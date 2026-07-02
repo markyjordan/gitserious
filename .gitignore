@@ -1,0 +1,184 @@
+# LEGEND:
+# - '!'  negation — force-track a file/dir that would otherwise be ignored
+# - '**' wildcard — matches across any number of directories (recursive)
+# - '*'  wildcard — matches anything except '/'
+# - '/'  trailing slash — match directories only
+# - '?'  matches any single character
+# - '#'  lines starting with '#' are comments
+
+
+# PROJECT DIRECTORIES AND FILES
+.jibsa/                     # because autonomous agents still need a handler
+
+docs/eng/_drafts/
+docs/product/_drafts/
+docs/product/roadmap/wishlist/
+
+
+# OS — platform-generated metadata files
+# Linux
+*~                              # editor backup files
+
+# macOS
+._*                             # resource forks / extended attributes
+.DS_Store                       # Finder directory metadata
+
+# Windows
+Desktop.ini                     # folder view settings
+Thumbs.db                       # thumbnail cache
+
+
+# EDITOR / IDE — workspace and editor state
+# Vim/Neovim
+*.sw?                           # swap files (.swp, .swo, etc.)
+.netrwhist                      # netrw directory history
+.nvimlog                        # Neovim debug log
+Session.vim                     # session save file
+Sessionx.vim                    # extended session save file
+
+# VS Code
+.vscode/                        # workspace settings, launch configs
+
+# VS Code extensions
+.history/                       # LACl History extension — file snapshots
+
+
+# AI AGENTS — CLI coding assistants and their local state
+# Anthropic Claude Code
+.claude/*                       # project-level config directory
+!.claude/CLAUDE.md              # tracked: project-level instructions
+!.claude/commands/              # tracked: custom slash commands
+!.claude/settings.json          # tracked: shared project settings
+**/.claude/settings.local.json  # user-specific local overrides
+
+# Cursor
+.cursor/                        # project-level config
+**/.cursor/settings.local.json  # user-specific local overrides
+
+# Google Gemini CLI
+.gemini/                        # project-level config
+**/.gemini/settings.local.json  # user-specific local overrides
+
+# Grok Build
+.grok/                          # project-level Grok Build config/extensions
+**/.grok/settings.local.json    # user-specific local overrides
+
+# OpenAI Codex CLI
+.codex/*                        # project-level config directory
+!.codex/instructions.md         # tracked: project-level instructions
+!.codex/settings.json           # tracked: shared project settings
+**/.codex/settings.local.json   # user-specific local overrides
+
+# Prompt caches
+.prompts/cache/                 # cached prompt expansions
+
+# Scratch/plan/patch artifacts
+**/*.agent.md
+**/*.agents.md
+**/*.codex.patch
+**/*_agent_notes.md
+**/*_plan.local.md
+**/*_scratch.md
+
+
+# SECRETS AND LOCAL ENVIRONMENT
+# Environment files
+.env                            # local environment variables
+.env.*                          # variant env files (.local, .dev, etc.)
+!.env.example                   # tracked: example env template
+!.env.template                  # tracked: env template
+
+# Infisical
+!.infisical.json                # tracked: Infisical project metadata
+
+# Generic credential/secret material
+*.cer                           # X.509 certificates (DER-encoded)
+*.crt                           # X.509 certificates
+*.jks                           # Java KeyStore files
+*.key                           # private keys
+*.keystore                      # Java/Android keystores
+*.p12                           # PKCS#12 keystores
+*.pem                           # PEM-encoded keys/certificates
+*.pfx                           # PKCS#12 keystores (Windows convention)
+*.secrets*                      # generic secrets files
+.netrc                          # machine login credentials
+credentials.json                # API / OAuth credentials
+token.json                      # OAuth / API tokens
+
+
+# DEPENDENCIES / PACKAGE MANAGERS
+# Rust: Cargo
+target/                         # Cargo build output
+*.rs.bk                         # rustfmt backup files
+
+
+# BUILD SYSTEM / TOOLCHAIN METADATA
+# Rust toolchain
+!rust-toolchain.toml
+
+!clippy.toml
+!rustfmt.toml
+
+
+# COMPILED / LINKED OUTPUTS
+# Native
+*.a                             # static libs
+*.dll                           # shared libs (Windows)
+*.dylib                         # shared libs (macOS)
+*.lib                           # static libs / import libs (Windows)
+*.o                             # object files
+*.obj                           # object files (Windows)
+*.out                           # generic compiler output binaries
+*.so                            # shared libraries (Linux)
+
+
+# DISTRIBUTION / PACKAGING ARTIFACTS
+# Archives
+*.gz                            # gzip-compressed archives
+*.tar                           # tar archives
+*.zip                           # ZIP archives
+
+# Generic output directories
+build/                          # generic build output
+dist/                           # distribution output
+out/                            # generic output directory
+
+
+# RUNTIME / ANALYSIS / TEST ARTIFACTS
+# Rust snapshot testing
+**/*.snap.new                   # unreviewed Insta snapshot updates
+
+
+# BUILD AND DISTRIBUTION ARTIFACTS
+dist/
+build/
+out/
+
+
+# COVERAGE / PROFILING
+# Coverage
+*.gcda                          # GCC coverage data files
+*.gcno                          # GCC coverage note files
+*.gcov                          # GCC coverage output
+.coverage                       # coverage database
+.coverage.*                     # coverage shards/variants
+.coverprofile                   # Go coverage profile
+coverage/                       # coverage reports
+coverage.out                    # Go coverage output
+htmlcov/                        # coverage HTML reports
+
+# Profiling
+cpu.prof                        # CPU profile
+mem.prof                        # memory profile
+trace.out                       # execution trace
+
+
+# LOGS, CACHES, TEMP FILES
+*.log
+*.tmp
+*.temp
+.cache/
+.tmp/
+tmp/
+logs/
+

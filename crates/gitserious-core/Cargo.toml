@@ -1,0 +1,13 @@
+[package]
+name = "gitserious-core"
+version = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+authors = { workspace = true }
+description = "Placeholder core crate for gitserious."
+license = { workspace = true }
+readme = "README.md"
+repository = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,29 @@
+[workspace]
+members = [
+    "crates/gitserious",
+    "crates/gitserious-app",
+    "crates/gitserious-cli",
+    "crates/gitserious-core",
+    "crates/gitserious-fs",
+]
+default-members = ["crates/gitserious"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+authors = ["markyjordan"]
+description = "Why did this commit message explain nothing? C'mon, gitserious!"
+repository = "https://github.com/markyjordan/gitserious"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+gitserious-app = { path = "crates/gitserious-app", version = "0.1.0" }
+gitserious-cli = { path = "crates/gitserious-cli", version = "0.1.0" }
+gitserious-core = { path = "crates/gitserious-core", version = "0.1.0" }
+gitserious-fs = { path = "crates/gitserious-fs", version = "0.1.0" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

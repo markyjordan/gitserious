@@ -1,0 +1,13 @@
+[package]
+name = "gitserious-cli"
+version = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+authors = { workspace = true }
+description = "Placeholder CLI crate for gitserious."
+license = { workspace = true }
+readme = "README.md"
+repository = { workspace = true }
+
+[lints]
+workspace = true

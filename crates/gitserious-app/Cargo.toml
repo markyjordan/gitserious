@@ -1,0 +1,13 @@
+[package]
+name = "gitserious-app"
+version = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+authors = { workspace = true }
+description = "Placeholder application crate for gitserious."
+license = { workspace = true }
+readme = "README.md"
+repository = { workspace = true }
+
+[lints]
+workspace = true

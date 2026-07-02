@@ -1,0 +1,20 @@
+[package]
+name = "gitserious"
+version = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+authors = { workspace = true }
+description = "Installable gitserious CLI binary."
+license = { workspace = true }
+readme = "README.md"
+repository = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+gitserious-app = { workspace = true }
+gitserious-cli = { workspace = true }
+gitserious-core = { workspace = true }
+gitserious-fs = { workspace = true }
+
