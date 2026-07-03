@@ -1,3 +1,1 @@
-# Workspace-wide Clippy behavior knobs.
-# Lint policy lives in Cargo.toml's [workspace.lints.clippy].
 msrv = "1.96.0"
