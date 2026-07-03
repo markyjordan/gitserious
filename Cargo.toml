@@ -25,5 +25,26 @@ gitserious-cli = { path = "crates/gitserious-cli", version = "0.1.0" }
 gitserious-core = { path = "crates/gitserious-core", version = "0.1.0" }
 gitserious-fs = { path = "crates/gitserious-fs", version = "0.1.0" }
 
+# dev-dependencies
+
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -2 }
+
+# accidental debug output
+dbg_macro = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+
+# unfinished code paths
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+
+# casual failure handling
+expect_used = "warn"
+unwrap_used = "warn"
