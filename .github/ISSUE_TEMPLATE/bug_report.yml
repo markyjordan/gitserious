@@ -1,0 +1,192 @@
+name: Bug report
+description: Report something that is broken.
+title: "[bug] "
+labels: ["bug"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before submitting, please review the Contributing Guidelines and AI Usage Policy.
+
+  - type: checkboxes
+    id: policy-acknowledgement
+    attributes:
+      label: Contributor acknowledgement
+      options:
+        - label: I have reviewed the contributor and AI usage expectations for this project.
+          required: true
+
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: Give a short, specific description of the bug.
+      placeholder: gitserious fails when...
+    validations:
+      required: true
+
+  - type: textarea
+    id: minimum-repro
+    attributes:
+      label: Minimum reproducible example
+      description: Describe the smallest repository, config, command, or input that still triggers the bug.
+      placeholder: |
+        Repository or setup:
+        - Fresh repository / existing project / CI job:
+        - Relevant .gitserious config or Git state:
+
+        Smallest command or workflow:
+        ```bash
+        gitserious ...
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: command-output
+    attributes:
+      label: Exact command and output
+      description: Run the failing command again with `--verbose`, then paste the exact command and relevant output.
+      placeholder: |
+        ```bash
+        gitserious ... --verbose
+        ```
+
+        ```text
+        Paste the output here.
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the exact steps someone else can follow from a clean starting point.
+      placeholder: |
+        1. Create or clone ...
+        2. Configure gitserious ...
+        3. Run `gitserious ... --verbose`
+        4. See ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should gitserious have done?
+      placeholder: gitserious should have...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What did gitserious do instead?
+      placeholder: gitserious instead...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os-platform
+    attributes:
+      label: OS platform
+      description: Choose the platform where the bug appears.
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - BSD or other Unix
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: cpu-architecture
+    attributes:
+      label: CPU architecture
+      description: Choose the architecture where the bug appears.
+      options:
+        - arm64 / aarch64
+        - x86_64 / amd64
+        - 32-bit x86
+        - 32-bit ARM
+        - Other or unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-source
+    attributes:
+      label: Install or source type
+      description: How are you running gitserious?
+      options:
+        - Release binary
+        - Homebrew
+        - cargo install
+        - Local source checkout
+        - CI build
+        - Package manager
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: gitserious-version
+    attributes:
+      label: gitserious version or commit
+      description: Paste `gitserious --version`, or the commit SHA if running from source.
+      placeholder: gitserious 0.1.0, commit abc1234, etc.
+    validations:
+      required: true
+
+  - type: input
+    id: git-version
+    attributes:
+      label: Git version
+      description: Paste the output of `git --version`.
+      placeholder: git version 2.50.0
+    validations:
+      required: true
+
+  - type: input
+    id: rust-toolchain
+    attributes:
+      label: Rust toolchain
+      description: Optional. If you built from source, used cargo, or ran a local checkout, paste `rustc --version` and `cargo --version`.
+      placeholder: rustc 1.96.0 (...); cargo 1.96.0 (...)
+
+  - type: dropdown
+    id: clean-repro
+    attributes:
+      label: Clean reproduction status
+      description: Have you tried reproducing this from a clean checkout or fresh test repository?
+      options:
+        - I have not tried this in a clean checkout
+        - "Yes, it reproduces in a clean checkout"
+        - "No, it only happens in my existing repository or environment"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment-notes
+    attributes:
+      label: Additional environment details
+      description: Optional. Include shell, terminal, package manager, CI provider, relevant Git config, or other details that may matter.
+      placeholder: zsh, bash, PowerShell, GitHub Actions, Homebrew, apt, mise, rustup, core.hooksPath, etc.
+
+  - type: textarea
+    id: regression
+    attributes:
+      label: Regression details
+      description: Optional. If this used to work, tell us the last known working version, commit, or date.
+      placeholder: This worked in v0.1.0 / commit abc1234 / on 2026-07-01.
+
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Screenshots, photos, or recordings
+      description: Optional. Paste or drag screenshots, photos, recordings, or terminal captures into the issue body if they help explain the bug.

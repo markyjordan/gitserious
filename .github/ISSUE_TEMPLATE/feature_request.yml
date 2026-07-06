@@ -1,0 +1,99 @@
+name: Feature request
+description: Suggest an improvement or new behavior.
+title: "[feat] "
+labels: ["enhancement"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before submitting, please review the Contributing Guidelines and AI Usage Policy.
+
+  - type: checkboxes
+    id: policy-acknowledgement
+    attributes:
+      label: Contributor acknowledgement
+      options:
+        - label: I have reviewed the contributor and AI usage expectations for this project.
+          required: true
+
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: Give a short, specific description of the request.
+      placeholder: Add support for...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Choose the area this request most closely affects.
+      options:
+        - init/config
+        - validation
+        - CLI/output
+        - Git hooks/policy
+        - docs
+        - CI/release
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What problem does this solve, and who runs into it?
+      placeholder: When using gitserious to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-behavior
+    attributes:
+      label: Proposed behavior
+      description: Describe the behavior you want gitserious to provide.
+      placeholder: gitserious should...
+    validations:
+      required: true
+
+  - type: textarea
+    id: concrete-example
+    attributes:
+      label: Concrete example
+      description: Show CLI usage, config, expected output, or a before/after workflow.
+      placeholder: |
+        ```bash
+        gitserious ...
+        ```
+
+        Expected output or workflow:
+        ```text
+        ...
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds
+      description: Optional. Describe any current workaround or alternate design you considered.
+      placeholder: Today I work around this by...
+
+  - type: textarea
+    id: compatibility-impact
+    attributes:
+      label: Compatibility or migration impact
+      description: Optional. Note whether this would affect existing configs, hooks, CLI output, CI workflows, or documented behavior.
+      placeholder: This may affect...
+
+  - type: textarea
+    id: contribution-testing
+    attributes:
+      label: Contribution and testing willingness
+      description: Optional. Tell us whether you can help implement, test, document, or validate this behavior.
+      placeholder: I can help by...
