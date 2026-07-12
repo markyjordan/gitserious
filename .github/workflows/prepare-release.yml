@@ -1,0 +1,50 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version-family:
+        description: "Release family to cut, such as 0.1"
+        required: true
+        type: string
+      base-ref:
+        description: "Stable branch to cut from"
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release-${{ inputs['version-family'] }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-release:
+    name: prepare-release
+    environment: release-management
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs['base-ref'] }}
+
+      - name: Exercise release-branch preparation fixtures
+        run: bash scripts/release/test-prepare-release.sh
+
+      - name: Cut release branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          VERSION_FAMILY: ${{ inputs['version-family'] }}
+          BASE_REF: ${{ inputs['base-ref'] }}
+        run: bash scripts/release/prepare-release.sh
