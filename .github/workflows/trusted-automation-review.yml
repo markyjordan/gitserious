@@ -1,0 +1,54 @@
+name: Trusted Automation Review
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+      - "release/**"
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
+      - dismissed
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: trusted-automation-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  trusted-automation-review:
+    name: trusted-automation-review
+    if: >-
+      github.event.pull_request.base.ref == 'dev' ||
+      github.event.pull_request.base.ref == 'main' ||
+      startsWith(github.event.pull_request.base.ref, 'release/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Exercise current-head review fixtures
+        run: bash scripts/ci/test-trusted-automation-review.sh
+
+      - name: Validate trusted automation review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/ci/validate-trusted-automation-review.sh
