@@ -1,0 +1,94 @@
+name: Dependency Security
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+      - "release/**"
+  push:
+    branches:
+      - dev
+      - main
+      - "release/**"
+    paths:
+      - "**/Cargo.toml"
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .github/dependabot.yml
+      - .github/workflows/dependency-security.yml
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_AUDIT_VERSION: "0.22.2"
+
+jobs:
+  dependency-review:
+    name: dependency-review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/dependency-review-action@v5.0.0
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
+        with:
+          fail-on-severity: low
+          license-check: false
+          vulnerability-check: true
+
+  cargo-audit:
+    name: cargo-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust toolchain
+        run: rustup toolchain install --no-self-update
+
+      - name: Install pinned cargo-audit
+        run: cargo install --locked cargo-audit --version "$CARGO_AUDIT_VERSION"
+
+      - name: Audit committed dependency graph
+        run: cargo audit --file Cargo.lock
+
+  dependency-security:
+    name: dependency-security
+    if: always()
+    needs:
+      - dependency-review
+      - cargo-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Require dependency security evidence
+        env:
+          DEPENDENCY_REVIEW_RESULT: ${{ needs.dependency-review.result }}
+          CARGO_AUDIT_RESULT: ${{ needs.cargo-audit.result }}
+        run: |
+          if [[ "$CARGO_AUDIT_RESULT" != "success" ]]; then
+            echo "cargo-audit did not pass: $CARGO_AUDIT_RESULT" >&2
+            exit 1
+          fi
+
+          if [[ "$DEPENDENCY_REVIEW_RESULT" != "success" && "$DEPENDENCY_REVIEW_RESULT" != "skipped" ]]; then
+            echo "dependency-review did not pass: $DEPENDENCY_REVIEW_RESULT" >&2
+            exit 1
+          fi
+
+          echo "Dependency security checks passed."
