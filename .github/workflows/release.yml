@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "v*.*.*-rc*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to simulate"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build-release-artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      RELEASE_MODE: dry-run
+
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - name: Set up Rust toolchain
+        run: |
+          rustup toolchain install --no-self-update
+          rustup show
+
+      - name: Exercise artifact fixtures
+        run: bash scripts/release/test-build-artifacts.sh
+
+      - name: Check release readiness
+        run: bash scripts/release/check-release.sh
+
+      - name: Build release artifacts
+        run: bash scripts/release/build-artifacts.sh
+
+      # actions/upload-artifact@v4
+      - name: Upload dry-run artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.RELEASE_TAG }}-artifacts
+          path: target/release-artifacts/**
+          if-no-files-found: error
