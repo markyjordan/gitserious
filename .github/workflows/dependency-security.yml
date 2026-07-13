@@ -16,7 +16,7 @@ on:
       - Cargo.lock
       - rust-toolchain.toml
       - .github/dependabot.yml
-      - .github/workflows/dependency-security.yml
+      - ".github/workflows/**"
   schedule:
     - cron: "23 4 * * *"
   workflow_dispatch:
