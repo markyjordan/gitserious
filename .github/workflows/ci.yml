@@ -1,0 +1,215 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+      - "release/**"
+  push:
+    branches:
+      - dev
+      - main
+      - "release/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ref-policy:
+    name: ref-policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Exercise accepted and rejected topology fixtures
+        run: bash scripts/ci/test-validate-ref-policy.sh
+
+      - name: Validate branch topology
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: bash scripts/ci/validate-ref-policy.sh
+
+  check:
+    name: check (${{ matrix.os }})
+    needs:
+      - ref-policy
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install --no-self-update
+          rustup show
+
+      - name: Check workspace
+        shell: bash
+        run: bash scripts/ci/run-rust-quality.sh check
+
+  fmt:
+    name: fmt
+    needs:
+      - ref-policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust toolchain
+        run: rustup toolchain install --no-self-update
+
+      - name: Check formatting
+        run: bash scripts/ci/run-rust-quality.sh fmt
+
+  lint:
+    name: lint
+    needs:
+      - ref-policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust toolchain
+        run: rustup toolchain install --no-self-update
+
+      - name: Lint workspace
+        run: bash scripts/ci/run-rust-quality.sh lint
+
+  test:
+    name: test (${{ matrix.os }})
+    needs:
+      - ref-policy
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust toolchain
+        shell: bash
+        run: rustup toolchain install --no-self-update
+
+      - name: Test workspace
+        shell: bash
+        run: bash scripts/ci/run-rust-quality.sh test
+
+  release-quality:
+    name: release-quality
+    if: >-
+      github.base_ref == 'main' ||
+      startsWith(github.base_ref, 'release/') ||
+      github.ref_name == 'main' ||
+      startsWith(github.ref_name, 'release/')
+    needs:
+      - ref-policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust toolchain
+        run: rustup toolchain install --no-self-update
+
+      - name: Build and inspect release packages
+        run: bash scripts/ci/run-rust-quality.sh release
+
+  ci-pass:
+    name: ci-pass
+    if: always()
+    needs:
+      - ref-policy
+      - check
+      - fmt
+      - lint
+      - test
+      - release-quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Require every CI component
+        env:
+          REF_POLICY_RESULT: ${{ needs.ref-policy.result }}
+          CHECK_RESULT: ${{ needs.check.result }}
+          FMT_RESULT: ${{ needs.fmt.result }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          RELEASE_QUALITY_RESULT: ${{ needs.release-quality.result }}
+        run: |
+          required_results=(
+            "ref-policy:$REF_POLICY_RESULT"
+            "check:$CHECK_RESULT"
+            "fmt:$FMT_RESULT"
+            "lint:$LINT_RESULT"
+            "test:$TEST_RESULT"
+          )
+
+          for component in "${required_results[@]}"; do
+            name="${component%%:*}"
+            result="${component#*:}"
+            if [[ "$result" != "success" ]]; then
+              echo "$name did not pass: $result" >&2
+              exit 1
+            fi
+          done
+
+          if [[ "$RELEASE_QUALITY_RESULT" != "success" && "$RELEASE_QUALITY_RESULT" != "skipped" ]]; then
+            echo "release-quality did not pass: $RELEASE_QUALITY_RESULT" >&2
+            exit 1
+          fi
+
+          echo "All required CI components passed."

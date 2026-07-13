@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+readonly REPO_ROOT
 
 readonly COLLAPSED_DOT_DIR_GLOB=".git|.gradle|.idea"
 readonly GENERATED_DIR_GLOB="node_modules|target|build|dist|coverage|out|debug"
@@ -174,6 +175,8 @@ path_matches_pipe_glob() {
   IFS='|' read -r -a patterns <<< "${pipe_glob}"
   for pattern in "${patterns[@]}"; do
     [[ -z "${pattern}" ]] && continue
+    # These variables intentionally carry user-supplied glob patterns.
+    # shellcheck disable=SC2053
     if [[ "${entry}" == ${pattern} ||
       "${relative_entry}" == ${pattern} ||
       "${relative_entry}" == ${pattern}/* ||
