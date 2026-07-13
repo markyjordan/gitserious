@@ -43,6 +43,14 @@ command -v gh >/dev/null || {
   echo "gh is required to publish the GitHub release." >&2
   exit 1
 }
+command -v curl >/dev/null || {
+  echo "curl is required to verify indexed crate identity." >&2
+  exit 1
+}
+command -v jq >/dev/null || {
+  echo "jq is required to verify indexed crate identity." >&2
+  exit 1
+}
 
 if [[ ! -f "$artifact_dir/SHA256SUMS" ]]; then
   echo "Release artifact checksums are required." >&2
@@ -124,6 +132,36 @@ package_is_indexed() {
   cargo info "${package}@${version}" >/dev/null 2>&1
 }
 
+verify_indexed_package() {
+  local package="$1"
+  local version="$2"
+  local crate_file="target/package/${package}-${version}.crate"
+  local local_checksum
+  local registry_checksum
+
+  cargo package --locked --no-verify -p "$package" >/dev/null
+  [[ -f "$crate_file" ]] || {
+    echo "Expected packaged crate at ${crate_file}." >&2
+    return 1
+  }
+
+  local_checksum="$(shasum -a 256 "$crate_file" | awk '{print $1}')"
+  registry_checksum="$(
+    curl -fsSL --retry 5 --retry-all-errors \
+      "https://crates.io/api/v1/crates/${package}/${version}" |
+      jq -r '.version.checksum // empty'
+  )"
+
+  if [[ -z "$registry_checksum" || "$local_checksum" != "$registry_checksum" ]]; then
+    echo "Indexed ${package} ${version} does not match the local package archive." >&2
+    echo "Local checksum: ${local_checksum}" >&2
+    echo "Registry checksum: ${registry_checksum:-<missing>}" >&2
+    return 1
+  fi
+
+  echo "Verified indexed identity for ${package} ${version}."
+}
+
 wait_for_package() {
   local package="$1"
   local version="$2"
@@ -143,7 +181,8 @@ while IFS=$'\t' read -r package version; do
   [[ -n "$package" && -n "$version" ]] || continue
 
   if package_is_indexed "$package" "$version"; then
-    echo "${package} ${version} is already indexed; skipping upload."
+    verify_indexed_package "$package" "$version"
+    echo "${package} ${version} is already indexed and identical; skipping upload."
     continue
   fi
 
@@ -152,6 +191,7 @@ while IFS=$'\t' read -r package version; do
   echo "Publishing ${package} ${version}."
   cargo publish --locked -p "$package"
   wait_for_package "$package" "$version"
+  verify_indexed_package "$package" "$version"
 done <"$package_order_file"
 
 gh release view "$tag" >/dev/null 2>&1 ||

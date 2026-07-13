@@ -10,6 +10,7 @@ fake_bin="$fixture_dir/bin"
 artifact_dir="$fixture_dir/artifacts"
 publish_log="$fixture_dir/publish.log"
 indexed_file="$fixture_dir/indexed.txt"
+registry_checksum="$(printf '%s' package-content | shasum -a 256 | awk '{print $1}')"
 mkdir -p "$fake_bin" "$artifact_dir"
 : >"$publish_log"
 : >"$indexed_file"
@@ -48,10 +49,29 @@ JSON
       printf '%s\n' "$package" >>"${INDEXED_FILE:?INDEXED_FILE is required}"
     fi
     ;;
+  package)
+    package=""
+    while (($#)); do
+      if [[ "$1" == "-p" ]]; then
+        package="$2"
+        break
+      fi
+      shift
+    done
+    [[ -n "$package" ]] || exit 2
+    mkdir -p target/package
+    printf '%s' package-content >"target/package/${package}-0.1.0.crate"
+    ;;
   *)
     exit 2
     ;;
 esac
+EOF
+
+cat >"$fake_bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '{"version":{"checksum":"%s"}}\n' "${REGISTRY_CHECKSUM:?REGISTRY_CHECKSUM is required}"
 EOF
 
 cat >"$fake_bin/gh" <<'EOF'
@@ -62,7 +82,7 @@ if [[ "${1:-}" == "release" && "${2:-}" == "view" ]]; then
   exit 1
 fi
 EOF
-chmod +x "$fake_bin/cargo" "$fake_bin/gh"
+chmod +x "$fake_bin/cargo" "$fake_bin/curl" "$fake_bin/gh"
 
 printf '%s\n' '## [0.1.0]' >"$artifact_dir/release-notes.md"
 printf '%s\n' artifact >"$artifact_dir/v0.1.0-gitserious"
@@ -83,7 +103,7 @@ fi
 
 env PATH="$fake_bin:$PATH" RELEASE_TAG=v0.1.0 RELEASE_MODE=publish \
   ARTIFACT_DIR="$artifact_dir" CRATES_IO_TOKEN=fixture GH_TOKEN=fixture \
-  INDEXED_FILE="$indexed_file" PUBLISH_LOG="$publish_log" \
+  INDEXED_FILE="$indexed_file" PUBLISH_LOG="$publish_log" REGISTRY_CHECKSUM="$registry_checksum" \
   bash "$publisher" >/dev/null
 
 expected=$'dry-run gitserious-app\npublish gitserious-app\ndry-run gitserious\npublish gitserious'
@@ -95,6 +115,15 @@ if [[ "$actual" != "$expected" ]]; then
 fi
 if ! grep -F 'gh release create v0.1.0' "$publish_log" >/dev/null; then
   echo "Stable publisher did not create the GitHub release after crates.io publication." >&2
+  exit 1
+fi
+
+if env PATH="$fake_bin:$PATH" RELEASE_TAG=v0.1.0 RELEASE_MODE=publish \
+  ARTIFACT_DIR="$artifact_dir" CRATES_IO_TOKEN=fixture GH_TOKEN=fixture \
+  INDEXED_FILE="$indexed_file" PUBLISH_LOG="$publish_log" \
+  REGISTRY_CHECKSUM=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff \
+  bash "$publisher" >/dev/null 2>&1; then
+  echo "Stable publisher accepted an indexed crate with different contents." >&2
   exit 1
 fi
 
