@@ -108,6 +108,11 @@ jobs:
           name: ${{ env.RELEASE_TAG }}-artifacts
           path: target/release-artifacts
 
+      - name: Verify downloaded artifacts
+        run: |
+          cd target/release-artifacts
+          shasum -a 256 -c SHA256SUMS
+
       - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
