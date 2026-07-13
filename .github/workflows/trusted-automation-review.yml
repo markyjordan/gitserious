@@ -42,8 +42,32 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.pull_request.base.sha }}
 
+      - name: Select trusted validator source
+        id: validator
+        run: |
+          if [[ -f scripts/ci/validate-trusted-automation-review.sh ]]; then
+            echo "root=." >>"$GITHUB_OUTPUT"
+            echo "Using the validator from the protected base commit."
+          else
+            echo "root=.trusted-automation-bootstrap" >>"$GITHUB_OUTPUT"
+            echo "The protected base predates the validator; using the signed bootstrap tree."
+          fi
+
+      # One-time trust anchor for the PR that introduces this gate. Once the
+      # validator exists on dev, the protected base checkout above always wins.
+      - name: Check out signed bootstrap validator
+        if: steps.validator.outputs.root != '.'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+          path: .trusted-automation-bootstrap
+          persist-credentials: false
+          ref: a2bd843511f468838f4877a128f4885e0bca57f6
+
       - name: Exercise current-head review fixtures
-        run: bash scripts/ci/test-trusted-automation-review.sh
+        env:
+          VALIDATOR_ROOT: ${{ steps.validator.outputs.root }}
+        run: bash "$VALIDATOR_ROOT/scripts/ci/test-trusted-automation-review.sh"
 
       - name: Validate trusted automation review
         env:
@@ -51,4 +75,5 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: bash scripts/ci/validate-trusted-automation-review.sh
+          VALIDATOR_ROOT: ${{ steps.validator.outputs.root }}
+        run: bash "$VALIDATOR_ROOT/scripts/ci/validate-trusted-automation-review.sh"
