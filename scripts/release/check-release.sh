@@ -34,7 +34,8 @@ case "$release_mode" in
     ;;
 esac
 
-tag="${RELEASE_TAG:-${GITHUB_REF_NAME:-}}"
+tag="${RELEASE_TAG:-}"
+release_ref="${RELEASE_REF:-${GITHUB_REF_NAME:-}}"
 if [[ -n "$tag" && "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-rc([1-9][0-9]*))?$ ]]; then
   major="${BASH_REMATCH[1]}"
   minor="${BASH_REMATCH[2]}"
@@ -93,8 +94,11 @@ if [[ -n "$tag" && "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-rc([1-9][0-9]*))?$ 
   else
     echo "Validated stable release ${tag} from ${release_branch}."
   fi
-elif [[ -n "$tag" && "$tag" != "main" && "$tag" != "dev" && "$tag" != release/* ]]; then
-  echo "Unsupported release tag or ref: $tag" >&2
+elif [[ -n "$tag" ]]; then
+  echo "Unsupported release tag: $tag" >&2
+  exit 1
+elif [[ -n "$release_ref" && "$release_ref" != main && "$release_ref" != dev && "$release_ref" != release/* ]]; then
+  echo "Unsupported release ref: $release_ref" >&2
   exit 1
 fi
 

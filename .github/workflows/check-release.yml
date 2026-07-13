@@ -43,5 +43,6 @@ jobs:
 
       - name: Check release readiness
         env:
+          RELEASE_REF: ${{ github.base_ref || github.ref_name }}
           RELEASE_TAG: ${{ github.event.inputs.tag }}
         run: bash scripts/release/check-release.sh

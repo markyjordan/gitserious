@@ -64,6 +64,18 @@ if [[ "$(cat "$quality_log")" != "$expected_components" ]]; then
   exit 1
 fi
 
+: >"$quality_log"
+(
+  cd "$repo"
+  env PATH="$fake_bin:$PATH" QUALITY_RUNNER="$fake_bin/quality-runner" \
+    QUALITY_LOG="$quality_log" RELEASE_REF=main GITHUB_REF_NAME=17/merge \
+    bash "$validator" >/dev/null
+)
+if [[ "$(cat "$quality_log")" != "$expected_components" ]]; then
+  echo "Release readiness did not accept a pull request merge ref for main." >&2
+  exit 1
+fi
+
 git -C "$repo" commit --allow-empty -qm "new release head"
 git -C "$repo" push -q origin release/0.1
 if (
