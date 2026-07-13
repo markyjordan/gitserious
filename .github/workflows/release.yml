@@ -41,30 +41,31 @@ jobs:
       RELEASE_MODE: ${{ github.event.inputs['release-mode'] || 'dry-run' }}
 
     steps:
-      - name: Record release request
-        id: release
-        run: |
-          case "$RELEASE_MODE" in
-            dry-run|publish) ;;
-            *)
-              echo "Unsupported release mode: $RELEASE_MODE" >&2
-              exit 1
-              ;;
-          esac
-          echo "release_tag=$RELEASE_TAG" >>"$GITHUB_OUTPUT"
-          echo "release_mode=$RELEASE_MODE" >>"$GITHUB_OUTPUT"
-          if [[ "$RELEASE_TAG" == *-rc* ]]; then
-            echo "is_rc=true" >>"$GITHUB_OUTPUT"
-          else
-            echo "is_rc=false" >>"$GITHUB_OUTPUT"
-          fi
-
       # actions/checkout@v7.0.0
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - name: Check out trusted release request policy
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Exercise release request fixtures
+        run: bash scripts/release/test-validate-release-request.sh
+
+      - name: Record release request
+        id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+        run: bash scripts/release/validate-release-request.sh
+
+      - name: Check out validated release tag
+        env:
+          VALIDATED_RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+        run: |
+          git fetch --no-tags origin \
+            "refs/tags/${VALIDATED_RELEASE_TAG}:refs/tags/${VALIDATED_RELEASE_TAG}"
+          git switch --detach "refs/tags/${VALIDATED_RELEASE_TAG}^{commit}"
 
       - name: Set up Rust toolchain
         run: |
