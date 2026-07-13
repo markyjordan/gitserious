@@ -29,6 +29,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  CARGO_AUDIT_SHA256: ab28a1bdb54db4d5d8ad5981cf1f959410370b3d28250dbd35f6a44248620e39
   CARGO_AUDIT_VERSION: "0.22.2"
 
 jobs:
@@ -60,8 +61,15 @@ jobs:
       - name: Set up Rust toolchain
         run: rustup toolchain install --no-self-update
 
-      - name: Install pinned cargo-audit
-        run: cargo install --locked cargo-audit --version "$CARGO_AUDIT_VERSION"
+      - name: Install pinned cargo-audit binary
+        run: |
+          archive="cargo-audit-x86_64-unknown-linux-gnu-v${CARGO_AUDIT_VERSION}.tgz"
+          release_dir="cargo-audit-x86_64-unknown-linux-gnu-v${CARGO_AUDIT_VERSION}"
+          curl -fsSLo "/tmp/$archive" \
+            "https://github.com/rustsec/rustsec/releases/download/cargo-audit/v${CARGO_AUDIT_VERSION}/$archive"
+          printf '%s  %s\n' "$CARGO_AUDIT_SHA256" "/tmp/$archive" | sha256sum -c -
+          tar -xzf "/tmp/$archive" -C /tmp
+          printf '%s\n' "/tmp/$release_dir" >>"$GITHUB_PATH"
 
       - name: Audit committed dependency graph
         run: cargo audit --file Cargo.lock
