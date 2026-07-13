@@ -104,7 +104,7 @@ jobs:
           fetch-depth: 1
           path: .trusted-automation-bootstrap
           persist-credentials: false
-          ref: a2bd843511f468838f4877a128f4885e0bca57f6
+          ref: e93771fa9db70e955bb5c22ee4d9146dd34c80a7
 
       - name: Exercise current-head review fixtures
         env:
