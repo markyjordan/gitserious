@@ -1,6 +1,12 @@
 # Routine dependency updates are disabled. A cooldown would not improve that
 # posture and must not delay advisory-triggered security remediation.
 rules:
+  dangerous-triggers:
+    ignore:
+      # The default-branch gate is read-only, checks out only the protected base,
+      # and never executes pull-request code. Keep this line-specific so trigger
+      # movement or another dangerous trigger requires a new review.
+      - trusted-automation-review.yml:3
   dependabot-cooldown:
     ignore:
       - dependabot.yml

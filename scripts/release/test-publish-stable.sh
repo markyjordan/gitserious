@@ -103,6 +103,7 @@ fi
 
 env PATH="$fake_bin:$PATH" RELEASE_TAG=v0.1.0 RELEASE_MODE=publish \
   ARTIFACT_DIR="$artifact_dir" CRATES_IO_TOKEN=fixture GH_TOKEN=fixture \
+  GITHUB_REPOSITORY=markyjordan/gitserious \
   INDEXED_FILE="$indexed_file" PUBLISH_LOG="$publish_log" REGISTRY_CHECKSUM="$registry_checksum" \
   bash "$publisher" >/dev/null
 
@@ -113,13 +114,28 @@ if [[ "$actual" != "$expected" ]]; then
   printf 'Expected:\n%s\nActual:\n%s\n' "$expected" "$actual" >&2
   exit 1
 fi
-if ! grep -F 'gh release create v0.1.0' "$publish_log" >/dev/null; then
+if ! grep -F 'gh release create v0.1.0 --repo markyjordan/gitserious' \
+  "$publish_log" >/dev/null; then
   echo "Stable publisher did not create the GitHub release after crates.io publication." >&2
+  exit 1
+fi
+if ! grep -F 'gh release upload v0.1.0' "$publish_log" |
+  grep -F -- '--repo markyjordan/gitserious --clobber' >/dev/null; then
+  echo "Stable publisher did not upload artifacts to the selected repository." >&2
   exit 1
 fi
 
 if env PATH="$fake_bin:$PATH" RELEASE_TAG=v0.1.0 RELEASE_MODE=publish \
   ARTIFACT_DIR="$artifact_dir" CRATES_IO_TOKEN=fixture GH_TOKEN=fixture \
+  INDEXED_FILE="$indexed_file" PUBLISH_LOG="$publish_log" REGISTRY_CHECKSUM="$registry_checksum" \
+  bash "$publisher" >/dev/null 2>&1; then
+  echo "Stable publisher accepted a missing repository." >&2
+  exit 1
+fi
+
+if env PATH="$fake_bin:$PATH" RELEASE_TAG=v0.1.0 RELEASE_MODE=publish \
+  ARTIFACT_DIR="$artifact_dir" CRATES_IO_TOKEN=fixture GH_TOKEN=fixture \
+  GITHUB_REPOSITORY=markyjordan/gitserious \
   INDEXED_FILE="$indexed_file" PUBLISH_LOG="$publish_log" \
   REGISTRY_CHECKSUM=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff \
   bash "$publisher" >/dev/null 2>&1; then
