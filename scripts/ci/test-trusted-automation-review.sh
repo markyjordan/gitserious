@@ -14,7 +14,6 @@ reviews="$fixture_dir/reviews.tsv"
 attestations="$fixture_dir/attestations.tsv"
 
 printf '%s\n' README.md >"$normal_paths"
-printf '%s\n' .github/workflows/ci.yml .github/zizmor.yml scripts/ci/example.sh >"$protected_paths"
 : >"$reviews"
 : >"$attestations"
 
@@ -48,7 +47,25 @@ expect_fail() {
 }
 
 expect_pass "ordinary source change" run_fixture "$normal_paths" "$reviews" "$attestations"
-expect_fail "protected path without approval" run_fixture "$protected_paths" "$reviews" "$attestations"
+
+protected_path_cases=(
+  .github/workflows/ci.yml
+  .github/actions/example/action.yml
+  .github/dependabot.yml
+  .github/zizmor.yml
+  scripts/ci/example.sh
+  scripts/release/example.sh
+  scripts/archive/example.sh
+  scripts/security/example.sh
+)
+
+for protected_path in "${protected_path_cases[@]}"; do
+  printf '%s\n' "$protected_path" >"$protected_paths"
+  expect_fail "${protected_path} without approval" \
+    run_fixture "$protected_paths" "$reviews" "$attestations"
+done
+
+printf '%s\n' "${protected_path_cases[@]}" >"$protected_paths"
 
 printf 'maintainer\tOWNER\tAPPROVED\t2026-07-12T20:00:00Z\t%s\n' "$head_sha" >"$reviews"
 expect_pass "owner approval on current head" run_fixture "$protected_paths" "$reviews" "$attestations"
