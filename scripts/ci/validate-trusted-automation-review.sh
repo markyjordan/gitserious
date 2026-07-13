@@ -18,7 +18,7 @@ fi
 
 is_protected_automation_path() {
   case "$1" in
-    .github/workflows/* | .github/actions/* | .github/dependabot.yml | \
+    .github/workflows/* | .github/actions/* | .github/dependabot.yml | .github/zizmor.yml | \
       scripts/ci/* | scripts/release/* | scripts/archive/* | scripts/security/*)
       return 0
       ;;

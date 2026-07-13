@@ -1,0 +1,6 @@
+# Routine dependency updates are disabled. A cooldown would not improve that
+# posture and must not delay advisory-triggered security remediation.
+rules:
+  dependabot-cooldown:
+    ignore:
+      - dependabot.yml

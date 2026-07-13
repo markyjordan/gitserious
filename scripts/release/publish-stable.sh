@@ -127,9 +127,8 @@ package_is_indexed() {
 wait_for_package() {
   local package="$1"
   local version="$2"
-  local attempt
 
-  for attempt in {1..30}; do
+  for _ in {1..30}; do
     if package_is_indexed "$package" "$version"; then
       return 0
     fi

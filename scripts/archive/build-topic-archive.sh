@@ -12,12 +12,17 @@ require_command() {
 
 write_checksums() {
   local directory="$1"
+  local checksum_file
+  checksum_file="$(mktemp)"
   (
+    trap 'rm -f "$checksum_file"' EXIT
     cd "$directory"
     find . -type f ! -name SHA256SUMS -print | LC_ALL=C sort |
       while IFS= read -r path; do
         shasum -a 256 "${path#./}"
-      done >SHA256SUMS
+      done >"$checksum_file"
+    mv "$checksum_file" SHA256SUMS
+    trap - EXIT
   )
 }
 

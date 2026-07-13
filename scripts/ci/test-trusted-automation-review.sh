@@ -13,7 +13,7 @@ protected_paths="$fixture_dir/protected-paths.txt"
 reviews="$fixture_dir/reviews.tsv"
 
 printf '%s\n' README.md >"$normal_paths"
-printf '%s\n' .github/workflows/ci.yml scripts/ci/example.sh >"$protected_paths"
+printf '%s\n' .github/workflows/ci.yml .github/zizmor.yml scripts/ci/example.sh >"$protected_paths"
 : >"$reviews"
 
 run_fixture() {
