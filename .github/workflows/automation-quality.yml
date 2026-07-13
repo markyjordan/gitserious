@@ -37,7 +37,9 @@ jobs:
         run: go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
 
       - name: Validate workflow syntax and expressions
-        run: "$(go env GOPATH)/bin/actionlint"
+        run: |
+          actionlint_bin="$(go env GOPATH)/bin/actionlint"
+          "$actionlint_bin"
 
       - name: Install pinned ShellCheck
         env:
