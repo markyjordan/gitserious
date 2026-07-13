@@ -106,20 +106,30 @@ jobs:
           persist-credentials: false
           ref: e93771fa9db70e955bb5c22ee4d9146dd34c80a7
 
+      # Promotion and release targets may predate the status reporter. Load that
+      # helper from protected default-branch state, never from the PR head.
+      - name: Check out trusted status reporter
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 1
+          path: .trusted-automation-status
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
       - name: Exercise exact-head status fixtures
         env:
-          VALIDATOR_ROOT: ${{ steps.validator.outputs.root }}
-        run: bash "$VALIDATOR_ROOT/scripts/ci/test-report-trusted-automation-status.sh"
+          STATUS_ROOT: .trusted-automation-status
+        run: bash "$STATUS_ROOT/scripts/ci/test-report-trusted-automation-status.sh"
 
       - name: Mark exact-head review pending
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_HEAD_SHA: ${{ steps.pull-request.outputs.head-sha }}
+          STATUS_ROOT: .trusted-automation-status
           TRUST_STATUS: pending
           TRUST_STATUS_TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          VALIDATOR_ROOT: ${{ steps.validator.outputs.root }}
-        run: bash "$VALIDATOR_ROOT/scripts/ci/report-trusted-automation-status.sh"
+        run: bash "$STATUS_ROOT/scripts/ci/report-trusted-automation-status.sh"
 
       - name: Exercise current-head review fixtures
         id: review-fixtures
@@ -147,15 +157,15 @@ jobs:
           PR_HEAD_SHA: ${{ steps.pull-request.outputs.head-sha }}
           REVIEW_FIXTURES_OUTCOME: ${{ steps.review-fixtures.outcome }}
           REVIEW_OUTCOME: ${{ steps.review.outcome }}
+          STATUS_ROOT: .trusted-automation-status
           TRUST_STATUS_TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          VALIDATOR_ROOT: ${{ steps.validator.outputs.root }}
         run: |
           status=failure
           if [[ "$REVIEW_FIXTURES_OUTCOME" == success && "$REVIEW_OUTCOME" == success ]]; then
             status=success
           fi
           TRUST_STATUS="$status" \
-            bash "$VALIDATOR_ROOT/scripts/ci/report-trusted-automation-status.sh"
+            bash "$STATUS_ROOT/scripts/ci/report-trusted-automation-status.sh"
 
           if [[ "$status" != success ]]; then
             echo "Trusted automation review did not pass." >&2
