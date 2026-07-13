@@ -4,6 +4,7 @@ set -euo pipefail
 tag="${RELEASE_TAG:?RELEASE_TAG is required}"
 release_mode="${RELEASE_MODE:-dry-run}"
 artifact_dir="${ARTIFACT_DIR:-target/release-artifacts}"
+repository="${GITHUB_REPOSITORY:-}"
 
 case "$release_mode" in
   dry-run)
@@ -32,6 +33,10 @@ if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
 fi
 if [[ -z "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]]; then
   echo "GH_TOKEN or GITHUB_TOKEN is required for publication." >&2
+  exit 1
+fi
+if [[ -z "$repository" ]]; then
+  echo "GITHUB_REPOSITORY is required for publication." >&2
   exit 1
 fi
 
@@ -194,8 +199,9 @@ while IFS=$'\t' read -r package version; do
   verify_indexed_package "$package" "$version"
 done <"$package_order_file"
 
-gh release view "$tag" >/dev/null 2>&1 ||
-  gh release create "$tag" --title "$tag" --notes-file "$artifact_dir/release-notes.md"
-gh release upload "$tag" "$artifact_dir"/* --clobber
+gh release view "$tag" --repo "$repository" >/dev/null 2>&1 ||
+  gh release create "$tag" --repo "$repository" --title "$tag" \
+    --notes-file "$artifact_dir/release-notes.md"
+gh release upload "$tag" "$artifact_dir"/* --repo "$repository" --clobber
 
 echo "Published stable release ${tag}."
