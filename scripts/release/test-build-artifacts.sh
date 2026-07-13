@@ -37,7 +37,7 @@ printf '%s\n' '# Changelog' '## [0.1.0]' >"$repo/CHANGELOG.md"
 )
 
 artifact_dir="$repo/target/release-artifacts"
-for artifact in CHANGELOG.md package-files.txt release-plan.json SHA256SUMS v0.1.0-gitserious; do
+for artifact in CHANGELOG.md package-files.txt release-notes.md release-plan.json SHA256SUMS v0.1.0-gitserious; do
   if [[ ! -f "$artifact_dir/$artifact" ]]; then
     echo "Missing release artifact: ${artifact}" >&2
     exit 1
@@ -46,6 +46,10 @@ done
 
 if [[ "$(jq -r '.release_mode' "$artifact_dir/release-plan.json")" != "dry-run" ]]; then
   echo "Release manifest did not record dry-run mode." >&2
+  exit 1
+fi
+if ! grep -F '## [0.1.0]' "$artifact_dir/release-notes.md" >/dev/null; then
+  echo "Release notes did not contain the versioned changelog section." >&2
   exit 1
 fi
 if [[ "$(jq -r '.publish_operations_enabled' "$artifact_dir/release-plan.json")" != "false" ]]; then

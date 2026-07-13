@@ -38,6 +38,18 @@ fi
 cp "$binary" "$artifact_dir/${tag}-gitserious"
 cp CHANGELOG.md "$artifact_dir/CHANGELOG.md"
 
+version="${tag#v}"
+version="${version%%-rc*}"
+awk -v heading="## [${version}]" '
+  index($0, heading) == 1 { capture = 1 }
+  capture && printed && /^## \[/ { exit }
+  capture { print; printed = 1 }
+  END { if (!capture) exit 1 }
+' CHANGELOG.md >"$artifact_dir/release-notes.md" || {
+  echo "CHANGELOG.md does not contain release notes for ${version}." >&2
+  exit 1
+}
+
 created_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 dry_run=true
 publish_operations_enabled=false
@@ -58,7 +70,8 @@ EOF
 
 (
   cd "$artifact_dir"
-  shasum -a 256 CHANGELOG.md package-files.txt release-plan.json "${tag}-gitserious" >SHA256SUMS
+  shasum -a 256 CHANGELOG.md package-files.txt release-notes.md release-plan.json \
+    "${tag}-gitserious" >SHA256SUMS
 )
 
 echo "Built ${release_mode} release artifacts in ${artifact_dir}."

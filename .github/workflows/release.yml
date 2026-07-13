@@ -8,9 +8,17 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag to simulate"
+        description: "Existing release tag to process"
         required: true
         type: string
+      release-mode:
+        description: "Simulate or publish after protected environment approval"
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - publish
 
 permissions:
   contents: read
@@ -24,11 +32,33 @@ jobs:
     name: build-release-artifacts
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    outputs:
+      is_rc: ${{ steps.release.outputs.is_rc }}
+      release_mode: ${{ steps.release.outputs.release_mode }}
+      release_tag: ${{ steps.release.outputs.release_tag }}
     env:
       RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-      RELEASE_MODE: dry-run
+      RELEASE_MODE: ${{ github.event.inputs['release-mode'] || 'dry-run' }}
 
     steps:
+      - name: Record release request
+        id: release
+        run: |
+          case "$RELEASE_MODE" in
+            dry-run|publish) ;;
+            *)
+              echo "Unsupported release mode: $RELEASE_MODE" >&2
+              exit 1
+              ;;
+          esac
+          echo "release_tag=$RELEASE_TAG" >>"$GITHUB_OUTPUT"
+          echo "release_mode=$RELEASE_MODE" >>"$GITHUB_OUTPUT"
+          if [[ "$RELEASE_TAG" == *-rc* ]]; then
+            echo "is_rc=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "is_rc=false" >>"$GITHUB_OUTPUT"
+          fi
+
       # actions/checkout@v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -50,10 +80,80 @@ jobs:
       - name: Build release artifacts
         run: bash scripts/release/build-artifacts.sh
 
-      # actions/upload-artifact@v4
+      # actions/upload-artifact@v7.0.1
       - name: Upload dry-run artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ env.RELEASE_TAG }}-artifacts
           path: target/release-artifacts/**
           if-no-files-found: error
+
+  publish-release-candidate:
+    name: publish-release-candidate
+    if: needs.build.outputs.release_mode == 'publish' && needs.build.outputs.is_rc == 'true'
+    needs:
+      - build
+    environment: release-candidate
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+
+    steps:
+      # actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.RELEASE_TAG }}-artifacts
+          path: target/release-artifacts
+
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || \
+            gh release create "$RELEASE_TAG" --prerelease --title "$RELEASE_TAG" \
+              --notes-file target/release-artifacts/release-notes.md
+          gh release upload "$RELEASE_TAG" target/release-artifacts/* --clobber
+
+  publish-stable:
+    name: publish-stable
+    if: needs.build.outputs.release_mode == 'publish' && needs.build.outputs.is_rc == 'false'
+    needs:
+      - build
+    environment: crates-io-release
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+      RELEASE_MODE: ${{ needs.build.outputs.release_mode }}
+      CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up Rust toolchain
+        run: rustup toolchain install --no-self-update
+
+      # actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.RELEASE_TAG }}-artifacts
+          path: target/release-artifacts
+
+      - name: Exercise stable publication fixtures
+        run: bash scripts/release/test-publish-stable.sh
+
+      - name: Publish stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash scripts/release/publish-stable.sh
