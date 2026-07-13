@@ -62,6 +62,20 @@ load_review_rows() {
     --jq '.[] | [.user.login, .author_association, .state, .submitted_at, .commit_id] | @tsv'
 }
 
+load_attestation_rows() {
+  if [[ -n "${ATTESTATION_ROWS_FILE:-}" ]]; then
+    cat "$ATTESTATION_ROWS_FILE"
+    return
+  fi
+
+  require_github_api
+  gh api --paginate "repos/${repository}/issues/${pr_number}/comments?per_page=100" \
+    --jq ".[] |
+      select(.body == \"/approve-automation ${head_sha}\") |
+      [.user.login, .author_association, .body, .updated_at] |
+      @tsv"
+}
+
 changed_paths="$(load_changed_paths)"
 protected_paths=""
 while IFS= read -r path; do
@@ -94,13 +108,27 @@ trusted_approval="$({ load_review_rows || exit $?; } | awk -F '\t' -v head="$hea
   }
 ')"
 
+approval_kind=review
+if [[ -z "$trusted_approval" ]]; then
+  attestation_command="/approve-automation ${head_sha}"
+  trusted_approval="$({ load_attestation_rows || exit $?; } | awk -F '\t' -v command="$attestation_command" '
+    $3 == command && ($2 == "OWNER" || $2 == "MEMBER" || $2 == "COLLABORATOR") {
+      print
+      exit 0
+    }
+  ')"
+  approval_kind=attestation
+fi
+
 if [[ -z "$trusted_approval" ]]; then
   cat >&2 <<EOF
 Protected automation changes require trusted approval on the current PR head.
 
-Required:
-- An approving review on ${head_sha}
-- Reviewer association of OWNER, MEMBER, or COLLABORATOR
+Provide either:
+- An approving review on ${head_sha}; or
+- An exact PR comment: /approve-automation ${head_sha}
+
+The reviewer or commenter must be an OWNER, MEMBER, or COLLABORATOR.
 
 Pushing a new commit intentionally invalidates approval of the previous head.
 EOF
@@ -111,4 +139,4 @@ reviewer="$(printf '%s' "$trusted_approval" | awk -F '\t' '{print $1}')"
 association="$(printf '%s' "$trusted_approval" | awk -F '\t' '{print $2}')"
 submitted_at="$(printf '%s' "$trusted_approval" | awk -F '\t' '{print $4}')"
 
-echo "Protected automation approved by ${reviewer} (${association}) at ${submitted_at} for ${head_sha}."
+echo "Protected automation approved by ${approval_kind} from ${reviewer} (${association}) at ${submitted_at} for ${head_sha}."

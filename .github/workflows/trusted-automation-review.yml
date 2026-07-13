@@ -15,19 +15,26 @@ on:
     types:
       - submitted
       - dismissed
+  issue_comment:
+    types:
+      - created
+      - edited
+      - deleted
 
 permissions:
   contents: read
+  issues: read
   pull-requests: read
 
 concurrency:
-  group: trusted-automation-review-${{ github.event.pull_request.number }}
+  group: trusted-automation-review-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: true
 
 jobs:
   trusted-automation-review:
     name: trusted-automation-review
     if: >-
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request) ||
       github.event.pull_request.base.ref == 'dev' ||
       github.event.pull_request.base.ref == 'main' ||
       startsWith(github.event.pull_request.base.ref, 'release/')
@@ -35,12 +42,47 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: Resolve pull request context
+        id: pull-request
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          EVENT_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [[ "$EVENT_NAME" == "issue_comment" ]]; then
+            pr_number="$ISSUE_NUMBER"
+            context="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}" \
+              --jq '[.base.ref, .base.sha, .head.sha] | @tsv')"
+            IFS=$'\t' read -r base_ref base_sha head_sha <<<"$context"
+          else
+            pr_number="$EVENT_PR_NUMBER"
+            base_ref="$EVENT_PR_BASE_REF"
+            base_sha="$EVENT_PR_BASE_SHA"
+            head_sha="$EVENT_PR_HEAD_SHA"
+          fi
+
+          case "$base_ref" in
+            dev | main | release/*) ;;
+            *)
+              echo "Unsupported protected target: $base_ref" >&2
+              exit 1
+              ;;
+          esac
+
+          printf 'number=%s\nbase-sha=%s\nhead-sha=%s\n' \
+            "$pr_number" "$base_sha" "$head_sha" >>"$GITHUB_OUTPUT"
+
       # actions/checkout@v7.0.0
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ steps.pull-request.outputs.base-sha }}
 
       - name: Select trusted validator source
         id: validator
@@ -73,7 +115,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ steps.pull-request.outputs.number }}
+          PR_HEAD_SHA: ${{ steps.pull-request.outputs.head-sha }}
           VALIDATOR_ROOT: ${{ steps.validator.outputs.root }}
         run: bash "$VALIDATOR_ROOT/scripts/ci/validate-trusted-automation-review.sh"
