@@ -44,6 +44,9 @@ jobs:
       - name: Exercise release request policy fixtures
         run: bash scripts/release/test-validate-release-request.sh
 
+      - name: Exercise release preparation request policy fixtures
+        run: bash scripts/release/test-validate-prepare-release-request.sh
+
       - name: Install pinned ShellCheck
         env:
           SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
