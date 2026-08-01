@@ -1,29 +1,16 @@
 name: Automation Quality
 
 on:
-  pull_request:
-    branches:
-      - dev
-      - main
-      - "release/**"
-  push:
-    branches:
-      - dev
-      - main
-      - "release/**"
+  workflow_call:
 
 permissions:
   contents: read
 
-concurrency:
-  group: automation-quality-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  automation-quality:
-    name: automation-quality
+  actionlint:
+    name: actionlint
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
 
     steps:
       # actions/checkout@v7.0.0
@@ -34,18 +21,23 @@ jobs:
       - name: Install pinned actionlint
         env:
           ACTIONLINT_VERSION: v1.7.12
-        run: go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+        run: |
+          go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+          printf '%s\n' "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
 
       - name: Validate workflow syntax and expressions
-        run: |
-          actionlint_bin="$(go env GOPATH)/bin/actionlint"
-          "$actionlint_bin"
+        run: bash scripts/ci/run-automation-quality.sh actionlint
 
-      - name: Exercise release request policy fixtures
-        run: bash scripts/release/test-validate-release-request.sh
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
 
-      - name: Exercise release preparation request policy fixtures
-        run: bash scripts/release/test-validate-prepare-release-request.sh
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
 
       - name: Install pinned ShellCheck
         env:
@@ -60,9 +52,32 @@ jobs:
           printf '%s\n' "/tmp/shellcheck-${SHELLCHECK_VERSION}" >>"$GITHUB_PATH"
 
       - name: Validate shell scripts
-        run: |
-          command -v shellcheck >/dev/null
-          find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck
+        run: bash scripts/ci/run-automation-quality.sh shellcheck
+
+  release-policy-fixtures:
+    name: release-policy-fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Exercise release policy fixtures
+        run: bash scripts/ci/run-automation-quality.sh release-policy-fixtures
+
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
 
       # zizmorcore/zizmor-action@v0.5.7
       - name: Audit GitHub Actions security
@@ -75,3 +90,25 @@ jobs:
           online-audits: true
           persona: pedantic
           version: "1.26.1"
+
+  automation-quality:
+    name: automation-quality
+    if: always()
+    needs:
+      - actionlint
+      - shellcheck
+      - release-policy-fixtures
+      - zizmor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Require automation quality evidence
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: bash scripts/ci/require-job-results.sh
