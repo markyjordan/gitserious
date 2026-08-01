@@ -3,6 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 validator="$script_dir/check-release.sh"
+validation_only="$script_dir/validate-release-readiness.sh"
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
 
@@ -69,10 +70,32 @@ fi
   cd "$repo"
   env PATH="$fake_bin:$PATH" QUALITY_RUNNER="$fake_bin/quality-runner" \
     QUALITY_LOG="$quality_log" RELEASE_REF=main GITHUB_REF_NAME=17/merge \
+    bash "$validation_only" >/dev/null
+)
+if [[ -s "$quality_log" ]]; then
+  echo "Validation-only release readiness reran the quality surface." >&2
+  exit 1
+fi
+
+(
+  cd "$repo"
+  env PATH="$fake_bin:$PATH" QUALITY_RUNNER="$fake_bin/quality-runner" \
+    QUALITY_LOG="$quality_log" RELEASE_REF=main GITHUB_REF_NAME=17/merge \
     bash "$validator" >/dev/null
 )
 if [[ "$(cat "$quality_log")" != "$expected_components" ]]; then
   echo "Release readiness did not accept a pull request merge ref for main." >&2
+  exit 1
+fi
+
+: >"$quality_log"
+(
+  cd "$repo"
+  env PATH="$fake_bin:$PATH" RELEASE_REF=release/0.1 \
+    bash "$validation_only" >/dev/null
+)
+if [[ -s "$quality_log" ]]; then
+  echo "Validation-only release readiness invoked a quality runner." >&2
   exit 1
 fi
 

@@ -74,8 +74,8 @@ jobs:
     if: github.event_name == 'pull_request'
     uses: ./.github/workflows/dependency-security.yml
 
-  release-quality:
-    name: release-quality
+  package-inspect:
+    name: package-inspect
     if: >-
       github.base_ref == 'main' ||
       startsWith(github.base_ref, 'release/') ||
@@ -98,6 +98,20 @@ jobs:
       - name: Build and inspect release packages
         run: bash scripts/ci/run-rust-quality.sh release
 
+  release-readiness:
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.base_ref == 'main' || startsWith(github.base_ref, 'release/'))
+    needs:
+      - check-code
+      - check-fmt
+      - check-lint
+      - test
+      - package-inspect
+    uses: ./.github/workflows/release-readiness.yml
+    with:
+      release-ref: ${{ github.base_ref }}
+
   ci-pass:
     name: ci-pass
     if: always()
@@ -107,7 +121,7 @@ jobs:
       - check-fmt
       - check-lint
       - test
-      - release-quality
+      - package-inspect
     runs-on: ubuntu-24.04
     timeout-minutes: 5
 
@@ -120,4 +134,4 @@ jobs:
       - name: Require every CI component
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
-        run: bash scripts/ci/require-job-results.sh release-quality
+        run: bash scripts/ci/require-job-results.sh package-inspect
