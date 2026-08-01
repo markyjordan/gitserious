@@ -47,101 +47,25 @@ jobs:
           CURRENT_SHA: ${{ github.sha }}
         run: bash scripts/ci/validate-ref-policy.sh
 
-  check:
-    name: check (${{ matrix.os }})
+  check-code:
     needs:
       - ref-policy
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    uses: ./.github/workflows/check-code.yml
 
-    steps:
-      # actions/checkout@v7.0.0
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          persist-credentials: false
-
-      - name: Set up Rust toolchain
-        shell: bash
-        run: |
-          rustup toolchain install --no-self-update
-          rustup show
-
-      - name: Check workspace
-        shell: bash
-        run: bash scripts/ci/run-rust-quality.sh check
-
-  fmt:
-    name: fmt
+  check-fmt:
     needs:
       - ref-policy
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    uses: ./.github/workflows/check-fmt.yml
 
-    steps:
-      # actions/checkout@v7.0.0
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          persist-credentials: false
-
-      - name: Set up Rust toolchain
-        run: rustup toolchain install --no-self-update
-
-      - name: Check formatting
-        run: bash scripts/ci/run-rust-quality.sh fmt
-
-  lint:
-    name: lint
+  check-lint:
     needs:
       - ref-policy
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-
-    steps:
-      # actions/checkout@v7.0.0
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          persist-credentials: false
-
-      - name: Set up Rust toolchain
-        run: rustup toolchain install --no-self-update
-
-      - name: Lint workspace
-        run: bash scripts/ci/run-rust-quality.sh lint
+    uses: ./.github/workflows/check-lint.yml
 
   test:
-    name: test (${{ matrix.os }})
     needs:
       - ref-policy
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-
-    steps:
-      # actions/checkout@v7.0.0
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          persist-credentials: false
-
-      - name: Set up Rust toolchain
-        shell: bash
-        run: rustup toolchain install --no-self-update
-
-      - name: Test workspace
-        shell: bash
-        run: bash scripts/ci/run-rust-quality.sh test
+    uses: ./.github/workflows/test.yml
 
   release-quality:
     name: release-quality
@@ -172,9 +96,9 @@ jobs:
     if: always()
     needs:
       - ref-policy
-      - check
-      - fmt
-      - lint
+      - check-code
+      - check-fmt
+      - check-lint
       - test
       - release-quality
     runs-on: ubuntu-24.04
@@ -184,17 +108,17 @@ jobs:
       - name: Require every CI component
         env:
           REF_POLICY_RESULT: ${{ needs.ref-policy.result }}
-          CHECK_RESULT: ${{ needs.check.result }}
-          FMT_RESULT: ${{ needs.fmt.result }}
-          LINT_RESULT: ${{ needs.lint.result }}
+          CHECK_CODE_RESULT: ${{ needs.check-code.result }}
+          CHECK_FMT_RESULT: ${{ needs.check-fmt.result }}
+          CHECK_LINT_RESULT: ${{ needs.check-lint.result }}
           TEST_RESULT: ${{ needs.test.result }}
           RELEASE_QUALITY_RESULT: ${{ needs.release-quality.result }}
         run: |
           required_results=(
             "ref-policy:$REF_POLICY_RESULT"
-            "check:$CHECK_RESULT"
-            "fmt:$FMT_RESULT"
-            "lint:$LINT_RESULT"
+            "check-code:$CHECK_CODE_RESULT"
+            "check-fmt:$CHECK_FMT_RESULT"
+            "check-lint:$CHECK_LINT_RESULT"
             "test:$TEST_RESULT"
           )
 

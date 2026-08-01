@@ -1,0 +1,25 @@
+name: Check Lint
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  clippy:
+    name: clippy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust toolchain
+        run: rustup toolchain install --no-self-update
+
+      - name: Lint Rust workspace
+        run: bash scripts/ci/run-rust-quality.sh lint
