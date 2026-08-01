@@ -67,6 +67,13 @@ jobs:
       - ref-policy
     uses: ./.github/workflows/test.yml
 
+  automation-quality:
+    uses: ./.github/workflows/automation-quality.yml
+
+  dependency-security:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/dependency-security.yml
+
   release-quality:
     name: release-quality
     if: >-
@@ -105,35 +112,12 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
       - name: Require every CI component
         env:
-          REF_POLICY_RESULT: ${{ needs.ref-policy.result }}
-          CHECK_CODE_RESULT: ${{ needs.check-code.result }}
-          CHECK_FMT_RESULT: ${{ needs.check-fmt.result }}
-          CHECK_LINT_RESULT: ${{ needs.check-lint.result }}
-          TEST_RESULT: ${{ needs.test.result }}
-          RELEASE_QUALITY_RESULT: ${{ needs.release-quality.result }}
-        run: |
-          required_results=(
-            "ref-policy:$REF_POLICY_RESULT"
-            "check-code:$CHECK_CODE_RESULT"
-            "check-fmt:$CHECK_FMT_RESULT"
-            "check-lint:$CHECK_LINT_RESULT"
-            "test:$TEST_RESULT"
-          )
-
-          for component in "${required_results[@]}"; do
-            name="${component%%:*}"
-            result="${component#*:}"
-            if [[ "$result" != "success" ]]; then
-              echo "$name did not pass: $result" >&2
-              exit 1
-            fi
-          done
-
-          if [[ "$RELEASE_QUALITY_RESULT" != "success" && "$RELEASE_QUALITY_RESULT" != "skipped" ]]; then
-            echo "release-quality did not pass: $RELEASE_QUALITY_RESULT" >&2
-            exit 1
-          fi
-
-          echo "All required CI components passed."
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: bash scripts/ci/require-job-results.sh release-quality

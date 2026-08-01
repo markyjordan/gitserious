@@ -1,11 +1,7 @@
 name: Dependency Security
 
 on:
-  pull_request:
-    branches:
-      - dev
-      - main
-      - "release/**"
+  workflow_call:
   push:
     branches:
       - dev
@@ -72,7 +68,7 @@ jobs:
           printf '%s\n' "/tmp/$release_dir" >>"$GITHUB_PATH"
 
       - name: Audit committed dependency graph
-        run: cargo audit --file Cargo.lock
+        run: bash scripts/ci/run-dependency-security.sh cargo-audit
 
   dependency-security:
     name: dependency-security
@@ -84,19 +80,12 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
       - name: Require dependency security evidence
         env:
-          DEPENDENCY_REVIEW_RESULT: ${{ needs.dependency-review.result }}
-          CARGO_AUDIT_RESULT: ${{ needs.cargo-audit.result }}
-        run: |
-          if [[ "$CARGO_AUDIT_RESULT" != "success" ]]; then
-            echo "cargo-audit did not pass: $CARGO_AUDIT_RESULT" >&2
-            exit 1
-          fi
-
-          if [[ "$DEPENDENCY_REVIEW_RESULT" != "success" && "$DEPENDENCY_REVIEW_RESULT" != "skipped" ]]; then
-            echo "dependency-review did not pass: $DEPENDENCY_REVIEW_RESULT" >&2
-            exit 1
-          fi
-
-          echo "Dependency security checks passed."
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: bash scripts/ci/require-job-results.sh dependency-review
