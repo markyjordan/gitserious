@@ -98,6 +98,19 @@ jobs:
       - name: Build and inspect release packages
         run: bash scripts/ci/run-rust-quality.sh release
 
+  native-binaries:
+    name: native-four
+    if: >-
+      github.base_ref == 'main' ||
+      startsWith(github.base_ref, 'release/') ||
+      github.ref_name == 'main' ||
+      startsWith(github.ref_name, 'release/')
+    needs:
+      - ref-policy
+    uses: ./.github/workflows/build-release-binaries.yml
+    with:
+      release-ref: ${{ github.sha }}
+
   release-readiness:
     if: >-
       github.event_name == 'pull_request' &&
@@ -108,6 +121,7 @@ jobs:
       - check-lint
       - test
       - package-inspect
+      - native-binaries
     uses: ./.github/workflows/release-readiness.yml
     with:
       release-ref: ${{ github.base_ref }}
@@ -122,6 +136,7 @@ jobs:
       - check-lint
       - test
       - package-inspect
+      - native-binaries
     runs-on: ubuntu-24.04
     timeout-minutes: 5
 
@@ -134,4 +149,4 @@ jobs:
       - name: Require every CI component
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
-        run: bash scripts/ci/require-job-results.sh package-inspect
+        run: bash scripts/ci/require-job-results.sh package-inspect native-binaries
