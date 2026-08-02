@@ -4,6 +4,7 @@ set -euo pipefail
 pr_number="${PR_NUMBER:?PR_NUMBER is required}"
 head_sha="${PR_HEAD_SHA:?PR_HEAD_SHA is required}"
 repository="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
+trusted_approvers="${TRUSTED_AUTOMATION_APPROVERS:?TRUSTED_AUTOMATION_APPROVERS is required}"
 token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 
 if [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
@@ -15,6 +16,23 @@ if [[ ! "$head_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
   echo "PR_HEAD_SHA must be a full commit SHA; got $head_sha." >&2
   exit 1
 fi
+
+normalized_approvers="$(
+  printf '%s\n' "$trusted_approvers" |
+    tr '[:space:]' '\n' |
+    sed '/^$/d'
+)"
+if [[ -z "$normalized_approvers" ]]; then
+  echo "TRUSTED_AUTOMATION_APPROVERS must name at least one maintainer." >&2
+  exit 1
+fi
+
+while IFS= read -r approver; do
+  if [[ ! "$approver" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
+    echo "Invalid GitHub login in TRUSTED_AUTOMATION_APPROVERS: $approver" >&2
+    exit 1
+  fi
+done <<<"$normalized_approvers"
 
 is_protected_automation_path() {
   case "$1" in
@@ -93,8 +111,15 @@ fi
 echo "Protected automation changes detected:"
 printf '%s' "$protected_paths" | sed 's/^/- /'
 
-trusted_approval="$({ load_review_rows || exit $?; } | awk -F '\t' -v head="$head_sha" '
-  $5 == head && ($2 == "OWNER" || $2 == "MEMBER" || $2 == "COLLABORATOR") {
+trusted_approval="$({ load_review_rows || exit $?; } | awk -F '\t' \
+  -v approvers="$normalized_approvers" -v head="$head_sha" '
+  BEGIN {
+    count = split(approvers, approver_list, /[[:space:]]+/)
+    for (position = 1; position <= count; position++) {
+      trusted[tolower(approver_list[position])] = 1
+    }
+  }
+  $5 == head && trusted[tolower($1)] {
     latest[$1] = $0
   }
   END {
@@ -111,8 +136,15 @@ trusted_approval="$({ load_review_rows || exit $?; } | awk -F '\t' -v head="$hea
 approval_kind=review
 if [[ -z "$trusted_approval" ]]; then
   attestation_command="/approve-automation ${head_sha}"
-  trusted_approval="$({ load_attestation_rows || exit $?; } | awk -F '\t' -v command="$attestation_command" '
-    $3 == command && ($2 == "OWNER" || $2 == "MEMBER" || $2 == "COLLABORATOR") {
+  trusted_approval="$({ load_attestation_rows || exit $?; } | awk -F '\t' \
+    -v approvers="$normalized_approvers" -v command="$attestation_command" '
+    BEGIN {
+      count = split(approvers, approver_list, /[[:space:]]+/)
+      for (position = 1; position <= count; position++) {
+        trusted[tolower(approver_list[position])] = 1
+      }
+    }
+    $3 == command && trusted[tolower($1)] {
       print
       exit 0
     }
@@ -128,7 +160,7 @@ Provide either:
 - An approving review on ${head_sha}; or
 - An exact PR comment: /approve-automation ${head_sha}
 
-The reviewer or commenter must be an OWNER, MEMBER, or COLLABORATOR.
+The reviewer or commenter must be named in the protected maintainer allowlist.
 
 Pushing a new commit intentionally invalidates approval of the previous head.
 EOF

@@ -13,6 +13,11 @@ on:
       - synchronize
       - reopened
       - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
+      - edited
+      - dismissed
   issue_comment:
     types:
       - created
@@ -31,7 +36,7 @@ concurrency:
 
 jobs:
   trusted-automation-review:
-    name: trusted-automation-evaluator
+    name: trusted-automation-review
     if: >-
       github.repository == 'markyjordan/gitserious' &&
       ((github.event_name == 'issue_comment' && github.event.issue.pull_request) ||
@@ -40,6 +45,10 @@ jobs:
       startsWith(github.event.pull_request.base.ref, 'release/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      # This repository is user-owned, so GitHub reports invited maintainers as
+      # COLLABORATOR. Keep trust narrower than that broad association.
+      TRUSTED_AUTOMATION_APPROVERS: markyjordan
 
     steps:
       - name: Resolve pull request context

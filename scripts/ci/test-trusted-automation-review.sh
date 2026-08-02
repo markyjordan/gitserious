@@ -22,6 +22,7 @@ run_fixture() {
     PR_NUMBER=17 \
     PR_HEAD_SHA="$head_sha" \
     GITHUB_REPOSITORY=markyjordan/gitserious \
+    TRUSTED_AUTOMATION_APPROVERS=maintainer \
     CHANGED_PATHS_FILE="$1" \
     REVIEW_ROWS_FILE="$2" \
     ATTESTATION_ROWS_FILE="$3" \
@@ -70,6 +71,14 @@ printf '%s\n' "${protected_path_cases[@]}" >"$protected_paths"
 printf 'maintainer\tOWNER\tAPPROVED\t2026-07-12T20:00:00Z\t%s\n' "$head_sha" >"$reviews"
 expect_pass "owner approval on current head" run_fixture "$protected_paths" "$reviews" "$attestations"
 
+printf 'maintainer\tCOLLABORATOR\tAPPROVED\t2026-07-12T20:00:00Z\t%s\n' "$head_sha" >"$reviews"
+expect_pass "allowlisted maintainer approval" run_fixture "$protected_paths" "$reviews" "$attestations"
+
+printf 'outside-collaborator\tCOLLABORATOR\tAPPROVED\t2026-07-12T20:00:00Z\t%s\n' \
+  "$head_sha" >"$reviews"
+expect_fail "non-maintainer collaborator approval" \
+  run_fixture "$protected_paths" "$reviews" "$attestations"
+
 printf 'maintainer\tOWNER\tAPPROVED\t2026-07-12T20:00:00Z\t%s\n' "$old_sha" >"$reviews"
 expect_fail "approval on stale head" run_fixture "$protected_paths" "$reviews" "$attestations"
 
@@ -94,6 +103,11 @@ expect_fail "attestation on stale head" run_fixture "$protected_paths" "$reviews
 printf 'visitor\tCONTRIBUTOR\t/approve-automation %s\t2026-07-12T20:02:00Z\n' \
   "$head_sha" >"$attestations"
 expect_fail "untrusted attestation" run_fixture "$protected_paths" "$reviews" "$attestations"
+
+printf 'outside-collaborator\tCOLLABORATOR\t/approve-automation %s\t2026-07-12T20:02:00Z\n' \
+  "$head_sha" >"$attestations"
+expect_fail "non-maintainer collaborator attestation" \
+  run_fixture "$protected_paths" "$reviews" "$attestations"
 
 printf 'maintainer\tOWNER\tapprove-automation %s\t2026-07-12T20:02:00Z\n' \
   "$head_sha" >"$attestations"
