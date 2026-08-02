@@ -49,9 +49,17 @@ fi
   shasum -a 256 -c SHA256SUMS >/dev/null
 )
 
-gh release view "$tag" --repo "$repository" >/dev/null 2>&1 ||
-  gh release create "$tag" --repo "$repository" --prerelease --title "$tag" \
-    --notes-file "$artifact_dir/release-notes.md"
-gh release upload "$tag" "$artifact_dir"/* --repo "$repository" --clobber
+if gh release view "$tag" --repo "$repository" >/dev/null 2>&1; then
+  echo "GitHub release ${tag} already exists and will not be updated." >&2
+  exit 1
+fi
+
+artifact_paths=("$artifact_dir"/*)
+gh release create "$tag" "${artifact_paths[@]}" \
+  --repo "$repository" \
+  --verify-tag \
+  --prerelease \
+  --title "$tag" \
+  --notes-file "$artifact_dir/release-notes.md"
 
 echo "Published release candidate ${tag}."

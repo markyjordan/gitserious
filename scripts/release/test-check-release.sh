@@ -23,7 +23,7 @@ EOF
 cat >"$repo/CHANGELOG.md" <<'EOF'
 # Changelog
 
-## [0.1.0]
+## [0.1.0] - 2026-08-01
 EOF
 
 cat >"$fake_bin/cargo" <<'EOF'
@@ -64,6 +64,17 @@ if [[ "$(cat "$quality_log")" != "$expected_components" ]]; then
   echo "Release readiness did not run the complete quality surface." >&2
   exit 1
 fi
+
+sed -i.bak 's/2026-08-01/TBD/' "$repo/CHANGELOG.md"
+if (
+  cd "$repo"
+  env PATH="$fake_bin:$PATH" QUALITY_RUNNER="$fake_bin/quality-runner" \
+    QUALITY_LOG="$quality_log" RELEASE_TAG=v0.1.0 bash "$validator" >/dev/null 2>&1
+); then
+  echo "Stable readiness accepted an unfinalized changelog date." >&2
+  exit 1
+fi
+mv "$repo/CHANGELOG.md.bak" "$repo/CHANGELOG.md"
 
 : >"$quality_log"
 (

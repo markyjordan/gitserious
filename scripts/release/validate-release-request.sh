@@ -11,38 +11,67 @@ fail() {
   exit 1
 }
 
-if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc[1-9][0-9]*)?$ ]]; then
-  fail "tag must look like vX.Y.Z or vX.Y.Z-rcN; got ${tag}"
-fi
-
 case "$release_mode" in
   dry-run | publish) ;;
   *) fail "mode must be dry-run or publish; got ${release_mode}" ;;
 esac
 
-case "$event_name" in
-  push)
-    [[ "$release_ref" == "refs/tags/${tag}" ]] ||
-      fail "tag push ref ${release_ref:-<empty>} does not match ${tag}"
-    [[ "$release_mode" == dry-run ]] ||
-      fail "tag pushes may only run in dry-run mode"
-    ;;
-  workflow_dispatch)
-    if [[ "$release_mode" == publish && "$release_ref" != "refs/tags/${tag}" ]]; then
-      fail "publish mode must be dispatched from refs/tags/${tag}; got ${release_ref:-<empty>}"
-    fi
-    ;;
-  *) fail "unsupported event: ${event_name:-<empty>}" ;;
-esac
-
 is_rc=false
-if [[ "$tag" == *-rc* ]]; then
-  is_rc=true
+is_dry_run=false
+checkout_ref=""
+readiness_tag="$tag"
+source_ref=""
+
+if [[ "$tag" == dry-run ]]; then
+  is_dry_run=true
+  readiness_tag=""
+  [[ "$event_name" == workflow_dispatch ]] ||
+    fail "tag=dry-run is available only through workflow_dispatch"
+  [[ "$release_mode" == dry-run ]] ||
+    fail "tag=dry-run cannot be published"
+  case "$release_ref" in
+    refs/heads/main | refs/heads/release/*)
+      checkout_ref="$release_ref"
+      source_ref="${release_ref#refs/heads/}"
+      ;;
+    *)
+      fail "tag=dry-run must be dispatched from main or release/X.Y; got ${release_ref:-<empty>}"
+      ;;
+  esac
+else
+  if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc[1-9][0-9]*)?$ ]]; then
+    fail "tag must be dry-run, vX.Y.Z, or vX.Y.Z-rcN; got ${tag}"
+  fi
+
+  case "$event_name" in
+    push)
+      [[ "$release_ref" == "refs/tags/${tag}" ]] ||
+        fail "tag push ref ${release_ref:-<empty>} does not match ${tag}"
+      [[ "$release_mode" == dry-run ]] ||
+        fail "tag pushes may only run in dry-run mode"
+      ;;
+    workflow_dispatch)
+      [[ "$release_ref" == "refs/tags/${tag}" ]] ||
+        fail "tag requests must be dispatched from refs/tags/${tag}; got ${release_ref:-<empty>}"
+      ;;
+    *) fail "unsupported event: ${event_name:-<empty>}" ;;
+  esac
+
+  checkout_ref="refs/tags/${tag}"
+  if [[ "$tag" == *-rc* ]]; then
+    is_rc=true
+  fi
 fi
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-  printf 'release_tag=%s\nrelease_mode=%s\nis_rc=%s\n' \
-    "$tag" "$release_mode" "$is_rc" >>"$GITHUB_OUTPUT"
+  printf '%s\n' \
+    "release_tag=${tag}" \
+    "release_mode=${release_mode}" \
+    "is_rc=${is_rc}" \
+    "is_dry_run=${is_dry_run}" \
+    "checkout_ref=${checkout_ref}" \
+    "readiness_tag=${readiness_tag}" \
+    "source_ref=${source_ref}" >>"$GITHUB_OUTPUT"
 fi
 
 echo "Accepted ${release_mode} request for ${tag} from ${release_ref}."

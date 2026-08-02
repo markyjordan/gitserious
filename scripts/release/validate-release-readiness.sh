@@ -86,6 +86,13 @@ if [[ -n "$tag" && "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-rc([1-9][0-9]*))?$ 
     exit 1
   fi
 
+  if [[ -z "$rc_suffix" ]] &&
+    ! grep -E "^## \[${version//./\\.}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" \
+      CHANGELOG.md >/dev/null; then
+    echo "Stable release notes for ${version} require a finalized YYYY-MM-DD date." >&2
+    exit 1
+  fi
+
   if [[ -n "$rc_suffix" ]]; then
     echo "Validated release candidate ${tag} from ${release_branch}."
   else
