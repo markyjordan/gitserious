@@ -79,12 +79,16 @@ jobs:
         with:
           persist-credentials: false
 
-      # zizmorcore/zizmor-action@v0.5.7
+      # zizmorcore/zizmor-action@v0.6.2
       - name: Audit GitHub Actions security
-        uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa
+        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054
         with:
           advanced-security: false
           annotations: false
+          collect: all
+          config: .github/zizmor.yml
+          fail-on-no-inputs: true
+          inputs: .
           min-confidence: medium
           min-severity: medium
           online-audits: true
