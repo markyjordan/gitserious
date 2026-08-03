@@ -15,8 +15,10 @@ run_shellcheck() {
 }
 
 run_release_policy_fixtures() {
-  bash scripts/release/test-validate-release-request.sh
-  bash scripts/release/test-validate-prepare-release-request.sh
+  local fixture
+  for fixture in scripts/release/test-*.sh; do
+    bash "$fixture"
+  done
 }
 
 component="${1:-}"

@@ -57,23 +57,21 @@ env PATH="$fake_bin:$PATH" RELEASE_TAG=v0.1.0-rc1 RELEASE_MODE=publish \
   ARTIFACT_DIR="$artifact_dir" GH_TOKEN=fixture GITHUB_REPOSITORY=markyjordan/gitserious \
   PUBLISH_LOG="$publish_log" bash "$publisher" >/dev/null
 
-if ! grep -F 'gh release create v0.1.0-rc1 --repo markyjordan/gitserious --prerelease' \
-  "$publish_log" >/dev/null; then
+if ! grep -F 'gh release create v0.1.0-rc1 ' "$publish_log" |
+  grep -F -- '--repo markyjordan/gitserious --verify-tag --prerelease' >/dev/null; then
   echo "Prerelease publisher did not create the release in the selected repository." >&2
   exit 1
 fi
-if ! grep -F 'gh release upload v0.1.0-rc1' "$publish_log" |
-  grep -F -- '--repo markyjordan/gitserious --clobber' >/dev/null; then
-  echo "Prerelease publisher did not upload artifacts to the selected repository." >&2
+if grep -E 'release upload|--clobber' "$publish_log" >/dev/null; then
+  echo "Prerelease publisher retained a mutable asset upload path." >&2
   exit 1
 fi
 
 : >"$publish_log"
-env PATH="$fake_bin:$PATH" RELEASE_TAG=v0.1.0-rc1 RELEASE_MODE=publish \
+if env PATH="$fake_bin:$PATH" RELEASE_TAG=v0.1.0-rc1 RELEASE_MODE=publish \
   ARTIFACT_DIR="$artifact_dir" GH_TOKEN=fixture GITHUB_REPOSITORY=markyjordan/gitserious \
-  PUBLISH_LOG="$publish_log" VIEW_STATUS=0 bash "$publisher" >/dev/null
-if grep -F 'gh release create' "$publish_log" >/dev/null; then
-  echo "Prerelease publisher recreated an existing release." >&2
+  PUBLISH_LOG="$publish_log" VIEW_STATUS=0 bash "$publisher" >/dev/null 2>&1; then
+  echo "Prerelease publisher accepted an existing release." >&2
   exit 1
 fi
 

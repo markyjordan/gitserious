@@ -3,12 +3,8 @@ set -euo pipefail
 
 tag="${RELEASE_TAG:?RELEASE_TAG is required}"
 release_mode="${RELEASE_MODE:-dry-run}"
+binary_dir="${BINARY_ARTIFACT_DIR:-target/release-binaries}"
 artifact_dir="${ARTIFACT_DIR:-target/release-artifacts}"
-
-if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc[1-9][0-9]*)?$ ]]; then
-  echo "RELEASE_TAG must be a stable or release-candidate tag; got ${tag}." >&2
-  exit 1
-fi
 
 case "$release_mode" in
   dry-run | publish) ;;
@@ -18,28 +14,121 @@ case "$release_mode" in
     ;;
 esac
 
-if [[ ! -f CHANGELOG.md ]]; then
-  echo "CHANGELOG.md is required to build release artifacts." >&2
+if [[ "$tag" == dry-run ]]; then
+  [[ "$release_mode" == dry-run ]] || {
+    echo "The dry-run sentinel cannot be assembled in publish mode." >&2
+    exit 1
+  }
+elif [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc[1-9][0-9]*)?$ ]]; then
+  echo "RELEASE_TAG must be dry-run, vX.Y.Z, or vX.Y.Z-rcN; got ${tag}." >&2
   exit 1
+fi
+
+for required_file in CHANGELOG.md Cargo.toml Cargo.lock rust-toolchain.toml; do
+  [[ -f "$required_file" ]] || {
+    echo "${required_file} is required to assemble release artifacts." >&2
+    exit 1
+  }
+done
+
+python_command="${PYTHON:-}"
+if [[ -z "$python_command" ]]; then
+  if command -v python3 >/dev/null; then
+    python_command=python3
+  elif command -v python >/dev/null; then
+    python_command=python
+  else
+    echo "Python is required to assemble release artifacts." >&2
+    exit 1
+  fi
+fi
+
+metadata_file="$(mktemp)"
+target_file="$(mktemp)"
+trap 'rm -f "$metadata_file" "$target_file"' EXIT
+cargo metadata --locked --no-deps --format-version 1 >"$metadata_file"
+version="$($python_command - "$metadata_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    metadata = json.load(handle)
+workspace = set(metadata.get("workspace_members", []))
+versions = sorted({
+    package["version"]
+    for package in metadata.get("packages", [])
+    if package.get("id") in workspace and package.get("source") is None
+})
+if len(versions) != 1:
+    raise SystemExit(f"expected one workspace version, got: {versions}")
+print(versions[0])
+PY
+)"
+
+if [[ "$tag" != dry-run ]]; then
+  tag_version="${tag#v}"
+  tag_version="${tag_version%%-rc*}"
+  [[ "$tag_version" == "$version" ]] || {
+    echo "Tag version ${tag_version} does not match workspace version ${version}." >&2
+    exit 1
+  }
 fi
 
 rm -rf "$artifact_dir"
 mkdir -p "$artifact_dir"
 
-cargo package --locked --workspace --list >"$artifact_dir/package-files.txt"
-cargo build --locked --workspace --all-targets --all-features --release
+targets=(
+  x86_64-unknown-linux-gnu
+  x86_64-apple-darwin
+  aarch64-apple-darwin
+  x86_64-pc-windows-msvc
+)
 
-binary="target/release/gitserious"
-if [[ ! -x "$binary" ]]; then
-  echo "Expected release binary at ${binary}." >&2
-  exit 1
-fi
+for target in "${targets[@]}"; do
+  extension=tar.gz
+  if [[ "$target" == *-windows-* ]]; then
+    extension=zip
+  fi
+  archive="gitserious-${target}.${extension}"
+  count="$(find "$binary_dir" -type f -name "$archive" | wc -l | tr -d ' ')"
+  [[ "$count" == 1 ]] || {
+    echo "Expected exactly one ${archive} below ${binary_dir}; found ${count}." >&2
+    exit 1
+  }
+  archive_path="$(find "$binary_dir" -type f -name "$archive" -print | head -1)"
+  checksum_count="$(find "$binary_dir" -type f -name "${archive}.sha256" | wc -l | tr -d ' ')"
+  [[ "$checksum_count" == 1 ]] || {
+    echo "Expected exactly one ${archive}.sha256 below ${binary_dir}; found ${checksum_count}." >&2
+    exit 1
+  }
+  checksum_path="$(find "$binary_dir" -type f -name "${archive}.sha256" -print | head -1)"
 
-cp "$binary" "$artifact_dir/${tag}-gitserious"
+  digest="$($python_command - "$archive_path" "$checksum_path" "$archive" <<'PY'
+import hashlib
+import pathlib
+import re
+import sys
+
+archive_path = pathlib.Path(sys.argv[1])
+checksum_path = pathlib.Path(sys.argv[2])
+expected_name = sys.argv[3]
+line = checksum_path.read_text(encoding="utf-8").strip()
+match = re.fullmatch(r"([0-9a-f]{64}) [ *](.+)", line)
+if not match or match.group(2) != expected_name:
+    raise SystemExit(f"invalid checksum record in {checksum_path}")
+digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+if digest != match.group(1):
+    raise SystemExit(f"checksum mismatch for {expected_name}")
+print(digest)
+PY
+)"
+  cp "$archive_path" "$checksum_path" "$artifact_dir/"
+  printf '%s\t%s\t%s\n' "$target" "$archive" "$digest" >>"$target_file"
+done
+
 cp CHANGELOG.md "$artifact_dir/CHANGELOG.md"
+cargo package --locked --workspace --list >"$artifact_dir/package-files.txt"
 
-version="${tag#v}"
-version="${version%%-rc*}"
 awk -v heading="## [${version}]" '
   index($0, heading) == 1 { capture = 1 }
   capture && printed && /^## \[/ { exit }
@@ -50,28 +139,64 @@ awk -v heading="## [${version}]" '
   exit 1
 }
 
-created_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-dry_run=true
-publish_operations_enabled=false
-if [[ "$release_mode" == "publish" ]]; then
-  dry_run=false
-  publish_operations_enabled=true
-fi
+source_archive="gitserious-${version}-source.tar.gz"
+git archive --format=tar.gz --prefix="gitserious-${version}/" HEAD \
+  >"$artifact_dir/$source_archive"
 
-cat >"$artifact_dir/release-plan.json" <<EOF
-{
-  "release_tag": "${tag}",
-  "release_mode": "${release_mode}",
-  "dry_run": ${dry_run},
-  "created_at": "${created_at}",
-  "publish_operations_enabled": ${publish_operations_enabled}
+source_commit="$(git rev-parse HEAD)"
+rust_toolchain="$(awk -F'"' '$1 ~ /^[[:space:]]*channel[[:space:]]*=/ { print $2; exit }' rust-toolchain.toml)"
+[[ -n "$rust_toolchain" ]] || {
+  echo "Could not determine the locked Rust toolchain." >&2
+  exit 1
 }
-EOF
+created_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+source_digest="$($python_command - "$artifact_dir/$source_archive" <<'PY'
+import hashlib
+import pathlib
+import sys
 
-(
-  cd "$artifact_dir"
-  shasum -a 256 CHANGELOG.md package-files.txt release-notes.md release-plan.json \
-    "${tag}-gitserious" >SHA256SUMS
-)
+print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+)"
 
-echo "Built ${release_mode} release artifacts in ${artifact_dir}."
+"$python_command" - "$target_file" "$artifact_dir/release-manifest.json" <<PY
+import json
+import pathlib
+import sys
+
+targets = []
+with open(sys.argv[1], encoding="utf-8") as handle:
+    for line in handle:
+        target, filename, digest = line.rstrip("\n").split("\t")
+        targets.append({"target": target, "filename": filename, "sha256": digest})
+
+manifest = {
+    "release_tag": "${tag}",
+    "release_mode": "${release_mode}",
+    "source_commit": "${source_commit}",
+    "workspace_version": "${version}",
+    "rust_toolchain": "${rust_toolchain}",
+    "created_at": "${created_at}",
+    "targets": targets,
+    "source_archive": {
+        "filename": "${source_archive}",
+        "sha256": "${source_digest}",
+    },
+}
+pathlib.Path(sys.argv[2]).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+PY
+
+"$python_command" - "$artifact_dir" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+records = []
+for path in sorted(root.iterdir(), key=lambda item: item.name):
+    if path.is_file() and path.name != "SHA256SUMS":
+        records.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}")
+(root / "SHA256SUMS").write_text("\n".join(records) + "\n", encoding="utf-8")
+PY
+
+echo "Assembled ${release_mode} release bundle in ${artifact_dir}."

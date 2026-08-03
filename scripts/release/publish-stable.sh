@@ -6,6 +6,11 @@ release_mode="${RELEASE_MODE:-dry-run}"
 artifact_dir="${ARTIFACT_DIR:-target/release-artifacts}"
 repository="${GITHUB_REPOSITORY:-}"
 
+if [[ ! "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+  echo "Stable release tags must look like vX.Y.Z; got ${tag}." >&2
+  exit 1
+fi
+
 case "$release_mode" in
   dry-run)
     echo "Dry-run mode selected; stable publishing is skipped for ${tag}."
@@ -17,11 +22,6 @@ case "$release_mode" in
     exit 1
     ;;
 esac
-
-if [[ ! "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-  echo "Stable release tags must look like vX.Y.Z; got ${tag}." >&2
-  exit 1
-fi
 
 if [[ -n "${CRATES_IO_TOKEN:-}" && -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
   export CARGO_REGISTRY_TOKEN="$CRATES_IO_TOKEN"
@@ -65,6 +65,11 @@ fi
   cd "$artifact_dir"
   shasum -a 256 -c SHA256SUMS >/dev/null
 )
+
+if gh release view "$tag" --repo "$repository" >/dev/null 2>&1; then
+  echo "GitHub release ${tag} already exists and will not be updated." >&2
+  exit 1
+fi
 
 metadata_file="$(mktemp)"
 package_order_file="$(mktemp)"
@@ -199,9 +204,11 @@ while IFS=$'\t' read -r package version; do
   verify_indexed_package "$package" "$version"
 done <"$package_order_file"
 
-gh release view "$tag" --repo "$repository" >/dev/null 2>&1 ||
-  gh release create "$tag" --repo "$repository" --title "$tag" \
-    --notes-file "$artifact_dir/release-notes.md"
-gh release upload "$tag" "$artifact_dir"/* --repo "$repository" --clobber
+artifact_paths=("$artifact_dir"/*)
+gh release create "$tag" "${artifact_paths[@]}" \
+  --repo "$repository" \
+  --verify-tag \
+  --title "$tag" \
+  --notes-file "$artifact_dir/release-notes.md"
 
 echo "Published stable release ${tag}."

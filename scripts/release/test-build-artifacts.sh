@@ -8,66 +8,124 @@ trap 'rm -rf "$fixture_dir"' EXIT
 
 fake_bin="$fixture_dir/bin"
 repo="$fixture_dir/repo"
-mkdir -p "$fake_bin" "$repo/target/release"
+binary_dir="$repo/native"
+mkdir -p "$fake_bin" "$repo" "$binary_dir"
 
 cat >"$fake_bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${1:-}" in
+  metadata)
+    printf '%s\n' '{"workspace_members":["gitserious 0.1.0"],"packages":[{"id":"gitserious 0.1.0","version":"0.1.0","source":null}]}'
+    ;;
   package)
     printf '%s\n' Cargo.toml Cargo.lock src/main.rs
     ;;
-  build)
-    mkdir -p target/release
-    printf '%s\n' '#!/usr/bin/env bash' 'echo gitserious' >target/release/gitserious
-    chmod +x target/release/gitserious
-    ;;
-  *)
-    exit 2
-    ;;
+  *) exit 2 ;;
 esac
 EOF
 chmod +x "$fake_bin/cargo"
 
-printf '%s\n' '# Changelog' '## [0.1.0]' >"$repo/CHANGELOG.md"
+printf '%s\n' '[workspace]' >"$repo/Cargo.toml"
+: >"$repo/Cargo.lock"
+printf '%s\n' '[toolchain]' 'channel = "1.96.0"' >"$repo/rust-toolchain.toml"
+printf '%s\n' '# Changelog' '' '## [0.1.0] - TBD' '' '- Fixture release.' >"$repo/CHANGELOG.md"
+git -C "$repo" init -q -b main
+git -C "$repo" config user.name Fixture
+git -C "$repo" config user.email fixture@example.invalid
+git -C "$repo" add .
+git -C "$repo" commit -qm "fixture source"
+
+targets=(
+  x86_64-unknown-linux-gnu.tar.gz
+  x86_64-apple-darwin.tar.gz
+  aarch64-apple-darwin.tar.gz
+  x86_64-pc-windows-msvc.zip
+)
+for target in "${targets[@]}"; do
+  archive="gitserious-${target}"
+  printf '%s\n' "$archive" >"$binary_dir/$archive"
+  (
+    cd "$binary_dir"
+    shasum -a 256 "$archive" >"${archive}.sha256"
+  )
+done
+
 (
   cd "$repo"
-  env PATH="$fake_bin:$PATH" RELEASE_TAG=v0.1.0 RELEASE_MODE=dry-run \
-    bash "$builder" >/dev/null
+  env PATH="$fake_bin:$PATH" RELEASE_TAG=dry-run RELEASE_MODE=dry-run \
+    BINARY_ARTIFACT_DIR="$binary_dir" bash "$builder" >/dev/null
 )
 
 artifact_dir="$repo/target/release-artifacts"
-for artifact in CHANGELOG.md package-files.txt release-notes.md release-plan.json SHA256SUMS v0.1.0-gitserious; do
-  if [[ ! -f "$artifact_dir/$artifact" ]]; then
+for artifact in CHANGELOG.md package-files.txt release-notes.md release-manifest.json \
+  SHA256SUMS gitserious-0.1.0-source.tar.gz; do
+  [[ -f "$artifact_dir/$artifact" ]] || {
     echo "Missing release artifact: ${artifact}" >&2
     exit 1
-  fi
+  }
+done
+for target in "${targets[@]}"; do
+  [[ -f "$artifact_dir/gitserious-${target}" ]] || exit 1
+  [[ -f "$artifact_dir/gitserious-${target}.sha256" ]] || exit 1
 done
 
-if [[ "$(jq -r '.release_mode' "$artifact_dir/release-plan.json")" != "dry-run" ]]; then
-  echo "Release manifest did not record dry-run mode." >&2
-  exit 1
-fi
-if ! grep -F '## [0.1.0]' "$artifact_dir/release-notes.md" >/dev/null; then
-  echo "Release notes did not contain the versioned changelog section." >&2
-  exit 1
-fi
-if [[ "$(jq -r '.publish_operations_enabled' "$artifact_dir/release-plan.json")" != "false" ]]; then
-  echo "Dry-run manifest enabled publish operations." >&2
-  exit 1
-fi
+[[ "$(jq -r '.release_tag' "$artifact_dir/release-manifest.json")" == dry-run ]] || exit 1
+[[ "$(jq -r '.workspace_version' "$artifact_dir/release-manifest.json")" == 0.1.0 ]] || exit 1
+[[ "$(jq -r '.rust_toolchain' "$artifact_dir/release-manifest.json")" == 1.96.0 ]] || exit 1
+[[ "$(jq -r '.targets | length' "$artifact_dir/release-manifest.json")" == 4 ]] || exit 1
+[[ "$(jq -r '.source_commit' "$artifact_dir/release-manifest.json")" == "$(git -C "$repo" rev-parse HEAD)" ]] || exit 1
 (
   cd "$artifact_dir"
   shasum -a 256 -c SHA256SUMS >/dev/null
 )
 
+printf '%s\n' corrupt >>"$binary_dir/gitserious-x86_64-unknown-linux-gnu.tar.gz"
 if (
   cd "$repo"
-  env PATH="$fake_bin:$PATH" RELEASE_TAG=v0.1.0-rc0 RELEASE_MODE=dry-run \
-    bash "$builder" >/dev/null 2>&1
+  env PATH="$fake_bin:$PATH" RELEASE_TAG=dry-run RELEASE_MODE=dry-run \
+    BINARY_ARTIFACT_DIR="$binary_dir" bash "$builder" >/dev/null 2>&1
 ); then
-  echo "Artifact builder accepted an invalid release candidate tag." >&2
+  echo "Bundle assembler accepted checksum corruption." >&2
+  exit 1
+fi
+printf '%s\n' gitserious-x86_64-unknown-linux-gnu.tar.gz \
+  >"$binary_dir/gitserious-x86_64-unknown-linux-gnu.tar.gz"
+(
+  cd "$binary_dir"
+  shasum -a 256 gitserious-x86_64-unknown-linux-gnu.tar.gz \
+    >gitserious-x86_64-unknown-linux-gnu.tar.gz.sha256
+)
+
+mkdir -p "$binary_dir/duplicate"
+cp "$binary_dir/gitserious-x86_64-apple-darwin.tar.gz" \
+  "$binary_dir/duplicate/gitserious-x86_64-apple-darwin.tar.gz"
+if (
+  cd "$repo"
+  env PATH="$fake_bin:$PATH" RELEASE_TAG=dry-run RELEASE_MODE=dry-run \
+    BINARY_ARTIFACT_DIR="$binary_dir" bash "$builder" >/dev/null 2>&1
+); then
+  echo "Bundle assembler accepted a duplicate target archive." >&2
+  exit 1
+fi
+rm -f "$binary_dir/duplicate/gitserious-x86_64-apple-darwin.tar.gz"
+rm -f "$binary_dir/gitserious-x86_64-pc-windows-msvc.zip"
+if (
+  cd "$repo"
+  env PATH="$fake_bin:$PATH" RELEASE_TAG=dry-run RELEASE_MODE=dry-run \
+    BINARY_ARTIFACT_DIR="$binary_dir" bash "$builder" >/dev/null 2>&1
+); then
+  echo "Bundle assembler accepted a missing target archive." >&2
   exit 1
 fi
 
-echo "Release artifact fixtures passed."
+if (
+  cd "$repo"
+  env PATH="$fake_bin:$PATH" RELEASE_TAG=dry-run RELEASE_MODE=publish \
+    BINARY_ARTIFACT_DIR="$binary_dir" bash "$builder" >/dev/null 2>&1
+); then
+  echo "Bundle assembler accepted publish mode for tag=dry-run." >&2
+  exit 1
+fi
+
+echo "Release bundle fixtures passed."
