@@ -3,14 +3,31 @@ set positional-arguments
 # DEFAULT ENTRYPOINTS
 # Lists all recipes so you can quickly discover available workflows.
 default:
-  @just --list
+    @just --list
 
 # PROJECT SETUP
 # Prepares a contributor checkout for local verification.
 bootstrap:
-  bash scripts/dev/justfile/bootstrap.sh
+    bash scripts/dev/justfile/bootstrap.sh
+
+# LOCAL CI
+# Runs the same language-neutral quality categories used by hosted CI.
+ci-check:
+    bash scripts/ci/run-quality.sh check
+
+ci-fmt:
+    bash scripts/ci/run-quality.sh fmt
+
+ci-lint:
+    bash scripts/ci/run-quality.sh lint
+
+ci-test:
+    bash scripts/ci/run-quality.sh test
+
+ci:
+    bash scripts/ci/check-merge-into-dev.sh
 
 # DOCS NAVIGATION
 # Displays a subtree with repo-aware path resolution for quick structure checks. Use `just tree -h` for usage.
 tree *args:
-  @bash scripts/dev/justfile/tree.sh "$@"
+    @bash scripts/dev/justfile/tree.sh "$@"

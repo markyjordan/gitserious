@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+for component in check fmt lint test release; do
+  "$script_dir/run-quality.sh" "$component"
+done

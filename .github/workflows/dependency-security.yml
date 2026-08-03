@@ -1,0 +1,91 @@
+name: Dependency Security
+
+on:
+  workflow_call:
+  push:
+    branches:
+      - dev
+      - main
+      - "release/**"
+    paths:
+      - "**/Cargo.toml"
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .github/dependabot.yml
+      - ".github/workflows/**"
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_AUDIT_SHA256: ab28a1bdb54db4d5d8ad5981cf1f959410370b3d28250dbd35f6a44248620e39
+  CARGO_AUDIT_VERSION: "0.22.2"
+
+jobs:
+  dependency-review:
+    name: dependency-review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/dependency-review-action@v5.0.0
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
+        with:
+          fail-on-severity: low
+          license-check: false
+          vulnerability-check: true
+
+  cargo-audit:
+    name: cargo-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust toolchain
+        run: rustup toolchain install --no-self-update
+
+      - name: Install pinned cargo-audit binary
+        run: |
+          archive="cargo-audit-x86_64-unknown-linux-gnu-v${CARGO_AUDIT_VERSION}.tgz"
+          release_dir="cargo-audit-x86_64-unknown-linux-gnu-v${CARGO_AUDIT_VERSION}"
+          curl -fsSLo "/tmp/$archive" \
+            "https://github.com/rustsec/rustsec/releases/download/cargo-audit/v${CARGO_AUDIT_VERSION}/$archive"
+          printf '%s  %s\n' "$CARGO_AUDIT_SHA256" "/tmp/$archive" | sha256sum -c -
+          tar -xzf "/tmp/$archive" -C /tmp
+          printf '%s\n' "/tmp/$release_dir" >>"$GITHUB_PATH"
+
+      - name: Audit committed dependency graph
+        run: bash scripts/ci/run-dependency-security.sh cargo-audit
+
+  dependency-security:
+    name: dependency-security
+    if: always()
+    needs:
+      - dependency-review
+      - cargo-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Require dependency security evidence
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: bash scripts/ci/require-job-results.sh dependency-review

@@ -1,0 +1,118 @@
+name: Automation Quality
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Install pinned actionlint
+        env:
+          ACTIONLINT_VERSION: v1.7.12
+        run: |
+          go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+          printf '%s\n' "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+
+      - name: Validate workflow syntax and expressions
+        run: bash scripts/ci/run-automation-quality.sh actionlint
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Install pinned ShellCheck
+        env:
+          SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
+          SHELLCHECK_VERSION: v0.11.0
+        run: |
+          archive="shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.gz"
+          curl -fsSLo "/tmp/$archive" \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/$archive"
+          printf '%s  %s\n' "$SHELLCHECK_SHA256" "/tmp/$archive" | sha256sum -c -
+          tar -xzf "/tmp/$archive" -C /tmp
+          printf '%s\n' "/tmp/shellcheck-${SHELLCHECK_VERSION}" >>"$GITHUB_PATH"
+
+      - name: Validate shell scripts
+        run: bash scripts/ci/run-automation-quality.sh shellcheck
+
+  release-policy-fixtures:
+    name: release-policy-fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Exercise release policy fixtures
+        run: bash scripts/ci/run-automation-quality.sh release-policy-fixtures
+
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      # zizmorcore/zizmor-action@v0.6.2
+      - name: Audit GitHub Actions security
+        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054
+        with:
+          advanced-security: false
+          annotations: false
+          collect: all
+          config: .github/zizmor.yml
+          fail-on-no-inputs: true
+          inputs: .
+          min-confidence: medium
+          min-severity: medium
+          online-audits: true
+          persona: pedantic
+          version: "1.26.1"
+
+  automation-quality:
+    name: automation-quality
+    if: always()
+    needs:
+      - actionlint
+      - shellcheck
+      - release-policy-fixtures
+      - zizmor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Require automation quality evidence
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: bash scripts/ci/require-job-results.sh
