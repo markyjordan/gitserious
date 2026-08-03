@@ -135,6 +135,7 @@ fi
 
 if env PATH="$fake_bin:$PATH" RELEASE_TAG=v0.1.0 RELEASE_MODE=publish \
   ARTIFACT_DIR="$artifact_dir" CRATES_IO_TOKEN=fixture GH_TOKEN=fixture \
+  GITHUB_REPOSITORY= \
   INDEXED_FILE="$indexed_file" PUBLISH_LOG="$publish_log" REGISTRY_CHECKSUM="$registry_checksum" \
   bash "$publisher" >/dev/null 2>&1; then
   echo "Stable publisher accepted a missing repository." >&2
