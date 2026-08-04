@@ -58,7 +58,7 @@ for entry in manifest.get("targets", []):
         raise SystemExit(f"duplicate target in manifest: {target}")
     if target not in expected:
         raise SystemExit(f"unexpected target in manifest: {target}")
-    expected_filename = f"gitserious-{target}.{expected[target]}"
+    expected_filename = f"gitserious-{version}-{target}.{expected[target]}"
     digest = entry.get("sha256", "")
     if entry.get("filename") != expected_filename:
         raise SystemExit(f"unexpected filename for {target}")

@@ -41,10 +41,10 @@ def add_tar_file(archive, name, content, mode=0o644):
 
 
 targets = [
-    ("x86_64-unknown-linux-gnu", "gitserious-x86_64-unknown-linux-gnu.tar.gz"),
-    ("x86_64-apple-darwin", "gitserious-x86_64-apple-darwin.tar.gz"),
-    ("aarch64-apple-darwin", "gitserious-aarch64-apple-darwin.tar.gz"),
-    ("x86_64-pc-windows-msvc", "gitserious-x86_64-pc-windows-msvc.zip"),
+    ("x86_64-unknown-linux-gnu", "gitserious-0.1.0-rc1-x86_64-unknown-linux-gnu.tar.gz"),
+    ("x86_64-apple-darwin", "gitserious-0.1.0-rc1-x86_64-apple-darwin.tar.gz"),
+    ("aarch64-apple-darwin", "gitserious-0.1.0-rc1-aarch64-apple-darwin.tar.gz"),
+    ("x86_64-pc-windows-msvc", "gitserious-0.1.0-rc1-x86_64-pc-windows-msvc.zip"),
 ]
 manifest_targets = []
 for target, filename in targets:
@@ -143,9 +143,18 @@ RELEASE_TAG=v0.1.0-rc1 RELEASE_MODE=publish \
   RELEASE_SOURCE_COMMIT="$source_commit" ARTIFACT_DIR="$artifact_dir" \
   GITHUB_OUTPUT="$output_file" bash "$verifier" >/dev/null
 grep -Fx 'source_archive=gitserious-0.1.0-source.tar.gz' "$output_file" >/dev/null
+grep -Fx 'linux_x86_64_archive=gitserious-0.1.0-rc1-x86_64-unknown-linux-gnu.tar.gz' \
+  "$output_file" >/dev/null
+grep -Fx 'macos_x86_64_archive=gitserious-0.1.0-rc1-x86_64-apple-darwin.tar.gz' \
+  "$output_file" >/dev/null
+grep -Fx 'macos_aarch64_archive=gitserious-0.1.0-rc1-aarch64-apple-darwin.tar.gz' \
+  "$output_file" >/dev/null
+grep -Fx 'windows_x86_64_archive=gitserious-0.1.0-rc1-x86_64-pc-windows-msvc.zip' \
+  "$output_file" >/dev/null
 grep -E '^manifest_digest=[0-9a-f]{64}$' "$output_file" >/dev/null
 
-printf '%s\n' corrupt >>"$artifact_dir/gitserious-x86_64-unknown-linux-gnu.tar.gz"
+printf '%s\n' corrupt \
+  >>"$artifact_dir/gitserious-0.1.0-rc1-x86_64-unknown-linux-gnu.tar.gz"
 expect_fail "checksum corruption"
 
 build_fixture
@@ -153,7 +162,8 @@ printf '%s\n' unexpected >"$artifact_dir/unexpected.txt"
 expect_fail "an extra artifact"
 
 build_fixture
-mv "$artifact_dir/gitserious-x86_64-pc-windows-msvc.zip" "$fixture_dir/windows.zip"
+mv "$artifact_dir/gitserious-0.1.0-rc1-x86_64-pc-windows-msvc.zip" \
+  "$fixture_dir/windows.zip"
 expect_fail "a missing target archive"
 
 build_fixture
@@ -186,7 +196,7 @@ import tarfile
 
 
 root = pathlib.Path(sys.argv[1])
-filename = "gitserious-x86_64-unknown-linux-gnu.tar.gz"
+filename = "gitserious-0.1.0-rc1-x86_64-unknown-linux-gnu.tar.gz"
 archive_path = root / filename
 with tarfile.open(archive_path, "w:gz") as archive:
     for name in [

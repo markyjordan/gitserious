@@ -43,13 +43,19 @@ checksum_attestations="$(grep -Fc 'target/release-artifacts/SHA256SUMS' "$releas
   echo "RC and stable publication must attest SHA256SUMS." >&2
   exit 1
 }
-for target_archive in \
-  gitserious-x86_64-unknown-linux-gnu.tar.gz \
-  gitserious-x86_64-apple-darwin.tar.gz \
-  gitserious-aarch64-apple-darwin.tar.gz \
-  gitserious-x86_64-pc-windows-msvc.zip; do
-  [[ "$(grep -Fc "target/release-artifacts/${target_archive}" "$release_workflow")" == 2 ]] || {
-    echo "RC and stable provenance must name ${target_archive} explicitly." >&2
+for archive_output in \
+  linux_x86_64_archive \
+  macos_x86_64_archive \
+  macos_aarch64_archive \
+  windows_x86_64_archive; do
+  grep -F "target/release-artifacts/\${{ steps.verify-release-candidate.outputs.${archive_output} }}" \
+    "$release_workflow" >/dev/null || {
+    echo "RC provenance must use verified ${archive_output}." >&2
+    exit 1
+  }
+  grep -F "target/release-artifacts/\${{ steps.verify-stable.outputs.${archive_output} }}" \
+    "$release_workflow" >/dev/null || {
+    echo "Stable provenance must use verified ${archive_output}." >&2
     exit 1
   }
 done
