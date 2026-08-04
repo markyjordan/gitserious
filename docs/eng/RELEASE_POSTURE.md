@@ -110,10 +110,16 @@ Each archive has a sibling `<archive>.sha256`. The final bundle also includes
 tag, source commit, workspace version, locked Rust toolchain, exact target list,
 filenames, and SHA256 digests.
 
+After assembly, the workflow writes a release authorization summary containing
+the requested ref, tag and release-branch commit, classification, version,
+toolchain, native targets, stable crate order, and manifest digest. Review that
+summary before approving either protected publication environment.
+
 The RC and stable publishers reject an existing GitHub Release. They verify the
 complete bundle, then use one `gh release create <tag> <all-assets>` operation.
 There is no upload/update/`--clobber` recovery path. GitHub provenance covers
-the four native archives, source archive, and manifest.
+the four native archives, source archive, aggregate checksum index, and
+manifest.
 
 Stable crate publication order is `gitserious-app`, `gitserious-cli`,
 `gitserious-core`, `gitserious-fs`, then `gitserious`. A retry skips an already
@@ -174,22 +180,84 @@ another tap PR and never changes the immutable GitHub Release.
 
 ### Publish an RC
 
-1. Create `vX.Y.Z-rcN` at the current `release/X.Y` head and push it. The push
-   can build only in dry-run mode.
-2. Inspect the tag-push artifacts.
-3. Select that exact tag in the workflow dispatcher and use
-   `tag=vX.Y.Z-rcN`, `release-mode=publish`.
-4. Approve the `release-candidate` environment. Verify the GitHub entry is a
-   prerelease and that crates.io and the tap did not change.
+Finalize the workspace version, changelog, and every other release input before
+the final RC. Starting from a clean release-branch checkout, create an annotated,
+signed tag at the exact branch head:
+
+```sh
+release_line=0.1
+tag=v0.1.0-rc1
+
+git fetch origin --prune --tags
+git switch "release/${release_line}"
+git pull --ff-only origin "release/${release_line}"
+test -z "$(git status --porcelain)"
+
+RELEASE_REF="release/${release_line}" RELEASE_MODE=dry-run RELEASE_TAG= \
+  bash scripts/release/check-release.sh
+
+commit="$(git rev-parse HEAD)"
+git tag -s "$tag" "$commit" -m "gitserious ${tag}"
+git tag -v "$tag"
+test "$(git rev-parse "${tag}^{commit}")" = "$commit"
+git push origin "refs/tags/${tag}"
+```
+
+The tag push can build only in dry-run mode. Inspect its artifacts and release
+authorization summary. Then select that exact tag in the workflow dispatcher,
+enter the same `tag`, choose `release-mode=publish`, and approve the
+`release-candidate` environment. Verify the GitHub entry is a prerelease and
+that crates.io and the tap did not change.
 
 ### Publish stable
 
-1. Tag the accepted final-RC commit `vX.Y.Z` without changing release inputs.
-2. Inspect the mandatory tag-push dry run.
-3. Select that tag and dispatch `tag=vX.Y.Z`, `release-mode=publish`.
-4. Approve `crates-io-release`. Verify all five crates and the immutable GitHub
-   Release before treating the source release as published.
-5. Inspect the single generated tap PR. Merge it only after `formula-ci` passes.
+The stable tag must point to the accepted final-RC commit. The stable date must
+already have been finalized before that RC; any later metadata change requires
+another RC.
+
+```sh
+accepted_rc=v0.1.0-rc1
+tag=v0.1.0
+
+git fetch origin --prune --tags
+git switch release/0.1
+git pull --ff-only origin release/0.1
+accepted_commit="$(git rev-parse "${accepted_rc}^{commit}")"
+test "$(git rev-parse HEAD)" = "$accepted_commit"
+test -z "$(git status --porcelain)"
+
+git tag -s "$tag" "$accepted_commit" -m "gitserious ${tag}"
+git tag -v "$tag"
+test "$(git rev-parse "${tag}^{commit}")" = "$accepted_commit"
+git push origin "refs/tags/${tag}"
+```
+
+Inspect the mandatory tag-push dry run and its authorization summary. Select
+that exact tag and dispatch `tag=v0.1.0`, `release-mode=publish`. Approve
+`crates-io-release`, then verify all five crates and the immutable GitHub
+Release before treating the source release as published. Inspect the single
+generated tap PR and merge it only after `formula-ci` passes.
+
+### Recover from partial publication
+
+Stable publication is sequential across crates.io, GitHub Releases, and the
+Homebrew handoff. Recovery never moves a tag and never changes release inputs:
+
+- If one or more crates were indexed but a later crate failed, re-dispatch
+  `release-mode=publish` from the same stable tag. The publisher skips a crate
+  only after its indexed archive checksum matches the locally packaged crate.
+- If all crates were indexed but GitHub Release creation failed, re-dispatch
+  from the same stable tag. The same identity checks run before the publisher
+  retries the one atomic GitHub Release creation.
+- If the immutable GitHub Release exists but the Homebrew handoff failed, do
+  not rerun stable publication. Manually dispatch **Update Homebrew Tap** from
+  the same stable tag; it reuses or updates the versioned tap PR.
+- If published RC or stable assets are defective, do not replace them. A failed
+  candidate gets a new RC tag; a stable defect gets a patch release.
+
+The operational rule is: rerun the same immutable tag to finish an incomplete
+downstream transaction. Never retag or bump merely to recover a transient
+publication failure.
 
 ## Direct Binary Installation and Verification
 
@@ -257,44 +325,25 @@ the four component crate identities do not yet exist. After all five packages
 exist, configure crates.io Trusted Publishing for subsequent versions and
 remove the long-lived token.
 
-Enable GitHub immutable releases after the atomic publisher reaches the default
-branch and before `v0.1.0-rc1`. Do not enable it while the old mutable publisher
-is still the hosted workflow implementation.
+The atomic publisher is now on the default branch. Enable **Settings → Releases
+→ Enable release immutability** before `v0.1.0-rc1`; GitHub applies the control
+only to releases created after it is enabled.
 
 Tap `main` is PR-only with squash merges, required aggregate `formula-ci`,
 conversation resolution, update/deletion protection, and zero required
 approvals. Manual merge is still the solo-maintainer publication decision.
 Automatically delete the version branch after merge.
 
-## Baseline Recorded 2026-08-01
+## Current State Recorded 2026-08-03
 
-This table records the live hosted state before this release-posture change, so
-the rollout gaps remain auditable even after the workflows land.
-
-| Surface | Verified baseline | Required before first RC/stable |
+| Surface | Verified current state | Remaining gate |
 | --- | --- | --- |
-| Source branch protection | Active rulesets for `dev`, `main`, and `release/*` | Add the native-four builder to the protected promotion path |
-| Source release controls | No environments; no `v*` tag ruleset; immutable releases disabled | Create four environments, activate tag immutability, then enable immutable Releases after merge |
-| Release rehearsal | No release, prepare-release, or release-readiness runs | Complete `tag=dry-run` rehearsal from the intended release ref |
-| GitHub distribution | No tags, Releases, or release assets | Publish and natively verify `v0.1.0-rc1` before stable |
-| crates.io | Only `gitserious 0.0.0`; four component names absent | Publish all five v0.1.0 crates in dependency order; migrate later versions to Trusted Publishing |
-| Homebrew tap | Hosted `main` has a placeholder README, no tracked formula, no CI, and no rulesets | Merge tap CI/rules first; stable release automation then opens the first formula PR |
-
-## Hosted Rollout Status Recorded 2026-08-01
-
-- The four source environments now exist with required maintainer review and
-  custom branch/tag policies (`dev` for the trusted release-cut dispatcher,
-  `v0.1.0-rc*`, and exact `v0.1.0` stable policies).
-- The active source `release-tags` ruleset allows `v*` creation and rejects tag
-  updates and deletions.
-- Tap `main` is now PR-only, squash-only, protected against deletion and force
-  update, requires conversation resolution and aggregate `formula-ci`, and
-  deletes merged branches automatically.
-- `CRATES_IO_TOKEN` and `HOMEBREW_TAP_TOKEN` are not yet present in their
-  environments. They must be loaded before stable publication.
-- Immutable GitHub Releases remain disabled until the atomic workflow change is
-  merged. Release rehearsal, RC publication, and stable publication remain
-  intentionally pending.
+| Source branch protection | Active rulesets protect `dev`, `main`, and `release/*`. Promotion CI runs all four native builders; `main` and `release/*` also require release readiness. | None for branch promotion. |
+| Source release controls | Four reviewed environments have exact branch/tag policies. The active `release-tags` ruleset permits `v*` creation and rejects updates and deletions. | Enable GitHub release immutability in the repository UI before the first RC. |
+| Release rehearsal | [Run 30865562740](https://github.com/markyjordan/gitserious/actions/runs/30865562740) succeeded from `main` commit `dc85c1e07950f16713b43fd71930ccf9c563ac71`: readiness, four native builds and executions, aggregate `native-four`, and bundle assembly passed; every publication job skipped. | Repeat from `release/0.1` after the release branch is cut. |
+| GitHub distribution | No source tags, Releases, deployments, or published release assets exist. | Publish and natively verify `v0.1.0-rc1`; enable release immutability first. |
+| crates.io | `gitserious 0.0.0` exists; `gitserious-app`, `gitserious-cli`, `gitserious-core`, and `gitserious-fs` do not. `crates-io-release` has no secret. | Load the protected first-publication token before stable; migrate later versions to Trusted Publishing. |
+| Homebrew tap | Tap PR [#1](https://github.com/markyjordan/homebrew-tap/pull/1) is merged. Three-platform `formula-ci` passes on tap `main`, its ruleset is active, and no formula exists before the first stable release. `homebrew-tap-release` has no secret. | Load the tap-only token before stable; the stable handoff opens the first formula PR. |
 
 ## Rollout and Acceptance
 
@@ -302,10 +351,14 @@ Before the first candidate:
 
 1. Run every release/archive/CI fixture plus ShellCheck, actionlint, zizmor, and
    Rust check/fmt/lint/test/release checks.
-2. Merge source and tap workflow changes; activate their hosted controls.
-3. Add the two protected environment secrets and confirm dry runs are token-free.
-4. Dispatch `tag=dry-run` and prove the run produces only Actions artifacts.
-5. Enable immutable GitHub Releases.
+2. Merge the remaining source hardening through `dev`, then promote it to
+   `main` with a regular merge commit.
+3. Enable immutable GitHub Releases.
+4. Cut `release/0.1` from green `main` and repeat the token-free dry run there.
+
+Before stable publication, add `CRATES_IO_TOKEN` and `HOMEBREW_TAP_TOKEN` only
+to their protected environments. RC publication intentionally requires neither
+credential.
 
 For `v0.1.0-rc1`, verify all native archives on their own platforms, individual
 and aggregate checksums, provenance, notes, prerelease status, and absence of
