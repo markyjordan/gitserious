@@ -186,6 +186,7 @@ jobs:
           subject-path: |
             target/release-artifacts/gitserious-*.tar.gz
             target/release-artifacts/gitserious-*.zip
+            target/release-artifacts/SHA256SUMS
             target/release-artifacts/release-manifest.json
 
       - name: Publish immutable GitHub prerelease
@@ -239,6 +240,7 @@ jobs:
           subject-path: |
             target/release-artifacts/gitserious-*.tar.gz
             target/release-artifacts/gitserious-*.zip
+            target/release-artifacts/SHA256SUMS
             target/release-artifacts/release-manifest.json
 
       - name: Publish crates and immutable GitHub release

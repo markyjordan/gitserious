@@ -23,6 +23,11 @@ done
 grep -F 'actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d' \
   "$release_workflow" >/dev/null
 grep -F 'target/release-artifacts/release-manifest.json' "$release_workflow" >/dev/null
+checksum_attestations="$(grep -Fc 'target/release-artifacts/SHA256SUMS' "$release_workflow")"
+[[ "$checksum_attestations" == 2 ]] || {
+  echo "RC and stable publication must attest SHA256SUMS." >&2
+  exit 1
+}
 grep -F 'uses: ./.github/workflows/update-homebrew-tap.yml' "$release_workflow" >/dev/null
 homebrew_job="$(sed -n '/^  update-homebrew-tap:/,$p' "$release_workflow")"
 printf '%s\n' "$homebrew_job" | grep -F 'attestations: read' >/dev/null
