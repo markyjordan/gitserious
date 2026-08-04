@@ -20,7 +20,12 @@ if [[ "${1:-}" == release && "${2:-}" == view ]]; then
   exit "${VIEW_STATUS:-1}"
 fi
 EOF
-chmod +x "$fake_bin/gh"
+cat >"$fake_bin/verify-release-bundle" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' verify-bundle >>"${PUBLISH_LOG:?PUBLISH_LOG is required}"
+EOF
+chmod +x "$fake_bin/gh" "$fake_bin/verify-release-bundle"
 
 printf '%s\n' '## [0.1.0]' >"$artifact_dir/release-notes.md"
 printf '%s\n' artifact >"$artifact_dir/v0.1.0-rc1-gitserious"
@@ -55,13 +60,18 @@ printf '%s\n' '## [0.1.0]' >"$artifact_dir/release-notes.md"
 : >"$publish_log"
 env PATH="$fake_bin:$PATH" RELEASE_TAG=v0.1.0-rc1 RELEASE_MODE=publish \
   ARTIFACT_DIR="$artifact_dir" GH_TOKEN=fixture GITHUB_REPOSITORY=markyjordan/gitserious \
-  PUBLISH_LOG="$publish_log" bash "$publisher" >/dev/null
+  PUBLISH_LOG="$publish_log" BUNDLE_VERIFIER="$fake_bin/verify-release-bundle" \
+  bash "$publisher" >/dev/null
 
 if ! grep -F 'gh release create v0.1.0-rc1 ' "$publish_log" |
   grep -F -- '--repo markyjordan/gitserious --verify-tag --prerelease' >/dev/null; then
   echo "Prerelease publisher did not create the release in the selected repository." >&2
   exit 1
 fi
+grep -Fx verify-bundle "$publish_log" >/dev/null || {
+  echo "Prerelease publisher did not verify the assembled bundle." >&2
+  exit 1
+}
 if grep -E 'release upload|--clobber' "$publish_log" >/dev/null; then
   echo "Prerelease publisher retained a mutable asset upload path." >&2
   exit 1
@@ -70,7 +80,8 @@ fi
 : >"$publish_log"
 if env PATH="$fake_bin:$PATH" RELEASE_TAG=v0.1.0-rc1 RELEASE_MODE=publish \
   ARTIFACT_DIR="$artifact_dir" GH_TOKEN=fixture GITHUB_REPOSITORY=markyjordan/gitserious \
-  PUBLISH_LOG="$publish_log" VIEW_STATUS=0 bash "$publisher" >/dev/null 2>&1; then
+  PUBLISH_LOG="$publish_log" VIEW_STATUS=0 \
+  BUNDLE_VERIFIER="$fake_bin/verify-release-bundle" bash "$publisher" >/dev/null 2>&1; then
   echo "Prerelease publisher accepted an existing release." >&2
   exit 1
 fi
