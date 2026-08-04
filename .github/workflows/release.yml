@@ -136,6 +136,12 @@ jobs:
           BINARY_ARTIFACT_DIR: target/release-binaries
         run: bash scripts/release/build-artifacts.sh
 
+      - name: Summarize release authorization state
+        env:
+          ARTIFACT_DIR: target/release-artifacts
+          RELEASE_SOURCE_REF: ${{ needs.validate.outputs.checkout_ref }}
+        run: bash scripts/release/write-release-summary.sh
+
       # actions/upload-artifact@v7.0.1
       - name: Upload release bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

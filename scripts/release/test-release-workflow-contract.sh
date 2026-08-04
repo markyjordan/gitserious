@@ -23,6 +23,7 @@ done
 grep -F 'actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d' \
   "$release_workflow" >/dev/null
 grep -F 'target/release-artifacts/release-manifest.json' "$release_workflow" >/dev/null
+grep -F 'run: bash scripts/release/write-release-summary.sh' "$release_workflow" >/dev/null
 checksum_attestations="$(grep -Fc 'target/release-artifacts/SHA256SUMS' "$release_workflow")"
 [[ "$checksum_attestations" == 2 ]] || {
   echo "RC and stable publication must attest SHA256SUMS." >&2
