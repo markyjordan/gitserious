@@ -80,9 +80,10 @@ flowchart LR
   Assemble --> Manifest["release-manifest.json + SHA256SUMS"]
   Assemble --> Source["checksummed source archive"]
   Assemble --> Notes["release-notes.md + CHANGELOG.md"]
-  Manifest --> Mode{"request mode and tag type"}
-  Source --> Mode
-  Notes --> Mode
+  Manifest --> Verify["verify exact files, layouts, digests, tag, mode, and commit"]
+  Source --> Verify
+  Notes --> Verify
+  Verify --> Mode{"request mode and tag type"}
   Mode -->|"tag=dry-run or tag push"| Actions["Actions artifact only; no external mutation"]
   Mode -->|"manual publish: RC"| AttestRC["SHA-pinned GitHub provenance attestations"]
   AttestRC --> Prerelease["one atomic GitHub prerelease create"]
@@ -115,11 +116,16 @@ the requested ref, tag and release-branch commit, classification, version,
 toolchain, native targets, stable crate order, and manifest digest. Review that
 summary before approving either protected publication environment.
 
-The RC and stable publishers reject an existing GitHub Release. They verify the
-complete bundle, then use one `gh release create <tag> <all-assets>` operation.
-There is no upload/update/`--clobber` recovery path. GitHub provenance covers
-the four native archives, source archive, aggregate checksum index, and
-manifest.
+The assembled bundle is verified before it becomes an Actions artifact and
+again after the protected publication job downloads it. Verification requires
+the exact fourteen-file bundle, canonical four-target order and archive
+layouts, individual and aggregate digests, tag/mode/commit alignment, source
+archive prefix, changelog heading, and manifest schema. The RC and stable
+publishers repeat that verification and reject an existing GitHub Release before
+using one `gh release create <tag> <all-assets>` operation. There is no
+upload/update/`--clobber` recovery path. GitHub provenance names the four native
+archives explicitly and also covers the source archive, aggregate checksum
+index, and manifest.
 
 Stable crate publication order is `gitserious-app`, `gitserious-cli`,
 `gitserious-core`, `gitserious-fs`, then `gitserious`. A retry skips an already
@@ -204,10 +210,14 @@ git push origin "refs/tags/${tag}"
 ```
 
 The tag push can build only in dry-run mode. Inspect its artifacts and release
-authorization summary. Then select that exact tag in the workflow dispatcher,
-enter the same `tag`, choose `release-mode=publish`, and approve the
-`release-candidate` environment. Verify the GitHub entry is a prerelease and
-that crates.io and the tap did not change.
+authorization summary. Then select that exact tag in the workflow dispatcher
+and enter the same `tag` with `release-mode=publish`. The publish run reassembles
+the bundle from the immutable tag before it pauses at `release-candidate`.
+Before approving that environment, inspect the publish run's authorization
+summary and `vX.Y.Z-rcN-<run-id>-artifacts`; the manifest digest in the summary
+must match the downloaded bundle. Approval releases only the verified bundle to
+explicit provenance attestation and atomic prerelease creation. Verify the
+GitHub entry is a prerelease and that crates.io and the tap did not change.
 
 ### Publish stable
 
@@ -325,23 +335,23 @@ the four component crate identities do not yet exist. After all five packages
 exist, configure crates.io Trusted Publishing for subsequent versions and
 remove the long-lived token.
 
-The atomic publisher is now on the default branch. Enable **Settings → Releases
-→ Enable release immutability** before `v0.1.0-rc1`; GitHub applies the control
-only to releases created after it is enabled.
+Immutable GitHub Releases are enabled for the repository. GitHub applies that
+control only to releases created after enablement, so it must remain active for
+every RC and stable publication.
 
 Tap `main` is PR-only with squash merges, required aggregate `formula-ci`,
 conversation resolution, update/deletion protection, and zero required
 approvals. Manual merge is still the solo-maintainer publication decision.
 Automatically delete the version branch after merge.
 
-## Current State Recorded 2026-08-03
+## Current State Recorded 2026-08-04
 
 | Surface | Verified current state | Remaining gate |
 | --- | --- | --- |
 | Source branch protection | Active rulesets protect `dev`, `main`, and `release/*`. Promotion CI runs all four native builders; `main` and `release/*` also require release readiness. | None for branch promotion. |
-| Source release controls | Four reviewed environments have exact branch/tag policies. The active `release-tags` ruleset permits `v*` creation and rejects updates and deletions. | Enable GitHub release immutability in the repository UI before the first RC. |
-| Release rehearsal | [Run 30865562740](https://github.com/markyjordan/gitserious/actions/runs/30865562740) succeeded from `main` commit `dc85c1e07950f16713b43fd71930ccf9c563ac71`: readiness, four native builds and executions, aggregate `native-four`, and bundle assembly passed; every publication job skipped. | Repeat from `release/0.1` after the release branch is cut. |
-| GitHub distribution | No source tags, Releases, deployments, or published release assets exist. | Publish and natively verify `v0.1.0-rc1`; enable release immutability first. |
+| Source release controls | Four reviewed environments have exact branch/tag policies. `release-candidate` accepts only `v0.1.0-rc*`; the active `release-tags` ruleset permits `v*` creation and rejects updates and deletions. The repository immutable-Releases endpoint reports `enabled: true`. | Preserve these controls through the first candidate. |
+| Release rehearsal | [Run 30870569614](https://github.com/markyjordan/gitserious/actions/runs/30870569614) succeeded from `main` commit `8ec5ca64ecefc1ee9110611181f5b46f1e296a2a`: readiness, four native builds and executions, aggregate `native-four`, checksums, bundle assembly, and local Intel-macOS execution passed; every publication job skipped. | Repeat from `release/0.1` after the release branch is cut and after this verifier hardening reaches `main`. |
+| GitHub distribution | No source tags, Releases, or published release assets exist. Candidate, crates.io, and Homebrew publication deployments remain absent. Cancelled Prepare Release run [30870110509](https://github.com/markyjordan/gitserious/actions/runs/30870110509) left one `release-branch-management` audit record but executed no steps and created no branch. | Publish and natively verify `v0.1.0-rc1`. |
 | crates.io | `gitserious 0.0.0` exists; `gitserious-app`, `gitserious-cli`, `gitserious-core`, and `gitserious-fs` do not. `crates-io-release` has no secret. | Load the protected first-publication token before stable; migrate later versions to Trusted Publishing. |
 | Homebrew tap | Tap PR [#1](https://github.com/markyjordan/homebrew-tap/pull/1) is merged. Three-platform `formula-ci` passes on tap `main`, its ruleset is active, and no formula exists before the first stable release. `homebrew-tap-release` has no secret. | Load the tap-only token before stable; the stable handoff opens the first formula PR. |
 
@@ -353,7 +363,7 @@ Before the first candidate:
    Rust check/fmt/lint/test/release checks.
 2. Merge the remaining source hardening through `dev`, then promote it to
    `main` with a regular merge commit.
-3. Enable immutable GitHub Releases.
+3. Confirm the immutable-Releases endpoint still reports `enabled: true`.
 4. Cut `release/0.1` from green `main` and repeat the token-free dry run there.
 
 Before stable publication, add `CRATES_IO_TOKEN` and `HOMEBREW_TAP_TOKEN` only
