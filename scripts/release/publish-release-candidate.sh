@@ -5,6 +5,8 @@ tag="${RELEASE_TAG:?RELEASE_TAG is required}"
 release_mode="${RELEASE_MODE:-dry-run}"
 artifact_dir="${ARTIFACT_DIR:-target/release-artifacts}"
 repository="${GITHUB_REPOSITORY:-}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+bundle_verifier="${BUNDLE_VERIFIER:-$script_dir/verify-release-bundle.sh}"
 
 if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc[1-9][0-9]*$ ]]; then
   echo "Release candidate tags must look like vX.Y.Z-rcN; got ${tag}." >&2
@@ -48,6 +50,8 @@ fi
   cd "$artifact_dir"
   shasum -a 256 -c SHA256SUMS >/dev/null
 )
+RELEASE_TAG="$tag" RELEASE_MODE="$release_mode" ARTIFACT_DIR="$artifact_dir" \
+  bash "$bundle_verifier"
 
 if gh release view "$tag" --repo "$repository" >/dev/null 2>&1; then
   echo "GitHub release ${tag} already exists and will not be updated." >&2
