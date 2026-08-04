@@ -254,6 +254,9 @@ jobs:
     needs:
       - validate
       - publish-stable
+    permissions:
+      attestations: read
+      contents: read
     uses: ./.github/workflows/update-homebrew-tap.yml
     with:
       tag: ${{ needs.validate.outputs.release_tag }}
