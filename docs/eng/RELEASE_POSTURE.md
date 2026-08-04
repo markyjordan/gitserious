@@ -305,7 +305,7 @@ The source repository requires these environments:
 
 | Environment | Purpose | Ref posture |
 | --- | --- | --- |
-| `release-management` | Cut `release/X.Y` from `main` | dispatch from protected default branch `dev`; script-enforced `main` base; maintainer approval |
+| `release-branch-management` | Cut `release/X.Y` from `main` | dispatch from protected default branch `dev`; script-enforced `main` base; maintainer approval |
 | `release-candidate` | Publish a GitHub prerelease | exact release-line candidate pattern; maintainer approval |
 | `crates-io-release` | Publish crates and stable GitHub Release | exact intended stable tag; maintainer approval; first-release token |
 | `homebrew-tap-release` | Open/update the downstream tap PR | exact intended stable tag; maintainer approval; tap-only token |
