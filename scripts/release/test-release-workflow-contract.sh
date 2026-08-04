@@ -5,6 +5,13 @@ repo_root="$(git rev-parse --show-toplevel)"
 release_workflow="$repo_root/.github/workflows/release.yml"
 builder_workflow="$repo_root/.github/workflows/build-release-binaries.yml"
 
+tag_triggers="$(sed -n '/^  push:/,/^  workflow_dispatch:/p' "$release_workflow" |
+  grep -Fc -- '- "v*.*.*"')"
+[[ "$tag_triggers" == 1 ]] || {
+  echo "Release workflow must use one broad tag trigger and strict request validation." >&2
+  exit 1
+}
+
 for target in \
   x86_64-unknown-linux-gnu \
   x86_64-apple-darwin \
