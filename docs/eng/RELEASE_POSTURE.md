@@ -19,8 +19,8 @@ metadata only; it never becomes the source of the binaries.
 The design intentionally separates the reusable native builder in
 [`build-release-binaries.yml`](../../.github/workflows/build-release-binaries.yml)
 from orchestration in [`release.yml`](../../.github/workflows/release.yml). This
-follows the useful boundary in uv while keeping build and policy logic in small,
-fixture-tested scripts.
+keeps native construction reusable across promotion and publication while
+release policy remains in small, fixture-tested scripts.
 
 ## Branch and Tag Promotion
 
@@ -371,8 +371,6 @@ one tap PR. After its manual merge, test both a clean
 
 ## References
 
-- [uv reusable binary builder](https://github.com/astral-sh/uv/blob/79bbface771210df216b738e9bdc7df95e5a9e6b/.github/workflows/build-release-binaries.yml)
-- [uv release orchestration](https://github.com/astral-sh/uv/blob/79bbface771210df216b738e9bdc7df95e5a9e6b/.github/workflows/release.yml)
 - [GitHub artifact attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations)
 - [GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)
 - [Homebrew tap maintenance](https://docs.brew.sh/How-to-Create-and-Maintain-a-Tap)
