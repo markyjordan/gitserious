@@ -4,6 +4,13 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 release_workflow="$repo_root/.github/workflows/release.yml"
 builder_workflow="$repo_root/.github/workflows/build-release-binaries.yml"
+prepare_workflow="$repo_root/.github/workflows/prepare-release.yml"
+
+grep -F 'environment: release-branch-management' "$prepare_workflow" >/dev/null
+if grep -F 'environment: release-management' "$prepare_workflow" >/dev/null; then
+  echo "Prepare Release still uses the retired environment name." >&2
+  exit 1
+fi
 
 tag_triggers="$(sed -n '/^  push:/,/^  workflow_dispatch:/p' "$release_workflow" |
   grep -Fc -- '- "v*.*.*"')"

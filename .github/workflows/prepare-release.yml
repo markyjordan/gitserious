@@ -18,7 +18,7 @@ concurrency:
 jobs:
   prepare-release:
     name: prepare-release
-    environment: release-management
+    environment: release-branch-management
     permissions:
       contents: write
     runs-on: ubuntu-24.04
