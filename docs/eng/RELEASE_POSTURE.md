@@ -100,10 +100,16 @@ The native contract is:
 
 | Runner | Rust target | GitHub asset |
 | --- | --- | --- |
-| `ubuntu-24.04` | `x86_64-unknown-linux-gnu` | `gitserious-x86_64-unknown-linux-gnu.tar.gz` |
-| `macos-15-intel` | `x86_64-apple-darwin` | `gitserious-x86_64-apple-darwin.tar.gz` |
-| `macos-15` | `aarch64-apple-darwin` | `gitserious-aarch64-apple-darwin.tar.gz` |
-| `windows-2025` | `x86_64-pc-windows-msvc` | `gitserious-x86_64-pc-windows-msvc.zip` |
+| `ubuntu-24.04` | `x86_64-unknown-linux-gnu` | `gitserious-X.Y.Z-x86_64-unknown-linux-gnu.tar.gz` |
+| `macos-15-intel` | `x86_64-apple-darwin` | `gitserious-X.Y.Z-x86_64-apple-darwin.tar.gz` |
+| `macos-15` | `aarch64-apple-darwin` | `gitserious-X.Y.Z-aarch64-apple-darwin.tar.gz` |
+| `windows-2025` | `x86_64-pc-windows-msvc` | `gitserious-X.Y.Z-x86_64-pc-windows-msvc.zip` |
+
+Candidate assets include the prerelease suffix, for example
+`gitserious-0.1.0-rc1-aarch64-apple-darwin.tar.gz`. Untagged dry-runs use
+the workspace version so their public bundle names rehearse the prospective
+stable contract. The reusable native builder keeps versionless intermediate
+names; final assembly assigns the versioned GitHub asset names.
 
 Each archive has a sibling `<archive>.sha256`. The final bundle also includes
 `SHA256SUMS`, `release-manifest.json`, `release-notes.md`, `CHANGELOG.md`,
@@ -276,7 +282,7 @@ Linux, for example:
 
 ```sh
 tag=v0.1.0
-asset=gitserious-aarch64-apple-darwin.tar.gz
+asset=gitserious-0.1.0-aarch64-apple-darwin.tar.gz
 gh release download "$tag" --repo markyjordan/gitserious \
   --pattern "$asset" --pattern "${asset}.sha256"
 shasum -a 256 -c "${asset}.sha256"

@@ -201,10 +201,10 @@ jobs:
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d
         with:
           subject-path: |
-            target/release-artifacts/gitserious-x86_64-unknown-linux-gnu.tar.gz
-            target/release-artifacts/gitserious-x86_64-apple-darwin.tar.gz
-            target/release-artifacts/gitserious-aarch64-apple-darwin.tar.gz
-            target/release-artifacts/gitserious-x86_64-pc-windows-msvc.zip
+            target/release-artifacts/${{ steps.verify-release-candidate.outputs.linux_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-release-candidate.outputs.macos_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-release-candidate.outputs.macos_aarch64_archive }}
+            target/release-artifacts/${{ steps.verify-release-candidate.outputs.windows_x86_64_archive }}
             target/release-artifacts/${{ steps.verify-release-candidate.outputs.source_archive }}
             target/release-artifacts/SHA256SUMS
             target/release-artifacts/release-manifest.json
@@ -264,10 +264,10 @@ jobs:
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d
         with:
           subject-path: |
-            target/release-artifacts/gitserious-x86_64-unknown-linux-gnu.tar.gz
-            target/release-artifacts/gitserious-x86_64-apple-darwin.tar.gz
-            target/release-artifacts/gitserious-aarch64-apple-darwin.tar.gz
-            target/release-artifacts/gitserious-x86_64-pc-windows-msvc.zip
+            target/release-artifacts/${{ steps.verify-stable.outputs.linux_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-stable.outputs.macos_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-stable.outputs.macos_aarch64_archive }}
+            target/release-artifacts/${{ steps.verify-stable.outputs.windows_x86_64_archive }}
             target/release-artifacts/${{ steps.verify-stable.outputs.source_archive }}
             target/release-artifacts/SHA256SUMS
             target/release-artifacts/release-manifest.json

@@ -70,12 +70,6 @@ expected_mode = sys.argv[3]
 expected_commit = sys.argv[4]
 github_output = pathlib.Path(sys.argv[5]) if sys.argv[5] else None
 
-target_contract = [
-    ("x86_64-unknown-linux-gnu", "gitserious-x86_64-unknown-linux-gnu.tar.gz"),
-    ("x86_64-apple-darwin", "gitserious-x86_64-apple-darwin.tar.gz"),
-    ("aarch64-apple-darwin", "gitserious-aarch64-apple-darwin.tar.gz"),
-    ("x86_64-pc-windows-msvc", "gitserious-x86_64-pc-windows-msvc.zip"),
-]
 archive_members = {
     "LICENSE-APACHE-2.0",
     "LICENSE-MIT",
@@ -161,6 +155,26 @@ if expected_tag != "dry-run":
     match = tag_pattern.fullmatch(expected_tag)
     if not match or ".".join(match.groups()) != version:
         fail(f"workspace version {version} does not match {expected_tag}")
+
+artifact_version = version if expected_tag == "dry-run" else expected_tag.removeprefix("v")
+target_contract = [
+    (
+        "x86_64-unknown-linux-gnu",
+        f"gitserious-{artifact_version}-x86_64-unknown-linux-gnu.tar.gz",
+    ),
+    (
+        "x86_64-apple-darwin",
+        f"gitserious-{artifact_version}-x86_64-apple-darwin.tar.gz",
+    ),
+    (
+        "aarch64-apple-darwin",
+        f"gitserious-{artifact_version}-aarch64-apple-darwin.tar.gz",
+    ),
+    (
+        "x86_64-pc-windows-msvc",
+        f"gitserious-{artifact_version}-x86_64-pc-windows-msvc.zip",
+    ),
+]
 
 rust_toolchain = manifest["rust_toolchain"]
 if not isinstance(rust_toolchain, str) or not rust_toolchain:
@@ -284,6 +298,17 @@ if not (root / "package-files.txt").read_text(encoding="utf-8").strip():
 manifest_digest = sha256(manifest_path)
 if github_output is not None:
     with github_output.open("a", encoding="utf-8") as handle:
+        for output_name, (_, filename) in zip(
+            (
+                "linux_x86_64_archive",
+                "macos_x86_64_archive",
+                "macos_aarch64_archive",
+                "windows_x86_64_archive",
+            ),
+            target_contract,
+            strict=True,
+        ):
+            handle.write(f"{output_name}={filename}\n")
         handle.write(f"source_archive={source_archive}\n")
         handle.write(f"manifest_digest={manifest_digest}\n")
 

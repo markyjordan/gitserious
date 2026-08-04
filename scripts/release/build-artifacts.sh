@@ -74,6 +74,11 @@ if [[ "$tag" != dry-run ]]; then
   }
 fi
 
+artifact_version="$version"
+if [[ "$tag" != dry-run ]]; then
+  artifact_version="${tag#v}"
+fi
+
 rm -rf "$artifact_dir"
 mkdir -p "$artifact_dir"
 
@@ -89,21 +94,22 @@ for target in "${targets[@]}"; do
   if [[ "$target" == *-windows-* ]]; then
     extension=zip
   fi
-  archive="gitserious-${target}.${extension}"
-  count="$(find "$binary_dir" -type f -name "$archive" | wc -l | tr -d ' ')"
+  input_archive="gitserious-${target}.${extension}"
+  public_archive="gitserious-${artifact_version}-${target}.${extension}"
+  count="$(find "$binary_dir" -type f -name "$input_archive" | wc -l | tr -d ' ')"
   [[ "$count" == 1 ]] || {
-    echo "Expected exactly one ${archive} below ${binary_dir}; found ${count}." >&2
+    echo "Expected exactly one ${input_archive} below ${binary_dir}; found ${count}." >&2
     exit 1
   }
-  archive_path="$(find "$binary_dir" -type f -name "$archive" -print | head -1)"
-  checksum_count="$(find "$binary_dir" -type f -name "${archive}.sha256" | wc -l | tr -d ' ')"
+  archive_path="$(find "$binary_dir" -type f -name "$input_archive" -print | head -1)"
+  checksum_count="$(find "$binary_dir" -type f -name "${input_archive}.sha256" | wc -l | tr -d ' ')"
   [[ "$checksum_count" == 1 ]] || {
-    echo "Expected exactly one ${archive}.sha256 below ${binary_dir}; found ${checksum_count}." >&2
+    echo "Expected exactly one ${input_archive}.sha256 below ${binary_dir}; found ${checksum_count}." >&2
     exit 1
   }
-  checksum_path="$(find "$binary_dir" -type f -name "${archive}.sha256" -print | head -1)"
+  checksum_path="$(find "$binary_dir" -type f -name "${input_archive}.sha256" -print | head -1)"
 
-  digest="$($python_command - "$archive_path" "$checksum_path" "$archive" <<'PY'
+  digest="$($python_command - "$archive_path" "$checksum_path" "$input_archive" <<'PY'
 import hashlib
 import pathlib
 import re
@@ -122,8 +128,10 @@ if digest != match.group(1):
 print(digest)
 PY
 )"
-  cp "$archive_path" "$checksum_path" "$artifact_dir/"
-  printf '%s\t%s\t%s\n' "$target" "$archive" "$digest" >>"$target_file"
+  cp "$archive_path" "$artifact_dir/$public_archive"
+  printf '%s  %s\n' "$digest" "$public_archive" \
+    >"$artifact_dir/${public_archive}.sha256"
+  printf '%s\t%s\t%s\n' "$target" "$public_archive" "$digest" >>"$target_file"
 done
 
 cp CHANGELOG.md "$artifact_dir/CHANGELOG.md"

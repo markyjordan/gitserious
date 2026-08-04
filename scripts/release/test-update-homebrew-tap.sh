@@ -50,7 +50,7 @@ targets=(
   x86_64-pc-windows-msvc.zip
 )
 for target in "${targets[@]}"; do
-  printf '%s\n' "$target" >"$assets/gitserious-${target}"
+  printf '%s\n' "$target" >"$assets/gitserious-0.1.0-${target}"
 done
 
 python3 - "$assets" "$manifest" <<'PY'
@@ -67,11 +67,11 @@ manifest = {
     "targets": [],
 }
 for path in sorted(assets.glob("gitserious-*")):
-    target, extension = path.name.removeprefix("gitserious-").rsplit(".", 1)
+    target, extension = path.name.removeprefix("gitserious-0.1.0-").rsplit(".", 1)
     if path.name.endswith(".tar.gz"):
-        target = path.name.removeprefix("gitserious-").removesuffix(".tar.gz")
+        target = path.name.removeprefix("gitserious-0.1.0-").removesuffix(".tar.gz")
     else:
-        target = path.name.removeprefix("gitserious-").removesuffix(".zip")
+        target = path.name.removeprefix("gitserious-0.1.0-").removesuffix(".zip")
     manifest["targets"].append({
         "target": target,
         "filename": path.name,
