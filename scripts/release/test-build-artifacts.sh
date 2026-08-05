@@ -66,8 +66,8 @@ for artifact in CHANGELOG.md package-files.txt release-notes.md release-manifest
   }
 done
 for target in "${targets[@]}"; do
-  [[ -f "$artifact_dir/gitserious-${target}" ]] || exit 1
-  [[ -f "$artifact_dir/gitserious-${target}.sha256" ]] || exit 1
+  [[ -f "$artifact_dir/gitserious-0.1.0-${target}" ]] || exit 1
+  [[ -f "$artifact_dir/gitserious-0.1.0-${target}.sha256" ]] || exit 1
 done
 
 [[ "$(jq -r '.release_tag' "$artifact_dir/release-manifest.json")" == dry-run ]] || exit 1
@@ -79,6 +79,18 @@ done
   cd "$artifact_dir"
   shasum -a 256 -c SHA256SUMS >/dev/null
 )
+
+(
+  cd "$repo"
+  env PATH="$fake_bin:$PATH" RELEASE_TAG=v0.1.0-rc1 RELEASE_MODE=publish \
+    BINARY_ARTIFACT_DIR="$binary_dir" bash "$builder" >/dev/null
+)
+for target in "${targets[@]}"; do
+  [[ -f "$artifact_dir/gitserious-0.1.0-rc1-${target}" ]] || exit 1
+  [[ -f "$artifact_dir/gitserious-0.1.0-rc1-${target}.sha256" ]] || exit 1
+done
+[[ "$(jq -r '.targets[0].filename' "$artifact_dir/release-manifest.json")" == \
+  gitserious-0.1.0-rc1-x86_64-unknown-linux-gnu.tar.gz ]] || exit 1
 
 printf '%s\n' corrupt >>"$binary_dir/gitserious-x86_64-unknown-linux-gnu.tar.gz"
 if (

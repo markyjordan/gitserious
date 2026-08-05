@@ -136,6 +136,11 @@ jobs:
           BINARY_ARTIFACT_DIR: target/release-binaries
         run: bash scripts/release/build-artifacts.sh
 
+      - name: Verify assembled release bundle
+        env:
+          ARTIFACT_DIR: target/release-artifacts
+        run: bash scripts/release/verify-release-bundle.sh
+
       - name: Summarize release authorization state
         env:
           ARTIFACT_DIR: target/release-artifacts
@@ -185,13 +190,22 @@ jobs:
       - name: Exercise release-candidate publication fixtures
         run: bash scripts/release/test-publish-release-candidate.sh
 
+      - name: Verify release-candidate bundle
+        id: verify-release-candidate
+        env:
+          ARTIFACT_DIR: target/release-artifacts
+        run: bash scripts/release/verify-release-bundle.sh
+
       # actions/attest@v4
       - name: Attest release artifacts
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d
         with:
           subject-path: |
-            target/release-artifacts/gitserious-*.tar.gz
-            target/release-artifacts/gitserious-*.zip
+            target/release-artifacts/${{ steps.verify-release-candidate.outputs.linux_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-release-candidate.outputs.macos_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-release-candidate.outputs.macos_aarch64_archive }}
+            target/release-artifacts/${{ steps.verify-release-candidate.outputs.windows_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-release-candidate.outputs.source_archive }}
             target/release-artifacts/SHA256SUMS
             target/release-artifacts/release-manifest.json
 
@@ -239,13 +253,22 @@ jobs:
       - name: Exercise stable publication fixtures
         run: bash scripts/release/test-publish-stable.sh
 
+      - name: Verify stable release bundle
+        id: verify-stable
+        env:
+          ARTIFACT_DIR: target/release-artifacts
+        run: bash scripts/release/verify-release-bundle.sh
+
       # actions/attest@v4
       - name: Attest release artifacts
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d
         with:
           subject-path: |
-            target/release-artifacts/gitserious-*.tar.gz
-            target/release-artifacts/gitserious-*.zip
+            target/release-artifacts/${{ steps.verify-stable.outputs.linux_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-stable.outputs.macos_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-stable.outputs.macos_aarch64_archive }}
+            target/release-artifacts/${{ steps.verify-stable.outputs.windows_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-stable.outputs.source_archive }}
             target/release-artifacts/SHA256SUMS
             target/release-artifacts/release-manifest.json
 
