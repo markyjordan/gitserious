@@ -63,6 +63,16 @@ jobs:
           RELEASE_REF: ${{ github.ref }}
         run: bash scripts/release/validate-release-request.sh
 
+      # The verifier and maintainer registry come from the protected default
+      # branch checkout above. No tagged source has been checked out or run yet.
+      - name: Verify registered release tag signer
+        if: steps.release.outputs.is_dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+        run: bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"
+
   release-check:
     name: release-check
     needs:

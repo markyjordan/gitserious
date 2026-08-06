@@ -31,6 +31,63 @@ grep -F 'actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6' \
   "$release_workflow" >/dev/null
 grep -F 'target/release-artifacts/release-manifest.json' "$release_workflow" >/dev/null
 grep -F 'run: bash scripts/release/write-release-summary.sh' "$release_workflow" >/dev/null
+
+request_validation_line="$(
+  grep -nF 'run: bash scripts/release/validate-release-request.sh' "$release_workflow" |
+    head -n 1 | cut -d: -f1
+)"
+# shellcheck disable=SC2016
+tag_verification_line="$(
+  grep -nF 'run: bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"' \
+    "$release_workflow" | head -n 1 | cut -d: -f1
+)"
+# shellcheck disable=SC2016
+tag_checkout_line="$(
+  grep -nF 'ref: ${{ needs.validate.outputs.checkout_ref }}' "$release_workflow" |
+    head -n 1 | cut -d: -f1
+)"
+if ((request_validation_line >= tag_verification_line || tag_verification_line >= tag_checkout_line)); then
+  echo "Release tags must be validated and signature-verified before tagged source is checked out." >&2
+  exit 1
+fi
+
+readiness_verifier_line="$(
+  grep -nF 'name: Check out trusted release tag verifier' "$repo_root/.github/workflows/release-readiness.yml" |
+    head -n 1 | cut -d: -f1
+)"
+# shellcheck disable=SC2016
+readiness_signature_line="$(
+  grep -nF 'run: bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"' \
+    "$repo_root/.github/workflows/release-readiness.yml" | head -n 1 | cut -d: -f1
+)"
+# shellcheck disable=SC2016
+readiness_checkout_line="$(
+  grep -nF 'ref: ${{ inputs.tag || github.ref }}' "$repo_root/.github/workflows/release-readiness.yml" |
+    head -n 1 | cut -d: -f1
+)"
+if ((readiness_verifier_line >= readiness_signature_line || readiness_signature_line >= readiness_checkout_line)); then
+  echo "Manual readiness must verify a selected tag before checking it out." >&2
+  exit 1
+fi
+
+homebrew_policy_line="$(
+  grep -nF 'name: Check out trusted source-release policy' "$homebrew_workflow" |
+    head -n 1 | cut -d: -f1
+)"
+# shellcheck disable=SC2016
+homebrew_signature_line="$(
+  grep -nF 'run: bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"' \
+    "$homebrew_workflow" | head -n 1 | cut -d: -f1
+)"
+homebrew_tag_checkout_line="$(
+  grep -nF 'name: Check out verified stable source' "$homebrew_workflow" |
+    head -n 1 | cut -d: -f1
+)"
+if ((homebrew_policy_line >= homebrew_signature_line || homebrew_signature_line >= homebrew_tag_checkout_line)); then
+  echo "Homebrew handoff must verify the stable tag before checking it out." >&2
+  exit 1
+fi
+
 bundle_verifications="$(
   grep -Fc 'run: bash scripts/release/verify-release-bundle.sh' "$release_workflow"
 )"
