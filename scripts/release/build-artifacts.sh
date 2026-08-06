@@ -147,8 +147,8 @@ awk -v heading="## [${version}]" '
   exit 1
 }
 
-source_archive="gitserious-${version}-source.tar.gz"
-git archive --format=tar.gz --prefix="gitserious-${version}/" HEAD \
+source_archive="gitserious-${artifact_version}-source.tar.gz"
+git archive --format=tar.gz --prefix="gitserious-${artifact_version}/" HEAD \
   >"$artifact_dir/$source_archive"
 
 source_commit="$(git rev-parse HEAD)"

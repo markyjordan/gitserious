@@ -73,10 +73,11 @@ for target, filename in targets:
         {"target": target, "filename": filename, "sha256": digest}
     )
 
-source_archive = root / f"gitserious-{version}-source.tar.gz"
+artifact_version = f"{version}-rc1"
+source_archive = root / f"gitserious-{artifact_version}-source.tar.gz"
 with tarfile.open(source_archive, "w:gz") as archive:
-    add_tar_file(archive, f"gitserious-{version}/Cargo.toml", "[workspace]\n")
-    add_tar_file(archive, f"gitserious-{version}/README.md", "# fixture\n")
+    add_tar_file(archive, f"gitserious-{artifact_version}/Cargo.toml", "[workspace]\n")
+    add_tar_file(archive, f"gitserious-{artifact_version}/README.md", "# fixture\n")
 
 (root / "CHANGELOG.md").write_text(
     "# Changelog\n\n## [0.1.0] - TBD\n\n- Fixture release.\n", encoding="utf-8"
@@ -142,7 +143,7 @@ build_fixture
 RELEASE_TAG=v0.1.0-rc1 RELEASE_MODE=publish \
   RELEASE_SOURCE_COMMIT="$source_commit" ARTIFACT_DIR="$artifact_dir" \
   GITHUB_OUTPUT="$output_file" bash "$verifier" >/dev/null
-grep -Fx 'source_archive=gitserious-0.1.0-source.tar.gz' "$output_file" >/dev/null
+grep -Fx 'source_archive=gitserious-0.1.0-rc1-source.tar.gz' "$output_file" >/dev/null
 grep -Fx 'linux_x86_64_archive=gitserious-0.1.0-rc1-x86_64-unknown-linux-gnu.tar.gz' \
   "$output_file" >/dev/null
 grep -Fx 'macos_x86_64_archive=gitserious-0.1.0-rc1-x86_64-apple-darwin.tar.gz' \
