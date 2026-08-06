@@ -70,7 +70,7 @@ printf '%s\n' "$homebrew_job" | grep -F 'attestations: read' >/dev/null
 printf '%s\n' "$homebrew_job" | grep -F 'contents: read' >/dev/null
 grep -F 'bash scripts/release/validate-homebrew-release.sh' "$homebrew_workflow" >/dev/null
 grep -F -- '--json isDraft,isPrerelease,tagName,url' "$homebrew_workflow" >/dev/null
-grep -F 'repos/${SOURCE_REPOSITORY}/commits/${RELEASE_TAG}' \
+grep -F "repos/\${SOURCE_REPOSITORY}/commits/\${RELEASE_TAG}" \
   "$homebrew_workflow" >/dev/null
 
 if rg -n -- '--clobber|gh release upload' \
