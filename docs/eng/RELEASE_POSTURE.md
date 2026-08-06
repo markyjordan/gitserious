@@ -6,9 +6,9 @@
 
 ## Posture at a Glance
 
-Gitserious promotes changes through:
+Gitserious can promote changes through:
 
-`dev → main → release/X.Y → vX.Y.Z-rcN → vX.Y.Z`
+`dev → main → release/X.Y → [optional vX.Y.Z-rcN] → vX.Y.Z`
 
 GitHub Actions artifacts are the private rehearsal surface, GitHub prereleases
 are the public candidate surface, and immutable GitHub Releases are the stable
@@ -32,15 +32,17 @@ flowchart TD
   DevFix --> Dev
   Gate -->|"yes: dispatch prepare-release.yml"| Cut["cut release/0.1 from main"]
   Cut --> Release["release/0.1"]
-  Release --> RC["tag current head v0.1.0-rcN"]
+  Release --> Candidate{"public candidate warranted?"}
+  Candidate -->|"yes"| RC["tag current head v0.1.0-rcN"]
   RC --> PushDry["tag push: mandatory dry-run only"]
-  PushDry --> Review{"candidate accepted on every native platform?"}
+  PushDry --> PublishRC["manual publish: GitHub prerelease only"]
+  PublishRC --> Review{"candidate accepted on every native platform?"}
   Review -->|"no"| ReleaseFix["release-fix PR into release/0.1"]
   ReleaseFix --> Release
-  ReleaseFix --> Forward["propagate applicable fix to main and dev"]
-  Forward --> Main
+  ReleaseFix --> Forward["forward-port through a topic PR into dev"]
   Forward --> Dev
-  Review -->|"yes; metadata unchanged"| Stable["tag the accepted commit v0.1.0"]
+  Review -->|"yes; metadata unchanged"| Stable["tag accepted commit v0.1.0"]
+  Candidate -->|"no"| Stable
   Stable --> StableDry["tag push: mandatory dry-run only"]
   StableDry --> Manual["manual dispatch from refs/tags/v0.1.0 with publish"]
   Manual --> Published["crates.io + immutable GitHub Release"]
@@ -51,14 +53,47 @@ flowchart TD
 ```
 
 `release/X.Y` is cut only from green `main`. RC and stable tags must point to
-the current release-branch head. A stable tag may point to the same commit as
-the accepted final RC. If the changelog, release notes, package metadata, or any
-other release input changes after that RC, create another RC; do not silently
-change the candidate beneath the stable tag.
+the current release-branch head. RCs are optional: use one when public native
+testing, compatibility risk, or release scope warrants an explicit candidate.
+The mandatory tag-push dry run and manual publication approval still apply when
+a stable release is published directly. If an RC is used, the stable tag should
+point to the accepted RC commit. Any release-input change after acceptance
+requires another RC if the release is still being represented as RC-validated.
 
-Release fixes merge through `release-fix/*`, `fix/*`, or `hotfix/*` PRs. Apply
-the same correction forward to `main` and `dev` when relevant. Never move or
-replace a published tag.
+Release fixes merge through `release-fix/*`, `fix/*`, or `hotfix/*` PRs. Use a
+human-owned name such as `release-fix/marky/<slug>`. Apply the same correction
+forward through a focused `marky/fix/<slug>` PR into `dev`, then promote `dev`
+to `main`; do not merge a release branch directly into either protected branch.
+Never move or replace a published tag.
+
+## Fix, Candidate, and Patch Flow
+
+```mermaid
+flowchart TD
+  Found{"where is the defect found?"}
+  Found -->|"ordinary development"| DevTopic["focused topic PR into dev"]
+  DevTopic --> Dev["dev"]
+  Dev --> Main["promotion PR into main"]
+  Found -->|"release branch or RC"| ReleaseFix["release-fix/marky/slug from release/X.Y"]
+  ReleaseFix --> ReleasePR["full PR checks; merge commit into release/X.Y"]
+  ReleasePR --> Candidate{"release already stable?"}
+  Candidate -->|"no"| NextRC["optional next RC, or direct stable"]
+  Candidate -->|"yes"| Patch["bump patch; optional patch RC; new stable tag"]
+  ReleasePR --> Forward["reapply or cherry-pick on marky/fix/slug from dev"]
+  Forward --> Dev
+  Found -->|"publication incomplete"| Retry["retry the same immutable tag"]
+  Found -->|"Homebrew metadata only"| TapFix["new tap PR; no source release"]
+```
+
+A failed candidate is not rolled back. Merge the smallest compatible correction
+into `release/X.Y`, forward-port it through `dev`, and either issue the next
+unused `rcN` or proceed directly to stable when another public candidate is not
+warranted. Never reuse an RC number.
+
+A defective stable version is superseded. For example, a defect in `v0.1.0` is
+fixed on `release/0.1`, recorded as `0.1.1`, and published as `v0.1.1` after the
+ordinary dry-run and approval gates. `v0.1.1-rc1` is available but optional.
+The same `release/0.1` branch serves the complete `0.1.x` maintenance line.
 
 ## Native Artifact and Publication Flow
 
@@ -91,7 +126,7 @@ flowchart LR
   Crates --> AttestStable["SHA-pinned GitHub provenance attestations"]
   AttestStable --> StableRelease["one atomic immutable GitHub Release create"]
   Prerelease --> RCFailure{"candidate failure?"}
-  RCFailure -->|"yes"| NewRC["fix release branch and issue a new RC tag"]
+  RCFailure -->|"yes"| NewRC["fix release branch; choose next RC or stable"]
   StableRelease --> StableFailure{"stable failure?"}
   StableFailure -->|"yes"| Patch["yank or document if needed; issue a patch release"]
 ```
@@ -180,6 +215,27 @@ another tap PR and never changes the immutable GitHub Release.
 
 ## Operator Procedure
 
+### Cut a release line
+
+Cut `release/X.Y` only when the product scope is ready for stabilization:
+
+1. Finish the intended workspace version and draft changelog section on a topic
+   branch, merge it through `dev`, and promote the exact green `dev` state to
+   `main` with a regular merge commit.
+2. Dispatch **Release** from `main` with `tag=dry-run` and
+   `release-mode=dry-run`; inspect the complete bundle and confirm that every
+   publication job skipped.
+3. Dispatch **Prepare Release** from the repository default branch with
+   `version-family=X.Y` and approve `release-branch-management`.
+4. The protected workflow re-reads `main`, fails if it moved or the branch
+   already exists, and creates `release/X.Y` at the exact `main` commit.
+5. Confirm the new release-branch head and tree match `main`, then repeat the
+   token-free dry run from `release/X.Y`.
+
+The `release-branch-management` deployment entry is the audit record for a
+protected ref mutation. It does not represent a deployed application or a
+published gitserious release.
+
 ### Rehearse from `main` or `release/X.Y`
 
 1. Open the **Release** workflow and select `main` or the intended
@@ -190,11 +246,13 @@ another tap PR and never changes the immutable GitHub Release.
    layouts, and native job results. Confirm no tag, GitHub Release, crates.io
    package, or tap branch was created.
 
-### Publish an RC
+### Publish an optional RC
 
-Finalize the workspace version, changelog, and every other release input before
-the final RC. Starting from a clean release-branch checkout, create an annotated,
-signed tag at the exact branch head:
+Use an RC when the release benefits from public candidate testing. Finalize the
+workspace version, changelog, and every other release input before the candidate
+that may become stable. Starting from a clean release-branch checkout, choose
+the next unused monotonically increasing `rcN` and create an annotated, signed
+tag at the exact branch head:
 
 ```sh
 release_line=0.1
@@ -227,24 +285,28 @@ GitHub entry is a prerelease and that crates.io and the tap did not change.
 
 ### Publish stable
 
-The stable tag must point to the accepted final-RC commit. The stable date must
-already have been finalized before that RC; any later metadata change requires
-another RC.
+Stable publication does not require an RC. If an RC was accepted, use its exact
+commit; otherwise use the current release-branch head after its successful
+token-free dry run. In both cases, finalize the stable changelog date before
+creating the tag.
 
 ```sh
-accepted_rc=v0.1.0-rc1
 tag=v0.1.0
 
 git fetch origin --prune --tags
 git switch release/0.1
 git pull --ff-only origin release/0.1
-accepted_commit="$(git rev-parse "${accepted_rc}^{commit}")"
-test "$(git rev-parse HEAD)" = "$accepted_commit"
 test -z "$(git status --porcelain)"
 
-git tag -s "$tag" "$accepted_commit" -m "gitserious ${tag}"
+release_commit="$(git rev-parse HEAD)"
+
+# If an RC was used, verify it before tagging stable:
+# accepted_rc=v0.1.0-rc1
+# test "$(git rev-parse "${accepted_rc}^{commit}")" = "$release_commit"
+
+git tag -s "$tag" "$release_commit" -m "gitserious ${tag}"
 git tag -v "$tag"
-test "$(git rev-parse "${tag}^{commit}")" = "$accepted_commit"
+test "$(git rev-parse "${tag}^{commit}")" = "$release_commit"
 git push origin "refs/tags/${tag}"
 ```
 
@@ -253,6 +315,26 @@ that exact tag and dispatch `tag=v0.1.0`, `release-mode=publish`. Approve
 `crates-io-release`, then verify all five crates and the immutable GitHub
 Release before treating the source release as published. Inspect the single
 generated tap PR and merge it only after `formula-ci` passes.
+
+### Publish a patch
+
+For a source, binary, or crate defect in `vX.Y.Z`:
+
+1. Branch `release-fix/marky/<slug>` from `release/X.Y` and make the smallest
+   compatible correction.
+2. Bump the workspace and workspace-dependency versions to `X.Y.(Z+1)`, update
+   `Cargo.lock`, and add a curated patch changelog section.
+3. Merge through a regular release-fix PR after release readiness and all four
+   native jobs pass.
+4. Forward-port the correction through a focused topic PR into `dev`, then the
+   normal `dev` to `main` promotion.
+5. Choose whether the patch warrants `vX.Y.(Z+1)-rc1`. The candidate is optional;
+   the stable tag-push dry run and manual stable approval are not.
+6. Publish `vX.Y.(Z+1)` and let the normal stable handoff update crates.io,
+   GitHub Releases, and Homebrew.
+
+Yank an affected crate only when continued dependency resolution creates real
+user or security harm. Yanking does not replace the patch release.
 
 ### Recover from partial publication
 
@@ -269,11 +351,20 @@ Homebrew handoff. Recovery never moves a tag and never changes release inputs:
   not rerun stable publication. Manually dispatch **Update Homebrew Tap** from
   the same stable tag; it reuses or updates the versioned tap PR.
 - If published RC or stable assets are defective, do not replace them. A failed
-  candidate gets a new RC tag; a stable defect gets a patch release.
+  candidate may get the next RC tag after its correction; a stable defect gets
+  a patch release.
 
 The operational rule is: rerun the same immutable tag to finish an incomplete
 downstream transaction. Never retag or bump merely to recover a transient
 publication failure.
+
+| Failure class | Correct response | New version? |
+| --- | --- | --- |
+| RC behavior or candidate artifact is bad | Merge a release fix; optionally publish the next RC | No stable version has been committed yet |
+| Stable source, binary, or crate is bad | Publish `vX.Y.(Z+1)` from the release line | Yes |
+| Crates/GitHub transaction stopped before completion | Re-dispatch the same stable tag after identity checks | No |
+| GitHub Release exists but tap handoff failed | Re-dispatch **Update Homebrew Tap** for the same tag | No |
+| Published binaries are good but formula metadata is bad | Repair through a new tap PR | No |
 
 ## Direct Binary Installation and Verification
 
@@ -355,17 +446,17 @@ Automatically delete the version branch after merge.
 | Surface | Verified current state | Remaining gate |
 | --- | --- | --- |
 | Source branch protection | Active rulesets protect `dev`, `main`, and `release/*`. Promotion CI runs all four native builders; `main` and `release/*` also require release readiness. | None for branch promotion. |
-| Source release controls | Four reviewed environments have exact branch/tag policies. `release-candidate` accepts only `v0.1.0-rc*`; the active `release-tags` ruleset permits `v*` creation and rejects updates and deletions. The repository immutable-Releases endpoint reports `enabled: true`. | Preserve these controls through the first candidate. |
+| Source release controls | Four reviewed environments have exact branch/tag policies. `release-candidate` accepts only `v0.1.0-rc*`; the active `release-tags` ruleset permits `v*` creation and rejects updates and deletions. The repository immutable-Releases endpoint reports `enabled: true`. | Preserve these controls through the first candidate or direct stable publication. |
 | Release rehearsal | [Run 31073157623](https://github.com/markyjordan/gitserious/actions/runs/31073157623) succeeded from promoted `main` commit `e76b7eb0201811d4570001c2adbd2ca422945a10`: request validation, release readiness, all four native builds and executions, aggregate `native-four`, versioned bundle assembly, exact-layout verification, and local Intel-macOS execution passed. Every publication job skipped. The run produced only Actions artifacts, and all individual and aggregate checksums verified. | No immediate release action. Repeat from `release/0.1` only after the v0.1 product scope is ready for stabilization and that branch is intentionally cut. |
-| GitHub distribution | No source tags, Releases, or published release assets exist. Candidate, crates.io, and Homebrew publication deployments remain absent. Cancelled Prepare Release run [30870110509](https://github.com/markyjordan/gitserious/actions/runs/30870110509) left one `release-branch-management` audit record but executed no steps and created no branch. | Continue normal product development. When v0.1 is feature-ready, begin the candidate process from `release/0.1`; this posture does not imply a release date. |
+| GitHub distribution | No source tags, Releases, or published release assets exist. Candidate, crates.io, and Homebrew publication deployments remain absent. Cancelled Prepare Release run [30870110509](https://github.com/markyjordan/gitserious/actions/runs/30870110509) left one `release-branch-management` audit record but executed no steps and created no branch. | Continue normal product development. When v0.1 is feature-ready, cut `release/0.1` and choose an optional RC or direct stable path; this posture does not imply a release date. |
 | crates.io | `gitserious 0.0.0` exists; `gitserious-app`, `gitserious-cli`, `gitserious-core`, and `gitserious-fs` do not. `crates-io-release` has no secret. | Load the protected first-publication token before stable; migrate later versions to Trusted Publishing. |
 | Homebrew tap | Tap PR [#1](https://github.com/markyjordan/homebrew-tap/pull/1) is merged. Three-platform `formula-ci` passes on tap `main`, its ruleset is active, and no formula exists before the first stable release. `homebrew-tap-release` has no secret. | Load the tap-only token before stable; the stable handoff opens the first formula PR. |
 
 ## Rollout and Acceptance
 
 When the v0.1 product scope is feature-ready and stabilization begins, complete
-these gates before the first candidate. They are not a signal to cut a release
-branch during ongoing product development:
+these gates before the first public candidate or stable publication. They are
+not a signal to cut a release branch during ongoing product development:
 
 1. Run every release/archive/CI fixture plus ShellCheck, actionlint, zizmor, and
    Rust check/fmt/lint/test/release checks.
@@ -378,9 +469,10 @@ Before stable publication, add `CRATES_IO_TOKEN` and `HOMEBREW_TAP_TOKEN` only
 to their protected environments. RC publication intentionally requires neither
 credential.
 
-For `v0.1.0-rc1`, verify all native archives on their own platforms, individual
-and aggregate checksums, provenance, notes, prerelease status, and absence of
-crates.io/Homebrew mutation. A failed candidate gets a new RC tag.
+If `v0.1.0-rc1` is used, verify all native archives on their own platforms,
+individual and aggregate checksums, provenance, notes, prerelease status, and
+absence of crates.io/Homebrew mutation. A failed candidate may be superseded by
+the next unused RC tag after its correction; RC publication remains optional.
 
 For `v0.1.0`, verify the five crate identities, four direct binaries, checksum
 files, manifest, source archive, attestations, immutable tag/Release, and exactly
