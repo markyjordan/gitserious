@@ -15,6 +15,9 @@ dependencies = [
 [[package]]
 name = "gitserious-app"
 version = "0.1.0"
+dependencies = [
+ "gitserious-core",
+]
 
 [[package]]
 name = "gitserious-cli"
