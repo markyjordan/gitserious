@@ -116,3 +116,134 @@ impl Display for CommitTypeDefinitionError {
 }
 
 impl Error for CommitTypeDefinitionError {}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use crate::{
+        CommitTypeId, PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement,
+        SchemaVersion,
+    };
+
+    use super::{CommitTypeDefinition, CommitTypeDefinitionError};
+
+    fn property(key: &str) -> Result<PropertyDefinition, Box<dyn Error>> {
+        Ok(PropertyDefinition::new(
+            PropertyKey::new(key)?,
+            format!("Description for {key}."),
+            PropertyRequirement::Required,
+            PropertyMultiplicity::Single,
+        )?)
+    }
+
+    #[test]
+    fn definitions_preserve_version_identity_description_and_property_order()
+    -> Result<(), Box<dyn Error>> {
+        let definition = CommitTypeDefinition::new(
+            SchemaVersion::new(2)?,
+            CommitTypeId::new("custom-type")?,
+            "A custom semantic contract.",
+            vec![property("first")?, property("second")?],
+        )?;
+
+        assert_eq!(definition.schema_version().get(), 2);
+        assert_eq!(definition.id().as_str(), "custom-type");
+        assert_eq!(definition.description(), "A custom semantic contract.");
+        assert_eq!(
+            definition
+                .properties()
+                .iter()
+                .map(|definition| definition.key().as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second"]
+        );
+        assert_eq!(definition.clone(), definition);
+
+        Ok(())
+    }
+
+    #[test]
+    fn definitions_reject_blank_descriptions() -> Result<(), Box<dyn Error>> {
+        let result = CommitTypeDefinition::new(
+            SchemaVersion::V1,
+            CommitTypeId::new("custom")?,
+            " \n",
+            vec![property("intent")?],
+        );
+
+        assert_eq!(result, Err(CommitTypeDefinitionError::EmptyDescription));
+        assert!(
+            !CommitTypeDefinitionError::EmptyDescription
+                .to_string()
+                .is_empty()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn definitions_reject_empty_property_sets() -> Result<(), Box<dyn Error>> {
+        let result = CommitTypeDefinition::new(
+            SchemaVersion::V1,
+            CommitTypeId::new("custom")?,
+            "A custom contract.",
+            Vec::new(),
+        );
+
+        assert_eq!(result, Err(CommitTypeDefinitionError::EmptyProperties));
+        assert!(
+            !CommitTypeDefinitionError::EmptyProperties
+                .to_string()
+                .is_empty()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn definitions_reject_duplicate_property_keys() -> Result<(), Box<dyn Error>> {
+        let duplicate_key = PropertyKey::new("intent")?;
+        let result = CommitTypeDefinition::new(
+            SchemaVersion::V1,
+            CommitTypeId::new("custom")?,
+            "A custom contract.",
+            vec![property("intent")?, property("intent")?],
+        );
+
+        assert_eq!(
+            result,
+            Err(CommitTypeDefinitionError::DuplicateProperty(
+                duplicate_key.clone()
+            ))
+        );
+        assert!(
+            CommitTypeDefinitionError::DuplicateProperty(duplicate_key)
+                .to_string()
+                .contains("intent")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn the_same_property_key_can_belong_to_distinct_commit_types() -> Result<(), Box<dyn Error>> {
+        let first = CommitTypeDefinition::new(
+            SchemaVersion::V1,
+            CommitTypeId::new("first")?,
+            "First contract.",
+            vec![property("change")?],
+        );
+        let second = CommitTypeDefinition::new(
+            SchemaVersion::V1,
+            CommitTypeId::new("second")?,
+            "Second contract.",
+            vec![property("change")?],
+        );
+
+        assert!(first.is_ok());
+        assert!(second.is_ok());
+
+        Ok(())
+    }
+}

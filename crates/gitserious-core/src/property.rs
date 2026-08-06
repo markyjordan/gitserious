@@ -334,3 +334,152 @@ impl Display for PropertyDefinitionError {
 }
 
 impl Error for PropertyDefinitionError {}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use crate::{ConditionId, PropertyKey};
+
+    use super::{
+        PropertyCondition, PropertyConditionError, PropertyDefinition, PropertyDefinitionError,
+        PropertyMultiplicity, PropertyRequirement, PropertyValue, PropertyValueError,
+        PropertyValues, PropertyValuesError,
+    };
+
+    #[test]
+    fn property_values_preserve_non_empty_unicode_and_multiline_text() -> Result<(), Box<dyn Error>>
+    {
+        let text = "  Causal context 🦀\nremains intact.  ";
+        let value = PropertyValue::new(text)?;
+        let borrowed = PropertyValue::try_from(text)?;
+        let owned = PropertyValue::try_from(String::from(text))?;
+
+        assert_eq!(value.as_str(), text);
+        assert_eq!(AsRef::<str>::as_ref(&value), text);
+        assert_eq!(value.to_string(), text);
+        assert_eq!(value, borrowed);
+        assert_eq!(borrowed, owned);
+
+        Ok(())
+    }
+
+    #[test]
+    fn property_values_reject_empty_and_whitespace_only_text() {
+        for text in ["", " ", "\n\t", "\u{2003}"] {
+            assert_eq!(PropertyValue::new(text), Err(PropertyValueError));
+        }
+        assert_eq!(
+            PropertyValueError.to_string(),
+            "property value must contain non-whitespace text"
+        );
+    }
+
+    #[test]
+    fn single_property_collections_expose_exactly_one_value() -> Result<(), Box<dyn Error>> {
+        let values = PropertyValues::single(PropertyValue::new("one")?);
+
+        assert_eq!(values.multiplicity(), PropertyMultiplicity::Single);
+        assert_eq!(values.len(), 1);
+        assert!(!values.is_empty());
+        assert_eq!(values.as_slice()[0].as_str(), "one");
+        assert_eq!(
+            values.iter().map(PropertyValue::as_str).collect::<Vec<_>>(),
+            ["one"]
+        );
+        assert_eq!(
+            (&values)
+                .into_iter()
+                .map(PropertyValue::as_str)
+                .collect::<Vec<_>>(),
+            ["one"]
+        );
+        assert_eq!(values.into_values().len(), 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn repeatable_property_collections_are_non_empty_and_ordered() -> Result<(), Box<dyn Error>> {
+        assert_eq!(
+            PropertyValues::multiple(Vec::new()),
+            Err(PropertyValuesError)
+        );
+        assert_eq!(
+            PropertyValuesError.to_string(),
+            "a property value collection must not be empty"
+        );
+
+        let one = PropertyValues::multiple([PropertyValue::new("one")?])?;
+        assert_eq!(one.multiplicity(), PropertyMultiplicity::Multiple);
+        assert_eq!(one.len(), 1);
+
+        let many = PropertyValues::multiple([
+            PropertyValue::new("first")?,
+            PropertyValue::new("second")?,
+        ])?;
+        assert_eq!(many.multiplicity(), PropertyMultiplicity::Multiple);
+        assert_eq!(
+            many.iter().map(PropertyValue::as_str).collect::<Vec<_>>(),
+            ["first", "second"]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn conditions_require_rationale_and_preserve_typed_metadata() -> Result<(), Box<dyn Error>> {
+        let id = ConditionId::new("known-cost")?;
+        let condition = PropertyCondition::new(id.clone(), "A known cost exists.")?;
+
+        assert_eq!(condition.id(), &id);
+        assert_eq!(condition.rationale(), "A known cost exists.");
+        assert_eq!(
+            PropertyCondition::new(id, " \n"),
+            Err(PropertyConditionError)
+        );
+        assert!(!PropertyConditionError.to_string().is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn property_definitions_preserve_all_schema_dimensions() -> Result<(), Box<dyn Error>> {
+        let condition =
+            PropertyCondition::new(ConditionId::new("known-cost")?, "Required for known costs.")?;
+        let definition = PropertyDefinition::new(
+            PropertyKey::new("tradeoff")?,
+            "The accepted cost.",
+            PropertyRequirement::Conditional(condition.clone()),
+            PropertyMultiplicity::Multiple,
+        )?;
+
+        assert_eq!(definition.key().as_str(), "tradeoff");
+        assert_eq!(definition.description(), "The accepted cost.");
+        assert_eq!(
+            definition.requirement(),
+            &PropertyRequirement::Conditional(condition)
+        );
+        assert_eq!(definition.multiplicity(), PropertyMultiplicity::Multiple);
+
+        let cloned = definition.clone();
+        assert_eq!(cloned, definition);
+
+        Ok(())
+    }
+
+    #[test]
+    fn property_definitions_reject_blank_descriptions() -> Result<(), Box<dyn Error>> {
+        let result = PropertyDefinition::new(
+            PropertyKey::new("intent")?,
+            "\t",
+            PropertyRequirement::Required,
+            PropertyMultiplicity::Single,
+        );
+
+        assert_eq!(result, Err(PropertyDefinitionError));
+        assert!(!PropertyDefinitionError.to_string().is_empty());
+
+        Ok(())
+    }
+}

@@ -200,3 +200,124 @@ define_identifier!(
     ConditionId,
     "An open, validated identifier for a conditional requirement rule."
 );
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Borrow;
+    use std::collections::{BTreeSet, HashSet};
+    use std::error::Error;
+
+    use super::{CommitTypeId, ConditionId, IdentifierErrorKind, PropertyKey};
+
+    #[test]
+    fn accepts_lowercase_ascii_kebab_identifiers() -> Result<(), Box<dyn Error>> {
+        let valid = [
+            "a",
+            "feat",
+            "fix2",
+            "a1",
+            "a-1",
+            "expected-behavior",
+            "workflow-permissions-change",
+            "x0-y9-z",
+        ];
+
+        for value in valid {
+            assert_eq!(CommitTypeId::new(value)?.as_str(), value);
+            assert_eq!(PropertyKey::new(value)?.as_str(), value);
+            assert_eq!(ConditionId::new(value)?.as_str(), value);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_invalid_identifier_shapes_with_precise_reasons() {
+        let invalid = [
+            ("", IdentifierErrorKind::Empty),
+            ("Feat", IdentifierErrorKind::InvalidStart),
+            ("1feat", IdentifierErrorKind::InvalidStart),
+            ("-feat", IdentifierErrorKind::InvalidStart),
+            (
+                "feat_type",
+                IdentifierErrorKind::InvalidCharacter { index: 4 },
+            ),
+            (
+                "feat type",
+                IdentifierErrorKind::InvalidCharacter { index: 4 },
+            ),
+            ("féat", IdentifierErrorKind::InvalidCharacter { index: 1 }),
+            (
+                "feat--type",
+                IdentifierErrorKind::ConsecutiveHyphen { index: 5 },
+            ),
+            ("feat-", IdentifierErrorKind::TrailingHyphen),
+        ];
+
+        for (value, expected_kind) in invalid {
+            let commit_type_error = CommitTypeId::new(value).err();
+            let property_error = PropertyKey::new(value).err();
+            let condition_error = ConditionId::new(value).err();
+
+            assert_eq!(
+                commit_type_error.as_ref().map(super::IdentifierError::kind),
+                Some(expected_kind)
+            );
+            assert_eq!(
+                property_error.as_ref().map(super::IdentifierError::kind),
+                Some(expected_kind)
+            );
+            assert_eq!(
+                condition_error.as_ref().map(super::IdentifierError::kind),
+                Some(expected_kind)
+            );
+            assert_eq!(
+                commit_type_error
+                    .as_ref()
+                    .map(super::IdentifierError::value),
+                Some(value)
+            );
+        }
+    }
+
+    #[test]
+    fn supports_parsing_conversion_display_borrowing_hashing_and_ordering()
+    -> Result<(), Box<dyn Error>> {
+        let parsed = "custom-type".parse::<CommitTypeId>()?;
+        let borrowed = CommitTypeId::try_from("custom-type")?;
+        let owned = CommitTypeId::try_from(String::from("custom-type"))?;
+
+        assert_eq!(parsed, borrowed);
+        assert_eq!(borrowed, owned);
+        assert_eq!(parsed.to_string(), "custom-type");
+        assert_eq!(AsRef::<str>::as_ref(&parsed), "custom-type");
+        assert_eq!(Borrow::<str>::borrow(&parsed), "custom-type");
+
+        let hash_values = HashSet::from([parsed.clone(), borrowed]);
+        assert_eq!(hash_values.len(), 1);
+        assert!(hash_values.contains("custom-type"));
+
+        let ordered = BTreeSet::from([CommitTypeId::new("z-type")?, CommitTypeId::new("a-type")?]);
+        let ordered_values = ordered.iter().map(CommitTypeId::as_str).collect::<Vec<_>>();
+        assert_eq!(ordered_values, ["a-type", "z-type"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn identifier_errors_describe_the_rejected_rule() {
+        let errors = [
+            CommitTypeId::new("").err(),
+            CommitTypeId::new("Upper").err(),
+            CommitTypeId::new("bad_value").err(),
+            CommitTypeId::new("bad--value").err(),
+            CommitTypeId::new("bad-").err(),
+        ];
+
+        for error in errors.into_iter().flatten() {
+            assert!(!error.to_string().is_empty());
+            let source: &dyn Error = &error;
+            assert!(source.source().is_none());
+        }
+    }
+}

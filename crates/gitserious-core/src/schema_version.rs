@@ -54,3 +54,33 @@ impl Display for SchemaVersionError {
 }
 
 impl Error for SchemaVersionError {}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use super::{SchemaVersion, SchemaVersionError};
+
+    #[test]
+    fn accepts_positive_versions_and_exposes_v1() -> Result<(), Box<dyn Error>> {
+        let version = SchemaVersion::new(42)?;
+        let converted = SchemaVersion::try_from(42)?;
+
+        assert_eq!(version, converted);
+        assert_eq!(version.get(), 42);
+        assert_eq!(version.to_string(), "42");
+        assert_eq!(SchemaVersion::V1.get(), 1);
+        assert!(SchemaVersion::V1 < version);
+
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_zero() {
+        assert_eq!(SchemaVersion::new(0), Err(SchemaVersionError));
+        assert_eq!(
+            SchemaVersionError.to_string(),
+            "schema version must be greater than zero"
+        );
+    }
+}
