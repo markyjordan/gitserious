@@ -1,0 +1,140 @@
+name: Automation Quality
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned actionlint
+        env:
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          install_dir="$RUNNER_TEMP/actionlint"
+          curl -fsSLo "$RUNNER_TEMP/$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$archive"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$RUNNER_TEMP/$archive" | sha256sum -c -
+          mkdir -p "$install_dir"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$install_dir"
+          printf '%s\n' "$install_dir" >>"$GITHUB_PATH"
+
+      - name: Validate workflow syntax and expressions
+        run: bash scripts/ci/run-automation-quality.sh actionlint
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned ShellCheck
+        env:
+          SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
+          SHELLCHECK_VERSION: v0.11.0
+        run: |
+          archive="shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.gz"
+          curl -fsSLo "/tmp/$archive" \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/$archive"
+          printf '%s  %s\n' "$SHELLCHECK_SHA256" "/tmp/$archive" | sha256sum -c -
+          tar -xzf "/tmp/$archive" -C /tmp
+          printf '%s\n' "/tmp/shellcheck-${SHELLCHECK_VERSION}" >>"$GITHUB_PATH"
+
+      - name: Validate shell scripts
+        run: bash scripts/ci/run-automation-quality.sh shellcheck
+
+  release-policy-fixtures:
+    name: release-policy-fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Exercise release policy fixtures
+        run: bash scripts/ci/run-automation-quality.sh release-policy-fixtures
+
+  ci-script-fixtures:
+    name: ci-script-fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Exercise CI script fixtures
+        run: bash scripts/ci/tests/run.sh
+
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      # zizmorcore/zizmor-action@v0.6.2
+      - name: Audit GitHub Actions security
+        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054
+        with:
+          advanced-security: false
+          annotations: true
+          collect: all
+          config: .github/zizmor.yml
+          fail-on-no-inputs: true
+          inputs: .
+          min-confidence: medium
+          min-severity: medium
+          online-audits: true
+          persona: pedantic
+          version: "1.29.0"
+
+  automation-quality:
+    name: automation-quality
+    if: always()
+    needs:
+      - actionlint
+      - shellcheck
+      - release-policy-fixtures
+      - ci-script-fixtures
+      - zizmor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Require automation quality evidence
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: bash scripts/ci/require-job-results.sh

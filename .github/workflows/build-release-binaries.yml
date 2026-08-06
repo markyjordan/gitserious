@@ -1,0 +1,86 @@
+name: Build Release Binaries
+
+on:
+  workflow_call:
+    inputs:
+      release-ref:
+        description: "Commit, branch, or tag to build"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            archive-format: tar.gz
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            archive-format: tar.gz
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            archive-format: tar.gz
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            archive-format: zip
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.release-ref }}
+
+      - name: Set up locked Rust toolchain
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          rustup toolchain install --no-self-update
+          rustup target add "$TARGET"
+          rustup show
+
+      - name: Build, execute, and package native binary
+        shell: bash
+        env:
+          ARCHIVE_FORMAT: ${{ matrix.archive-format }}
+          OUTPUT_DIR: target/release-binaries
+          TARGET: ${{ matrix.target }}
+        run: bash scripts/release/build-release-binary.sh
+
+      # actions/upload-artifact@v7.0.1
+      - name: Upload target archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-binary-${{ matrix.target }}
+          path: target/release-binaries/*
+          if-no-files-found: error
+          retention-days: 7
+
+  native-four:
+    name: native-four
+    if: always()
+    needs:
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Require every native target
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          if [[ "$BUILD_RESULT" != success ]]; then
+            echo "Native release binaries did not all pass: ${BUILD_RESULT}." >&2
+            exit 1
+          fi
+          echo "All four native release binaries passed."

@@ -1,0 +1,122 @@
+name: Update Homebrew Tap
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Published stable tag"
+        required: true
+        type: string
+      source-repository:
+        description: "Repository containing the immutable GitHub Release"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published stable tag, such as v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  attestations: read
+  contents: read
+
+concurrency:
+  group: homebrew-tap-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  update-homebrew-tap:
+    name: update-homebrew-tap
+    environment: homebrew-tap-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      SOURCE_REPOSITORY: ${{ inputs.source-repository || github.repository }}
+      TAP_REPOSITORY: markyjordan/homebrew-tap
+
+    steps:
+      # actions/checkout@v7.0.1
+      - name: Check out trusted source-release policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Reject non-stable handoffs
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Homebrew handoff accepts only stable vX.Y.Z releases." >&2
+            exit 1
+          fi
+
+      - name: Verify registered release tag signer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"
+
+      # actions/checkout@v7.0.1
+      - name: Check out verified stable source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Download published release bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p target/homebrew-release-assets
+          gh release download "$RELEASE_TAG" --repo "$SOURCE_REPOSITORY" \
+            --dir target/homebrew-release-assets
+
+      - name: Verify stable GitHub Release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_metadata="${RUNNER_TEMP}/gitserious-release-metadata.json"
+          gh release view "$RELEASE_TAG" --repo "$SOURCE_REPOSITORY" \
+            --json isDraft,isPrerelease,tagName,url >"$release_metadata"
+          tag_commit="$(
+            gh api "repos/${SOURCE_REPOSITORY}/commits/${RELEASE_TAG}" --jq .sha
+          )"
+          RELEASE_METADATA_FILE="$release_metadata" \
+            MANIFEST_FILE=target/homebrew-release-assets/release-manifest.json \
+            TAG_COMMIT="$tag_commit" \
+            bash scripts/release/validate-homebrew-release.sh
+
+      - name: Verify GitHub provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify target/homebrew-release-assets/release-manifest.json \
+            --repo "$SOURCE_REPOSITORY"
+          jq -r '.targets[].filename, .source_archive.filename' \
+            target/homebrew-release-assets/release-manifest.json |
+            while IFS= read -r filename; do
+              gh attestation verify "target/homebrew-release-assets/${filename}" \
+                --repo "$SOURCE_REPOSITORY"
+            done
+
+      - name: Clone Homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: gh repo clone "$TAP_REPOSITORY" "${RUNNER_TEMP}/homebrew-tap"
+
+      - name: Exercise formula and handoff fixtures
+        run: |
+          bash scripts/release/test-render-homebrew-formula.sh
+          bash scripts/release/test-update-homebrew-tap.sh
+
+      - name: Create or update versioned tap pull request
+        env:
+          ASSET_DIR: target/homebrew-release-assets
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          MANIFEST_FILE: target/homebrew-release-assets/release-manifest.json
+          TAP_DIR: ${{ runner.temp }}/homebrew-tap
+        run: bash scripts/release/update-homebrew-tap.sh

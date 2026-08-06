@@ -1,0 +1,303 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "dry-run, vX.Y.Z-rcN, or vX.Y.Z"
+        required: true
+        default: dry-run
+        type: string
+      release-mode:
+        description: "Build only or publish from the selected matching tag"
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - publish
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: validate-release-request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      checkout_ref: ${{ steps.release.outputs.checkout_ref }}
+      is_dry_run: ${{ steps.release.outputs.is_dry_run }}
+      is_rc: ${{ steps.release.outputs.is_rc }}
+      readiness_tag: ${{ steps.release.outputs.readiness_tag }}
+      release_mode: ${{ steps.release.outputs.release_mode }}
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      source_ref: ${{ steps.release.outputs.source_ref }}
+    env:
+      RELEASE_MODE: ${{ github.event.inputs['release-mode'] || 'dry-run' }}
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+    steps:
+      # actions/checkout@v7.0.1
+      - name: Check out trusted release request policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Exercise release request fixtures
+        run: bash scripts/release/test-validate-release-request.sh
+
+      - name: Validate release request
+        id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+        run: bash scripts/release/validate-release-request.sh
+
+      # The verifier and maintainer registry come from the protected default
+      # branch checkout above. No tagged source has been checked out or run yet.
+      - name: Verify registered release tag signer
+        if: steps.release.outputs.is_dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+        run: bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"
+
+  release-check:
+    name: release-check
+    needs:
+      - validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.validate.outputs.checkout_ref }}
+
+      - name: Set up locked Rust toolchain
+        run: |
+          rustup toolchain install --no-self-update
+          rustup show
+
+      - name: Run complete release readiness
+        env:
+          RELEASE_MODE: ${{ needs.validate.outputs.release_mode }}
+          RELEASE_REF: ${{ needs.validate.outputs.source_ref }}
+          RELEASE_TAG: ${{ needs.validate.outputs.readiness_tag }}
+        run: bash scripts/release/check-release.sh
+
+  native-binaries:
+    name: native-four
+    needs:
+      - validate
+      - release-check
+    uses: ./.github/workflows/build-release-binaries.yml
+    with:
+      release-ref: ${{ needs.validate.outputs.checkout_ref }}
+
+  assemble:
+    name: assemble-release-bundle
+    needs:
+      - validate
+      - release-check
+      - native-binaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RELEASE_MODE: ${{ needs.validate.outputs.release_mode }}
+      RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.validate.outputs.checkout_ref }}
+
+      # actions/download-artifact@v8
+      - name: Download native archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: release-binary-*
+          path: target/release-binaries
+          merge-multiple: true
+
+      - name: Exercise bundle assembly fixtures
+        run: bash scripts/release/test-build-artifacts.sh
+
+      - name: Assemble final release bundle
+        env:
+          ARTIFACT_DIR: target/release-artifacts
+          BINARY_ARTIFACT_DIR: target/release-binaries
+        run: bash scripts/release/build-artifacts.sh
+
+      - name: Verify assembled release bundle
+        env:
+          ARTIFACT_DIR: target/release-artifacts
+        run: bash scripts/release/verify-release-bundle.sh
+
+      - name: Summarize release authorization state
+        env:
+          ARTIFACT_DIR: target/release-artifacts
+          RELEASE_SOURCE_REF: ${{ needs.validate.outputs.checkout_ref }}
+        run: bash scripts/release/write-release-summary.sh
+
+      # actions/upload-artifact@v7.0.1
+      - name: Upload release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ needs.validate.outputs.release_tag }}-${{ github.run_id }}-artifacts
+          path: target/release-artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-release-candidate:
+    name: publish-release-candidate
+    if: needs.validate.outputs.release_mode == 'publish' && needs.validate.outputs.is_rc == 'true'
+    needs:
+      - validate
+      - assemble
+    environment: release-candidate
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RELEASE_MODE: ${{ needs.validate.outputs.release_mode }}
+      RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ env.RELEASE_TAG }}
+
+      # actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.RELEASE_TAG }}-${{ github.run_id }}-artifacts
+          path: target/release-artifacts
+
+      - name: Exercise release-candidate publication fixtures
+        run: bash scripts/release/test-publish-release-candidate.sh
+
+      - name: Verify release-candidate bundle
+        id: verify-release-candidate
+        env:
+          ARTIFACT_DIR: target/release-artifacts
+        run: bash scripts/release/verify-release-bundle.sh
+
+      # actions/attest@v4.2.2
+      - name: Attest release artifacts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: |
+            target/release-artifacts/${{ steps.verify-release-candidate.outputs.linux_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-release-candidate.outputs.macos_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-release-candidate.outputs.macos_aarch64_archive }}
+            target/release-artifacts/${{ steps.verify-release-candidate.outputs.windows_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-release-candidate.outputs.source_archive }}
+            target/release-artifacts/SHA256SUMS
+            target/release-artifacts/release-manifest.json
+
+      - name: Publish immutable GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash scripts/release/publish-release-candidate.sh
+
+  publish-stable:
+    name: publish-stable
+    if: needs.validate.outputs.release_mode == 'publish' && needs.validate.outputs.is_rc == 'false' && needs.validate.outputs.is_dry_run == 'false'
+    needs:
+      - validate
+      - assemble
+    environment: crates-io-release
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+      RELEASE_MODE: ${{ needs.validate.outputs.release_mode }}
+      RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up locked Rust toolchain
+        run: rustup toolchain install --no-self-update
+
+      # actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ env.RELEASE_TAG }}-${{ github.run_id }}-artifacts
+          path: target/release-artifacts
+
+      - name: Exercise stable publication fixtures
+        run: bash scripts/release/test-publish-stable.sh
+
+      - name: Verify stable release bundle
+        id: verify-stable
+        env:
+          ARTIFACT_DIR: target/release-artifacts
+        run: bash scripts/release/verify-release-bundle.sh
+
+      # actions/attest@v4.2.2
+      - name: Attest release artifacts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: |
+            target/release-artifacts/${{ steps.verify-stable.outputs.linux_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-stable.outputs.macos_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-stable.outputs.macos_aarch64_archive }}
+            target/release-artifacts/${{ steps.verify-stable.outputs.windows_x86_64_archive }}
+            target/release-artifacts/${{ steps.verify-stable.outputs.source_archive }}
+            target/release-artifacts/SHA256SUMS
+            target/release-artifacts/release-manifest.json
+
+      - name: Publish crates and immutable GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash scripts/release/publish-stable.sh
+
+  update-homebrew-tap:
+    name: update-homebrew-tap
+    if: needs.validate.outputs.release_mode == 'publish' && needs.validate.outputs.is_rc == 'false' && needs.validate.outputs.is_dry_run == 'false'
+    needs:
+      - validate
+      - publish-stable
+    permissions:
+      attestations: read
+      contents: read
+    uses: ./.github/workflows/update-homebrew-tap.yml
+    with:
+      tag: ${{ needs.validate.outputs.release_tag }}
+      source-repository: ${{ github.repository }}

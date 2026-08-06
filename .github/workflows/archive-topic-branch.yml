@@ -1,0 +1,64 @@
+name: Archive Topic Branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: "Pull request number targeting dev"
+        required: true
+        type: string
+      retention-days:
+        description: "Artifact retention from 1 to 90 days"
+        required: false
+        default: "30"
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: archive-topic-branch-${{ inputs['pr-number'] }}
+  cancel-in-progress: false
+
+jobs:
+  build-topic-archive:
+    name: build-topic-archive
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate retention
+        env:
+          RETENTION_DAYS: ${{ inputs['retention-days'] }}
+        run: |
+          if [[ ! "$RETENTION_DAYS" =~ ^[0-9]+$ ]] || ((RETENTION_DAYS < 1 || RETENTION_DAYS > 90)); then
+            echo "retention-days must be between 1 and 90" >&2
+            exit 1
+          fi
+
+      - name: Exercise archive and restore fixtures
+        run: bash scripts/archive/test-build-topic-archive.sh
+
+      - name: Build topic branch archive
+        id: archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          PR_NUMBER: ${{ inputs['pr-number'] }}
+        run: bash scripts/archive/build-topic-archive.sh
+
+      # actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.archive.outputs.artifact-name }}
+          path: ${{ steps.archive.outputs.artifact-path }}
+          retention-days: ${{ inputs['retention-days'] }}
+          if-no-files-found: error

@@ -1,0 +1,16 @@
+# Allow Dependabot to propose fixes for actionable security advisories while
+# disabling routine version-update pull requests. Security updates target the
+# repository's default branch and remain subject to human review.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
