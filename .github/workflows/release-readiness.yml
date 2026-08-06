@@ -28,8 +28,29 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # actions/checkout@v7.0.0
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      # Verify a manually selected tag with protected default-branch code before
+      # the tag is checked out or any of its scripts are executed.
+      # actions/checkout@v7.0.1
+      - name: Check out trusted release tag verifier
+        if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          path: .trusted-release-verifier
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Verify registered release tag signer
+        if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        working-directory: .trusted-release-verifier
+        run: bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"
+
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false

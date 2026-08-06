@@ -27,6 +27,10 @@ ci-test:
 ci:
     bash scripts/ci/check-merge-into-dev.sh
 
+# Exercises portable CI policy and helper fixtures without running hosted-only jobs.
+ci-fixtures:
+    bash scripts/ci/tests/run.sh
+
 # DOCS NAVIGATION
 # Displays a subtree with repo-aware path resolution for quick structure checks. Use `just tree -h` for usage.
 tree *args:

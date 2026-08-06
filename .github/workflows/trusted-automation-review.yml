@@ -45,10 +45,6 @@ jobs:
       startsWith(github.event.pull_request.base.ref, 'release/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    env:
-      # This repository is user-owned, so GitHub reports invited maintainers as
-      # COLLABORATOR. Keep trust narrower than that broad association.
-      TRUSTED_AUTOMATION_APPROVERS: markyjordan
 
     steps:
       - name: Resolve pull request context
@@ -57,6 +53,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           EVENT_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_PR_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
           EVENT_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ github.token }}
@@ -66,13 +63,14 @@ jobs:
           if [[ "$EVENT_NAME" == "issue_comment" ]]; then
             pr_number="$ISSUE_NUMBER"
             context="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}" \
-              --jq '[.base.ref, .base.sha, .head.sha] | @tsv')"
-            IFS=$'\t' read -r base_ref base_sha head_sha <<<"$context"
+              --jq '[.base.ref, .base.sha, .head.sha, .user.login] | @tsv')"
+            IFS=$'\t' read -r base_ref base_sha head_sha author_login <<<"$context"
           else
             pr_number="$EVENT_PR_NUMBER"
             base_ref="$EVENT_PR_BASE_REF"
             base_sha="$EVENT_PR_BASE_SHA"
             head_sha="$EVENT_PR_HEAD_SHA"
+            author_login="$EVENT_PR_AUTHOR_LOGIN"
           fi
 
           case "$base_ref" in
@@ -83,11 +81,11 @@ jobs:
               ;;
           esac
 
-          printf 'number=%s\nbase-sha=%s\nhead-sha=%s\n' \
-            "$pr_number" "$base_sha" "$head_sha" >>"$GITHUB_OUTPUT"
+          printf 'number=%s\nbase-sha=%s\nhead-sha=%s\nauthor-login=%s\n' \
+            "$pr_number" "$base_sha" "$head_sha" "$author_login" >>"$GITHUB_OUTPUT"
 
-      # actions/checkout@v7.0.0
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -108,7 +106,7 @@ jobs:
       # validator exists on dev, the protected base checkout above always wins.
       - name: Check out signed bootstrap validator
         if: steps.validator.outputs.root != '.'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 1
           path: .trusted-automation-bootstrap
@@ -118,7 +116,7 @@ jobs:
       # Promotion and release targets may predate the status reporter. Load that
       # helper from protected default-branch state, never from the PR head.
       - name: Check out trusted status reporter
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 1
           path: .trusted-automation-status
@@ -128,7 +126,7 @@ jobs:
       - name: Exercise exact-head status fixtures
         env:
           STATUS_ROOT: .trusted-automation-status
-        run: bash "$STATUS_ROOT/scripts/ci/test-report-trusted-automation-status.sh"
+        run: bash "$STATUS_ROOT/scripts/ci/tests/test-report-trusted-automation-status.sh"
 
       - name: Mark exact-head review pending
         env:
@@ -145,7 +143,7 @@ jobs:
         continue-on-error: true
         env:
           VALIDATOR_ROOT: ${{ steps.validator.outputs.root }}
-        run: bash "$VALIDATOR_ROOT/scripts/ci/test-trusted-automation-review.sh"
+        run: bash "$VALIDATOR_ROOT/scripts/ci/tests/test-trusted-automation-review.sh"
 
       - name: Validate trusted automation review
         id: review
@@ -154,6 +152,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ steps.pull-request.outputs.number }}
+          PR_AUTHOR_LOGIN: ${{ steps.pull-request.outputs.author-login }}
           PR_HEAD_SHA: ${{ steps.pull-request.outputs.head-sha }}
           VALIDATOR_ROOT: ${{ steps.validator.outputs.root }}
         run: bash "$VALIDATOR_ROOT/scripts/ci/validate-trusted-automation-review.sh"
