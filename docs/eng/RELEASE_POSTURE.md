@@ -146,11 +146,19 @@ the workspace version so their public bundle names rehearse the prospective
 stable contract. The reusable native builder keeps versionless intermediate
 names; final assembly assigns the versioned GitHub asset names.
 
+The leading `v` belongs to the Git tag, not the asset filename. Keep the target
+triple and real archive extension: `gitserious-v0.1.0-tar.gz` is rejected as a
+public contract because it does not identify a platform and does not use a real
+`.tar.gz` suffix. Do not add feature-profile suffixes unless the project
+intentionally begins supporting multiple public binary variants.
+
 Each archive has a sibling `<archive>.sha256`. The final bundle also includes
 `SHA256SUMS`, `release-manifest.json`, `release-notes.md`, `CHANGELOG.md`,
-`package-files.txt`, and `gitserious-X.Y.Z-source.tar.gz`. The manifest binds the
-tag, source commit, workspace version, locked Rust toolchain, exact target list,
-filenames, and SHA256 digests.
+`package-files.txt`, and a versioned source archive. Stable source uses
+`gitserious-X.Y.Z-source.tar.gz`; an RC uses
+`gitserious-X.Y.Z-rcN-source.tar.gz`. The archive root has the same versioned
+name. The manifest binds the tag, source commit, workspace version, locked Rust
+toolchain, exact target list, filenames, and SHA256 digests.
 
 After assembly, the workflow writes a release authorization summary containing
 the requested ref, tag and release-branch commit, classification, version,
@@ -172,6 +180,67 @@ Stable crate publication order is `gitserious-app`, `gitserious-cli`,
 `gitserious-core`, `gitserious-fs`, then `gitserious`. A retry skips an already
 indexed crate only after its crates.io archive checksum is shown to match the
 locally packaged crate.
+
+## Changelog and Release Notes
+
+`CHANGELOG.md` is manually curated and is the canonical user-facing release
+history. The pipeline does not generate changelog prose from commits or pull
+requests. During bundle assembly, it mechanically extracts the exact
+`## [X.Y.Z]` section into `release-notes.md`; GitHub publication uses that file
+without generating a competing set of notes.
+
+Use the following policy:
+
+- Record notable user-facing work under `Unreleased`; internal refactors and
+  mechanical CI-only changes need entries only when they affect users or
+  operators.
+- Group entries as applicable under `Added`, `Changed`, `Deprecated`,
+  `Removed`, `Fixed`, and `Security`.
+- During version preparation, move the applicable entries into
+  `## [X.Y.Z] - TBD` and leave `Unreleased` ready for subsequent development.
+- An exploratory RC may retain `TBD`. Before an RC can be treated as the exact
+  accepted stable commit, replace it with the intended ISO `YYYY-MM-DD` date.
+  Direct stable publication also requires that finalized date.
+- Any changelog, release-note, license, package metadata, or other bundled input
+  change after an accepted RC means the previous RC no longer represents the
+  stable bits. Use another RC if retaining RC validation matters.
+- A patch gets its own `X.Y.(Z+1)` section. If a version is yanked, preserve its
+  history and mark its disposition rather than deleting the entry.
+
+GitHub-generated release notes may later provide a contributor appendix, but
+they do not replace the curated changelog or the extracted `release-notes.md`.
+
+## Feature Flag Policy
+
+Gitserious currently defines no Cargo features and no runtime feature flags.
+Do not introduce flags speculatively: every flag creates another behavioral or
+build configuration that must be owned, tested, documented, and eventually
+graduated or removed.
+
+| Mechanism | Use it for | Release posture |
+| --- | --- | --- |
+| Cargo feature | Optional dependency or compile-time capability | Additive where possible; one documented canonical feature set builds the public binaries |
+| Runtime flag | Experimental user-visible behavior in the same binary | Off by default, locally opted in through a command/config/environment setting, with a safe fallback |
+| RC | Testing an entire prospective release | Optional public distribution channel, not a feature flag and not percentage rollout |
+
+The current Rust quality lane exercises `--all-features`, while native release
+jobs build the default feature set. Before adding the first Cargo feature:
+
+1. Record its purpose, default, owner, compatibility promise, and graduation or
+   removal condition.
+2. Define it at the public package boundary and propagate only the required
+   dependency features.
+3. Test the default, no-default, all-feature, and canonical release
+   configurations in proportion to the supported combinations.
+4. Pass the canonical set explicitly to the native builder and record it in
+   `release-manifest.json` so a published digest is tied to its build features.
+5. Keep GitHub and Homebrew on that one canonical build. Additional public
+   feature variants require a separately designed naming and support contract.
+
+Prefer runtime gating for experimental commands that should be available in the
+ordinary binary. Such behavior must be visibly experimental, disabled by
+default, testable both on and off, and recorded in the changelog. Remote or
+percentage-based rollout infrastructure is not justified for this local CLI.
 
 ## Homebrew Handoff
 
@@ -481,6 +550,9 @@ one tap PR. After its manual merge, test both a clean
 
 ## References
 
+- [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
+- [Cargo feature reference](https://doc.rust-lang.org/cargo/reference/features.html)
+- [GitHub generated release notes](https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes)
 - [GitHub artifact attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations)
 - [GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)
 - [Homebrew tap maintenance](https://docs.brew.sh/How-to-Create-and-Maintain-a-Tap)
