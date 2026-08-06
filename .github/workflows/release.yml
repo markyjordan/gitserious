@@ -45,9 +45,9 @@ jobs:
       RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
     steps:
-      # actions/checkout@v7.0.0
+      # actions/checkout@v7.0.1
       - name: Check out trusted release request policy
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -71,8 +71,8 @@ jobs:
     timeout-minutes: 40
 
     steps:
-      # actions/checkout@v7.0.0
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -112,8 +112,8 @@ jobs:
       RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
 
     steps:
-      # actions/checkout@v7.0.0
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -174,8 +174,8 @@ jobs:
       RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
 
     steps:
-      # actions/checkout@v7.0.0
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -196,9 +196,9 @@ jobs:
           ARTIFACT_DIR: target/release-artifacts
         run: bash scripts/release/verify-release-bundle.sh
 
-      # actions/attest@v4
+      # actions/attest@v4.2.2
       - name: Attest release artifacts
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
           subject-path: |
             target/release-artifacts/${{ steps.verify-release-candidate.outputs.linux_x86_64_archive }}
@@ -234,8 +234,8 @@ jobs:
       RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
 
     steps:
-      # actions/checkout@v7.0.0
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -259,9 +259,9 @@ jobs:
           ARTIFACT_DIR: target/release-artifacts
         run: bash scripts/release/verify-release-bundle.sh
 
-      # actions/attest@v4
+      # actions/attest@v4.2.2
       - name: Attest release artifacts
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
           subject-path: |
             target/release-artifacts/${{ steps.verify-stable.outputs.linux_x86_64_archive }}

@@ -27,7 +27,7 @@ for target in \
   grep -F "target: ${target}" "$builder_workflow" >/dev/null
 done
 
-grep -F 'actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d' \
+grep -F 'actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6' \
   "$release_workflow" >/dev/null
 grep -F 'target/release-artifacts/release-manifest.json' "$release_workflow" >/dev/null
 grep -F 'run: bash scripts/release/write-release-summary.sh' "$release_workflow" >/dev/null
