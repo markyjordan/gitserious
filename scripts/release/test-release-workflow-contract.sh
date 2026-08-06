@@ -5,6 +5,7 @@ repo_root="$(git rev-parse --show-toplevel)"
 release_workflow="$repo_root/.github/workflows/release.yml"
 builder_workflow="$repo_root/.github/workflows/build-release-binaries.yml"
 prepare_workflow="$repo_root/.github/workflows/prepare-release.yml"
+homebrew_workflow="$repo_root/.github/workflows/update-homebrew-tap.yml"
 
 grep -F 'environment: release-branch-management' "$prepare_workflow" >/dev/null
 if grep -F 'environment: release-management' "$prepare_workflow" >/dev/null; then
@@ -67,6 +68,10 @@ grep -F 'uses: ./.github/workflows/update-homebrew-tap.yml' "$release_workflow" 
 homebrew_job="$(sed -n '/^  update-homebrew-tap:/,$p' "$release_workflow")"
 printf '%s\n' "$homebrew_job" | grep -F 'attestations: read' >/dev/null
 printf '%s\n' "$homebrew_job" | grep -F 'contents: read' >/dev/null
+grep -F 'bash scripts/release/validate-homebrew-release.sh' "$homebrew_workflow" >/dev/null
+grep -F -- '--json isDraft,isPrerelease,tagName,url' "$homebrew_workflow" >/dev/null
+grep -F 'repos/${SOURCE_REPOSITORY}/commits/${RELEASE_TAG}' \
+  "$homebrew_workflow" >/dev/null
 
 if rg -n -- '--clobber|gh release upload' \
   "$repo_root/scripts/release/publish-release-candidate.sh" \
