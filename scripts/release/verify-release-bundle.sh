@@ -184,12 +184,12 @@ try:
 except (TypeError, ValueError):
     fail("release-manifest.json contains an invalid created_at timestamp")
 
-source_archive = f"gitserious-{version}-source.tar.gz"
+source_archive = f"gitserious-{artifact_version}-source.tar.gz"
 source_record = manifest["source_archive"]
 if not isinstance(source_record, dict) or set(source_record) != {"filename", "sha256"}:
     fail("release-manifest.json contains an invalid source_archive record")
 if source_record["filename"] != source_archive:
-    fail("release-manifest.json source archive filename does not match the workspace version")
+    fail("release-manifest.json source archive filename does not match the artifact version")
 if not isinstance(source_record["sha256"], str) or not digest_pattern.fullmatch(
     source_record["sha256"]
 ):
@@ -273,7 +273,7 @@ for position, (target, filename) in enumerate(target_contract):
 if source_record["sha256"] != checksum_records[source_archive]:
     fail("release-manifest.json source archive digest does not match SHA256SUMS")
 
-source_prefix = f"gitserious-{version}/"
+source_prefix = f"gitserious-{artifact_version}/"
 with tarfile.open(root / source_archive, "r:gz") as archive:
     source_members = archive.getmembers()
     if not source_members:

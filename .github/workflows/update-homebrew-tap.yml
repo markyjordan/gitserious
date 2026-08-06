@@ -60,6 +60,21 @@ jobs:
           gh release download "$RELEASE_TAG" --repo "$SOURCE_REPOSITORY" \
             --dir target/homebrew-release-assets
 
+      - name: Verify stable GitHub Release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_metadata="${RUNNER_TEMP}/gitserious-release-metadata.json"
+          gh release view "$RELEASE_TAG" --repo "$SOURCE_REPOSITORY" \
+            --json isDraft,isPrerelease,tagName,url >"$release_metadata"
+          tag_commit="$(
+            gh api "repos/${SOURCE_REPOSITORY}/commits/${RELEASE_TAG}" --jq .sha
+          )"
+          RELEASE_METADATA_FILE="$release_metadata" \
+            MANIFEST_FILE=target/homebrew-release-assets/release-manifest.json \
+            TAG_COMMIT="$tag_commit" \
+            bash scripts/release/validate-homebrew-release.sh
+
       - name: Verify GitHub provenance
         env:
           GH_TOKEN: ${{ github.token }}

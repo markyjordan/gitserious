@@ -89,8 +89,12 @@ for target in "${targets[@]}"; do
   [[ -f "$artifact_dir/gitserious-0.1.0-rc1-${target}" ]] || exit 1
   [[ -f "$artifact_dir/gitserious-0.1.0-rc1-${target}.sha256" ]] || exit 1
 done
+[[ -f "$artifact_dir/gitserious-0.1.0-rc1-source.tar.gz" ]] || exit 1
+[[ ! -e "$artifact_dir/gitserious-0.1.0-source.tar.gz" ]] || exit 1
 [[ "$(jq -r '.targets[0].filename' "$artifact_dir/release-manifest.json")" == \
   gitserious-0.1.0-rc1-x86_64-unknown-linux-gnu.tar.gz ]] || exit 1
+[[ "$(jq -r '.source_archive.filename' "$artifact_dir/release-manifest.json")" == \
+  gitserious-0.1.0-rc1-source.tar.gz ]] || exit 1
 
 printf '%s\n' corrupt >>"$binary_dir/gitserious-x86_64-unknown-linux-gnu.tar.gz"
 if (
