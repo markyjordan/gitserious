@@ -68,6 +68,20 @@ jobs:
       - name: Exercise release policy fixtures
         run: bash scripts/ci/run-automation-quality.sh release-policy-fixtures
 
+  ci-script-fixtures:
+    name: ci-script-fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Exercise CI script fixtures
+        run: bash scripts/ci/tests/run.sh
+
   zizmor:
     name: zizmor
     runs-on: ubuntu-24.04
@@ -102,6 +116,7 @@ jobs:
       - actionlint
       - shellcheck
       - release-policy-fixtures
+      - ci-script-fixtures
       - zizmor
     runs-on: ubuntu-24.04
     timeout-minutes: 5

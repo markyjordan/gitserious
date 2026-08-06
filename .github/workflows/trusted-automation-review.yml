@@ -128,7 +128,7 @@ jobs:
       - name: Exercise exact-head status fixtures
         env:
           STATUS_ROOT: .trusted-automation-status
-        run: bash "$STATUS_ROOT/scripts/ci/test-report-trusted-automation-status.sh"
+        run: bash "$STATUS_ROOT/scripts/ci/tests/test-report-trusted-automation-status.sh"
 
       - name: Mark exact-head review pending
         env:
@@ -145,7 +145,7 @@ jobs:
         continue-on-error: true
         env:
           VALIDATOR_ROOT: ${{ steps.validator.outputs.root }}
-        run: bash "$VALIDATOR_ROOT/scripts/ci/test-trusted-automation-review.sh"
+        run: bash "$VALIDATOR_ROOT/scripts/ci/tests/test-trusted-automation-review.sh"
 
       - name: Validate trusted automation review
         id: review

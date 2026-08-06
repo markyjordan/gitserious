@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
 
       - name: Exercise accepted and rejected topology fixtures
-        run: bash scripts/ci/test-validate-ref-policy.sh
+        run: bash scripts/ci/tests/test-validate-ref-policy.sh
 
       - name: Validate branch topology
         env:
