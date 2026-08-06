@@ -247,7 +247,8 @@ percentage-based rollout infrastructure is not justified for this local CLI.
 ```mermaid
 flowchart LR
   GH["stable immutable GitHub Release"] --> Handoff["update-homebrew-tap.yml"]
-  Handoff --> Verify["download manifest; verify SHA256 + GitHub provenance"]
+  Handoff --> Identity["reject draft/prerelease; bind tag commit to manifest"]
+  Identity --> Verify["verify SHA256 + GitHub provenance"]
   Verify --> Render["render Formula/gitserious.rb from exact release URLs and digests"]
   Render --> Branch["automation/gitserious-vX.Y.Z"]
   Branch --> PR["create or update tap PR; never push tap main"]
@@ -269,6 +270,13 @@ both reusable and manually dispatchable. Stable publication calls it after the
 GitHub Release exists; manual dispatch retries only this handoff. RCs cannot
 enter the workflow.
 
+Before accessing the tap token, the handoff queries the source release and
+rejects drafts, prereleases, mismatched tags, non-publish manifests, unexpected
+release URLs, and any stable tag commit that differs from the manifest source
+commit. It then verifies GitHub provenance and each published archive digest.
+The cross-repository credential is exposed only after those source-identity
+checks pass.
+
 The updater maps Apple Silicon, Intel macOS, and Intel Linux to their published
 archives. Windows remains a direct-download platform. It is idempotent:
 
@@ -281,6 +289,18 @@ The source release is complete when crates.io and GitHub publication succeed.
 Homebrew distribution is complete only after the generated PR passes all three
 native tap jobs and the maintainer manually merges it. Formula repair happens in
 another tap PR and never changes the immutable GitHub Release.
+
+Tap CI uses SHA-pinned Actions, rejects placeholder digests, runs `brew style`,
+performs `brew audit --strict --online`, installs the exact published binary,
+runs `brew test`, and directly executes the installed program on Apple Silicon,
+Intel macOS, and Linux x64. Once gitserious has a stable functional command, the
+formula `test do` block must exercise that behavior and assert meaningful output;
+an exit-only placeholder or `--version` check is not the long-term acceptance
+test.
+
+The fine-grained tap token is acceptable for the first release. A later
+hardening step may replace it with a short-lived GitHub App installation token;
+that migration is not a v0.1 publication gate.
 
 ## Operator Procedure
 
@@ -492,9 +512,10 @@ only in `homebrew-tap-release`. The source repository also needs an active `v*`
 tag ruleset that permits creation and prohibits update or deletion.
 
 For the first release, the hosted policies are deliberately exact:
-`v0.1.0-rc*` for candidates and `v0.1.0` for stable crates/Homebrew jobs. Advance
-those policies to the next intended version as part of opening a new release
-line; do not use a broad stable glob that also matches RC suffixes.
+`v0.1.0-rc*` for optional candidates and `v0.1.0` for stable crates/Homebrew
+jobs. Before every later target version—including a patch on the existing
+release line—advance those policies to the exact candidate series and stable
+tag. Do not use a broad stable glob that also matches RC suffixes.
 
 Use the existing protected crates.io token for the first publication because
 the four component crate identities do not yet exist. After all five packages
@@ -506,9 +527,15 @@ control only to releases created after enablement, so it must remain active for
 every RC and stable publication.
 
 Tap `main` is PR-only with squash merges, required aggregate `formula-ci`,
-conversation resolution, update/deletion protection, and zero required
-approvals. Manual merge is still the solo-maintainer publication decision.
-Automatically delete the version branch after merge.
+strict up-to-date status enforcement, conversation resolution, update/deletion
+protection, and zero required approvals. Manual merge is still the
+solo-maintainer publication decision. Automatically delete the version branch
+after merge.
+
+Both repositories require full commit SHA references for Actions. Source
+workflows allow GitHub-owned Actions plus the explicitly selected
+`zizmorcore/zizmor-action`; the tap allows GitHub-owned Actions plus
+`Homebrew/actions/setup-homebrew`. Local reusable workflows remain allowed.
 
 ## Current State Recorded 2026-08-05
 
@@ -516,10 +543,11 @@ Automatically delete the version branch after merge.
 | --- | --- | --- |
 | Source branch protection | Active rulesets protect `dev`, `main`, and `release/*`. Promotion CI runs all four native builders; `main` and `release/*` also require release readiness. | None for branch promotion. |
 | Source release controls | Four reviewed environments have exact branch/tag policies. `release-candidate` accepts only `v0.1.0-rc*`; the active `release-tags` ruleset permits `v*` creation and rejects updates and deletions. The repository immutable-Releases endpoint reports `enabled: true`. | Preserve these controls through the first candidate or direct stable publication. |
+| Actions trust | Source and tap Actions are constrained to full commit SHA references and selected GitHub, zizmor, and Homebrew action owners. Workflow permissions default to read-only. | Review and deliberately admit any new third-party Action before use. |
 | Release rehearsal | [Run 31073157623](https://github.com/markyjordan/gitserious/actions/runs/31073157623) succeeded from promoted `main` commit `e76b7eb0201811d4570001c2adbd2ca422945a10`: request validation, release readiness, all four native builds and executions, aggregate `native-four`, versioned bundle assembly, exact-layout verification, and local Intel-macOS execution passed. Every publication job skipped. The run produced only Actions artifacts, and all individual and aggregate checksums verified. | No immediate release action. Repeat from `release/0.1` only after the v0.1 product scope is ready for stabilization and that branch is intentionally cut. |
 | GitHub distribution | No source tags, Releases, or published release assets exist. Candidate, crates.io, and Homebrew publication deployments remain absent. Cancelled Prepare Release run [30870110509](https://github.com/markyjordan/gitserious/actions/runs/30870110509) left one `release-branch-management` audit record but executed no steps and created no branch. | Continue normal product development. When v0.1 is feature-ready, cut `release/0.1` and choose an optional RC or direct stable path; this posture does not imply a release date. |
 | crates.io | `gitserious 0.0.0` exists; `gitserious-app`, `gitserious-cli`, `gitserious-core`, and `gitserious-fs` do not. `crates-io-release` has no secret. | Load the protected first-publication token before stable; migrate later versions to Trusted Publishing. |
-| Homebrew tap | Tap PR [#1](https://github.com/markyjordan/homebrew-tap/pull/1) is merged. Three-platform `formula-ci` passes on tap `main`, its ruleset is active, and no formula exists before the first stable release. `homebrew-tap-release` has no secret. | Load the tap-only token before stable; the stable handoff opens the first formula PR. |
+| Homebrew tap | Tap PR [#1](https://github.com/markyjordan/homebrew-tap/pull/1) is merged. Three-platform `formula-ci` is required and must be up to date with tap `main`; its ruleset has no bypass. No formula exists before the first stable release. `homebrew-tap-release` has no secret. | Load the tap-only token before stable. Replace the exit-only formula test with a meaningful functional assertion once the product exposes stable behavior. |
 
 ## Rollout and Acceptance
 
@@ -555,5 +583,7 @@ one tap PR. After its manual merge, test both a clean
 - [GitHub generated release notes](https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes)
 - [GitHub artifact attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations)
 - [GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)
+- [GitHub Actions policy controls](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/disabling-or-limiting-github-actions-for-a-repository)
 - [Homebrew tap maintenance](https://docs.brew.sh/How-to-Create-and-Maintain-a-Tap)
+- [Homebrew Formula Cookbook](https://docs.brew.sh/Formula-Cookbook)
 - [crates.io Trusted Publishing](https://blog.rust-lang.org/2025/07/11/crates-io-development-update-2025-07/)
