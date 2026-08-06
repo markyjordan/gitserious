@@ -363,12 +363,14 @@ Automatically delete the version branch after merge.
 
 ## Rollout and Acceptance
 
-Before the first candidate:
+When the v0.1 product scope is feature-ready and stabilization begins, complete
+these gates before the first candidate. They are not a signal to cut a release
+branch during ongoing product development:
 
 1. Run every release/archive/CI fixture plus ShellCheck, actionlint, zizmor, and
    Rust check/fmt/lint/test/release checks.
-2. Merge the remaining source hardening through `dev`, then promote it to
-   `main` with a regular merge commit.
+2. Merge the release-ready product and any remaining source hardening through
+   `dev`, then promote that exact state to `main` with a regular merge commit.
 3. Confirm the immutable-Releases endpoint still reports `enabled: true`.
 4. Cut `release/0.1` from green `main` and repeat the token-free dry run there.
 
