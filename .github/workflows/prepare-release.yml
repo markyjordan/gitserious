@@ -34,7 +34,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
 
       - name: Exercise release preparation request fixtures
-        run: bash scripts/release/test-validate-prepare-release-request.sh
+        run: bash scripts/release/tests/test-validate-prepare-release-request.sh
 
       - name: Validate release preparation request
         id: request
@@ -56,7 +56,7 @@ jobs:
           ref: ${{ steps.request.outputs.base_ref }}
 
       - name: Exercise release-branch preparation fixtures
-        run: bash scripts/release/test-prepare-release.sh
+        run: bash scripts/release/tests/test-prepare-release.sh
 
       - name: Cut release branch
         env:

@@ -110,8 +110,8 @@ jobs:
 
       - name: Exercise formula and handoff fixtures
         run: |
-          bash scripts/release/test-render-homebrew-formula.sh
-          bash scripts/release/test-update-homebrew-tap.sh
+          bash scripts/release/tests/test-render-homebrew-formula.sh
+          bash scripts/release/tests/test-update-homebrew-tap.sh
 
       - name: Create or update versioned tap pull request
         env:
