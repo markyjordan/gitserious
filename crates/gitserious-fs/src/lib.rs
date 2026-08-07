@@ -1,11 +1,15 @@
-//! Filesystem paths and local-storage adapters for gitserious.
+//! Filesystem paths, Git worktree discovery, and local-storage adapters for gitserious.
 
 mod directory;
+mod git;
 mod global;
 mod platform;
+mod project;
 
 pub use directory::LocalDirectoryCreator;
+pub use git::{GitRepositoryError, GitRepositoryLocator};
 pub use global::{GlobalPathError, SystemGlobalPathResolver};
+pub use project::{ProjectArtifact, ProjectStateError, TomlProjectStateStore};
 
 #[cfg(test)]
 #[path = "../tests/unit/mod.rs"]

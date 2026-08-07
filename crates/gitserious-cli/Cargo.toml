@@ -9,5 +9,9 @@ license = { workspace = true }
 readme = "README.md"
 repository = { workspace = true }
 
+[dependencies]
+clap = { workspace = true }
+gitserious-app = { workspace = true }
+
 [lints]
 workspace = true
