@@ -4,10 +4,22 @@ version = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
 authors = { workspace = true }
-description = "Placeholder filesystem crate for gitserious."
+description = "Filesystem paths and local-storage adapters for gitserious."
 license = { workspace = true }
 readme = "README.md"
 repository = { workspace = true }
 
+[dependencies]
+gitserious-app = { workspace = true }
+gitserious-core = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+directories = { workspace = true }

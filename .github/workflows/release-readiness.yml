@@ -57,7 +57,7 @@ jobs:
           ref: ${{ inputs.tag || github.ref }}
 
       - name: Exercise release validation fixtures
-        run: bash scripts/release/test-check-release.sh
+        run: bash scripts/release/tests/test-check-release.sh
 
       - name: Validate promotion readiness without rerunning quality
         if: github.event_name == 'pull_request'

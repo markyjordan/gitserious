@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 validator="$script_dir/check-release.sh"
 validation_only="$script_dir/validate-release-readiness.sh"
 fixture_dir="$(mktemp -d)"
