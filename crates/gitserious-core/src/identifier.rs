@@ -24,7 +24,7 @@ pub enum IdentifierErrorKind {
     TrailingHyphen,
 }
 
-/// An invalid commit-type, property, or condition identifier.
+/// An invalid commit-type, template, property, or condition identifier.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IdentifierError {
     value: Box<str>,
@@ -191,6 +191,10 @@ macro_rules! define_identifier {
 define_identifier!(
     CommitTypeId,
     "An open, validated identifier for a commit type."
+);
+define_identifier!(
+    TemplateId,
+    "An open, validated identifier for a commit-message template."
 );
 define_identifier!(
     PropertyKey,
