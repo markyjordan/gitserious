@@ -6,6 +6,34 @@ release_workflow="$repo_root/.github/workflows/release.yml"
 builder_workflow="$repo_root/.github/workflows/build-release-binaries.yml"
 prepare_workflow="$repo_root/.github/workflows/prepare-release.yml"
 homebrew_workflow="$repo_root/.github/workflows/update-homebrew-tap.yml"
+automation_runner="$repo_root/scripts/ci/run-automation-quality.sh"
+
+grep -F 'bash scripts/release/tests/run.sh' "$automation_runner" >/dev/null
+if rg -n 'scripts/release/test-[^/[:space:]]+\.sh' \
+  "$repo_root/.github/workflows" "$automation_runner" >/dev/null; then
+  echo "Release tests must be invoked from scripts/release/tests/." >&2
+  exit 1
+fi
+
+for fixture_reference in \
+  'scripts/release/tests/test-validate-prepare-release-request.sh' \
+  'scripts/release/tests/test-prepare-release.sh'; do
+  grep -F "$fixture_reference" "$prepare_workflow" >/dev/null
+done
+grep -F 'scripts/release/tests/test-check-release.sh' \
+  "$repo_root/.github/workflows/release-readiness.yml" >/dev/null
+for fixture_reference in \
+  'scripts/release/tests/test-validate-release-request.sh' \
+  'scripts/release/tests/test-build-artifacts.sh' \
+  'scripts/release/tests/test-publish-release-candidate.sh' \
+  'scripts/release/tests/test-publish-stable.sh'; do
+  grep -F "$fixture_reference" "$release_workflow" >/dev/null
+done
+for fixture_reference in \
+  'scripts/release/tests/test-render-homebrew-formula.sh' \
+  'scripts/release/tests/test-update-homebrew-tap.sh'; do
+  grep -F "$fixture_reference" "$homebrew_workflow" >/dev/null
+done
 
 grep -F 'environment: release-branch-management' "$prepare_workflow" >/dev/null
 if grep -F 'environment: release-management' "$prepare_workflow" >/dev/null; then

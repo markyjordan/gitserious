@@ -54,7 +54,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
 
       - name: Exercise release request fixtures
-        run: bash scripts/release/test-validate-release-request.sh
+        run: bash scripts/release/tests/test-validate-release-request.sh
 
       - name: Validate release request
         id: release
@@ -138,7 +138,7 @@ jobs:
           merge-multiple: true
 
       - name: Exercise bundle assembly fixtures
-        run: bash scripts/release/test-build-artifacts.sh
+        run: bash scripts/release/tests/test-build-artifacts.sh
 
       - name: Assemble final release bundle
         env:
@@ -198,7 +198,7 @@ jobs:
           path: target/release-artifacts
 
       - name: Exercise release-candidate publication fixtures
-        run: bash scripts/release/test-publish-release-candidate.sh
+        run: bash scripts/release/tests/test-publish-release-candidate.sh
 
       - name: Verify release-candidate bundle
         id: verify-release-candidate
@@ -261,7 +261,7 @@ jobs:
           path: target/release-artifacts
 
       - name: Exercise stable publication fixtures
-        run: bash scripts/release/test-publish-stable.sh
+        run: bash scripts/release/tests/test-publish-stable.sh
 
       - name: Verify stable release bundle
         id: verify-stable
