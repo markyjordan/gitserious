@@ -10,6 +10,11 @@ default:
 bootstrap:
     bash scripts/dev/justfile/bootstrap.sh
 
+# LOCAL DEVELOPMENT
+# Builds the workspace with Cargo's debug profile for local testing.
+build:
+    cargo build --locked --workspace
+
 # LOCAL CI
 # Runs the same language-neutral quality categories used by hosted CI.
 ci-check:
