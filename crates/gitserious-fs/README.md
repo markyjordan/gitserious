@@ -5,9 +5,9 @@ This crate is an internal component of `gitserious`.
 The Rust API exposed here is unstable and may have breaking changes in any
 release. The supported public interface is the `gitserious` command-line tool.
 
-This crate owns filesystem adapters. Global user storage follows XDG Base
-Directory conventions on Unix-family targets and native AppData conventions on
-Windows.
+This crate implements the application-owned global path-resolution and
+directory-creation ports. Global user storage follows XDG Base Directory
+conventions on Unix-family targets and native AppData conventions on Windows.
 
 | Purpose | Unix-family targets | Native Windows |
 | --- | --- | --- |

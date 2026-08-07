@@ -4,5 +4,5 @@ mod directory;
 mod global;
 mod platform;
 
-pub use directory::{StorageDirectory, ensure_directory};
-pub use global::{GlobalPathError, GlobalPaths};
+pub use directory::LocalDirectoryCreator;
+pub use global::{GlobalPathError, SystemGlobalPathResolver};

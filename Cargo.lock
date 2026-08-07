@@ -70,6 +70,7 @@ name = "gitserious-fs"
 version = "0.1.0"
 dependencies = [
  "directories",
+ "gitserious-app",
 ]
 
 [[package]]

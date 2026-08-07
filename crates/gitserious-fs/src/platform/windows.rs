@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use crate::{GlobalPathError, GlobalPaths};
+use gitserious_app::GlobalPaths;
+
+use crate::GlobalPathError;
 
 const APPLICATION_DIRECTORY: &str = "gitserious";
 

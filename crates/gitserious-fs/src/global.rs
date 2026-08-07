@@ -2,66 +2,17 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::PathBuf;
 
-use crate::StorageDirectory;
+use gitserious_app::{GlobalPathResolver, GlobalPaths};
 
-/// Resolved user-scoped storage directories for gitserious.
-///
-/// Values are owned snapshots. Resolving paths performs no filesystem I/O and
-/// never creates directories.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GlobalPaths {
-    config: StorageDirectory,
-    data: StorageDirectory,
-    state: StorageDirectory,
-    cache: StorageDirectory,
-}
+/// System-environment adapter for resolving global storage paths.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SystemGlobalPathResolver;
 
-impl GlobalPaths {
-    /// Resolves global storage paths for the current operating system.
-    ///
-    /// Unix-family targets use XDG Base Directory environment variables and
-    /// HOME-based fallbacks. Native Windows targets use Roaming and Local
-    /// `AppData` Known Folders.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GlobalPathError`] when the platform cannot provide an
-    /// absolute base directory required by its storage convention.
-    pub fn resolve() -> Result<Self, GlobalPathError> {
+impl GlobalPathResolver for SystemGlobalPathResolver {
+    type Error = GlobalPathError;
+
+    fn resolve(&self) -> Result<GlobalPaths, Self::Error> {
         crate::platform::resolve()
-    }
-
-    pub(crate) fn new(config: PathBuf, data: PathBuf, state: PathBuf, cache: PathBuf) -> Self {
-        Self {
-            config: StorageDirectory::new(config),
-            data: StorageDirectory::new(data),
-            state: StorageDirectory::new(state),
-            cache: StorageDirectory::new(cache),
-        }
-    }
-
-    /// Returns the user-authored configuration directory.
-    #[must_use]
-    pub const fn config(&self) -> &StorageDirectory {
-        &self.config
-    }
-
-    /// Returns the durable, portable application-data directory.
-    #[must_use]
-    pub const fn data(&self) -> &StorageDirectory {
-        &self.data
-    }
-
-    /// Returns the durable, machine-local application-state directory.
-    #[must_use]
-    pub const fn state(&self) -> &StorageDirectory {
-        &self.state
-    }
-
-    /// Returns the disposable derived-data directory.
-    #[must_use]
-    pub const fn cache(&self) -> &StorageDirectory {
-        &self.cache
     }
 }
 
