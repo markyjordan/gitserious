@@ -21,6 +21,7 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 clap = { version = "4.6.6", features = ["derive"] }
+directories = "6.0.0"
 gitserious-app = { path = "crates/gitserious-app", version = "0.1.0" }
 gitserious-cli = { path = "crates/gitserious-cli", version = "0.1.0" }
 gitserious-core = { path = "crates/gitserious-core", version = "0.1.0" }
