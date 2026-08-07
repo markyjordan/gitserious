@@ -18,3 +18,5 @@ gitserious-cli = { workspace = true }
 gitserious-core = { workspace = true }
 gitserious-fs = { workspace = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
