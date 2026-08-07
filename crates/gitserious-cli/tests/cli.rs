@@ -31,7 +31,7 @@ impl RepositoryLocator for FakeLocator {
         if self.error {
             Err(FakeError)
         } else {
-            RepositoryRoot::new(PathBuf::from("/repo")).map_err(|_| FakeError)
+            RepositoryRoot::new(repository_path()).map_err(|_| FakeError)
         }
     }
 }
@@ -73,13 +73,17 @@ impl ProjectStateStore for RecordingStore {
     }
 }
 
+fn repository_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fake-repository")
+}
+
 fn run(arguments: &[&str], locator: &FakeLocator) -> (ExitCode, String, String, RecordingStore) {
     let store = RecordingStore::default();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let exit = run_from(
         arguments.iter().copied(),
-        Path::new("/repo/subdir"),
+        &repository_path().join("subdir"),
         locator,
         &store,
         &mut stdout,
@@ -100,7 +104,10 @@ fn init_dispatches_and_reports_the_exact_resolution() {
     assert_eq!(exit, ExitCode::SUCCESS);
     assert_eq!(
         stdout,
-        "Initialized gitserious in /repo/.gitserious (default -> conventional@1).\n"
+        format!(
+            "Initialized gitserious in {} (default -> conventional@1).\n",
+            repository_path().join(".gitserious").display()
+        )
     );
     assert!(stderr.is_empty());
     let initialized = store.initialized.borrow();

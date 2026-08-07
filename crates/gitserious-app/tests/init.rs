@@ -40,7 +40,7 @@ struct FakeLocator {
 impl FakeLocator {
     fn available() -> Result<Self, Box<dyn Error>> {
         Ok(Self {
-            result: Ok(RepositoryRoot::new(PathBuf::from("/repo"))?),
+            result: Ok(RepositoryRoot::new(repository_path())?),
             calls: Cell::new(0),
         })
     }
@@ -149,6 +149,10 @@ fn default_config_and_lock() -> Result<(ProjectConfig, ProjectLock), Box<dyn Err
     Ok((config, lock))
 }
 
+fn repository_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fake-repository")
+}
+
 fn stale_lock(current: &ProjectLock) -> Result<ProjectLock, Box<dyn Error>> {
     let fingerprint = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
         .parse::<Fingerprint>()?;
@@ -162,7 +166,7 @@ fn stale_lock(current: &ProjectLock) -> Result<ProjectLock, Box<dyn Error>> {
 
 fn assert_resolution(status: InitStatus, outcome: &gitserious_app::InitOutcome) {
     assert_eq!(outcome.status(), status);
-    assert_eq!(outcome.root().as_path(), Path::new("/repo"));
+    assert_eq!(outcome.root().as_path(), repository_path());
     assert_eq!(outcome.template_reference().as_str(), "default");
     assert_eq!(outcome.resolved_template().as_str(), "conventional");
     assert_eq!(outcome.resolved_version(), TemplateVersion::V1);
@@ -174,7 +178,7 @@ fn absent_state_creates_config_and_lock_once() -> Result<(), Box<dyn Error>> {
     let store = FakeStore::new(ProjectState::Absent);
     let (expected_config, expected_lock) = default_config_and_lock()?;
 
-    let outcome = initialize_project(&locator, &store, Path::new("/repo/subdir"))?;
+    let outcome = initialize_project(&locator, &store, &repository_path().join("subdir"))?;
 
     assert_resolution(InitStatus::Initialized, &outcome);
     assert_eq!(locator.calls.get(), 1);
@@ -194,7 +198,7 @@ fn config_only_state_creates_only_the_missing_lock() -> Result<(), Box<dyn Error
     let (config, expected_lock) = default_config_and_lock()?;
     let store = FakeStore::new(ProjectState::ConfigOnly(config));
 
-    let outcome = initialize_project(&locator, &store, Path::new("/repo"))?;
+    let outcome = initialize_project(&locator, &store, &repository_path())?;
 
     assert_resolution(InitStatus::LockCreated, &outcome);
     assert_eq!(
@@ -210,7 +214,7 @@ fn matching_initialized_state_performs_no_write() -> Result<(), Box<dyn Error>> 
     let (config, lock) = default_config_and_lock()?;
     let store = FakeStore::new(ProjectState::Initialized { config, lock });
 
-    let outcome = initialize_project(&locator, &store, Path::new("/repo"))?;
+    let outcome = initialize_project(&locator, &store, &repository_path())?;
 
     assert_resolution(InitStatus::AlreadyInitialized, &outcome);
     assert_eq!(store.calls.borrow().as_slice(), [StoreCall::Inspect]);
@@ -227,7 +231,7 @@ fn stale_initialized_state_replaces_only_the_observed_lock() -> Result<(), Box<d
         lock: stale.clone(),
     });
 
-    let outcome = initialize_project(&locator, &store, Path::new("/repo"))?;
+    let outcome = initialize_project(&locator, &store, &repository_path())?;
 
     assert_resolution(InitStatus::LockRefreshed, &outcome);
     assert_eq!(
@@ -242,7 +246,7 @@ fn orphan_lock_is_refused_without_a_write() -> Result<(), Box<dyn Error>> {
     let locator = FakeLocator::available()?;
     let store = FakeStore::new(ProjectState::LockOnly);
 
-    let error = initialize_project(&locator, &store, Path::new("/repo")).err();
+    let error = initialize_project(&locator, &store, &repository_path()).err();
 
     assert!(matches!(error, Some(InitializeProjectError::OrphanLock)));
     assert_eq!(store.calls.borrow().as_slice(), [StoreCall::Inspect]);
@@ -255,7 +259,7 @@ fn unknown_authored_template_is_refused_without_a_write() -> Result<(), Box<dyn 
     let config = ProjectConfig::new(1, TemplateId::new("custom")?)?;
     let store = FakeStore::new(ProjectState::ConfigOnly(config));
 
-    let error = initialize_project(&locator, &store, Path::new("/repo")).err();
+    let error = initialize_project(&locator, &store, &repository_path()).err();
 
     assert!(matches!(error, Some(InitializeProjectError::Policy(_))));
     assert_eq!(store.calls.borrow().as_slice(), [StoreCall::Inspect]);
@@ -265,7 +269,7 @@ fn unknown_authored_template_is_refused_without_a_write() -> Result<(), Box<dyn 
 #[test]
 fn locator_and_each_store_failure_remain_distinguishable() -> Result<(), Box<dyn Error>> {
     let store = FakeStore::new(ProjectState::Absent);
-    let locator_error = initialize_project(&FakeLocator::failing(), &store, Path::new("/repo"));
+    let locator_error = initialize_project(&FakeLocator::failing(), &store, &repository_path());
     assert!(matches!(
         locator_error,
         Err(InitializeProjectError::Repository(FakeError::Locate))
@@ -289,7 +293,7 @@ fn locator_and_each_store_failure_remain_distinguishable() -> Result<(), Box<dyn
         ),
     ] {
         let store = FakeStore::failing(state, failure);
-        let error = initialize_project(&locator, &store, Path::new("/repo"));
+        let error = initialize_project(&locator, &store, &repository_path());
         assert!(matches!(
             error,
             Err(InitializeProjectError::Store(actual)) if actual == failure
