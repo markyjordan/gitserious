@@ -29,6 +29,11 @@ fn repository() -> Result<TempDir, Box<dyn Error>> {
     Ok(directory)
 }
 
+fn assert_same_existing_path(actual: &Path, expected: &Path) -> Result<(), Box<dyn Error>> {
+    assert_eq!(fs::canonicalize(actual)?, fs::canonicalize(expected)?);
+    Ok(())
+}
+
 #[test]
 fn locates_root_from_root_and_nested_directories() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
@@ -36,11 +41,11 @@ fn locates_root_from_root_and_nested_directories() -> Result<(), Box<dyn Error>>
     fs::create_dir_all(&nested)?;
     let expected = fs::canonicalize(repository.path())?;
 
-    assert_eq!(
+    assert_same_existing_path(
         GitRepositoryLocator.locate(repository.path())?.as_path(),
-        expected
-    );
-    assert_eq!(GitRepositoryLocator.locate(&nested)?.as_path(), expected);
+        &expected,
+    )?;
+    assert_same_existing_path(GitRepositoryLocator.locate(&nested)?.as_path(), &expected)?;
     Ok(())
 }
 
@@ -51,10 +56,7 @@ fn nested_repository_selects_the_innermost_worktree() -> Result<(), Box<dyn Erro
     fs::create_dir(&inner)?;
     git(&["init", "-q"], &inner)?;
 
-    assert_eq!(
-        GitRepositoryLocator.locate(&inner)?.as_path(),
-        fs::canonicalize(&inner)?
-    );
+    assert_same_existing_path(GitRepositoryLocator.locate(&inner)?.as_path(), &inner)?;
     Ok(())
 }
 
@@ -84,10 +86,7 @@ fn linked_worktree_resolves_its_own_root() -> Result<(), Box<dyn Error>> {
         .status()?;
     assert!(status.success());
 
-    assert_eq!(
-        GitRepositoryLocator.locate(&linked)?.as_path(),
-        fs::canonicalize(&linked)?
-    );
+    assert_same_existing_path(GitRepositoryLocator.locate(&linked)?.as_path(), &linked)?;
     Ok(())
 }
 
@@ -115,10 +114,10 @@ fn preserves_worktree_paths_with_spaces() -> Result<(), Box<dyn Error>> {
     fs::create_dir(&repository)?;
     git(&["init", "-q"], &repository)?;
 
-    assert_eq!(
+    assert_same_existing_path(
         GitRepositoryLocator.locate(&repository)?.as_path(),
-        fs::canonicalize(&repository)?
-    );
+        &repository,
+    )?;
     Ok(())
 }
 
