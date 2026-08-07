@@ -1,3 +1,5 @@
+use std::fs::DirBuilder;
+use std::io;
 use std::path::{Path, PathBuf};
 
 /// An application-owned directory resolved by gitserious storage policy.
@@ -23,4 +25,28 @@ impl AsRef<Path> for StorageDirectory {
     fn as_ref(&self) -> &Path {
         self.as_path()
     }
+}
+
+/// Creates one resolved storage directory and its missing parents.
+///
+/// Calling this function is the explicit boundary between side-effect-free
+/// path resolution and filesystem mutation. Existing directories and their
+/// permissions are left unchanged.
+///
+/// # Errors
+///
+/// Returns the underlying filesystem error when the directory or a required
+/// parent cannot be created.
+pub fn ensure_directory(directory: &StorageDirectory) -> io::Result<()> {
+    let mut builder = DirBuilder::new();
+    builder.recursive(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+
+        builder.mode(0o700);
+    }
+
+    builder.create(directory.as_path())
 }

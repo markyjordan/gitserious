@@ -23,5 +23,11 @@ ignores XDG variables and uses Known Folders.
 A binary compiled inside WSL is a Linux binary and therefore follows XDG. A
 native Windows executable launched from WSL still follows Windows AppData.
 
-Path resolution is side-effect free. Repository-local storage is established
-separately from these global conventions.
+Path resolution is side-effect free. Callers explicitly create only the
+resolved directory needed immediately before a write; there is no eager
+create-all operation. Newly created Unix directories request mode `0700`, while
+existing permissions remain unchanged. Windows directories inherit native
+ACLs.
+
+Repository-local storage is established separately from these global
+conventions.
