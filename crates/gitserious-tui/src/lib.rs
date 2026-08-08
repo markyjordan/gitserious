@@ -226,3 +226,7 @@ fn render_type_list(
     list_state.select(Some(state.selected));
     frame.render_stateful_widget(list, area, &mut list_state);
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/mod.rs"]
+mod tests;
