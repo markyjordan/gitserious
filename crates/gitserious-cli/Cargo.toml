@@ -12,6 +12,7 @@ repository = { workspace = true }
 [dependencies]
 clap = { workspace = true }
 gitserious-app = { workspace = true }
+gitserious-core = { workspace = true }
 
 [lints]
 workspace = true

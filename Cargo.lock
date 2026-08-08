@@ -389,6 +389,7 @@ dependencies = [
  "gitserious-cli",
  "gitserious-core",
  "gitserious-fs",
+ "gitserious-tui",
  "tempfile",
 ]
 
@@ -406,6 +407,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "gitserious-app",
+ "gitserious-core",
 ]
 
 [[package]]
