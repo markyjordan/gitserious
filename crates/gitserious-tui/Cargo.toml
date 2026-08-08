@@ -1,0 +1,18 @@
+[package]
+name = "gitserious-tui"
+version = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+authors = { workspace = true }
+description = "Terminal interaction adapters for gitserious."
+license = { workspace = true }
+readme = "README.md"
+repository = { workspace = true }
+
+[dependencies]
+gitserious-app = { workspace = true }
+gitserious-core = { workspace = true }
+ratatui = { workspace = true }
+
+[lints]
+workspace = true
