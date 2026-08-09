@@ -13,6 +13,7 @@ repository = { workspace = true }
 gitserious-app = { workspace = true }
 gitserious-core = { workspace = true }
 ratatui = { workspace = true }
+tui-textarea = { workspace = true }
 
 [lints]
 workspace = true

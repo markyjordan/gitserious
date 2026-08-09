@@ -1,5 +1,9 @@
 //! Ratatui-backed terminal interaction adapters for gitserious.
 
+mod author;
+
+pub use author::{RatatuiCommitDraftAuthor, RatatuiCommitDraftAuthorError};
+
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::io::{self, IsTerminal};
