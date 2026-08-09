@@ -131,7 +131,7 @@ fn commit_requires_initialized_current_policy_before_opening_editor() -> Result<
     assert!(stderr(&absent).contains("not initialized"));
 
     initialize(repository.path())?;
-    let lock = repository.path().join(".gitserious/gitserious.lock");
+    let lock = repository.path().join("gitserious.lock");
     let stale = fs::read_to_string(&lock)?.replace(
         "config-fingerprint = \"sha256:b",
         "config-fingerprint = \"sha256:a",
