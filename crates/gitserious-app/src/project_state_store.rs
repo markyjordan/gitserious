@@ -13,6 +13,14 @@ pub trait ProjectStateStore {
     /// parsed safely.
     fn inspect(&self, root: &RepositoryRoot) -> Result<ProjectState, Self::Error>;
 
+    /// Ensures the ignored repository-local state directory is available.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter's [`Self::Error`] when the local state directory or
+    /// its ignore marker cannot be inspected or prepared safely.
+    fn ensure_local_state(&self, root: &RepositoryRoot) -> Result<(), Self::Error>;
+
     /// Creates authored configuration and its lock without overwriting either.
     ///
     /// # Errors
