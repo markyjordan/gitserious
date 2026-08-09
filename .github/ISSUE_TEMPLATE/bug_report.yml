@@ -34,7 +34,7 @@ body:
       placeholder: |
         Repository or setup:
         - Fresh repository / existing project / CI job:
-        - Relevant .gitserious config or Git state:
+        - Relevant gitserious.toml, gitserious.lock, .gitserious local state, or Git state:
 
         Smallest command or workflow:
         ```bash

@@ -48,6 +48,10 @@ impl ProjectStateStore for RecordingStore {
         Ok(ProjectState::Absent)
     }
 
+    fn ensure_local_state(&self, _root: &RepositoryRoot) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     fn initialize(
         &self,
         _root: &RepositoryRoot,
@@ -106,7 +110,7 @@ fn init_dispatches_and_reports_the_exact_resolution() {
         stdout,
         format!(
             "Initialized gitserious in {} (default -> conventional@1).\n",
-            repository_path().join(".gitserious").display()
+            repository_path().display()
         )
     );
     assert!(stderr.is_empty());

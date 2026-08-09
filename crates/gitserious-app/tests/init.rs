@@ -19,6 +19,7 @@ use gitserious_core::{
 enum FakeError {
     Locate,
     Inspect,
+    EnsureLocalState,
     Initialize,
     CreateLock,
     ReplaceLock,
@@ -65,6 +66,7 @@ impl RepositoryLocator for FakeLocator {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum StoreCall {
     Inspect,
+    EnsureLocalState,
     Initialize(ProjectConfig, ProjectLock),
     CreateLock(ProjectLock),
     ReplaceLock(ProjectLock, ProjectLock),
@@ -109,6 +111,11 @@ impl ProjectStateStore for FakeStore {
         self.calls.borrow_mut().push(StoreCall::Inspect);
         self.maybe_fail(FakeError::Inspect)?;
         Ok(self.state.clone())
+    }
+
+    fn ensure_local_state(&self, _root: &RepositoryRoot) -> Result<(), Self::Error> {
+        self.calls.borrow_mut().push(StoreCall::EnsureLocalState);
+        self.maybe_fail(FakeError::EnsureLocalState)
     }
 
     fn initialize(
@@ -186,6 +193,7 @@ fn absent_state_creates_config_and_lock_once() -> Result<(), Box<dyn Error>> {
         store.calls.borrow().as_slice(),
         [
             StoreCall::Inspect,
+            StoreCall::EnsureLocalState,
             StoreCall::Initialize(expected_config, expected_lock),
         ]
     );
@@ -203,13 +211,17 @@ fn config_only_state_creates_only_the_missing_lock() -> Result<(), Box<dyn Error
     assert_resolution(InitStatus::LockCreated, &outcome);
     assert_eq!(
         store.calls.borrow().as_slice(),
-        [StoreCall::Inspect, StoreCall::CreateLock(expected_lock)]
+        [
+            StoreCall::Inspect,
+            StoreCall::EnsureLocalState,
+            StoreCall::CreateLock(expected_lock)
+        ]
     );
     Ok(())
 }
 
 #[test]
-fn matching_initialized_state_performs_no_write() -> Result<(), Box<dyn Error>> {
+fn matching_initialized_state_ensures_only_local_state() -> Result<(), Box<dyn Error>> {
     let locator = FakeLocator::available()?;
     let (config, lock) = default_config_and_lock()?;
     let store = FakeStore::new(ProjectState::Initialized { config, lock });
@@ -217,7 +229,10 @@ fn matching_initialized_state_performs_no_write() -> Result<(), Box<dyn Error>> 
     let outcome = initialize_project(&locator, &store, &repository_path())?;
 
     assert_resolution(InitStatus::AlreadyInitialized, &outcome);
-    assert_eq!(store.calls.borrow().as_slice(), [StoreCall::Inspect]);
+    assert_eq!(
+        store.calls.borrow().as_slice(),
+        [StoreCall::Inspect, StoreCall::EnsureLocalState]
+    );
     Ok(())
 }
 
@@ -236,7 +251,11 @@ fn stale_initialized_state_replaces_only_the_observed_lock() -> Result<(), Box<d
     assert_resolution(InitStatus::LockRefreshed, &outcome);
     assert_eq!(
         store.calls.borrow().as_slice(),
-        [StoreCall::Inspect, StoreCall::ReplaceLock(stale, expected),]
+        [
+            StoreCall::Inspect,
+            StoreCall::EnsureLocalState,
+            StoreCall::ReplaceLock(stale, expected),
+        ]
     );
     Ok(())
 }
@@ -279,6 +298,7 @@ fn locator_and_each_store_failure_remain_distinguishable() -> Result<(), Box<dyn
     let locator = FakeLocator::available()?;
     for (state, failure) in [
         (ProjectState::Absent, FakeError::Inspect),
+        (ProjectState::Absent, FakeError::EnsureLocalState),
         (ProjectState::Absent, FakeError::Initialize),
         (
             ProjectState::ConfigOnly(ProjectConfig::default_channel()?),

@@ -59,6 +59,10 @@ impl ProjectStateStore for FakeStore {
         self.state.borrow().clone()
     }
 
+    fn ensure_local_state(&self, _root: &RepositoryRoot) -> Result<(), Self::Error> {
+        Err(FakeError("unexpected ensure local state"))
+    }
+
     fn initialize(
         &self,
         _root: &RepositoryRoot,

@@ -292,7 +292,7 @@ fn write_commit_output(
 }
 
 fn write_init_outcome(output: &mut (impl Write + ?Sized), outcome: &InitOutcome) -> ExitCode {
-    let project_directory = outcome.root().as_path().join(".gitserious");
+    let project_root = outcome.root().as_path();
     let template_reference = outcome.template_reference();
     let resolved_template = outcome.resolved_template();
     let resolved_version = outcome.resolved_version();
@@ -300,22 +300,22 @@ fn write_init_outcome(output: &mut (impl Write + ?Sized), outcome: &InitOutcome)
         InitStatus::Initialized => writeln!(
             output,
             "Initialized gitserious in {} ({template_reference} -> {resolved_template}@{resolved_version}).",
-            project_directory.display()
+            project_root.display()
         ),
         InitStatus::LockCreated => writeln!(
             output,
             "Created missing lock {} ({template_reference} -> {resolved_template}@{resolved_version}).",
-            project_directory.join("gitserious.lock").display()
+            project_root.join("gitserious.lock").display()
         ),
         InitStatus::LockRefreshed => writeln!(
             output,
             "Refreshed {} ({template_reference} -> {resolved_template}@{resolved_version}).",
-            project_directory.join("gitserious.lock").display()
+            project_root.join("gitserious.lock").display()
         ),
         InitStatus::AlreadyInitialized => writeln!(
             output,
             "gitserious is already initialized in {} ({template_reference} -> {resolved_template}@{resolved_version}).",
-            project_directory.display()
+            project_root.display()
         ),
     };
 

@@ -91,7 +91,7 @@ where
             Self::InvalidDefaultReference(error) => Display::fmt(error, formatter),
             Self::Policy(error) => Display::fmt(error, formatter),
             Self::OrphanLock => formatter.write_str(
-                "gitserious.lock exists without config.toml; restore or remove the orphan lock",
+                "gitserious.lock exists without gitserious.toml; restore or remove the orphan lock",
             ),
         }
     }
@@ -150,6 +150,9 @@ where
     };
 
     let expected_lock = resolve_project_lock(&config).map_err(InitializeProjectError::Policy)?;
+    store
+        .ensure_local_state(&root)
+        .map_err(InitializeProjectError::Store)?;
     let status = match (status, existing_lock) {
         (InitStatus::Initialized, None) => {
             store

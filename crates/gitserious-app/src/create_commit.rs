@@ -53,7 +53,7 @@ impl Display for CommitPolicyError {
             Self::MissingLock => formatter
                 .write_str("gitserious.lock is missing; run `gitserious init` before committing"),
             Self::OrphanLock => formatter.write_str(
-                "gitserious.lock exists without config.toml; restore or remove the orphan lock",
+                "gitserious.lock exists without gitserious.toml; restore or remove the orphan lock",
             ),
             Self::StaleLock => formatter.write_str(
                 "gitserious project policy is stale; run `gitserious init` before committing",
