@@ -1,5 +1,6 @@
 //! Application ports and use cases for gitserious.
 
+mod commit_draft_author;
 mod commit_draft_editor;
 mod commit_type_catalog;
 mod commit_type_selector;
@@ -21,6 +22,7 @@ mod repository_locator;
 mod resolve_global_paths;
 mod storage_directory;
 
+pub use commit_draft_author::{CommitDraftAuthor, CommitDraftAuthorOutcome};
 pub use commit_draft_editor::CommitDraftEditor;
 pub use commit_type_catalog::CommitTypeCatalog;
 pub use commit_type_selector::{CommitTypeSelection, CommitTypeSelector};
