@@ -2,12 +2,16 @@
 
 mod directory;
 mod git;
+mod git_commit;
+mod git_editor;
 mod global;
 mod platform;
 mod project;
 
 pub use directory::LocalDirectoryCreator;
 pub use git::{GitRepositoryError, GitRepositoryLocator};
+pub use git_commit::{GitCommitError, GitCommitWriter};
+pub use git_editor::{GitCommitDraftEditor, GitCommitDraftEditorError};
 pub use global::{GlobalPathError, SystemGlobalPathResolver};
 pub use project::{ProjectArtifact, ProjectStateError, TomlProjectStateStore};
 

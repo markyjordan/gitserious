@@ -10,6 +10,15 @@ default:
 bootstrap:
     bash scripts/dev/justfile/bootstrap.sh
 
+# LOCAL DEVELOPMENT
+# Builds the workspace with Cargo's debug profile for local testing.
+build:
+    bash scripts/dev/justfile/cargo.sh build
+
+# Runs the gitserious binary with Cargo's debug profile. Arguments are forwarded to the binary.
+run *args:
+    bash scripts/dev/justfile/cargo.sh run "$@"
+
 # LOCAL CI
 # Runs the same language-neutral quality categories used by hosted CI.
 ci-check:

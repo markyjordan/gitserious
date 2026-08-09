@@ -13,13 +13,11 @@ repository = { workspace = true }
 gitserious-app = { workspace = true }
 gitserious-core = { workspace = true }
 serde = { workspace = true }
+tempfile = { workspace = true }
 toml = { workspace = true }
 
 [lints]
 workspace = true
-
-[dev-dependencies]
-tempfile = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 directories = { workspace = true }

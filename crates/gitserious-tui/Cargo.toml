@@ -1,18 +1,18 @@
 [package]
-name = "gitserious-cli"
+name = "gitserious-tui"
 version = { workspace = true }
 edition = { workspace = true }
 rust-version = { workspace = true }
 authors = { workspace = true }
-description = "Placeholder CLI crate for gitserious."
+description = "Terminal interaction adapters for gitserious."
 license = { workspace = true }
 readme = "README.md"
 repository = { workspace = true }
 
 [dependencies]
-clap = { workspace = true }
 gitserious-app = { workspace = true }
 gitserious-core = { workspace = true }
+ratatui = { workspace = true }
 
 [lints]
 workspace = true
