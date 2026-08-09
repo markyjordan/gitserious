@@ -9,9 +9,9 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use gitserious_app::{
-    CommitDraftEditor, CommitOutcome, CommitOutput, CommitTypeCatalog, CommitTypeSelection,
-    CommitTypeSelector, CommitWriter, InitOutcome, InitStatus, ProjectStateStore,
-    RepositoryLocator, RepositoryRoot, create_commit, initialize_project,
+    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitTypeCatalog,
+    CommitWriter, InitOutcome, InitStatus, ProjectStateStore, RepositoryLocator, RepositoryRoot,
+    create_commit, initialize_project,
 };
 use gitserious_core::{CommitMessage, CommitTypeDefinition, CommitTypeId};
 
@@ -42,21 +42,19 @@ enum Command {
 
 /// Concrete adapters required only by the interactive commit workflow.
 #[derive(Clone, Copy)]
-pub struct CommitAdapters<'a, C: ?Sized, T: ?Sized, E: ?Sized, W: ?Sized> {
+pub struct CommitAdapters<'a, C: ?Sized, A: ?Sized, W: ?Sized> {
     catalog: &'a C,
-    selector: &'a T,
-    editor: &'a E,
+    author: &'a A,
     writer: &'a W,
 }
 
-impl<'a, C: ?Sized, T: ?Sized, E: ?Sized, W: ?Sized> CommitAdapters<'a, C, T, E, W> {
+impl<'a, C: ?Sized, A: ?Sized, W: ?Sized> CommitAdapters<'a, C, A, W> {
     /// Bundles the independent commit-workflow adapters for command dispatch.
     #[must_use]
-    pub const fn new(catalog: &'a C, selector: &'a T, editor: &'a E, writer: &'a W) -> Self {
+    pub const fn new(catalog: &'a C, author: &'a A, writer: &'a W) -> Self {
         Self {
             catalog,
-            selector,
-            editor,
+            author,
             writer,
         }
     }
@@ -85,34 +83,32 @@ where
     Err: Write + ?Sized,
 {
     let unavailable = UnsupportedCommitAdapter;
-    let commit = CommitAdapters::new(&unavailable, &unavailable, &unavailable, &unavailable);
+    let commit = CommitAdapters::new(&unavailable, &unavailable, &unavailable);
     run_with_commit(arguments, locator, store, &commit, stdout, stderr)
 }
 
 /// Runs the CLI with concrete interactive commit adapters.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
-pub fn run_with_commit<I, A, L, S, C, T, E, W, Out, Err>(
+pub fn run_with_commit<I, T, L, S, C, A, W, Out, Err>(
     arguments: I,
     locator: &L,
     store: &S,
-    commit: &CommitAdapters<'_, C, T, E, W>,
+    commit: &CommitAdapters<'_, C, A, W>,
     stdout: &mut Out,
     stderr: &mut Err,
 ) -> ExitCode
 where
-    I: IntoIterator<Item = A>,
-    A: Into<OsString> + Clone,
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
     L: RepositoryLocator + ?Sized,
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
     C: CommitTypeCatalog + ?Sized,
     C::Error: Display,
-    T: CommitTypeSelector + ?Sized,
-    T::Error: Display,
-    E: CommitDraftEditor + ?Sized,
-    E::Error: Display,
+    A: CommitDraftAuthor + ?Sized,
+    A::Error: Display,
     W: CommitWriter + ?Sized,
     W::Error: Display,
     Out: Write + ?Sized,
@@ -153,35 +149,33 @@ where
     Err: Write + ?Sized,
 {
     let unavailable = UnsupportedCommitAdapter;
-    let commit = CommitAdapters::new(&unavailable, &unavailable, &unavailable, &unavailable);
+    let commit = CommitAdapters::new(&unavailable, &unavailable, &unavailable);
     run_from_with_commit(arguments, start, locator, store, &commit, stdout, stderr)
 }
 
 /// Runs the CLI from an explicit directory with concrete commit adapters.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
-pub fn run_from_with_commit<I, A, L, S, C, T, E, W, Out, Err>(
+pub fn run_from_with_commit<I, T, L, S, C, A, W, Out, Err>(
     arguments: I,
     start: &Path,
     locator: &L,
     store: &S,
-    commit: &CommitAdapters<'_, C, T, E, W>,
+    commit: &CommitAdapters<'_, C, A, W>,
     stdout: &mut Out,
     stderr: &mut Err,
 ) -> ExitCode
 where
-    I: IntoIterator<Item = A>,
-    A: Into<OsString> + Clone,
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
     L: RepositoryLocator + ?Sized,
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
     C: CommitTypeCatalog + ?Sized,
     C::Error: Display,
-    T: CommitTypeSelector + ?Sized,
-    T::Error: Display,
-    E: CommitDraftEditor + ?Sized,
-    E::Error: Display,
+    A: CommitDraftAuthor + ?Sized,
+    A::Error: Display,
     W: CommitWriter + ?Sized,
     W::Error: Display,
     Out: Write + ?Sized,
@@ -217,12 +211,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn execute<L, S, C, T, E, W, Out, Err>(
+fn execute<L, S, C, A, W, Out, Err>(
     cli: &Cli,
     start: &Path,
     locator: &L,
     store: &S,
-    commit: &CommitAdapters<'_, C, T, E, W>,
+    commit: &CommitAdapters<'_, C, A, W>,
     stdout: &mut Out,
     stderr: &mut Err,
 ) -> ExitCode
@@ -233,10 +227,8 @@ where
     S::Error: Display,
     C: CommitTypeCatalog + ?Sized,
     C::Error: Display,
-    T: CommitTypeSelector + ?Sized,
-    T::Error: Display,
-    E: CommitDraftEditor + ?Sized,
-    E::Error: Display,
+    A: CommitDraftAuthor + ?Sized,
+    A::Error: Display,
     W: CommitWriter + ?Sized,
     W::Error: Display,
     Out: Write + ?Sized,
@@ -247,8 +239,7 @@ where
             locator,
             store,
             commit.catalog,
-            commit.selector,
-            commit.editor,
+            commit.author,
             commit.writer,
             start,
             commit_type.as_ref(),
@@ -352,21 +343,14 @@ impl CommitTypeCatalog for UnsupportedCommitAdapter {
     }
 }
 
-impl CommitTypeSelector for UnsupportedCommitAdapter {
+impl CommitDraftAuthor for UnsupportedCommitAdapter {
     type Error = UnsupportedCommitError;
 
-    fn select(
+    fn author(
         &self,
         _definitions: &[CommitTypeDefinition],
-    ) -> Result<CommitTypeSelection, Self::Error> {
-        Err(UnsupportedCommitError)
-    }
-}
-
-impl CommitDraftEditor for UnsupportedCommitAdapter {
-    type Error = UnsupportedCommitError;
-
-    fn edit(&self, _root: &RepositoryRoot, _document: &str) -> Result<String, Self::Error> {
+        _preselected: Option<&CommitTypeDefinition>,
+    ) -> Result<CommitDraftAuthorOutcome, Self::Error> {
         Err(UnsupportedCommitError)
     }
 }
