@@ -298,7 +298,7 @@ fn invalid_review_marks_every_blocker_and_moves_to_the_first() {
 fn review_is_exact_backtracking_is_lossless_and_enter_returns_the_typed_draft()
 -> Result<(), Box<dyn Error>> {
     let mut session = valid_feat_session();
-    let expected = "feat: compose durable message\n\nintent:\n  explain intent 🦀\n\nbehavior:\n  first line\n  second line\n";
+    let expected = "feat: compose durable message\n\nintent:\nexplain intent 🦀\n\nbehavior:\nfirst line\nsecond line\n";
     assert_eq!(session.stage, Stage::Review);
     assert_eq!(
         session
@@ -473,7 +473,7 @@ fn multiple_schema_values_still_compile_when_present() -> Result<(), Box<dyn Err
             .ok_or("missing review")?
             .message
             .as_str(),
-        "custom: collect evidence\n\nevidence:\n  first\n\nevidence:\n  second\n  line\n"
+        "custom: collect evidence\n\nevidence:\nfirst\n\nevidence:\nsecond\nline\n"
     );
     Ok(())
 }
@@ -578,7 +578,7 @@ fn hud_tracks_requirement_completion_validation_and_cursor_context() -> Result<(
             .ok_or("missing review")?
             .message
             .as_str(),
-        "custom: cover contracts\n\nrequired-field:\n  complete\n"
+        "custom: cover contracts\n\nrequired-field:\ncomplete\n"
     );
 
     press(&mut session, KeyCode::Esc);
@@ -666,7 +666,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
         .editor
         .move_cursor(CursorMove::Jump(16, 0));
     let text = rendered(&mut composer, 120, 32)?;
-    assert!(text.contains("Compose commit"));
+    assert!(text.contains("Compose commit message"));
     assert!(text.contains("Keymap: conventional"));
     assert!(text.contains("○ subject · required"));
     assert!(text.contains("conditional-field · conditional"));
@@ -731,10 +731,20 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
 
     let footer = row_text(&buffer, 120, 31);
     assert!(footer.contains("ctrl+t vim · ctrl+s review · Esc back"));
-    assert!(footer.contains("· col 6/80"));
+    assert!(footer.contains("▌ col 6/80 "));
     assert!(!footer.contains("Ctrl"));
     assert!(!footer.contains("ctrl+n"));
     assert!(!footer.contains("ctrl+d"));
+    let status = find_ascii(&buffer, 120, 32, "col 6/80").ok_or("missing column status")?;
+    let padding = [(status.0 - 1, status.1), (status.0 + 8, status.1)];
+    assert_eq!(buffer[(status.0 - 2, status.1)].symbol(), "▌");
+    for position in padding {
+        assert_eq!(buffer[position].symbol(), " ");
+        assert_eq!(buffer[position].fg, Color::Black);
+        assert_eq!(buffer[position].bg, Color::Yellow);
+    }
+    assert_eq!(buffer[(status.0 - 2, status.1)].fg, Color::Black);
+    assert_eq!(buffer[(status.0 - 2, status.1)].bg, Color::Yellow);
 
     modified_press(&mut composer, KeyCode::Char('t'), KeyModifiers::CONTROL);
     let buffer = rendered_buffer(&mut composer, 120, 32)?;
@@ -766,7 +776,7 @@ fn composer_layout_caps_at_eighty_columns_and_adapts_on_narrow_terminals()
     let edit = find_ascii(&buffer, 120, 32, "Edit form").ok_or("missing editor")?;
     let fields = find_ascii(&buffer, 120, 32, "Fields").ok_or("missing fields")?;
     let description = find_ascii(&buffer, 120, 32, "Description").ok_or("missing description")?;
-    let guidance = find_ascii(&buffer, 120, 32, "Concise").ok_or("missing guidance")?;
+    let guidance = find_ascii(&buffer, 120, 32, "Required concise").ok_or("missing guidance")?;
 
     assert_eq!(edit.1, fields.1);
     assert!(edit.0 < fields.0);
@@ -774,32 +784,78 @@ fn composer_layout_caps_at_eighty_columns_and_adapts_on_narrow_terminals()
     assert!(description.1 > fields.1);
     assert!(guidance.0 >= description.0.saturating_sub(1));
     assert!(guidance.1 > description.1);
+    assert!(find_ascii(&buffer, 120, 32, "type(scope):").is_some());
     assert!(find_ascii(&buffer, 120, 32, "col 1/80").is_some());
     assert_eq!(wide.composer.editor.wrap_mode(), WrapMode::WordOrGlyph);
+
+    wide.composer.editor.move_cursor(CursorMove::Jump(1, 0));
+    let buffer = rendered_buffer(&mut wide, 120, 32)?;
+    assert!(find_ascii(&buffer, 120, 32, "Optional affected area").is_some());
+    assert!(find_ascii(&buffer, 120, 32, "type(scope):").is_some());
 
     let mut narrow = AuthoringSession::new(built_in_commit_types(), Some(0));
     let buffer = rendered_buffer(&mut narrow, 72, 24)?;
     assert!(!narrow.too_small);
-    assert!(find_ascii(&buffer, 72, 24, "col 1/40").is_some());
+    assert!(find_ascii(&buffer, 72, 24, "col 1/80").is_some());
     Ok(())
 }
 
 #[test]
-fn soft_wrap_reports_the_visual_column_without_changing_authored_lines()
+fn narrow_editor_scrolls_until_fixed_width_wrap_then_returns_to_column_one()
+-> Result<(), Box<dyn Error>> {
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let initial = rendered_buffer(&mut session, 72, 24)?;
+    let subject = find_ascii(&initial, 72, 24, "subject:").ok_or("missing subject")?;
+    let first_forty = "0123456789012345678901234567890123456789";
+    paste(&mut session, first_forty);
+    let buffer = rendered_buffer(&mut session, 72, 24)?;
+    let visible = (1..=40)
+        .map(|column| buffer[(column, subject.1 + 1)].symbol())
+        .collect::<String>();
+    assert_eq!(visible.trim_end(), &first_forty[1..]);
+    assert!(find_ascii(&buffer, 72, 24, "col 41/80").is_some());
+
+    press(&mut session, KeyCode::Left);
+    let buffer = rendered_buffer(&mut session, 72, 24)?;
+    assert_eq!(buffer[(1, subject.1 + 1)].symbol(), "0");
+    assert!(find_ascii(&buffer, 72, 24, "col 40/80").is_some());
+    press(&mut session, KeyCode::Right);
+
+    paste(&mut session, &"x".repeat(41));
+    let buffer = rendered_buffer(&mut session, 72, 24)?;
+    assert_eq!(
+        session.composer.editor.lines()[4],
+        format!("{first_forty}{}", "x".repeat(41))
+    );
+    assert_eq!(buffer[(1, subject.1 + 2)].symbol(), "x");
+    assert!(find_ascii(&buffer, 72, 24, "col 2/80").is_some());
+    Ok(())
+}
+
+#[test]
+fn fixed_width_soft_wrap_reports_visual_columns_without_changing_authored_lines()
 -> Result<(), Box<dyn Error>> {
     let mut word_wrap = AuthoringSession::new(built_in_commit_types(), Some(0));
     let value = format!("{} word", "x".repeat(76));
     paste(&mut word_wrap, &value);
-    let buffer = rendered_buffer(&mut word_wrap, 120, 32)?;
+    let buffer = rendered_buffer(&mut word_wrap, 72, 24)?;
     assert_eq!(word_wrap.composer.editor.lines()[4], value);
-    assert!(find_ascii(&buffer, 120, 32, "col 5/80").is_some());
+    assert!(find_ascii(&buffer, 72, 24, "col 5/80").is_some());
 
     let mut glyph_wrap = AuthoringSession::new(built_in_commit_types(), Some(0));
     let value = "x".repeat(81);
     paste(&mut glyph_wrap, &value);
-    let buffer = rendered_buffer(&mut glyph_wrap, 120, 32)?;
+    let buffer = rendered_buffer(&mut glyph_wrap, 72, 24)?;
     assert_eq!(glyph_wrap.composer.editor.lines()[4], value);
-    assert!(find_ascii(&buffer, 120, 32, "col 2/80").is_some());
+    assert!(find_ascii(&buffer, 72, 24, "col 2/80").is_some());
+
+    let mut unicode = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let value = "🦀".repeat(21);
+    paste(&mut unicode, &value);
+    let buffer = rendered_buffer(&mut unicode, 72, 24)?;
+    assert_eq!(unicode.composer.editor.lines()[4], value);
+    assert!(buffer.content().iter().any(|cell| cell.symbol() == "🦀"));
+    assert!(find_ascii(&buffer, 72, 24, "col 43/80").is_some());
     Ok(())
 }
 

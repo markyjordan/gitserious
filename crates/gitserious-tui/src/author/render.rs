@@ -1,9 +1,10 @@
 use gitserious_core::{CommitTypeDefinition, PropertyRequirement};
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Flex, Layout, Rect};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap};
 
 use super::state::{
     AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, Keymap, Stage, VimMode,
@@ -133,7 +134,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Compose commit "),
+                .title(" Compose commit message "),
         ),
         sections[0],
     );
@@ -286,25 +287,45 @@ fn render_document_editor(
     } else {
         Style::default().fg(Color::Red)
     };
-    session.composer.editor.set_block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style)
-            .title(editor_title),
-    );
-    frame.render_widget(&session.composer.editor, area);
+    let editor_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(editor_title);
+    session.composer.editor.set_block(editor_block.clone());
 
-    let wrap_width = area.width.saturating_sub(EDITOR_BORDER_WIDTH).max(1);
-    let inner_left = area.x.saturating_add(1);
+    // The text area's wrap width is coupled to its render width. Render it at
+    // the canonical width, then project the cursor-following slice on screen.
+    let virtual_area = Rect::new(
+        0,
+        0,
+        MAX_EDITOR_INNER_WIDTH + EDITOR_BORDER_WIDTH,
+        area.height,
+    );
+    let mut virtual_buffer = Buffer::empty(virtual_area);
+    Widget::render(&session.composer.editor, virtual_area, &mut virtual_buffer);
+    frame.render_widget(editor_block, area);
+
     let column = session
         .composer
         .editor
         .rendered_cursor_position()
-        .map_or(1, |position| {
-            position.x.saturating_sub(inner_left).saturating_add(1)
-        })
-        .clamp(1, wrap_width);
-    CursorStatus { column, wrap_width }
+        .map_or(1, |position| position.x)
+        .clamp(1, MAX_EDITOR_INNER_WIDTH);
+    let visible_width = area.width.saturating_sub(EDITOR_BORDER_WIDTH).max(1);
+    let horizontal_offset = column.saturating_sub(visible_width);
+    let visible_height = area.height.saturating_sub(EDITOR_BORDER_WIDTH);
+    for row in 0..visible_height {
+        for viewport_column in 0..visible_width {
+            let source = (1 + horizontal_offset + viewport_column, 1 + row);
+            let destination = (area.x + 1 + viewport_column, area.y + 1 + row);
+            frame.buffer_mut()[destination] = virtual_buffer[source].clone();
+        }
+    }
+
+    CursorStatus {
+        column,
+        wrap_width: MAX_EDITOR_INNER_WIDTH,
+    }
 }
 
 fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
@@ -384,11 +405,13 @@ fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String
     match kind {
         FieldKind::Scope => (
             " Scope · optional ".to_owned(),
-            "Semantic area affected by the commit. Leave empty when no scope applies.".to_owned(),
+            "Optional affected area in a Conventional Commit: type(scope): subject. Leave blank for type: subject."
+                .to_owned(),
         ),
         FieldKind::Subject => (
             " Subject · required ".to_owned(),
-            "Concise, single-line summary of the change.".to_owned(),
+            "Required concise description in a Conventional Commit: type(scope): subject, or type: subject without a scope."
+                .to_owned(),
         ),
         FieldKind::Property {
             definition_index,
@@ -423,17 +446,13 @@ fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &str, status:
         frame.render_widget(Paragraph::new(hints).style(navigation_style()), area);
         return;
     };
-    let status = format!("· {status}");
-    let sections = Layout::horizontal([
-        Constraint::Min(0),
-        Constraint::Length(u16::try_from(status.len()).unwrap_or(u16::MAX)),
-    ])
-    .split(area);
+    let status = format!("▌ {status} ");
+    let status_width = u16::try_from(Line::from(status.as_str()).width()).unwrap_or(u16::MAX);
+    let sections =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(status_width)]).split(area);
     frame.render_widget(Paragraph::new(hints).style(navigation_style()), sections[0]);
     frame.render_widget(
-        Paragraph::new(status)
-            .alignment(Alignment::Right)
-            .style(navigation_style()),
+        Paragraph::new(status).style(navigation_style()),
         sections[1],
     );
 }
