@@ -122,6 +122,19 @@ fn row_text(buffer: &Buffer, width: u16, row: u16) -> String {
         .collect()
 }
 
+fn assert_step_counter(
+    session: &mut AuthoringSession<'_>,
+    width: u16,
+    height: u16,
+    expected: &str,
+) -> Result<(), Box<dyn Error>> {
+    let buffer = rendered_buffer(session, width, height)?;
+    let position = find_ascii(&buffer, width, height, expected).ok_or("missing step counter")?;
+    assert_eq!(position.1, 0);
+    assert!(position.0 >= width.saturating_sub(7));
+    Ok(())
+}
+
 fn assert_highlighted_footer(
     session: &mut AuthoringSession<'_>,
     width: u16,
@@ -684,7 +697,8 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     let text = rendered(&mut picker, 100, 24)?;
     assert!(text.contains("gitserious commit"));
     assert!(text.contains("Commit types"));
-    assert!(text.contains("Enter select"));
+    assert!(text.contains("Enter: select"));
+    assert_step_counter(&mut picker, 100, 24, "1/3")?;
     assert_highlighted_footer(&mut picker, 100, 24)?;
 
     let definitions = vec![presentation_definition()?];
@@ -699,8 +713,10 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(text.contains("○ subject · required"));
     assert!(text.contains("conditional-field · conditional"));
     assert!(text.contains("required when the condition applies"));
-    assert!(text.contains("ctrl+t vim"));
+    assert!(text.contains("ctrl+t: vim"));
+    assert!(!text.contains("Complete every required field before review."));
     assert!(!text.contains("repeatable"));
+    assert_step_counter(&mut composer, 120, 32, "2/3")?;
     assert_highlighted_footer(&mut composer, 120, 32)?;
 
     modified_press(&mut composer, KeyCode::Char('s'), KeyModifiers::CONTROL);
@@ -712,13 +728,17 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     let text = rendered(&mut review, 100, 24)?;
     assert!(text.contains("Review commit"));
     assert!(text.contains("feat: compose durable message"));
-    assert!(text.contains("Enter commit"));
+    assert!(text.contains("Enter: commit"));
+    assert_step_counter(&mut review, 100, 24, "3/3")?;
     assert_highlighted_footer(&mut review, 100, 24)?;
 
     press(&mut review, KeyCode::Char('q'));
     let text = rendered(&mut review, 100, 24)?;
     assert!(text.contains("Confirm discard"));
     assert!(text.contains("Discard this draft and cancel"));
+    assert!(text.contains("y: discard · Enter/Esc/n: keep editing"));
+    assert!(text.contains("Review commit"));
+    assert!(text.contains("3/3"));
 
     for (width, height) in [(59, 24), (100, 17)] {
         let mut too_small = AuthoringSession::new(built_in_commit_types(), Some(0));
@@ -758,7 +778,7 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     assert!(!buffer[authored].modifier.contains(Modifier::UNDERLINED));
 
     let footer = row_text(&buffer, 120, 31);
-    assert!(footer.contains("ctrl+t vim · ctrl+s review · Esc back"));
+    assert!(footer.contains("ctrl+t: vim · ctrl+s: review · Esc: back"));
     assert!(footer.contains("▌ col 6/80 "));
     assert!(!footer.contains("Ctrl"));
     assert!(!footer.contains("ctrl+n"));
@@ -773,25 +793,33 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     }
     assert_eq!(buffer[(status.0 - 2, status.1)].fg, Color::Black);
     assert_eq!(buffer[(status.0 - 2, status.1)].bg, Color::Yellow);
+    let key = find_ascii(&buffer, 120, 32, "ctrl+t").ok_or("missing key hint")?;
+    let action = find_ascii(&buffer, 120, 32, "vim").ok_or("missing action hint")?;
+    assert!(buffer[key].modifier.contains(Modifier::BOLD));
+    assert!(!buffer[action].modifier.contains(Modifier::BOLD));
+    assert_eq!(buffer[key].bg, Color::Yellow);
+    assert_eq!(buffer[action].bg, Color::Yellow);
 
     modified_press(&mut composer, KeyCode::Char('t'), KeyModifiers::CONTROL);
     let buffer = rendered_buffer(&mut composer, 120, 32)?;
     let footer = row_text(&buffer, 120, 31);
-    assert!(footer.contains("ctrl+t conventional · ctrl+s review · i insert · q back"));
+    assert!(footer.contains("ctrl+t: conventional · ctrl+s: review · i: insert · q: back"));
     press(&mut composer, KeyCode::Char('i'));
     let buffer = rendered_buffer(&mut composer, 120, 32)?;
     let footer = row_text(&buffer, 120, 31);
-    assert!(footer.contains("ctrl+t conventional · ctrl+s review · Esc normal"));
+    assert!(footer.contains("ctrl+t: conventional · ctrl+s: review · Esc: normal"));
 
     let mut picker = AuthoringSession::new(built_in_commit_types(), None);
     let buffer = rendered_buffer(&mut picker, 100, 24)?;
     let footer = row_text(&buffer, 100, 23);
-    assert!(footer.contains("↑/k · ↓/j move · Home/End jump · Enter select · Esc/q cancel"));
+    assert!(
+        footer.contains("↑/k: move · ↓/j: move · Home/End: jump · Enter: select · Esc/q: cancel")
+    );
 
     let mut review = valid_feat_session();
     let buffer = rendered_buffer(&mut review, 100, 24)?;
     let footer = row_text(&buffer, 100, 23);
-    assert!(footer.contains("Enter commit · Esc edit · ↑/↓ scroll · q/ctrl+c cancel"));
+    assert!(footer.contains("Enter: commit · Esc: edit · ↑/↓: scroll · q/ctrl+c: cancel"));
     assert!(!footer.contains("Ctrl"));
     Ok(())
 }

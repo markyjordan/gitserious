@@ -655,6 +655,16 @@ impl<'a> AuthoringSession<'a> {
         &self.definitions[self.selected_type]
     }
 
+    pub(crate) fn visible_stage(&self) -> Stage {
+        if self.stage != Stage::Confirm {
+            return self.stage;
+        }
+        match self.confirmation_resume {
+            ResumeStage::Compose => Stage::Compose,
+            ResumeStage::Review => Stage::Review,
+        }
+    }
+
     pub(crate) fn handle_event(&mut self, event: Event) -> Option<CommitDraftAuthorOutcome> {
         if self.too_small {
             return self.handle_too_small(&event);
