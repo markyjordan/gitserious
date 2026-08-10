@@ -27,7 +27,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
     session.too_small = area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT;
     if session.too_small {
         let message = if session.stage == Stage::Confirm {
-            "Discard this draft?\ny discard   Enter/n keep editing"
+            "Discard this draft?\ny: discard · Enter/n: keep editing"
         } else {
             "Terminal too small\nResize or press Esc/q to cancel"
         };
@@ -40,10 +40,11 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
         return;
     }
 
-    match session.stage {
+    match session.visible_stage() {
         Stage::SelectType => render_picker(frame, area, session),
-        Stage::Compose | Stage::Confirm => render_composer(frame, area, session),
+        Stage::Compose => render_composer(frame, area, session),
         Stage::Review => render_review(frame, area, session),
+        Stage::Confirm => unreachable!("confirmation resolves to its underlying stage"),
     }
     if session.stage == Stage::Confirm {
         render_confirmation(frame, area, session);
@@ -59,11 +60,8 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
     ])
     .split(area);
     frame.render_widget(
-        Paragraph::new("Choose the semantic contract for this commit.").block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" gitserious commit "),
-        ),
+        Paragraph::new("Choose the semantic contract for this commit.")
+            .block(stage_block(" gitserious commit ", "1/3")),
         sections[0],
     );
     let items = session
@@ -87,7 +85,7 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
                 .title(" Commit types "),
         )
         .highlight_symbol("› ")
-        .highlight_style(navigation_style());
+        .highlight_style(navigation_key_style());
     let mut state = ListState::default();
     state.select(Some(session.selected_type));
     frame.render_stateful_widget(list, sections[1], &mut state);
@@ -104,7 +102,13 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
     render_navigation_row(
         frame,
         sections[3],
-        "↑/k · ↓/j move · Home/End jump · Enter select · Esc/q cancel",
+        &[
+            ("↑/k", "move"),
+            ("↓/j", "move"),
+            ("Home/End", "jump"),
+            ("Enter", "select"),
+            ("Esc/q", "cancel"),
+        ],
         None,
     );
 }
@@ -131,11 +135,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
             Span::raw("   Keymap: "),
             Span::styled(keymap, Style::default().fg(Color::Yellow)),
         ]))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Compose commit message "),
-        ),
+        .block(stage_block(" Compose commit message ", "2/3")),
         sections[0],
     );
 
@@ -149,28 +149,28 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     let cursor_status = render_document_editor(frame, body[0], session);
     render_field_sidebar(frame, body[1], session);
 
-    let help = match (session.keymap, session.vim_mode) {
-        (Keymap::Conventional, _) => "ctrl+t vim · ctrl+s review · Esc back",
-        (Keymap::Vim, VimMode::Normal) => "ctrl+t conventional · ctrl+s review · i insert · q back",
-        (Keymap::Vim, VimMode::Insert) => "ctrl+t conventional · ctrl+s review · Esc normal",
+    let help: &[_] = match (session.keymap, session.vim_mode) {
+        (Keymap::Conventional, _) => &[("ctrl+t", "vim"), ("ctrl+s", "review"), ("Esc", "back")],
+        (Keymap::Vim, VimMode::Normal) => &[
+            ("ctrl+t", "conventional"),
+            ("ctrl+s", "review"),
+            ("i", "insert"),
+            ("q", "back"),
+        ],
+        (Keymap::Vim, VimMode::Insert) => &[
+            ("ctrl+t", "conventional"),
+            ("ctrl+s", "review"),
+            ("Esc", "normal"),
+        ],
     };
-    let issue = session
-        .composer
-        .issues
-        .first()
-        .map_or("Complete every required field before review.", |issue| {
-            issue.message.as_str()
-        });
     let footer =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(sections[2]);
-    frame.render_widget(
-        Paragraph::new(issue).style(Style::default().fg(if session.composer.issues.is_empty() {
-            Color::DarkGray
-        } else {
-            Color::Red
-        })),
-        footer[0],
-    );
+    if let Some(issue) = session.composer.issues.first() {
+        frame.render_widget(
+            Paragraph::new(issue.message.as_str()).style(Style::default().fg(Color::Red)),
+            footer[0],
+        );
+    }
     render_navigation_row(
         frame,
         footer[1],
@@ -336,11 +336,8 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
     ])
     .split(area);
     frame.render_widget(
-        Paragraph::new("Review the exact canonical message before Git creates the commit.").block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Review commit "),
-        ),
+        Paragraph::new("Review the exact canonical message before Git creates the commit.")
+            .block(stage_block(" Review commit ", "3/3")),
         sections[0],
     );
     if let Some(review) = &session.review {
@@ -359,7 +356,12 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
     render_navigation_row(
         frame,
         sections[2],
-        "Enter commit · Esc edit · ↑/↓ scroll · q/ctrl+c cancel",
+        &[
+            ("Enter", "commit"),
+            ("Esc", "edit"),
+            ("↑/↓", "scroll"),
+            ("q/ctrl+c", "cancel"),
+        ],
         None,
     );
 }
@@ -372,14 +374,16 @@ fn render_confirmation(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSes
     };
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(format!("{message}\n\ny discard   Enter/Esc/n keep editing"))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Red))
-                    .title(" Confirm discard "),
-            )
-            .wrap(Wrap { trim: true }),
+        Paragraph::new(format!(
+            "{message}\n\ny: discard · Enter/Esc/n: keep editing"
+        ))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Red))
+                .title(" Confirm discard "),
+        )
+        .wrap(Wrap { trim: true }),
         popup,
     );
 }
@@ -434,25 +438,60 @@ fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String
     }
 }
 
-fn navigation_style() -> Style {
-    Style::default()
-        .fg(Color::Black)
-        .bg(Color::Yellow)
-        .add_modifier(Modifier::BOLD)
+fn stage_block(title: &'static str, step: &'static str) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .title_top(
+            Line::styled(
+                format!(" {step} "),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .right_aligned(),
+        )
 }
 
-fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &str, status: Option<&str>) {
+fn navigation_style() -> Style {
+    Style::default().fg(Color::Black).bg(Color::Yellow)
+}
+
+fn navigation_key_style() -> Style {
+    navigation_style().add_modifier(Modifier::BOLD)
+}
+
+fn navigation_line<'a>(hints: &'a [(&'a str, &'a str)]) -> Line<'a> {
+    let mut spans = Vec::with_capacity(hints.len().saturating_mul(3));
+    for (index, (key, action)) in hints.iter().copied().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(" · "));
+        }
+        spans.push(Span::styled(key, navigation_key_style()));
+        spans.push(Span::raw(": "));
+        spans.push(Span::raw(action));
+    }
+    Line::from(spans)
+}
+
+fn render_navigation_row(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    hints: &[(&str, &str)],
+    status: Option<&str>,
+) {
+    let line = navigation_line(hints);
     let Some(status) = status else {
-        frame.render_widget(Paragraph::new(hints).style(navigation_style()), area);
+        frame.render_widget(Paragraph::new(line).style(navigation_style()), area);
         return;
     };
     let status = format!("▌ {status} ");
     let status_width = u16::try_from(Line::from(status.as_str()).width()).unwrap_or(u16::MAX);
     let sections =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(status_width)]).split(area);
-    frame.render_widget(Paragraph::new(hints).style(navigation_style()), sections[0]);
+    frame.render_widget(Paragraph::new(line).style(navigation_style()), sections[0]);
     frame.render_widget(
-        Paragraph::new(status).style(navigation_style()),
+        Paragraph::new(status).style(navigation_key_style()),
         sections[1],
     );
 }

@@ -125,7 +125,7 @@ impl ComposerState {
     fn new(definition: &CommitTypeDefinition) -> Self {
         let pristine = scaffold_lines(definition);
         let mut editor = text_area(pristine.clone(), definition);
-        editor.move_cursor(CursorMove::Jump(4, 0));
+        editor.move_cursor(CursorMove::Jump(1, 0));
         Self {
             editor,
             pristine,
@@ -245,13 +245,22 @@ impl ComposerState {
         edit: impl FnOnce(&mut TextArea<'static>),
     ) {
         let previous = self.editor.clone();
+        let previous_cursor = self.editor.cursor();
         edit(&mut self.editor);
         if headings_are_intact(self.editor.lines(), definition) {
             apply_heading_guards(&mut self.editor, definition);
+            skip_heading_cursor(&mut self.editor, definition, previous_cursor);
             self.issues.clear();
         } else {
             self.editor = previous;
         }
+    }
+
+    fn move_cursor(&mut self, definition: &CommitTypeDefinition, movement: CursorMove) {
+        let previous_cursor = self.editor.cursor();
+        self.editor.move_cursor(movement);
+        skip_heading_cursor(&mut self.editor, definition, previous_cursor);
+        self.issues.clear();
     }
 }
 
@@ -314,6 +323,34 @@ fn headings_are_intact(lines: &[String], definition: &CommitTypeDefinition) -> b
 
 fn terminal_line(line: usize) -> u16 {
     u16::try_from(line).unwrap_or(u16::MAX)
+}
+
+fn terminal_column(column: usize) -> u16 {
+    u16::try_from(column).unwrap_or(u16::MAX)
+}
+
+fn skip_heading_cursor(
+    editor: &mut TextArea<'static>,
+    definition: &CommitTypeDefinition,
+    previous_cursor: (usize, usize),
+) {
+    let cursor = editor.cursor();
+    let Some(line) = editor.lines().get(cursor.0) else {
+        return;
+    };
+    if exact_heading(line, definition).is_none() {
+        return;
+    }
+
+    let target_line = if cursor > previous_cursor || cursor.0 == 0 {
+        cursor.0.saturating_add(1)
+    } else {
+        cursor.0.saturating_sub(1)
+    };
+    editor.move_cursor(CursorMove::Jump(
+        terminal_line(target_line),
+        terminal_column(previous_cursor.1),
+    ));
 }
 
 fn scaffold_lines(definition: &CommitTypeDefinition) -> Vec<String> {
@@ -618,6 +655,16 @@ impl<'a> AuthoringSession<'a> {
         &self.definitions[self.selected_type]
     }
 
+    pub(crate) fn visible_stage(&self) -> Stage {
+        if self.stage != Stage::Confirm {
+            return self.stage;
+        }
+        match self.confirmation_resume {
+            ResumeStage::Compose => Stage::Compose,
+            ResumeStage::Review => Stage::Review,
+        }
+    }
+
     pub(crate) fn handle_event(&mut self, event: Event) -> Option<CommitDraftAuthorOutcome> {
         if self.too_small {
             return self.handle_too_small(&event);
@@ -759,52 +806,51 @@ impl<'a> AuthoringSession<'a> {
     }
 
     fn handle_vim_normal_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
+        let definition = self.definition().clone();
         match key.code {
             KeyCode::Char('h') | KeyCode::Left => {
-                self.composer.editor.move_cursor(CursorMove::Back);
+                self.composer.move_cursor(&definition, CursorMove::Back);
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.composer.editor.move_cursor(CursorMove::Down);
+                self.composer.move_cursor(&definition, CursorMove::Down);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.composer.editor.move_cursor(CursorMove::Up);
+                self.composer.move_cursor(&definition, CursorMove::Up);
             }
             KeyCode::Char('l') | KeyCode::Right => {
-                self.composer.editor.move_cursor(CursorMove::Forward);
+                self.composer.move_cursor(&definition, CursorMove::Forward);
             }
             KeyCode::Char('w') => {
-                self.composer.editor.move_cursor(CursorMove::WordForward);
+                self.composer
+                    .move_cursor(&definition, CursorMove::WordForward);
             }
             KeyCode::Char('b') => {
-                self.composer.editor.move_cursor(CursorMove::WordBack);
+                self.composer.move_cursor(&definition, CursorMove::WordBack);
             }
             KeyCode::Char('0') | KeyCode::Home => {
-                self.composer.editor.move_cursor(CursorMove::Head);
+                self.composer.move_cursor(&definition, CursorMove::Head);
             }
             KeyCode::Char('$') | KeyCode::End => {
-                self.composer.editor.move_cursor(CursorMove::End);
+                self.composer.move_cursor(&definition, CursorMove::End);
             }
             KeyCode::Char('i') => self.vim_mode = VimMode::Insert,
             KeyCode::Char('a') => {
-                self.composer.editor.move_cursor(CursorMove::Forward);
+                self.composer.move_cursor(&definition, CursorMove::Forward);
                 self.vim_mode = VimMode::Insert;
             }
             KeyCode::Char('x') | KeyCode::Delete => {
-                let definition = self.definition().clone();
                 self.composer
                     .edit_preserving_headings(&definition, |editor| {
                         editor.delete_next_char();
                     });
             }
             KeyCode::Char('u') => {
-                let definition = self.definition().clone();
                 self.composer
                     .edit_preserving_headings(&definition, |editor| {
                         editor.undo();
                     });
             }
             _ if control(key, 'r') => {
-                let definition = self.definition().clone();
                 self.composer
                     .edit_preserving_headings(&definition, |editor| {
                         editor.redo();
