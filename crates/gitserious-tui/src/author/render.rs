@@ -1,6 +1,6 @@
-use gitserious_core::{CommitTypeDefinition, PropertyMultiplicity, PropertyRequirement};
+use gitserious_core::{CommitTypeDefinition, PropertyRequirement};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Flex, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
@@ -11,6 +11,15 @@ use super::state::{
 
 const MINIMUM_WIDTH: u16 = 60;
 const MINIMUM_HEIGHT: u16 = 18;
+const MAX_EDITOR_INNER_WIDTH: u16 = 80;
+const EDITOR_BORDER_WIDTH: u16 = 2;
+const MINIMUM_SIDEBAR_WIDTH: u16 = 30;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CursorStatus {
+    column: u16,
+    wrap_width: u16,
+}
 
 pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) {
     let area = frame.area();
@@ -91,10 +100,11 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
             .wrap(Wrap { trim: true }),
         sections[2],
     );
-    frame.render_widget(
-        Paragraph::new("↑/k ↓/j move  Home/End jump  Enter select  Esc/q cancel")
-            .style(navigation_style()),
+    render_navigation_row(
+        frame,
         sections[3],
+        "↑/k · ↓/j move · Home/End jump · Enter select · Esc/q cancel",
+        None,
     );
 }
 
@@ -128,15 +138,20 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         sections[0],
     );
 
-    let body = Layout::horizontal([Constraint::Percentage(36), Constraint::Percentage(64)])
-        .split(sections[1]);
-    render_field_hud(frame, body[0], session);
-    render_document_editor(frame, body[1], session);
+    let available_editor_width = sections[1].width.saturating_sub(MINIMUM_SIDEBAR_WIDTH);
+    let editor_width = available_editor_width.min(MAX_EDITOR_INNER_WIDTH + EDITOR_BORDER_WIDTH);
+    let body = Layout::horizontal([
+        Constraint::Length(editor_width),
+        Constraint::Min(MINIMUM_SIDEBAR_WIDTH),
+    ])
+    .split(sections[1]);
+    let cursor_status = render_document_editor(frame, body[0], session);
+    render_field_sidebar(frame, body[1], session);
 
-    let help = if session.keymap == Keymap::Vim {
-        "Ctrl+T conventional  Ctrl+S review  Ctrl+N/D values  Esc normal  q back"
-    } else {
-        "Ctrl+T vim  Ctrl+S review  Ctrl+N/D repeatable values  Esc back"
+    let help = match (session.keymap, session.vim_mode) {
+        (Keymap::Conventional, _) => "ctrl+t vim · ctrl+s review · Esc back",
+        (Keymap::Vim, VimMode::Normal) => "ctrl+t conventional · ctrl+s review · i insert · q back",
+        (Keymap::Vim, VimMode::Insert) => "ctrl+t conventional · ctrl+s review · Esc normal",
     };
     let issue = session
         .composer
@@ -155,7 +170,27 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         })),
         footer[0],
     );
-    frame.render_widget(Paragraph::new(help).style(navigation_style()), footer[1]);
+    render_navigation_row(
+        frame,
+        footer[1],
+        help,
+        Some(&format!(
+            "col {}/{}",
+            cursor_status.column, cursor_status.wrap_width
+        )),
+    );
+}
+
+fn render_field_sidebar(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
+    let desired_fields_height =
+        u16::try_from(session.definition().properties().len() + 4).unwrap_or(u16::MAX);
+    let fields_height = desired_fields_height
+        .min(area.height.saturating_sub(3))
+        .max(3);
+    let sections =
+        Layout::vertical([Constraint::Length(fields_height), Constraint::Min(3)]).split(area);
+    render_field_hud(frame, sections[0], session);
+    render_field_description(frame, sections[1], session);
 }
 
 fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
@@ -193,7 +228,7 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
     );
 }
 
-fn render_document_editor(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
+fn render_field_description(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
     let definition = session.definition().clone();
     let current = session.composer.current_field(&definition);
     let (title, description) = current.map_or_else(
@@ -205,14 +240,34 @@ fn render_document_editor(frame: &mut Frame<'_>, area: Rect, session: &mut Autho
         },
         |kind| field_metadata(kind, &definition),
     );
-    let sections = Layout::vertical([Constraint::Length(5), Constraint::Min(4)]).split(area);
     frame.render_widget(
-        Paragraph::new(description)
-            .block(Block::default().borders(Borders::ALL).title(title))
-            .wrap(Wrap { trim: true }),
-        sections[0],
+        Paragraph::new(vec![
+            Line::styled(
+                title.trim().to_owned(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Line::from(description),
+        ])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Description "),
+        )
+        .wrap(Wrap { trim: true }),
+        area,
     );
-    let current_id = current.map(FieldKind::id);
+}
+
+fn render_document_editor(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    session: &mut AuthoringSession<'_>,
+) -> CursorStatus {
+    let definition = session.definition().clone();
+    let current_id = session
+        .composer
+        .current_field(&definition)
+        .map(FieldKind::id);
     let issues = session
         .composer
         .issues
@@ -237,7 +292,19 @@ fn render_document_editor(frame: &mut Frame<'_>, area: Rect, session: &mut Autho
             .border_style(border_style)
             .title(editor_title),
     );
-    frame.render_widget(&session.composer.editor, sections[1]);
+    frame.render_widget(&session.composer.editor, area);
+
+    let wrap_width = area.width.saturating_sub(EDITOR_BORDER_WIDTH).max(1);
+    let inner_left = area.x.saturating_add(1);
+    let column = session
+        .composer
+        .editor
+        .rendered_cursor_position()
+        .map_or(1, |position| {
+            position.x.saturating_sub(inner_left).saturating_add(1)
+        })
+        .clamp(1, wrap_width);
+    CursorStatus { column, wrap_width }
 }
 
 fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
@@ -268,10 +335,11 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
             sections[1],
         );
     }
-    frame.render_widget(
-        Paragraph::new("Enter commit  Esc edit  ↑/↓ scroll  q/Ctrl+C cancel")
-            .style(navigation_style()),
+    render_navigation_row(
+        frame,
         sections[2],
+        "Enter commit · Esc edit · ↑/↓ scroll · q/ctrl+c cancel",
+        None,
     );
 }
 
@@ -307,12 +375,7 @@ fn field_label(id: FieldId, definition: &CommitTypeDefinition) -> String {
                 PropertyRequirement::Optional => "optional",
                 PropertyRequirement::Conditional(_) => "conditional",
             };
-            let repeatable = if property.multiplicity() == PropertyMultiplicity::Multiple {
-                " · repeatable"
-            } else {
-                ""
-            };
-            format!("{} · {requirement}{repeatable}", property.key())
+            format!("{} · {requirement}", property.key())
         }
     }
 }
@@ -329,7 +392,7 @@ fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String
         ),
         FieldKind::Property {
             definition_index,
-            value_index,
+            value_index: _,
         } => {
             let property = &definition.properties()[definition_index];
             let requirement = match property.requirement() {
@@ -340,12 +403,8 @@ fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String
                     format!("conditional: {}", condition.rationale())
                 }
             };
-            let multiplicity = match property.multiplicity() {
-                PropertyMultiplicity::Single => "single value".to_owned(),
-                PropertyMultiplicity::Multiple => format!("value {} · repeatable", value_index + 1),
-            };
             (
-                format!(" {} · {requirement} · {multiplicity} ", property.key()),
+                format!(" {} · {requirement} ", property.key()),
                 property.description().to_owned(),
             )
         }
@@ -357,6 +416,26 @@ fn navigation_style() -> Style {
         .fg(Color::Black)
         .bg(Color::Yellow)
         .add_modifier(Modifier::BOLD)
+}
+
+fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &str, status: Option<&str>) {
+    let Some(status) = status else {
+        frame.render_widget(Paragraph::new(hints).style(navigation_style()), area);
+        return;
+    };
+    let status = format!("· {status}");
+    let sections = Layout::horizontal([
+        Constraint::Min(0),
+        Constraint::Length(u16::try_from(status.len()).unwrap_or(u16::MAX)),
+    ])
+    .split(area);
+    frame.render_widget(Paragraph::new(hints).style(navigation_style()), sections[0]);
+    frame.render_widget(
+        Paragraph::new(status)
+            .alignment(Alignment::Right)
+            .style(navigation_style()),
+        sections[1],
+    );
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {

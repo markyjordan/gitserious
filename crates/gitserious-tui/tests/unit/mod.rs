@@ -8,9 +8,10 @@ use gitserious_core::{
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::style::Color;
-use tui_textarea::{CursorMove, TextArea};
+use ratatui::style::{Color, Modifier, Style};
+use tui_textarea::{CursorMove, TextArea, WrapMode};
 
 use crate::{RatatuiCommitDraftAuthor, RatatuiCommitDraftAuthorError};
 
@@ -84,6 +85,41 @@ fn rendered(
     let mut terminal = Terminal::new(backend)?;
     terminal.draw(|frame| render(frame, session))?;
     Ok(buffer_text(terminal.backend()))
+}
+
+fn rendered_buffer(
+    session: &mut AuthoringSession<'_>,
+    width: u16,
+    height: u16,
+) -> Result<Buffer, Box<dyn Error>> {
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend)?;
+    terminal.draw(|frame| render(frame, session))?;
+    Ok(terminal.backend().buffer().clone())
+}
+
+fn find_ascii(buffer: &Buffer, width: u16, height: u16, needle: &str) -> Option<(u16, u16)> {
+    let characters = needle.chars().collect::<Vec<_>>();
+    for y in 0..height {
+        for x in 0..width {
+            if characters.iter().enumerate().all(|(offset, character)| {
+                u16::try_from(offset)
+                    .ok()
+                    .and_then(|offset| x.checked_add(offset))
+                    .filter(|column| *column < width)
+                    .is_some_and(|column| buffer[(column, y)].symbol() == character.to_string())
+            }) {
+                return Some((x, y));
+            }
+        }
+    }
+    None
+}
+
+fn row_text(buffer: &Buffer, width: u16, row: u16) -> String {
+    (0..width)
+        .map(|column| buffer[(column, row)].symbol())
+        .collect()
 }
 
 fn assert_highlighted_footer(
@@ -355,19 +391,71 @@ fn bounded_vim_mode_uses_ctrl_t_and_supports_document_commands() {
 }
 
 #[test]
-fn repeatable_sections_keep_independent_ordered_values() -> Result<(), Box<dyn Error>> {
+fn schema_headings_are_immutable_across_editing_modes() -> Result<(), Box<dyn Error>> {
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let pristine = session.composer.editor.lines().to_vec();
+    let subject_line = pristine
+        .iter()
+        .position(|line| line == "subject:")
+        .ok_or("subject heading")?;
+    let subject_line = u16::try_from(subject_line)?;
+
+    session
+        .composer
+        .editor
+        .move_cursor(CursorMove::Jump(subject_line, 0));
+    press(&mut session, KeyCode::Right);
+    assert_eq!(
+        session.composer.editor.cursor(),
+        (usize::from(subject_line), "subject:".chars().count())
+    );
+    session
+        .composer
+        .editor
+        .move_cursor(CursorMove::Jump(subject_line, 0));
+    press(&mut session, KeyCode::Char('x'));
+    assert_eq!(session.composer.editor.lines(), pristine);
+
+    press(&mut session, KeyCode::Delete);
+    assert_eq!(session.composer.editor.lines(), pristine);
+
+    session
+        .composer
+        .editor
+        .move_cursor(CursorMove::Jump(subject_line.saturating_add(1), 0));
+    press(&mut session, KeyCode::Backspace);
+    assert_eq!(session.composer.editor.lines(), pristine);
+
+    paste(&mut session, "scope:\n");
+    assert_eq!(session.composer.editor.lines(), pristine);
+
+    session.composer.editor.start_selection();
+    session
+        .composer
+        .editor
+        .move_cursor(CursorMove::Jump(subject_line, 0));
+    press(&mut session, KeyCode::Backspace);
+    assert_eq!(session.composer.editor.lines(), pristine);
+
+    modified_press(&mut session, KeyCode::Char('t'), KeyModifiers::CONTROL);
+    session
+        .composer
+        .editor
+        .move_cursor(CursorMove::Jump(subject_line, 0));
+    press(&mut session, KeyCode::Char('x'));
+    assert_eq!(session.composer.editor.lines(), pristine);
+    Ok(())
+}
+
+#[test]
+fn multiple_schema_values_still_compile_when_present() -> Result<(), Box<dyn Error>> {
     let definitions = vec![repeatable_definition()?];
     let mut session = AuthoringSession::new(&definitions, Some(0));
     set_document(
         &mut session,
-        "scope:\n\n\nsubject:\ncollect evidence\n\nevidence:\nfirst\n\n",
-        7,
+        "scope:\n\nsubject:\ncollect evidence\n\nevidence:\nfirst\n\nevidence:\nsecond\nline\n",
+        9,
     );
-    modified_press(&mut session, KeyCode::Char('n'), KeyModifiers::CONTROL);
-    paste(&mut session, "second\nline");
-    modified_press(&mut session, KeyCode::Char('n'), KeyModifiers::CONTROL);
-    paste(&mut session, "discard me");
-    modified_press(&mut session, KeyCode::Char('d'), KeyModifiers::CONTROL);
 
     assert_eq!(
         session.composer.current_field(&definitions[0]),
@@ -388,6 +476,38 @@ fn repeatable_sections_keep_independent_ordered_values() -> Result<(), Box<dyn E
         "custom: collect evidence\n\nevidence:\n  first\n\nevidence:\n  second\n  line\n"
     );
     Ok(())
+}
+
+#[test]
+fn ctrl_n_and_ctrl_d_use_conventional_editor_behavior_without_changing_the_schema() {
+    let definitions = built_in_commit_types();
+    let mut session = AuthoringSession::new(definitions, Some(0));
+    let headings = session
+        .composer
+        .editor
+        .lines()
+        .iter()
+        .filter(|line| line.ends_with(':'))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    paste(&mut session, "abc");
+    session.composer.editor.move_cursor(CursorMove::Head);
+    modified_press(&mut session, KeyCode::Char('d'), KeyModifiers::CONTROL);
+    assert_eq!(session.composer.editor.lines()[4], "bc");
+    modified_press(&mut session, KeyCode::Char('n'), KeyModifiers::CONTROL);
+
+    assert_eq!(
+        session
+            .composer
+            .editor
+            .lines()
+            .iter()
+            .filter(|line| line.ends_with(':'))
+            .cloned()
+            .collect::<Vec<_>>(),
+        headings
+    );
 }
 
 #[test]
@@ -551,7 +671,8 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(text.contains("○ subject · required"));
     assert!(text.contains("conditional-field · conditional"));
     assert!(text.contains("required when the condition applies"));
-    assert!(text.contains("Ctrl+T vim"));
+    assert!(text.contains("ctrl+t vim"));
+    assert!(!text.contains("repeatable"));
     assert_highlighted_footer(&mut composer, 120, 32)?;
 
     modified_press(&mut composer, KeyCode::Char('s'), KeyModifiers::CONTROL);
@@ -582,6 +703,103 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
             Some(CommitDraftAuthorOutcome::Cancelled)
         );
     }
+    Ok(())
+}
+
+#[test]
+fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<(), Box<dyn Error>> {
+    let mut composer = AuthoringSession::new(built_in_commit_types(), Some(0));
+    assert_eq!(
+        composer.composer.editor.cursor_line_style(),
+        Style::default()
+    );
+    assert_eq!(
+        composer.composer.editor.cursor_style(),
+        Style::default().add_modifier(Modifier::REVERSED)
+    );
+    paste(&mut composer, "hello");
+    let buffer = rendered_buffer(&mut composer, 120, 32)?;
+    let scope = find_ascii(&buffer, 120, 32, "scope:").ok_or("missing scope label")?;
+    for offset in 0..u16::try_from("scope:".len())? {
+        let cell = &buffer[(scope.0 + offset, scope.1)];
+        assert_eq!(cell.fg, Color::Yellow);
+        assert!(cell.modifier.contains(Modifier::BOLD));
+        assert!(!cell.modifier.contains(Modifier::UNDERLINED));
+    }
+    let authored = find_ascii(&buffer, 120, 32, "hello").ok_or("missing authored value")?;
+    assert!(!buffer[authored].modifier.contains(Modifier::UNDERLINED));
+
+    let footer = row_text(&buffer, 120, 31);
+    assert!(footer.contains("ctrl+t vim · ctrl+s review · Esc back"));
+    assert!(footer.contains("· col 6/80"));
+    assert!(!footer.contains("Ctrl"));
+    assert!(!footer.contains("ctrl+n"));
+    assert!(!footer.contains("ctrl+d"));
+
+    modified_press(&mut composer, KeyCode::Char('t'), KeyModifiers::CONTROL);
+    let buffer = rendered_buffer(&mut composer, 120, 32)?;
+    let footer = row_text(&buffer, 120, 31);
+    assert!(footer.contains("ctrl+t conventional · ctrl+s review · i insert · q back"));
+    press(&mut composer, KeyCode::Char('i'));
+    let buffer = rendered_buffer(&mut composer, 120, 32)?;
+    let footer = row_text(&buffer, 120, 31);
+    assert!(footer.contains("ctrl+t conventional · ctrl+s review · Esc normal"));
+
+    let mut picker = AuthoringSession::new(built_in_commit_types(), None);
+    let buffer = rendered_buffer(&mut picker, 100, 24)?;
+    let footer = row_text(&buffer, 100, 23);
+    assert!(footer.contains("↑/k · ↓/j move · Home/End jump · Enter select · Esc/q cancel"));
+
+    let mut review = valid_feat_session();
+    let buffer = rendered_buffer(&mut review, 100, 24)?;
+    let footer = row_text(&buffer, 100, 23);
+    assert!(footer.contains("Enter commit · Esc edit · ↑/↓ scroll · q/ctrl+c cancel"));
+    assert!(!footer.contains("Ctrl"));
+    Ok(())
+}
+
+#[test]
+fn composer_layout_caps_at_eighty_columns_and_adapts_on_narrow_terminals()
+-> Result<(), Box<dyn Error>> {
+    let mut wide = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let buffer = rendered_buffer(&mut wide, 120, 32)?;
+    let edit = find_ascii(&buffer, 120, 32, "Edit form").ok_or("missing editor")?;
+    let fields = find_ascii(&buffer, 120, 32, "Fields").ok_or("missing fields")?;
+    let description = find_ascii(&buffer, 120, 32, "Description").ok_or("missing description")?;
+    let guidance = find_ascii(&buffer, 120, 32, "Concise").ok_or("missing guidance")?;
+
+    assert_eq!(edit.1, fields.1);
+    assert!(edit.0 < fields.0);
+    assert_eq!(fields.0, description.0);
+    assert!(description.1 > fields.1);
+    assert!(guidance.0 >= description.0.saturating_sub(1));
+    assert!(guidance.1 > description.1);
+    assert!(find_ascii(&buffer, 120, 32, "col 1/80").is_some());
+    assert_eq!(wide.composer.editor.wrap_mode(), WrapMode::WordOrGlyph);
+
+    let mut narrow = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let buffer = rendered_buffer(&mut narrow, 72, 24)?;
+    assert!(!narrow.too_small);
+    assert!(find_ascii(&buffer, 72, 24, "col 1/40").is_some());
+    Ok(())
+}
+
+#[test]
+fn soft_wrap_reports_the_visual_column_without_changing_authored_lines()
+-> Result<(), Box<dyn Error>> {
+    let mut word_wrap = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let value = format!("{} word", "x".repeat(76));
+    paste(&mut word_wrap, &value);
+    let buffer = rendered_buffer(&mut word_wrap, 120, 32)?;
+    assert_eq!(word_wrap.composer.editor.lines()[4], value);
+    assert!(find_ascii(&buffer, 120, 32, "col 5/80").is_some());
+
+    let mut glyph_wrap = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let value = "x".repeat(81);
+    paste(&mut glyph_wrap, &value);
+    let buffer = rendered_buffer(&mut glyph_wrap, 120, 32)?;
+    assert_eq!(glyph_wrap.composer.editor.lines()[4], value);
+    assert!(find_ascii(&buffer, 120, 32, "col 2/80").is_some());
     Ok(())
 }
 

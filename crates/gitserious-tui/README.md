@@ -22,26 +22,32 @@ coordination remain in `gitserious-app`.
 composer. Both forms require interactive standard input and output. There is no
 configured-Git-editor fallback or non-interactive authoring mode in this slice.
 
-The composer prepopulates one editable document with `scope`, `subject`, and
-every schema-defined property header. Values are authored beneath those headers
-without traversing separate controls. The Fields pane is a passive HUD that
-tracks complete, incomplete, and invalid values while showing the schema
-requirement and the field under the document cursor. `Ctrl+S` compiles this form
-into the exact canonical message shown during review; blank nonrequired fields
-are omitted. Repeatable properties keep independent ordered sections.
+The composer places one prepopulated document on the left with `scope`,
+`subject`, and every schema-defined property header. The headers are immutable;
+values are authored beneath them without traversing separate controls. Blank
+nonrequired fields are omitted, while blank required fields block review.
+
+The right sidebar places the passive Fields HUD above the contextual Description
+pane. The HUD tracks complete, incomplete, and invalid values and shows each
+field's schema requirement. The editor soft-wraps at 80 columns when space
+permits and adapts to narrower supported terminals. Its highlighted status strip
+reports the visual cursor column and active wrap width. `Ctrl+S` compiles the
+form into the exact canonical message shown during review.
 
 | Context | Controls |
 | --- | --- |
 | Type picker | `Up`/`k`, `Down`/`j`, `Home`, `End`, `Enter`; `Esc`/`q` cancels |
-| Composer | Normal document editing; `Ctrl+N`/`Ctrl+D` adds/removes a repeatable section under the cursor; `Ctrl+S` validates and reviews |
+| Composer | Normal document editing; `Ctrl+S` validates and reviews |
 | Keymap | `Ctrl+T` toggles conventional and Vim editing; the active mode is always shown |
 | Review | `Enter` confirms; `Esc` returns to editing; arrows or `j`/`k` scroll; `q` cancels |
 | Cancellation | Untouched drafts cancel immediately; dirty drafts require explicit discard confirmation |
 
 Conventional mode provides cursor movement, selection, word movement,
 soft-wrapped Unicode input, paste, undo/redo, and `Ctrl+K` deletion to the end of
-the line through the text-area widget. The navigation hints at the bottom of
-each terminal view use a highlighted strip for quick scanning.
+the line through the text-area widget. The cursor uses a visible cell without
+underlining the input line. Navigation hints at the bottom of each terminal view
+use a highlighted strip, centered-dot separators, and lowercase `ctrl` labels
+for quick scanning.
 The bounded Vim mode provides Normal and Insert modes plus `h`/`j`/`k`/`l`,
 `w`/`b`, `0`/`$`, `i`/`a`, `x`, `u`, and `Ctrl+R`. It intentionally does not
 implement operators, counts, registers, macros, Visual mode, or ex commands.
