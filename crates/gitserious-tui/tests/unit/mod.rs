@@ -780,26 +780,66 @@ fn composer_layout_caps_at_eighty_columns_and_adapts_on_narrow_terminals()
     let mut narrow = AuthoringSession::new(built_in_commit_types(), Some(0));
     let buffer = rendered_buffer(&mut narrow, 72, 24)?;
     assert!(!narrow.too_small);
-    assert!(find_ascii(&buffer, 72, 24, "col 1/40").is_some());
+    assert!(find_ascii(&buffer, 72, 24, "col 1/80").is_some());
     Ok(())
 }
 
 #[test]
-fn soft_wrap_reports_the_visual_column_without_changing_authored_lines()
+fn narrow_editor_scrolls_until_fixed_width_wrap_then_returns_to_column_one()
+-> Result<(), Box<dyn Error>> {
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let initial = rendered_buffer(&mut session, 72, 24)?;
+    let subject = find_ascii(&initial, 72, 24, "subject:").ok_or("missing subject")?;
+    let first_forty = "0123456789012345678901234567890123456789";
+    paste(&mut session, first_forty);
+    let buffer = rendered_buffer(&mut session, 72, 24)?;
+    let visible = (1..=40)
+        .map(|column| buffer[(column, subject.1 + 1)].symbol())
+        .collect::<String>();
+    assert_eq!(visible.trim_end(), &first_forty[1..]);
+    assert!(find_ascii(&buffer, 72, 24, "col 41/80").is_some());
+
+    press(&mut session, KeyCode::Left);
+    let buffer = rendered_buffer(&mut session, 72, 24)?;
+    assert_eq!(buffer[(1, subject.1 + 1)].symbol(), "0");
+    assert!(find_ascii(&buffer, 72, 24, "col 40/80").is_some());
+    press(&mut session, KeyCode::Right);
+
+    paste(&mut session, &"x".repeat(41));
+    let buffer = rendered_buffer(&mut session, 72, 24)?;
+    assert_eq!(
+        session.composer.editor.lines()[4],
+        format!("{first_forty}{}", "x".repeat(41))
+    );
+    assert_eq!(buffer[(1, subject.1 + 2)].symbol(), "x");
+    assert!(find_ascii(&buffer, 72, 24, "col 2/80").is_some());
+    Ok(())
+}
+
+#[test]
+fn fixed_width_soft_wrap_reports_visual_columns_without_changing_authored_lines()
 -> Result<(), Box<dyn Error>> {
     let mut word_wrap = AuthoringSession::new(built_in_commit_types(), Some(0));
     let value = format!("{} word", "x".repeat(76));
     paste(&mut word_wrap, &value);
-    let buffer = rendered_buffer(&mut word_wrap, 120, 32)?;
+    let buffer = rendered_buffer(&mut word_wrap, 72, 24)?;
     assert_eq!(word_wrap.composer.editor.lines()[4], value);
-    assert!(find_ascii(&buffer, 120, 32, "col 5/80").is_some());
+    assert!(find_ascii(&buffer, 72, 24, "col 5/80").is_some());
 
     let mut glyph_wrap = AuthoringSession::new(built_in_commit_types(), Some(0));
     let value = "x".repeat(81);
     paste(&mut glyph_wrap, &value);
-    let buffer = rendered_buffer(&mut glyph_wrap, 120, 32)?;
+    let buffer = rendered_buffer(&mut glyph_wrap, 72, 24)?;
     assert_eq!(glyph_wrap.composer.editor.lines()[4], value);
-    assert!(find_ascii(&buffer, 120, 32, "col 2/80").is_some());
+    assert!(find_ascii(&buffer, 72, 24, "col 2/80").is_some());
+
+    let mut unicode = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let value = "🦀".repeat(21);
+    paste(&mut unicode, &value);
+    let buffer = rendered_buffer(&mut unicode, 72, 24)?;
+    assert_eq!(unicode.composer.editor.lines()[4], value);
+    assert!(buffer.content().iter().any(|cell| cell.symbol() == "🦀"));
+    assert!(find_ascii(&buffer, 72, 24, "col 43/80").is_some());
     Ok(())
 }
 
