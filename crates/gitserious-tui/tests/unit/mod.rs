@@ -666,7 +666,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
         .editor
         .move_cursor(CursorMove::Jump(16, 0));
     let text = rendered(&mut composer, 120, 32)?;
-    assert!(text.contains("Compose commit"));
+    assert!(text.contains("Compose commit message"));
     assert!(text.contains("Keymap: conventional"));
     assert!(text.contains("○ subject · required"));
     assert!(text.contains("conditional-field · conditional"));
@@ -731,10 +731,20 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
 
     let footer = row_text(&buffer, 120, 31);
     assert!(footer.contains("ctrl+t vim · ctrl+s review · Esc back"));
-    assert!(footer.contains("· col 6/80"));
+    assert!(footer.contains("▌ col 6/80 "));
     assert!(!footer.contains("Ctrl"));
     assert!(!footer.contains("ctrl+n"));
     assert!(!footer.contains("ctrl+d"));
+    let status = find_ascii(&buffer, 120, 32, "col 6/80").ok_or("missing column status")?;
+    let padding = [(status.0 - 1, status.1), (status.0 + 8, status.1)];
+    assert_eq!(buffer[(status.0 - 2, status.1)].symbol(), "▌");
+    for position in padding {
+        assert_eq!(buffer[position].symbol(), " ");
+        assert_eq!(buffer[position].fg, Color::Black);
+        assert_eq!(buffer[position].bg, Color::Yellow);
+    }
+    assert_eq!(buffer[(status.0 - 2, status.1)].fg, Color::Black);
+    assert_eq!(buffer[(status.0 - 2, status.1)].bg, Color::Yellow);
 
     modified_press(&mut composer, KeyCode::Char('t'), KeyModifiers::CONTROL);
     let buffer = rendered_buffer(&mut composer, 120, 32)?;
@@ -766,7 +776,7 @@ fn composer_layout_caps_at_eighty_columns_and_adapts_on_narrow_terminals()
     let edit = find_ascii(&buffer, 120, 32, "Edit form").ok_or("missing editor")?;
     let fields = find_ascii(&buffer, 120, 32, "Fields").ok_or("missing fields")?;
     let description = find_ascii(&buffer, 120, 32, "Description").ok_or("missing description")?;
-    let guidance = find_ascii(&buffer, 120, 32, "Concise").ok_or("missing guidance")?;
+    let guidance = find_ascii(&buffer, 120, 32, "Required concise").ok_or("missing guidance")?;
 
     assert_eq!(edit.1, fields.1);
     assert!(edit.0 < fields.0);
@@ -774,8 +784,14 @@ fn composer_layout_caps_at_eighty_columns_and_adapts_on_narrow_terminals()
     assert!(description.1 > fields.1);
     assert!(guidance.0 >= description.0.saturating_sub(1));
     assert!(guidance.1 > description.1);
+    assert!(find_ascii(&buffer, 120, 32, "type(scope):").is_some());
     assert!(find_ascii(&buffer, 120, 32, "col 1/80").is_some());
     assert_eq!(wide.composer.editor.wrap_mode(), WrapMode::WordOrGlyph);
+
+    wide.composer.editor.move_cursor(CursorMove::Jump(1, 0));
+    let buffer = rendered_buffer(&mut wide, 120, 32)?;
+    assert!(find_ascii(&buffer, 120, 32, "Optional affected area").is_some());
+    assert!(find_ascii(&buffer, 120, 32, "type(scope):").is_some());
 
     let mut narrow = AuthoringSession::new(built_in_commit_types(), Some(0));
     let buffer = rendered_buffer(&mut narrow, 72, 24)?;

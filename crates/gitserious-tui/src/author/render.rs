@@ -1,7 +1,7 @@
 use gitserious_core::{CommitTypeDefinition, PropertyRequirement};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Alignment, Constraint, Flex, Layout, Rect};
+use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap};
@@ -134,7 +134,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Compose commit "),
+                .title(" Compose commit message "),
         ),
         sections[0],
     );
@@ -405,11 +405,13 @@ fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String
     match kind {
         FieldKind::Scope => (
             " Scope · optional ".to_owned(),
-            "Semantic area affected by the commit. Leave empty when no scope applies.".to_owned(),
+            "Optional affected area in a Conventional Commit: type(scope): subject. Leave blank for type: subject."
+                .to_owned(),
         ),
         FieldKind::Subject => (
             " Subject · required ".to_owned(),
-            "Concise, single-line summary of the change.".to_owned(),
+            "Required concise description in a Conventional Commit: type(scope): subject, or type: subject without a scope."
+                .to_owned(),
         ),
         FieldKind::Property {
             definition_index,
@@ -444,17 +446,13 @@ fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &str, status:
         frame.render_widget(Paragraph::new(hints).style(navigation_style()), area);
         return;
     };
-    let status = format!("· {status}");
-    let sections = Layout::horizontal([
-        Constraint::Min(0),
-        Constraint::Length(u16::try_from(status.len()).unwrap_or(u16::MAX)),
-    ])
-    .split(area);
+    let status = format!("▌ {status} ");
+    let status_width = u16::try_from(Line::from(status.as_str()).width()).unwrap_or(u16::MAX);
+    let sections =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(status_width)]).split(area);
     frame.render_widget(Paragraph::new(hints).style(navigation_style()), sections[0]);
     frame.render_widget(
-        Paragraph::new(status)
-            .alignment(Alignment::Right)
-            .style(navigation_style()),
+        Paragraph::new(status).style(navigation_style()),
         sections[1],
     );
 }
