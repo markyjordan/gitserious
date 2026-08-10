@@ -92,7 +92,8 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
         sections[2],
     );
     frame.render_widget(
-        Paragraph::new("↑/k ↓/j move  Home/End jump  Enter select  Esc/q cancel"),
+        Paragraph::new("↑/k ↓/j move  Home/End jump  Enter select  Esc/q cancel")
+            .style(navigation_style()),
         sections[3],
     );
 }
@@ -154,7 +155,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         })),
         footer[0],
     );
-    frame.render_widget(Paragraph::new(help), footer[1]);
+    frame.render_widget(Paragraph::new(help).style(navigation_style()), footer[1]);
 }
 
 fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
@@ -268,7 +269,8 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
         );
     }
     frame.render_widget(
-        Paragraph::new("Enter commit  Esc edit  ↑/↓ scroll  q/Ctrl+C cancel"),
+        Paragraph::new("Enter commit  Esc edit  ↑/↓ scroll  q/Ctrl+C cancel")
+            .style(navigation_style()),
         sections[2],
     );
 }
