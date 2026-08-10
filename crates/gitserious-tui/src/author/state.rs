@@ -708,7 +708,7 @@ impl<'a> AuthoringSession<'a> {
     }
 
     fn handle_composer_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
-        if key.code == KeyCode::F(2) {
+        if control(key, 't') {
             self.keymap = match self.keymap {
                 Keymap::Conventional => Keymap::Vim,
                 Keymap::Vim => Keymap::Conventional,

@@ -133,9 +133,9 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     render_document_editor(frame, body[1], session);
 
     let help = if session.keymap == Keymap::Vim {
-        "F2 conventional  Ctrl+S review  Ctrl+N/D values  Esc normal  q back"
+        "Ctrl+T conventional  Ctrl+S review  Ctrl+N/D values  Esc normal  q back"
     } else {
-        "F2 vim  Ctrl+S review  Ctrl+N/D repeatable values  Esc back"
+        "Ctrl+T vim  Ctrl+S review  Ctrl+N/D repeatable values  Esc back"
     };
     let issue = session
         .composer
