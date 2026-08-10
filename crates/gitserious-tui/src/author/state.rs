@@ -203,7 +203,7 @@ impl ComposerState {
             let first_line = issues[0].line;
             self.issues = issues;
             self.editor
-                .move_cursor(CursorMove::Jump(first_line as u16, 0));
+                .move_cursor(CursorMove::Jump(terminal_line(first_line), 0));
             return None;
         }
         let subject = subject?;
@@ -316,7 +316,7 @@ impl ComposerState {
     fn replace_editor(&mut self, lines: Vec<String>, cursor_line: usize) {
         self.editor = text_area(lines);
         self.editor
-            .move_cursor(CursorMove::Jump(cursor_line as u16, 0));
+            .move_cursor(CursorMove::Jump(terminal_line(cursor_line), 0));
         self.issues.clear();
     }
 }
@@ -325,6 +325,10 @@ fn text_area(lines: Vec<String>) -> TextArea<'static> {
     let mut editor = TextArea::new(lines);
     editor.set_wrap_mode(WrapMode::WordOrGlyph);
     editor
+}
+
+fn terminal_line(line: usize) -> u16 {
+    u16::try_from(line).unwrap_or(u16::MAX)
 }
 
 fn scaffold_lines(definition: &CommitTypeDefinition) -> Vec<String> {
@@ -464,13 +468,10 @@ fn section_text(lines: &[String]) -> String {
 }
 
 fn parse_scope(parsed: &ParsedDocument, issues: &mut Vec<ValidationIssue>) -> Option<CommitScope> {
-    let Some(section) = parsed
+    let section = parsed
         .sections
         .iter()
-        .find(|section| section.kind == FieldKind::Scope)
-    else {
-        return None;
-    };
+        .find(|section| section.kind == FieldKind::Scope)?;
     if section.text.is_empty() {
         return None;
     }
@@ -737,8 +738,16 @@ impl<'a> AuthoringSession<'a> {
         }
         if control(key, 'n') {
             let definition = self.definition().clone();
-            self.composer.add_repeatable_value(&definition);
-            return None;
+            if matches!(
+                self.composer.current_field(&definition),
+                Some(FieldKind::Property {
+                    definition_index,
+                    ..
+                }) if definition.properties()[definition_index].multiplicity() == PropertyMultiplicity::Multiple
+            ) {
+                self.composer.add_repeatable_value(&definition);
+                return None;
+            }
         }
         if control(key, 'd') {
             let definition = self.definition().clone();
