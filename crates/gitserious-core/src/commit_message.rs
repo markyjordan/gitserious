@@ -59,7 +59,7 @@ pub fn render_commit_message(
         for value in authored.values() {
             let _ = write!(message, "\n{}:\n", authored.key());
             for line in value.as_str().lines() {
-                let _ = writeln!(message, "  {line}");
+                let _ = writeln!(message, "{line}");
             }
         }
     }

@@ -87,7 +87,9 @@ fn canonical_render_uses_schema_order_and_preserves_multiline_values() -> Result
         )?,
         authored(
             "intent",
-            PropertyValues::single(value("centralize validation\nwithout syntax coupling 🦀")?),
+            PropertyValues::single(value(
+                "centralize validation\n  preserve authored indentation 🦀",
+            )?),
         )?,
     ])?;
 
@@ -95,7 +97,7 @@ fn canonical_render_uses_schema_order_and_preserves_multiline_values() -> Result
 
     assert_eq!(
         message.as_str(),
-        "feat(core): render typed drafts\n\nintent:\n  centralize validation\n  without syntax coupling 🦀\n\nbehavior:\n  render one message\n"
+        "feat(core): render typed drafts\n\nintent:\ncentralize validation\n  preserve authored indentation 🦀\n\nbehavior:\nrender one message\n"
     );
     Ok(())
 }
@@ -184,7 +186,7 @@ fn repeatable_values_render_as_ordered_canonical_property_blocks() -> Result<(),
 
     assert_eq!(
         render_commit_message(&repeatable, &draft)?.as_str(),
-        "custom: retain evidence\n\nevidence:\n  first\n\nevidence:\n  second\n  line\n"
+        "custom: retain evidence\n\nevidence:\nfirst\n\nevidence:\nsecond\nline\n"
     );
     Ok(())
 }

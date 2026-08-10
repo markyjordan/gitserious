@@ -298,7 +298,7 @@ fn invalid_review_marks_every_blocker_and_moves_to_the_first() {
 fn review_is_exact_backtracking_is_lossless_and_enter_returns_the_typed_draft()
 -> Result<(), Box<dyn Error>> {
     let mut session = valid_feat_session();
-    let expected = "feat: compose durable message\n\nintent:\n  explain intent 🦀\n\nbehavior:\n  first line\n  second line\n";
+    let expected = "feat: compose durable message\n\nintent:\nexplain intent 🦀\n\nbehavior:\nfirst line\nsecond line\n";
     assert_eq!(session.stage, Stage::Review);
     assert_eq!(
         session
@@ -473,7 +473,7 @@ fn multiple_schema_values_still_compile_when_present() -> Result<(), Box<dyn Err
             .ok_or("missing review")?
             .message
             .as_str(),
-        "custom: collect evidence\n\nevidence:\n  first\n\nevidence:\n  second\n  line\n"
+        "custom: collect evidence\n\nevidence:\nfirst\n\nevidence:\nsecond\nline\n"
     );
     Ok(())
 }
@@ -578,7 +578,7 @@ fn hud_tracks_requirement_completion_validation_and_cursor_context() -> Result<(
             .ok_or("missing review")?
             .message
             .as_str(),
-        "custom: cover contracts\n\nrequired-field:\n  complete\n"
+        "custom: cover contracts\n\nrequired-field:\ncomplete\n"
     );
 
     press(&mut session, KeyCode::Esc);
