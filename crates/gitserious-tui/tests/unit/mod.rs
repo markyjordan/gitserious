@@ -10,7 +10,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier, Style};
 use tui_textarea::{CursorMove, TextArea, WrapMode};
 
 use crate::{RatatuiCommitDraftAuthor, RatatuiCommitDraftAuthorError};
@@ -114,6 +114,12 @@ fn find_ascii(buffer: &Buffer, width: u16, height: u16, needle: &str) -> Option<
         }
     }
     None
+}
+
+fn row_text(buffer: &Buffer, width: u16, row: u16) -> String {
+    (0..width)
+        .map(|column| buffer[(column, row)].symbol())
+        .collect()
 }
 
 fn assert_highlighted_footer(
@@ -385,27 +391,28 @@ fn bounded_vim_mode_uses_ctrl_t_and_supports_document_commands() {
 }
 
 #[test]
-fn schema_headings_are_immutable_across_editing_modes() {
+fn schema_headings_are_immutable_across_editing_modes() -> Result<(), Box<dyn Error>> {
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
     let pristine = session.composer.editor.lines().to_vec();
     let subject_line = pristine
         .iter()
         .position(|line| line == "subject:")
-        .expect("subject heading");
+        .ok_or("subject heading")?;
+    let subject_line = u16::try_from(subject_line)?;
 
     session
         .composer
         .editor
-        .move_cursor(CursorMove::Jump(subject_line as u16, 0));
+        .move_cursor(CursorMove::Jump(subject_line, 0));
     press(&mut session, KeyCode::Right);
     assert_eq!(
         session.composer.editor.cursor(),
-        (subject_line, "subject:".chars().count())
+        (usize::from(subject_line), "subject:".chars().count())
     );
     session
         .composer
         .editor
-        .move_cursor(CursorMove::Jump(subject_line as u16, 0));
+        .move_cursor(CursorMove::Jump(subject_line, 0));
     press(&mut session, KeyCode::Char('x'));
     assert_eq!(session.composer.editor.lines(), pristine);
 
@@ -415,7 +422,7 @@ fn schema_headings_are_immutable_across_editing_modes() {
     session
         .composer
         .editor
-        .move_cursor(CursorMove::Jump((subject_line + 1) as u16, 0));
+        .move_cursor(CursorMove::Jump(subject_line.saturating_add(1), 0));
     press(&mut session, KeyCode::Backspace);
     assert_eq!(session.composer.editor.lines(), pristine);
 
@@ -426,7 +433,7 @@ fn schema_headings_are_immutable_across_editing_modes() {
     session
         .composer
         .editor
-        .move_cursor(CursorMove::Jump(subject_line as u16, 0));
+        .move_cursor(CursorMove::Jump(subject_line, 0));
     press(&mut session, KeyCode::Backspace);
     assert_eq!(session.composer.editor.lines(), pristine);
 
@@ -434,9 +441,10 @@ fn schema_headings_are_immutable_across_editing_modes() {
     session
         .composer
         .editor
-        .move_cursor(CursorMove::Jump(subject_line as u16, 0));
+        .move_cursor(CursorMove::Jump(subject_line, 0));
     press(&mut session, KeyCode::Char('x'));
     assert_eq!(session.composer.editor.lines(), pristine);
+    Ok(())
 }
 
 #[test]
@@ -663,7 +671,8 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(text.contains("○ subject · required"));
     assert!(text.contains("conditional-field · conditional"));
     assert!(text.contains("required when the condition applies"));
-    assert!(text.contains("Ctrl+T vim"));
+    assert!(text.contains("ctrl+t vim"));
+    assert!(!text.contains("repeatable"));
     assert_highlighted_footer(&mut composer, 120, 32)?;
 
     modified_press(&mut composer, KeyCode::Char('s'), KeyModifiers::CONTROL);
@@ -694,6 +703,58 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
             Some(CommitDraftAuthorOutcome::Cancelled)
         );
     }
+    Ok(())
+}
+
+#[test]
+fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<(), Box<dyn Error>> {
+    let mut composer = AuthoringSession::new(built_in_commit_types(), Some(0));
+    assert_eq!(
+        composer.composer.editor.cursor_line_style(),
+        Style::default()
+    );
+    assert_eq!(
+        composer.composer.editor.cursor_style(),
+        Style::default().add_modifier(Modifier::REVERSED)
+    );
+    paste(&mut composer, "hello");
+    let buffer = rendered_buffer(&mut composer, 120, 32)?;
+    let scope = find_ascii(&buffer, 120, 32, "scope:").ok_or("missing scope label")?;
+    for offset in 0..u16::try_from("scope:".len())? {
+        let cell = &buffer[(scope.0 + offset, scope.1)];
+        assert_eq!(cell.fg, Color::Yellow);
+        assert!(cell.modifier.contains(Modifier::BOLD));
+        assert!(!cell.modifier.contains(Modifier::UNDERLINED));
+    }
+    let authored = find_ascii(&buffer, 120, 32, "hello").ok_or("missing authored value")?;
+    assert!(!buffer[authored].modifier.contains(Modifier::UNDERLINED));
+
+    let footer = row_text(&buffer, 120, 31);
+    assert!(footer.contains("ctrl+t vim · ctrl+s review · Esc back"));
+    assert!(footer.contains("· col 6/80"));
+    assert!(!footer.contains("Ctrl"));
+    assert!(!footer.contains("ctrl+n"));
+    assert!(!footer.contains("ctrl+d"));
+
+    modified_press(&mut composer, KeyCode::Char('t'), KeyModifiers::CONTROL);
+    let buffer = rendered_buffer(&mut composer, 120, 32)?;
+    let footer = row_text(&buffer, 120, 31);
+    assert!(footer.contains("ctrl+t conventional · ctrl+s review · i insert · q back"));
+    press(&mut composer, KeyCode::Char('i'));
+    let buffer = rendered_buffer(&mut composer, 120, 32)?;
+    let footer = row_text(&buffer, 120, 31);
+    assert!(footer.contains("ctrl+t conventional · ctrl+s review · Esc normal"));
+
+    let mut picker = AuthoringSession::new(built_in_commit_types(), None);
+    let buffer = rendered_buffer(&mut picker, 100, 24)?;
+    let footer = row_text(&buffer, 100, 23);
+    assert!(footer.contains("↑/k · ↓/j move · Home/End jump · Enter select · Esc/q cancel"));
+
+    let mut review = valid_feat_session();
+    let buffer = rendered_buffer(&mut review, 100, 24)?;
+    let footer = row_text(&buffer, 100, 23);
+    assert!(footer.contains("Enter commit · Esc edit · ↑/↓ scroll · q/ctrl+c cancel"));
+    assert!(!footer.contains("Ctrl"));
     Ok(())
 }
 

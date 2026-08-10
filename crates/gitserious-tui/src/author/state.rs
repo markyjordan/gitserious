@@ -5,6 +5,7 @@ use gitserious_core::{
     render_commit_message,
 };
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::style::{Color, Modifier, Style};
 use tui_textarea::{AtomicRange, CursorMove, Input, TextArea, WrapMode};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -257,6 +258,7 @@ impl ComposerState {
 fn text_area(lines: Vec<String>, definition: &CommitTypeDefinition) -> TextArea<'static> {
     let mut editor = TextArea::new(lines);
     editor.set_wrap_mode(WrapMode::WordOrGlyph);
+    editor.set_cursor_line_style(Style::default());
     apply_heading_guards(&mut editor, definition);
     editor
 }
@@ -273,7 +275,17 @@ fn apply_heading_guards(editor: &mut TextArea<'static>, definition: &CommitTypeD
             end_col: line.chars().count(),
         })
         .collect::<Vec<_>>();
-    editor.set_atomic_ranges(ranges);
+    editor.set_atomic_ranges(ranges.iter().copied());
+    editor.clear_custom_highlight();
+    for range in ranges {
+        editor.custom_highlight(
+            ((range.row, range.start_col), (range.row, range.end_col)),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+            1,
+        );
+    }
 }
 
 fn expected_heading_signature(definition: &CommitTypeDefinition) -> Vec<FieldId> {

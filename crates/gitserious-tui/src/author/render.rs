@@ -1,4 +1,4 @@
-use gitserious_core::{CommitTypeDefinition, PropertyMultiplicity, PropertyRequirement};
+use gitserious_core::{CommitTypeDefinition, PropertyRequirement};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -100,10 +100,11 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
             .wrap(Wrap { trim: true }),
         sections[2],
     );
-    frame.render_widget(
-        Paragraph::new("↑/k ↓/j move  Home/End jump  Enter select  Esc/q cancel")
-            .style(navigation_style()),
+    render_navigation_row(
+        frame,
         sections[3],
+        "↑/k · ↓/j move · Home/End jump · Enter select · Esc/q cancel",
+        None,
     );
 }
 
@@ -147,10 +148,10 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     let cursor_status = render_document_editor(frame, body[0], session);
     render_field_sidebar(frame, body[1], session);
 
-    let help = if session.keymap == Keymap::Vim {
-        "Ctrl+T conventional  Ctrl+S review  Ctrl+N/D values  Esc normal  q back"
-    } else {
-        "Ctrl+T vim  Ctrl+S review  Ctrl+N/D repeatable values  Esc back"
+    let help = match (session.keymap, session.vim_mode) {
+        (Keymap::Conventional, _) => "ctrl+t vim · ctrl+s review · Esc back",
+        (Keymap::Vim, VimMode::Normal) => "ctrl+t conventional · ctrl+s review · i insert · q back",
+        (Keymap::Vim, VimMode::Insert) => "ctrl+t conventional · ctrl+s review · Esc normal",
     };
     let issue = session
         .composer
@@ -169,21 +170,14 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         })),
         footer[0],
     );
-    let status = format!("col {}/{}", cursor_status.column, cursor_status.wrap_width);
-    let navigation = Layout::horizontal([
-        Constraint::Min(0),
-        Constraint::Length(u16::try_from(status.len()).unwrap_or(u16::MAX)),
-    ])
-    .split(footer[1]);
-    frame.render_widget(
-        Paragraph::new(help).style(navigation_style()),
-        navigation[0],
-    );
-    frame.render_widget(
-        Paragraph::new(status)
-            .alignment(Alignment::Right)
-            .style(navigation_style()),
-        navigation[1],
+    render_navigation_row(
+        frame,
+        footer[1],
+        help,
+        Some(&format!(
+            "col {}/{}",
+            cursor_status.column, cursor_status.wrap_width
+        )),
     );
 }
 
@@ -341,10 +335,11 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
             sections[1],
         );
     }
-    frame.render_widget(
-        Paragraph::new("Enter commit  Esc edit  ↑/↓ scroll  q/Ctrl+C cancel")
-            .style(navigation_style()),
+    render_navigation_row(
+        frame,
         sections[2],
+        "Enter commit · Esc edit · ↑/↓ scroll · q/ctrl+c cancel",
+        None,
     );
 }
 
@@ -380,12 +375,7 @@ fn field_label(id: FieldId, definition: &CommitTypeDefinition) -> String {
                 PropertyRequirement::Optional => "optional",
                 PropertyRequirement::Conditional(_) => "conditional",
             };
-            let repeatable = if property.multiplicity() == PropertyMultiplicity::Multiple {
-                " · repeatable"
-            } else {
-                ""
-            };
-            format!("{} · {requirement}{repeatable}", property.key())
+            format!("{} · {requirement}", property.key())
         }
     }
 }
@@ -402,7 +392,7 @@ fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String
         ),
         FieldKind::Property {
             definition_index,
-            value_index,
+            value_index: _,
         } => {
             let property = &definition.properties()[definition_index];
             let requirement = match property.requirement() {
@@ -413,12 +403,8 @@ fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String
                     format!("conditional: {}", condition.rationale())
                 }
             };
-            let multiplicity = match property.multiplicity() {
-                PropertyMultiplicity::Single => "single value".to_owned(),
-                PropertyMultiplicity::Multiple => format!("value {} · repeatable", value_index + 1),
-            };
             (
-                format!(" {} · {requirement} · {multiplicity} ", property.key()),
+                format!(" {} · {requirement} ", property.key()),
                 property.description().to_owned(),
             )
         }
@@ -430,6 +416,26 @@ fn navigation_style() -> Style {
         .fg(Color::Black)
         .bg(Color::Yellow)
         .add_modifier(Modifier::BOLD)
+}
+
+fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &str, status: Option<&str>) {
+    let Some(status) = status else {
+        frame.render_widget(Paragraph::new(hints).style(navigation_style()), area);
+        return;
+    };
+    let status = format!("· {status}");
+    let sections = Layout::horizontal([
+        Constraint::Min(0),
+        Constraint::Length(u16::try_from(status.len()).unwrap_or(u16::MAX)),
+    ])
+    .split(area);
+    frame.render_widget(Paragraph::new(hints).style(navigation_style()), sections[0]);
+    frame.render_widget(
+        Paragraph::new(status)
+            .alignment(Alignment::Right)
+            .style(navigation_style()),
+        sections[1],
+    );
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
