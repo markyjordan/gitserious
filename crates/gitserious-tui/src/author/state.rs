@@ -5,7 +5,7 @@ use gitserious_core::{
     render_commit_message,
 };
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use tui_textarea::{CursorMove, Input, TextArea, WrapMode};
+use tui_textarea::{AtomicRange, CursorMove, Input, TextArea, WrapMode};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Stage {
@@ -123,7 +123,7 @@ pub(crate) struct ComposerState {
 impl ComposerState {
     fn new(definition: &CommitTypeDefinition) -> Self {
         let pristine = scaffold_lines(definition);
-        let mut editor = text_area(pristine.clone());
+        let mut editor = text_area(pristine.clone(), definition);
         editor.move_cursor(CursorMove::Jump(4, 0));
         Self {
             editor,
@@ -238,93 +238,66 @@ impl ComposerState {
         }
     }
 
-    fn add_repeatable_value(&mut self, definition: &CommitTypeDefinition) {
-        let parsed = self.parse(definition);
-        let cursor_line = self.editor.cursor().0;
-        let Some(section) = parsed
-            .sections
-            .iter()
-            .find(|section| cursor_line >= section.heading_line && cursor_line < section.end_line)
-        else {
-            return;
-        };
-        let FieldKind::Property {
-            definition_index, ..
-        } = section.kind
-        else {
-            return;
-        };
-        if definition.properties()[definition_index].multiplicity()
-            != PropertyMultiplicity::Multiple
-        {
-            return;
-        }
-
-        let mut lines = self.editor.lines().to_vec();
-        let insertion = section.end_line;
-        lines.splice(
-            insertion..insertion,
-            [
-                format!("{}:", definition.properties()[definition_index].key()),
-                String::new(),
-                String::new(),
-            ],
-        );
-        self.replace_editor(lines, insertion + 1);
-    }
-
-    fn remove_repeatable_value(&mut self, definition: &CommitTypeDefinition) {
-        let parsed = self.parse(definition);
-        let cursor_line = self.editor.cursor().0;
-        let Some(section) = parsed
-            .sections
-            .iter()
-            .find(|section| cursor_line >= section.heading_line && cursor_line < section.end_line)
-        else {
-            return;
-        };
-        let FieldKind::Property {
-            definition_index, ..
-        } = section.kind
-        else {
-            return;
-        };
-        if definition.properties()[definition_index].multiplicity()
-            != PropertyMultiplicity::Multiple
-        {
-            return;
-        }
-        let matching = parsed
-            .sections
-            .iter()
-            .filter(|candidate| candidate.kind.id() == FieldId::Property(definition_index))
-            .count();
-        let mut lines = self.editor.lines().to_vec();
-        if matching == 1 {
-            lines.splice(
-                section.heading_line + 1..section.end_line,
-                [String::new(), String::new()],
-            );
-            self.replace_editor(lines, section.heading_line + 1);
+    fn edit_preserving_headings(
+        &mut self,
+        definition: &CommitTypeDefinition,
+        edit: impl FnOnce(&mut TextArea<'static>),
+    ) {
+        let previous = self.editor.clone();
+        edit(&mut self.editor);
+        if headings_are_intact(self.editor.lines(), definition) {
+            apply_heading_guards(&mut self.editor, definition);
+            self.issues.clear();
         } else {
-            lines.drain(section.heading_line..section.end_line);
-            let cursor = section.heading_line.min(lines.len().saturating_sub(1));
-            self.replace_editor(lines, cursor);
+            self.editor = previous;
         }
-    }
-
-    fn replace_editor(&mut self, lines: Vec<String>, cursor_line: usize) {
-        self.editor = text_area(lines);
-        self.editor
-            .move_cursor(CursorMove::Jump(terminal_line(cursor_line), 0));
-        self.issues.clear();
     }
 }
 
-fn text_area(lines: Vec<String>) -> TextArea<'static> {
+fn text_area(lines: Vec<String>, definition: &CommitTypeDefinition) -> TextArea<'static> {
     let mut editor = TextArea::new(lines);
     editor.set_wrap_mode(WrapMode::WordOrGlyph);
+    apply_heading_guards(&mut editor, definition);
     editor
+}
+
+fn apply_heading_guards(editor: &mut TextArea<'static>, definition: &CommitTypeDefinition) {
+    let ranges = editor
+        .lines()
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| exact_heading(line, definition).is_some())
+        .map(|(row, line)| AtomicRange {
+            row,
+            start_col: 0,
+            end_col: line.chars().count(),
+        })
+        .collect::<Vec<_>>();
+    editor.set_atomic_ranges(ranges);
+}
+
+fn expected_heading_signature(definition: &CommitTypeDefinition) -> Vec<FieldId> {
+    std::iter::once(FieldId::Scope)
+        .chain(std::iter::once(FieldId::Subject))
+        .chain((0..definition.properties().len()).map(FieldId::Property))
+        .collect()
+}
+
+fn headings_are_intact(lines: &[String], definition: &CommitTypeDefinition) -> bool {
+    let headings = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(line_index, line)| exact_heading(line, definition).map(|id| (line_index, id)))
+        .collect::<Vec<_>>();
+    let signature = headings.iter().map(|(_, id)| *id).collect::<Vec<_>>();
+    let separated = headings
+        .windows(2)
+        .all(|pair| pair[1].0.saturating_sub(pair[0].0) >= 3);
+    let trailing_input = headings
+        .last()
+        .is_some_and(|(line, _)| lines.len().saturating_sub(*line) >= 3);
+
+    signature == expected_heading_signature(definition) && separated && trailing_input
 }
 
 fn terminal_line(line: usize) -> u16 {
@@ -641,8 +614,11 @@ impl<'a> AuthoringSession<'a> {
             Event::Key(key) if key.kind == KeyEventKind::Press => self.handle_key(key),
             Event::Paste(text) if self.stage == Stage::Compose => {
                 if self.keymap == Keymap::Conventional || self.vim_mode == VimMode::Insert {
-                    self.composer.editor.insert_str(text);
-                    self.composer.issues.clear();
+                    let definition = self.definition().clone();
+                    self.composer
+                        .edit_preserving_headings(&definition, |editor| {
+                            editor.insert_str(text);
+                        });
                 }
                 None
             }
@@ -736,33 +712,6 @@ impl<'a> AuthoringSession<'a> {
         if control(key, 'c') {
             return self.request_confirmation(ConfirmationAction::Cancel, ResumeStage::Compose);
         }
-        if control(key, 'n') {
-            let definition = self.definition().clone();
-            if matches!(
-                self.composer.current_field(&definition),
-                Some(FieldKind::Property {
-                    definition_index,
-                    ..
-                }) if definition.properties()[definition_index].multiplicity() == PropertyMultiplicity::Multiple
-            ) {
-                self.composer.add_repeatable_value(&definition);
-                return None;
-            }
-        }
-        if control(key, 'd') {
-            let definition = self.definition().clone();
-            if matches!(
-                self.composer.current_field(&definition),
-                Some(FieldKind::Property {
-                    definition_index,
-                    ..
-                }) if definition.properties()[definition_index].multiplicity() == PropertyMultiplicity::Multiple
-            ) {
-                self.composer.remove_repeatable_value(&definition);
-                return None;
-            }
-        }
-
         match self.keymap {
             Keymap::Conventional => {
                 if key.code == KeyCode::Esc {
@@ -790,34 +739,64 @@ impl<'a> AuthoringSession<'a> {
     }
 
     fn input_key(&mut self, key: KeyEvent) {
-        self.composer.editor.input(Input::from(key));
-        self.composer.issues.clear();
+        let definition = self.definition().clone();
+        self.composer
+            .edit_preserving_headings(&definition, |editor| {
+                editor.input(Input::from(key));
+            });
     }
 
     fn handle_vim_normal_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
-        let editor = &mut self.composer.editor;
         match key.code {
-            KeyCode::Char('h') | KeyCode::Left => editor.move_cursor(CursorMove::Back),
-            KeyCode::Char('j') | KeyCode::Down => editor.move_cursor(CursorMove::Down),
-            KeyCode::Char('k') | KeyCode::Up => editor.move_cursor(CursorMove::Up),
-            KeyCode::Char('l') | KeyCode::Right => editor.move_cursor(CursorMove::Forward),
-            KeyCode::Char('w') => editor.move_cursor(CursorMove::WordForward),
-            KeyCode::Char('b') => editor.move_cursor(CursorMove::WordBack),
-            KeyCode::Char('0') | KeyCode::Home => editor.move_cursor(CursorMove::Head),
-            KeyCode::Char('$') | KeyCode::End => editor.move_cursor(CursorMove::End),
+            KeyCode::Char('h') | KeyCode::Left => {
+                self.composer.editor.move_cursor(CursorMove::Back);
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.composer.editor.move_cursor(CursorMove::Down);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.composer.editor.move_cursor(CursorMove::Up);
+            }
+            KeyCode::Char('l') | KeyCode::Right => {
+                self.composer.editor.move_cursor(CursorMove::Forward);
+            }
+            KeyCode::Char('w') => {
+                self.composer.editor.move_cursor(CursorMove::WordForward);
+            }
+            KeyCode::Char('b') => {
+                self.composer.editor.move_cursor(CursorMove::WordBack);
+            }
+            KeyCode::Char('0') | KeyCode::Home => {
+                self.composer.editor.move_cursor(CursorMove::Head);
+            }
+            KeyCode::Char('$') | KeyCode::End => {
+                self.composer.editor.move_cursor(CursorMove::End);
+            }
             KeyCode::Char('i') => self.vim_mode = VimMode::Insert,
             KeyCode::Char('a') => {
-                editor.move_cursor(CursorMove::Forward);
+                self.composer.editor.move_cursor(CursorMove::Forward);
                 self.vim_mode = VimMode::Insert;
             }
             KeyCode::Char('x') | KeyCode::Delete => {
-                editor.delete_next_char();
+                let definition = self.definition().clone();
+                self.composer
+                    .edit_preserving_headings(&definition, |editor| {
+                        editor.delete_next_char();
+                    });
             }
             KeyCode::Char('u') => {
-                editor.undo();
+                let definition = self.definition().clone();
+                self.composer
+                    .edit_preserving_headings(&definition, |editor| {
+                        editor.undo();
+                    });
             }
             _ if control(key, 'r') => {
-                editor.redo();
+                let definition = self.definition().clone();
+                self.composer
+                    .edit_preserving_headings(&definition, |editor| {
+                        editor.redo();
+                    });
             }
             KeyCode::Char('q') => {
                 let action = if self.preselected {

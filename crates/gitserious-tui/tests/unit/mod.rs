@@ -355,19 +355,69 @@ fn bounded_vim_mode_uses_ctrl_t_and_supports_document_commands() {
 }
 
 #[test]
-fn repeatable_sections_keep_independent_ordered_values() -> Result<(), Box<dyn Error>> {
+fn schema_headings_are_immutable_across_editing_modes() {
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let pristine = session.composer.editor.lines().to_vec();
+    let subject_line = pristine
+        .iter()
+        .position(|line| line == "subject:")
+        .expect("subject heading");
+
+    session
+        .composer
+        .editor
+        .move_cursor(CursorMove::Jump(subject_line as u16, 0));
+    press(&mut session, KeyCode::Right);
+    assert_eq!(
+        session.composer.editor.cursor(),
+        (subject_line, "subject:".chars().count())
+    );
+    session
+        .composer
+        .editor
+        .move_cursor(CursorMove::Jump(subject_line as u16, 0));
+    press(&mut session, KeyCode::Char('x'));
+    assert_eq!(session.composer.editor.lines(), pristine);
+
+    press(&mut session, KeyCode::Delete);
+    assert_eq!(session.composer.editor.lines(), pristine);
+
+    session
+        .composer
+        .editor
+        .move_cursor(CursorMove::Jump((subject_line + 1) as u16, 0));
+    press(&mut session, KeyCode::Backspace);
+    assert_eq!(session.composer.editor.lines(), pristine);
+
+    paste(&mut session, "scope:\n");
+    assert_eq!(session.composer.editor.lines(), pristine);
+
+    session.composer.editor.start_selection();
+    session
+        .composer
+        .editor
+        .move_cursor(CursorMove::Jump(subject_line as u16, 0));
+    press(&mut session, KeyCode::Backspace);
+    assert_eq!(session.composer.editor.lines(), pristine);
+
+    modified_press(&mut session, KeyCode::Char('t'), KeyModifiers::CONTROL);
+    session
+        .composer
+        .editor
+        .move_cursor(CursorMove::Jump(subject_line as u16, 0));
+    press(&mut session, KeyCode::Char('x'));
+    assert_eq!(session.composer.editor.lines(), pristine);
+}
+
+#[test]
+fn multiple_schema_values_still_compile_when_present() -> Result<(), Box<dyn Error>> {
     let definitions = vec![repeatable_definition()?];
     let mut session = AuthoringSession::new(&definitions, Some(0));
     set_document(
         &mut session,
-        "scope:\n\n\nsubject:\ncollect evidence\n\nevidence:\nfirst\n\n",
-        7,
+        "scope:\n\nsubject:\ncollect evidence\n\nevidence:\nfirst\n\nevidence:\nsecond\nline\n",
+        9,
     );
-    modified_press(&mut session, KeyCode::Char('n'), KeyModifiers::CONTROL);
-    paste(&mut session, "second\nline");
-    modified_press(&mut session, KeyCode::Char('n'), KeyModifiers::CONTROL);
-    paste(&mut session, "discard me");
-    modified_press(&mut session, KeyCode::Char('d'), KeyModifiers::CONTROL);
 
     assert_eq!(
         session.composer.current_field(&definitions[0]),
@@ -388,6 +438,38 @@ fn repeatable_sections_keep_independent_ordered_values() -> Result<(), Box<dyn E
         "custom: collect evidence\n\nevidence:\n  first\n\nevidence:\n  second\n  line\n"
     );
     Ok(())
+}
+
+#[test]
+fn ctrl_n_and_ctrl_d_use_conventional_editor_behavior_without_changing_the_schema() {
+    let definitions = built_in_commit_types();
+    let mut session = AuthoringSession::new(definitions, Some(0));
+    let headings = session
+        .composer
+        .editor
+        .lines()
+        .iter()
+        .filter(|line| line.ends_with(':'))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    paste(&mut session, "abc");
+    session.composer.editor.move_cursor(CursorMove::Head);
+    modified_press(&mut session, KeyCode::Char('d'), KeyModifiers::CONTROL);
+    assert_eq!(session.composer.editor.lines()[4], "bc");
+    modified_press(&mut session, KeyCode::Char('n'), KeyModifiers::CONTROL);
+
+    assert_eq!(
+        session
+            .composer
+            .editor
+            .lines()
+            .iter()
+            .filter(|line| line.ends_with(':'))
+            .cloned()
+            .collect::<Vec<_>>(),
+        headings
+    );
 }
 
 #[test]
