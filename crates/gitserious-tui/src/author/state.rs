@@ -40,6 +40,13 @@ enum ResumeStage {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FieldId {
+    Scope,
+    Subject,
+    Property(usize),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FieldKind {
     Scope,
     Subject,
@@ -49,213 +56,154 @@ pub(crate) enum FieldKind {
     },
 }
 
-pub(crate) struct FieldState {
-    pub(crate) kind: FieldKind,
-    pub(crate) editor: TextArea<'static>,
+impl FieldKind {
+    pub(crate) const fn id(self) -> FieldId {
+        match self {
+            Self::Scope => FieldId::Scope,
+            Self::Subject => FieldId::Subject,
+            Self::Property {
+                definition_index, ..
+            } => FieldId::Property(definition_index),
+        }
+    }
 }
 
-impl FieldState {
-    fn new(kind: FieldKind) -> Self {
-        let mut editor = TextArea::default();
-        editor.set_wrap_mode(WrapMode::WordOrGlyph);
-        Self { kind, editor }
-    }
-
-    pub(crate) fn text(&self) -> String {
-        self.editor.lines().join("\n")
-    }
-
-    fn is_empty(&self) -> bool {
-        self.text().is_empty()
-    }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FieldStatus {
+    Incomplete,
+    Complete,
+    Invalid,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ValidationIssue {
-    pub(crate) field: usize,
+    pub(crate) field: Option<FieldId>,
+    pub(crate) line: usize,
     pub(crate) message: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct HudField {
+    pub(crate) id: FieldId,
+    pub(crate) status: FieldStatus,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DocumentSection {
+    kind: FieldKind,
+    heading_line: usize,
+    end_line: usize,
+    text: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct ParsedDocument {
+    sections: Vec<DocumentSection>,
+    issues: Vec<ValidationIssue>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BoundaryKind {
+    Known(FieldId),
+    Invalid,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Boundary {
+    line: usize,
+    kind: BoundaryKind,
+}
+
 pub(crate) struct ComposerState {
-    pub(crate) fields: Vec<FieldState>,
-    pub(crate) focused: usize,
+    pub(crate) editor: TextArea<'static>,
+    pristine: Vec<String>,
     pub(crate) issues: Vec<ValidationIssue>,
 }
 
 impl ComposerState {
     fn new(definition: &CommitTypeDefinition) -> Self {
-        let mut fields = vec![
-            FieldState::new(FieldKind::Scope),
-            FieldState::new(FieldKind::Subject),
-        ];
-        fields.extend(
-            definition
-                .properties()
-                .iter()
-                .enumerate()
-                .map(|(definition_index, _)| {
-                    FieldState::new(FieldKind::Property {
-                        definition_index,
-                        value_index: 0,
-                    })
-                }),
-        );
+        let pristine = scaffold_lines(definition);
+        let mut editor = text_area(pristine.clone());
+        editor.move_cursor(CursorMove::Jump(4, 0));
         Self {
-            fields,
-            focused: 0,
+            editor,
+            pristine,
             issues: Vec::new(),
         }
     }
 
-    pub(crate) fn current(&self) -> &FieldState {
-        &self.fields[self.focused]
-    }
-
-    pub(crate) fn current_mut(&mut self) -> &mut FieldState {
-        &mut self.fields[self.focused]
-    }
-
     pub(crate) fn dirty(&self) -> bool {
-        self.fields.iter().any(|field| !field.is_empty())
+        self.editor.lines() != self.pristine
     }
 
-    fn next(&mut self) {
-        self.focused = (self.focused + 1) % self.fields.len();
+    pub(crate) fn current_field(&self, definition: &CommitTypeDefinition) -> Option<FieldKind> {
+        let cursor_line = self.editor.cursor().0;
+        self.parse(definition)
+            .sections
+            .into_iter()
+            .find(|section| cursor_line >= section.heading_line && cursor_line < section.end_line)
+            .map(|section| section.kind)
     }
 
-    fn previous(&mut self) {
-        self.focused = if self.focused == 0 {
-            self.fields.len() - 1
-        } else {
-            self.focused - 1
-        };
-    }
-
-    fn add_repeatable_value(&mut self, definition: &CommitTypeDefinition) {
-        let FieldKind::Property {
-            definition_index, ..
-        } = self.current().kind
-        else {
-            return;
-        };
-        if definition.properties()[definition_index].multiplicity()
-            != PropertyMultiplicity::Multiple
+    pub(crate) fn hud_fields(&self, definition: &CommitTypeDefinition) -> Vec<HudField> {
+        let parsed = self.parse(definition);
+        let mut issues = parsed.issues;
+        issues.extend(self.issues.iter().cloned());
+        let mut fields = Vec::with_capacity(definition.properties().len() + 2);
+        for id in std::iter::once(FieldId::Scope)
+            .chain(std::iter::once(FieldId::Subject))
+            .chain((0..definition.properties().len()).map(FieldId::Property))
         {
-            return;
-        }
-        let insertion = self
-            .fields
-            .iter()
-            .rposition(|field| {
-                matches!(
-                    field.kind,
-                    FieldKind::Property {
-                        definition_index: candidate,
-                        ..
-                    } if candidate == definition_index
-                )
-            })
-            .map_or(self.focused + 1, |index| index + 1);
-        let value_index = self
-            .fields
-            .iter()
-            .filter(|field| {
-                matches!(
-                    field.kind,
-                    FieldKind::Property {
-                        definition_index: candidate,
-                        ..
-                    } if candidate == definition_index
-                )
-            })
-            .count();
-        self.fields.insert(
-            insertion,
-            FieldState::new(FieldKind::Property {
-                definition_index,
-                value_index,
-            }),
-        );
-        self.focused = insertion;
-        self.issues.clear();
-    }
-
-    fn current_is_repeatable(&self, definition: &CommitTypeDefinition) -> bool {
-        match self.current().kind {
-            FieldKind::Property {
-                definition_index, ..
-            } => {
-                definition.properties()[definition_index].multiplicity()
-                    == PropertyMultiplicity::Multiple
-            }
-            FieldKind::Scope | FieldKind::Subject => false,
-        }
-    }
-
-    fn remove_repeatable_value(&mut self, definition: &CommitTypeDefinition) {
-        let FieldKind::Property {
-            definition_index, ..
-        } = self.current().kind
-        else {
-            return;
-        };
-        if definition.properties()[definition_index].multiplicity()
-            != PropertyMultiplicity::Multiple
-        {
-            return;
-        }
-        let count = self
-            .fields
-            .iter()
-            .filter(|field| {
-                matches!(
-                    field.kind,
-                    FieldKind::Property {
-                        definition_index: candidate,
-                        ..
-                    } if candidate == definition_index
-                )
-            })
-            .count();
-        if count == 1 {
-            self.fields[self.focused] = FieldState::new(FieldKind::Property {
-                definition_index,
-                value_index: 0,
+            let sections = parsed
+                .sections
+                .iter()
+                .filter(|section| section.kind.id() == id)
+                .collect::<Vec<_>>();
+            let invalid = issues.iter().any(|issue| issue.field == Some(id))
+                || sections.iter().any(|section| match id {
+                    FieldId::Scope => {
+                        !section.text.is_empty() && CommitScope::new(&section.text).is_err()
+                    }
+                    FieldId::Subject => {
+                        !section.text.is_empty() && CommitSubject::new(&section.text).is_err()
+                    }
+                    FieldId::Property(_) => false,
+                });
+            let complete = sections.iter().any(|section| !section.text.is_empty());
+            fields.push(HudField {
+                id,
+                status: if invalid {
+                    FieldStatus::Invalid
+                } else if complete {
+                    FieldStatus::Complete
+                } else {
+                    FieldStatus::Incomplete
+                },
             });
-        } else {
-            self.fields.remove(self.focused);
-            self.focused = self.focused.min(self.fields.len() - 1);
-            self.renumber_values(definition_index);
         }
-        self.issues.clear();
+        fields
     }
 
-    fn renumber_values(&mut self, definition_index: usize) {
-        let mut value_index = 0;
-        for field in &mut self.fields {
-            if let FieldKind::Property {
-                definition_index: candidate,
-                value_index: current,
-            } = &mut field.kind
-                && *candidate == definition_index
-            {
-                *current = value_index;
-                value_index += 1;
-            }
-        }
+    fn parse(&self, definition: &CommitTypeDefinition) -> ParsedDocument {
+        parse_document(self.editor.lines(), definition)
     }
 
     fn validate(
         &mut self,
         definition: &CommitTypeDefinition,
     ) -> Option<(CommitDraft, CommitMessage)> {
-        let mut issues = Vec::new();
-        let (scope, subject) = self.parse_header_fields(&mut issues);
-        let authored = self.build_properties(definition, &mut issues);
+        let parsed = self.parse(definition);
+        let mut issues = parsed.issues.clone();
+        let scope = parse_scope(&parsed, &mut issues);
+        let subject = parse_subject(&parsed, &mut issues);
+        let authored = build_properties(&parsed, definition, &mut issues);
 
         if !issues.is_empty() {
-            self.focused = issues[0].field;
+            issues.sort_by_key(|issue| issue.line);
+            let first_line = issues[0].line;
             self.issues = issues;
+            self.editor
+                .move_cursor(CursorMove::Jump(first_line as u16, 0));
             return None;
         }
         let subject = subject?;
@@ -263,7 +211,8 @@ impl ComposerState {
             Ok(draft) => draft,
             Err(error) => {
                 self.issues = vec![ValidationIssue {
-                    field: self.focused,
+                    field: self.current_field(definition).map(FieldKind::id),
+                    line: self.editor.cursor().0,
                     message: error.to_string(),
                 }];
                 return None;
@@ -279,7 +228,8 @@ impl ComposerState {
                     .as_slice()
                     .iter()
                     .map(|error| ValidationIssue {
-                        field: self.focused,
+                        field: self.current_field(definition).map(FieldKind::id),
+                        line: self.editor.cursor().0,
                         message: error.to_string(),
                     })
                     .collect();
@@ -288,110 +238,348 @@ impl ComposerState {
         }
     }
 
-    fn parse_header_fields(
-        &self,
-        issues: &mut Vec<ValidationIssue>,
-    ) -> (Option<CommitScope>, Option<CommitSubject>) {
-        let scope_text = self.fields[0].text();
-        let scope = if scope_text.is_empty() {
-            None
+    fn add_repeatable_value(&mut self, definition: &CommitTypeDefinition) {
+        let parsed = self.parse(definition);
+        let cursor_line = self.editor.cursor().0;
+        let Some(section) = parsed
+            .sections
+            .iter()
+            .find(|section| cursor_line >= section.heading_line && cursor_line < section.end_line)
+        else {
+            return;
+        };
+        let FieldKind::Property {
+            definition_index, ..
+        } = section.kind
+        else {
+            return;
+        };
+        if definition.properties()[definition_index].multiplicity()
+            != PropertyMultiplicity::Multiple
+        {
+            return;
+        }
+
+        let mut lines = self.editor.lines().to_vec();
+        let insertion = section.end_line;
+        lines.splice(
+            insertion..insertion,
+            [
+                format!("{}:", definition.properties()[definition_index].key()),
+                String::new(),
+                String::new(),
+            ],
+        );
+        self.replace_editor(lines, insertion + 1);
+    }
+
+    fn remove_repeatable_value(&mut self, definition: &CommitTypeDefinition) {
+        let parsed = self.parse(definition);
+        let cursor_line = self.editor.cursor().0;
+        let Some(section) = parsed
+            .sections
+            .iter()
+            .find(|section| cursor_line >= section.heading_line && cursor_line < section.end_line)
+        else {
+            return;
+        };
+        let FieldKind::Property {
+            definition_index, ..
+        } = section.kind
+        else {
+            return;
+        };
+        if definition.properties()[definition_index].multiplicity()
+            != PropertyMultiplicity::Multiple
+        {
+            return;
+        }
+        let matching = parsed
+            .sections
+            .iter()
+            .filter(|candidate| candidate.kind.id() == FieldId::Property(definition_index))
+            .count();
+        let mut lines = self.editor.lines().to_vec();
+        if matching == 1 {
+            lines.splice(
+                section.heading_line + 1..section.end_line,
+                [String::new(), String::new()],
+            );
+            self.replace_editor(lines, section.heading_line + 1);
         } else {
-            match CommitScope::new(scope_text) {
-                Ok(scope) => Some(scope),
+            lines.drain(section.heading_line..section.end_line);
+            let cursor = section.heading_line.min(lines.len().saturating_sub(1));
+            self.replace_editor(lines, cursor);
+        }
+    }
+
+    fn replace_editor(&mut self, lines: Vec<String>, cursor_line: usize) {
+        self.editor = text_area(lines);
+        self.editor
+            .move_cursor(CursorMove::Jump(cursor_line as u16, 0));
+        self.issues.clear();
+    }
+}
+
+fn text_area(lines: Vec<String>) -> TextArea<'static> {
+    let mut editor = TextArea::new(lines);
+    editor.set_wrap_mode(WrapMode::WordOrGlyph);
+    editor
+}
+
+fn scaffold_lines(definition: &CommitTypeDefinition) -> Vec<String> {
+    let mut lines = Vec::with_capacity((definition.properties().len() + 2) * 3);
+    for heading in std::iter::once("scope".to_owned())
+        .chain(std::iter::once("subject".to_owned()))
+        .chain(
+            definition
+                .properties()
+                .iter()
+                .map(|property| property.key().to_string()),
+        )
+    {
+        lines.push(format!("{heading}:"));
+        lines.push(String::new());
+        lines.push(String::new());
+    }
+    lines
+}
+
+fn parse_document(lines: &[String], definition: &CommitTypeDefinition) -> ParsedDocument {
+    let mut parsed = ParsedDocument::default();
+    let mut boundaries = Vec::new();
+    for (line_index, line) in lines.iter().enumerate() {
+        if let Some(id) = exact_heading(line, definition) {
+            boundaries.push(Boundary {
+                line: line_index,
+                kind: BoundaryKind::Known(id),
+            });
+        } else if looks_like_heading(line) || looks_like_malformed_known_heading(line, definition) {
+            parsed.issues.push(ValidationIssue {
+                field: None,
+                line: line_index,
+                message: format!("unknown or malformed field header {line:?}"),
+            });
+            boundaries.push(Boundary {
+                line: line_index,
+                kind: BoundaryKind::Invalid,
+            });
+        }
+    }
+
+    let mut occurrences = vec![0; definition.properties().len()];
+    for (index, boundary) in boundaries.iter().copied().enumerate() {
+        let BoundaryKind::Known(id) = boundary.kind else {
+            continue;
+        };
+        let end_line = boundaries
+            .get(index + 1)
+            .map_or(lines.len(), |next| next.line);
+        let text = section_text(&lines[boundary.line + 1..end_line]);
+        let kind = match id {
+            FieldId::Scope => FieldKind::Scope,
+            FieldId::Subject => FieldKind::Subject,
+            FieldId::Property(definition_index) => {
+                let value_index = occurrences[definition_index];
+                occurrences[definition_index] += 1;
+                FieldKind::Property {
+                    definition_index,
+                    value_index,
+                }
+            }
+        };
+        parsed.sections.push(DocumentSection {
+            kind,
+            heading_line: boundary.line,
+            end_line,
+            text,
+        });
+    }
+
+    for id in std::iter::once(FieldId::Scope)
+        .chain(std::iter::once(FieldId::Subject))
+        .chain((0..definition.properties().len()).map(FieldId::Property))
+    {
+        let matching = parsed
+            .sections
+            .iter()
+            .filter(|section| section.kind.id() == id)
+            .collect::<Vec<_>>();
+        let repeatable = matches!(id, FieldId::Property(index) if definition.properties()[index].multiplicity() == PropertyMultiplicity::Multiple);
+        if matching.len() > 1 && !repeatable {
+            for duplicate in matching.into_iter().skip(1) {
+                parsed.issues.push(ValidationIssue {
+                    field: Some(id),
+                    line: duplicate.heading_line,
+                    message: format!("field {} may appear only once", field_name(id, definition)),
+                });
+            }
+        }
+    }
+    parsed
+}
+
+fn exact_heading(line: &str, definition: &CommitTypeDefinition) -> Option<FieldId> {
+    match line {
+        "scope:" => Some(FieldId::Scope),
+        "subject:" => Some(FieldId::Subject),
+        _ => definition
+            .properties()
+            .iter()
+            .position(|property| line == format!("{}:", property.key()))
+            .map(FieldId::Property),
+    }
+}
+
+fn looks_like_heading(line: &str) -> bool {
+    let Some(name) = line.strip_suffix(':') else {
+        return false;
+    };
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+fn looks_like_malformed_known_heading(line: &str, definition: &CommitTypeDefinition) -> bool {
+    let trimmed = line.trim();
+    trimmed == "scope"
+        || trimmed == "subject"
+        || definition
+            .properties()
+            .iter()
+            .any(|property| trimmed == property.key().as_str())
+}
+
+fn section_text(lines: &[String]) -> String {
+    let start = lines
+        .iter()
+        .position(|line| !line.trim().is_empty())
+        .unwrap_or(lines.len());
+    let end = lines
+        .iter()
+        .rposition(|line| !line.trim().is_empty())
+        .map_or(start, |index| index + 1);
+    lines[start..end].join("\n")
+}
+
+fn parse_scope(parsed: &ParsedDocument, issues: &mut Vec<ValidationIssue>) -> Option<CommitScope> {
+    let Some(section) = parsed
+        .sections
+        .iter()
+        .find(|section| section.kind == FieldKind::Scope)
+    else {
+        return None;
+    };
+    if section.text.is_empty() {
+        return None;
+    }
+    match CommitScope::new(&section.text) {
+        Ok(scope) => Some(scope),
+        Err(error) => {
+            issues.push(ValidationIssue {
+                field: Some(FieldId::Scope),
+                line: section.heading_line + 1,
+                message: error.to_string(),
+            });
+            None
+        }
+    }
+}
+
+fn parse_subject(
+    parsed: &ParsedDocument,
+    issues: &mut Vec<ValidationIssue>,
+) -> Option<CommitSubject> {
+    let Some(section) = parsed
+        .sections
+        .iter()
+        .find(|section| section.kind == FieldKind::Subject)
+    else {
+        issues.push(ValidationIssue {
+            field: Some(FieldId::Subject),
+            line: 0,
+            message: "restore the subject field header".to_owned(),
+        });
+        return None;
+    };
+    match CommitSubject::new(&section.text) {
+        Ok(subject) => Some(subject),
+        Err(error) => {
+            issues.push(ValidationIssue {
+                field: Some(FieldId::Subject),
+                line: section.heading_line + 1,
+                message: error.to_string(),
+            });
+            None
+        }
+    }
+}
+
+fn build_properties(
+    parsed: &ParsedDocument,
+    definition: &CommitTypeDefinition,
+    issues: &mut Vec<ValidationIssue>,
+) -> Vec<AuthoredProperty> {
+    let mut authored = Vec::new();
+    for (definition_index, property) in definition.properties().iter().enumerate() {
+        let sections = parsed
+            .sections
+            .iter()
+            .filter(|section| section.kind.id() == FieldId::Property(definition_index))
+            .collect::<Vec<_>>();
+        let first_line = sections
+            .first()
+            .map_or(0, |section| section.heading_line + 1);
+        let values = sections
+            .iter()
+            .filter(|section| !section.text.is_empty())
+            .filter_map(|section| match PropertyValue::new(&section.text) {
+                Ok(value) => Some(value),
                 Err(error) => {
                     issues.push(ValidationIssue {
-                        field: 0,
+                        field: Some(FieldId::Property(definition_index)),
+                        line: section.heading_line + 1,
                         message: error.to_string(),
                     });
                     None
                 }
-            }
-        };
-        let subject = CommitSubject::new(self.fields[1].text()).map_or_else(
-            |error| {
-                issues.push(ValidationIssue {
-                    field: 1,
-                    message: error.to_string(),
-                });
-                None
-            },
-            Some,
-        );
-        (scope, subject)
-    }
-
-    fn build_properties(
-        &self,
-        definition: &CommitTypeDefinition,
-        issues: &mut Vec<ValidationIssue>,
-    ) -> Vec<AuthoredProperty> {
-        let mut authored = Vec::new();
-        for (definition_index, property) in definition.properties().iter().enumerate() {
-            let matching = self.property_fields(definition_index);
-            let first_field = matching.first().map_or(1, |(index, _)| *index);
-            let values = Self::build_property_values(&matching, issues);
-            if values.is_empty() {
-                if property.requirement() == &PropertyRequirement::Required {
-                    issues.push(ValidationIssue {
-                        field: first_field,
-                        message: format!("complete required property {:?}", property.key()),
-                    });
-                }
-                continue;
-            }
-            let values = match property.multiplicity() {
-                PropertyMultiplicity::Single => PropertyValues::single(values[0].clone()),
-                PropertyMultiplicity::Multiple => match PropertyValues::multiple(values) {
-                    Ok(values) => values,
-                    Err(error) => {
-                        issues.push(ValidationIssue {
-                            field: first_field,
-                            message: error.to_string(),
-                        });
-                        continue;
-                    }
-                },
-            };
-            authored.push(AuthoredProperty::new(property.key().clone(), values));
-        }
-        authored
-    }
-
-    fn property_fields(&self, definition_index: usize) -> Vec<(usize, &FieldState)> {
-        self.fields
-            .iter()
-            .enumerate()
-            .filter(|(_, field)| {
-                matches!(
-                    field.kind,
-                    FieldKind::Property {
-                        definition_index: candidate,
-                        ..
-                    } if candidate == definition_index
-                )
             })
-            .collect()
-    }
-
-    fn build_property_values(
-        matching: &[(usize, &FieldState)],
-        issues: &mut Vec<ValidationIssue>,
-    ) -> Vec<PropertyValue> {
-        let mut values = Vec::new();
-        for (field_index, field) in matching {
-            let text = field.text();
-            if text.trim().is_empty() {
-                continue;
+            .collect::<Vec<_>>();
+        if values.is_empty() {
+            if property.requirement() == &PropertyRequirement::Required {
+                issues.push(ValidationIssue {
+                    field: Some(FieldId::Property(definition_index)),
+                    line: first_line,
+                    message: format!("complete required property {:?}", property.key()),
+                });
             }
-            match PropertyValue::new(text) {
-                Ok(value) => values.push(value),
-                Err(error) => issues.push(ValidationIssue {
-                    field: *field_index,
-                    message: error.to_string(),
-                }),
-            }
+            continue;
         }
-        values
+        let values = match property.multiplicity() {
+            PropertyMultiplicity::Single => PropertyValues::single(values[0].clone()),
+            PropertyMultiplicity::Multiple => match PropertyValues::multiple(values) {
+                Ok(values) => values,
+                Err(error) => {
+                    issues.push(ValidationIssue {
+                        field: Some(FieldId::Property(definition_index)),
+                        line: first_line,
+                        message: error.to_string(),
+                    });
+                    continue;
+                }
+            },
+        };
+        authored.push(AuthoredProperty::new(property.key().clone(), values));
+    }
+    authored
+}
+
+fn field_name(id: FieldId, definition: &CommitTypeDefinition) -> String {
+    match id {
+        FieldId::Scope => "scope".to_owned(),
+        FieldId::Subject => "subject".to_owned(),
+        FieldId::Property(index) => definition.properties()[index].key().to_string(),
     }
 }
 
@@ -452,7 +640,7 @@ impl<'a> AuthoringSession<'a> {
             Event::Key(key) if key.kind == KeyEventKind::Press => self.handle_key(key),
             Event::Paste(text) if self.stage == Stage::Compose => {
                 if self.keymap == Keymap::Conventional || self.vim_mode == VimMode::Insert {
-                    self.composer.current_mut().editor.insert_str(text);
+                    self.composer.editor.insert_str(text);
                     self.composer.issues.clear();
                 }
                 None
@@ -547,30 +735,23 @@ impl<'a> AuthoringSession<'a> {
         if control(key, 'c') {
             return self.request_confirmation(ConfirmationAction::Cancel, ResumeStage::Compose);
         }
-        match key.code {
-            KeyCode::Tab => {
-                self.composer.next();
+        if control(key, 'n') {
+            let definition = self.definition().clone();
+            self.composer.add_repeatable_value(&definition);
+            return None;
+        }
+        if control(key, 'd') {
+            let definition = self.definition().clone();
+            if matches!(
+                self.composer.current_field(&definition),
+                Some(FieldKind::Property {
+                    definition_index,
+                    ..
+                }) if definition.properties()[definition_index].multiplicity() == PropertyMultiplicity::Multiple
+            ) {
+                self.composer.remove_repeatable_value(&definition);
                 return None;
             }
-            KeyCode::BackTab => {
-                self.composer.previous();
-                return None;
-            }
-            _ if control(key, 'n') => {
-                let definition = self.definition().clone();
-                if self.composer.current_is_repeatable(&definition) {
-                    self.composer.add_repeatable_value(&definition);
-                    return None;
-                }
-            }
-            _ if control(key, 'd') => {
-                let definition = self.definition().clone();
-                if self.composer.current_is_repeatable(&definition) {
-                    self.composer.remove_repeatable_value(&definition);
-                    return None;
-                }
-            }
-            _ => {}
         }
 
         match self.keymap {
@@ -600,20 +781,12 @@ impl<'a> AuthoringSession<'a> {
     }
 
     fn input_key(&mut self, key: KeyEvent) {
-        let single_line = matches!(
-            self.composer.current().kind,
-            FieldKind::Scope | FieldKind::Subject
-        );
-        if single_line && key.code == KeyCode::Enter {
-            self.composer.next();
-            return;
-        }
-        self.composer.current_mut().editor.input(Input::from(key));
+        self.composer.editor.input(Input::from(key));
         self.composer.issues.clear();
     }
 
     fn handle_vim_normal_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
-        let editor = &mut self.composer.current_mut().editor;
+        let editor = &mut self.composer.editor;
         match key.code {
             KeyCode::Char('h') | KeyCode::Left => editor.move_cursor(CursorMove::Back),
             KeyCode::Char('j') | KeyCode::Down => editor.move_cursor(CursorMove::Down),

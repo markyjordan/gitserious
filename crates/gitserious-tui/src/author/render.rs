@@ -5,7 +5,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
-use super::state::{AuthoringSession, ConfirmationAction, FieldKind, Keymap, Stage, VimMode};
+use super::state::{
+    AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, Keymap, Stage, VimMode,
+};
 
 const MINIMUM_WIDTH: u16 = 60;
 const MINIMUM_HEIGHT: u16 = 18;
@@ -75,12 +77,7 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
                 .title(" Commit types "),
         )
         .highlight_symbol("› ")
-        .highlight_style(
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(navigation_style());
     let mut state = ListState::default();
     state.select(Some(session.selected_type));
     frame.render_stateful_widget(list, sections[1], &mut state);
@@ -132,80 +129,81 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
 
     let body = Layout::horizontal([Constraint::Percentage(36), Constraint::Percentage(64)])
         .split(sections[1]);
-    render_field_list(frame, body[0], session);
-    render_field_editor(frame, body[1], session);
+    render_field_hud(frame, body[0], session);
+    render_document_editor(frame, body[1], session);
 
     let help = if session.keymap == Keymap::Vim {
-        "Tab fields  F2 conventional  Ctrl+S review  Ctrl+N/D values  Esc normal  q back"
+        "F2 conventional  Ctrl+S review  Ctrl+N/D values  Esc normal  q back"
     } else {
-        "Tab/Shift+Tab fields  F2 vim  Ctrl+S review  Ctrl+N/D values  Esc back"
+        "F2 vim  Ctrl+S review  Ctrl+N/D repeatable values  Esc back"
     };
     let issue = session
         .composer
         .issues
         .first()
-        .map_or("All required fields must be complete.", |issue| {
+        .map_or("Complete every required field before review.", |issue| {
             issue.message.as_str()
         });
+    let footer =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(sections[2]);
     frame.render_widget(
-        Paragraph::new(vec![
-            Line::styled(
-                issue,
-                Style::default().fg(if session.composer.issues.is_empty() {
-                    Color::DarkGray
-                } else {
-                    Color::Red
-                }),
-            ),
-            Line::raw(help),
-        ]),
-        sections[2],
+        Paragraph::new(issue).style(Style::default().fg(if session.composer.issues.is_empty() {
+            Color::DarkGray
+        } else {
+            Color::Red
+        })),
+        footer[0],
     );
+    frame.render_widget(Paragraph::new(help), footer[1]);
 }
 
-fn render_field_list(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
+fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
+    let definition = session.definition();
+    let current = session
+        .composer
+        .current_field(definition)
+        .map(FieldKind::id);
     let items = session
         .composer
-        .fields
-        .iter()
-        .enumerate()
-        .map(|(index, field)| {
-            let populated = !field.text().trim().is_empty();
-            let invalid = session
-                .composer
-                .issues
-                .iter()
-                .any(|issue| issue.field == index);
-            let marker = if invalid {
-                Span::styled("! ", Style::default().fg(Color::Red))
-            } else if populated {
-                Span::styled("✓ ", Style::default().fg(Color::Green))
+        .hud_fields(definition)
+        .into_iter()
+        .map(|field| {
+            let marker = match field.status {
+                FieldStatus::Invalid => Span::styled("! ", Style::default().fg(Color::Red)),
+                FieldStatus::Complete => Span::styled("✓ ", Style::default().fg(Color::Green)),
+                FieldStatus::Incomplete => Span::styled("○ ", Style::default().fg(Color::DarkGray)),
+            };
+            let style = if current == Some(field.id) {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Span::styled("○ ", Style::default().fg(Color::DarkGray))
+                Style::default()
             };
             ListItem::new(Line::from(vec![
                 marker,
-                Span::raw(field_label(field.kind, session.definition())),
+                Span::styled(field_label(field.id, definition), style),
             ]))
         })
         .collect::<Vec<_>>();
-    let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(" Fields "))
-        .highlight_symbol("› ")
-        .highlight_style(
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        );
-    let mut state = ListState::default();
-    state.select(Some(session.composer.focused));
-    frame.render_stateful_widget(list, area, &mut state);
+    frame.render_widget(
+        List::new(items).block(Block::default().borders(Borders::ALL).title(" Fields ")),
+        area,
+    );
 }
 
-fn render_field_editor(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
-    let field_kind = session.composer.current().kind;
-    let (title, description) = field_metadata(field_kind, session.definition());
+fn render_document_editor(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
+    let definition = session.definition().clone();
+    let current = session.composer.current_field(&definition);
+    let (title, description) = current.map_or_else(
+        || {
+            (
+                " Commit form ".to_owned(),
+                "Edit values beneath the schema-generated field headers.".to_owned(),
+            )
+        },
+        |kind| field_metadata(kind, &definition),
+    );
     let sections = Layout::vertical([Constraint::Length(5), Constraint::Min(4)]).split(area);
     frame.render_widget(
         Paragraph::new(description)
@@ -213,16 +211,17 @@ fn render_field_editor(frame: &mut Frame<'_>, area: Rect, session: &mut Authorin
             .wrap(Wrap { trim: true }),
         sections[0],
     );
+    let current_id = current.map(FieldKind::id);
     let issues = session
         .composer
         .issues
         .iter()
-        .filter(|issue| issue.field == session.composer.focused)
+        .filter(|issue| issue.field.is_none() || issue.field == current_id)
         .map(|issue| issue.message.as_str())
         .collect::<Vec<_>>()
         .join("; ");
     let editor_title = if issues.is_empty() {
-        " Edit ".to_owned()
+        " Edit form ".to_owned()
     } else {
         format!(" Error: {issues} ")
     };
@@ -231,13 +230,13 @@ fn render_field_editor(frame: &mut Frame<'_>, area: Rect, session: &mut Authorin
     } else {
         Style::default().fg(Color::Red)
     };
-    session.composer.current_mut().editor.set_block(
+    session.composer.editor.set_block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
             .title(editor_title),
     );
-    frame.render_widget(&session.composer.current().editor, sections[1]);
+    frame.render_widget(&session.composer.editor, sections[1]);
 }
 
 fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
@@ -294,20 +293,24 @@ fn render_confirmation(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSes
     );
 }
 
-fn field_label(kind: FieldKind, definition: &CommitTypeDefinition) -> String {
-    match kind {
-        FieldKind::Scope => "scope (optional)".to_owned(),
-        FieldKind::Subject => "subject (required)".to_owned(),
-        FieldKind::Property {
-            definition_index,
-            value_index,
-        } => {
-            let property = &definition.properties()[definition_index];
-            if property.multiplicity() == PropertyMultiplicity::Multiple {
-                format!("{} [{}]", property.key(), value_index + 1)
+fn field_label(id: FieldId, definition: &CommitTypeDefinition) -> String {
+    match id {
+        FieldId::Scope => "scope · optional".to_owned(),
+        FieldId::Subject => "subject · required".to_owned(),
+        FieldId::Property(index) => {
+            let property = &definition.properties()[index];
+            let requirement = match property.requirement() {
+                PropertyRequirement::Required => "required",
+                PropertyRequirement::Recommended => "recommended",
+                PropertyRequirement::Optional => "optional",
+                PropertyRequirement::Conditional(_) => "conditional",
+            };
+            let repeatable = if property.multiplicity() == PropertyMultiplicity::Multiple {
+                " · repeatable"
             } else {
-                property.key().to_string()
-            }
+                ""
+            };
+            format!("{} · {requirement}{repeatable}", property.key())
         }
     }
 }
@@ -345,6 +348,13 @@ fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String
             )
         }
     }
+}
+
+fn navigation_style() -> Style {
+    Style::default()
+        .fg(Color::Black)
+        .bg(Color::Yellow)
+        .add_modifier(Modifier::BOLD)
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
