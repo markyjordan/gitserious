@@ -8,9 +8,10 @@ use gitserious_core::{
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::style::Color;
-use tui_textarea::{CursorMove, TextArea};
+use tui_textarea::{CursorMove, TextArea, WrapMode};
 
 use crate::{RatatuiCommitDraftAuthor, RatatuiCommitDraftAuthorError};
 
@@ -84,6 +85,35 @@ fn rendered(
     let mut terminal = Terminal::new(backend)?;
     terminal.draw(|frame| render(frame, session))?;
     Ok(buffer_text(terminal.backend()))
+}
+
+fn rendered_buffer(
+    session: &mut AuthoringSession<'_>,
+    width: u16,
+    height: u16,
+) -> Result<Buffer, Box<dyn Error>> {
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend)?;
+    terminal.draw(|frame| render(frame, session))?;
+    Ok(terminal.backend().buffer().clone())
+}
+
+fn find_ascii(buffer: &Buffer, width: u16, height: u16, needle: &str) -> Option<(u16, u16)> {
+    let characters = needle.chars().collect::<Vec<_>>();
+    for y in 0..height {
+        for x in 0..width {
+            if characters.iter().enumerate().all(|(offset, character)| {
+                u16::try_from(offset)
+                    .ok()
+                    .and_then(|offset| x.checked_add(offset))
+                    .filter(|column| *column < width)
+                    .is_some_and(|column| buffer[(column, y)].symbol() == character.to_string())
+            }) {
+                return Some((x, y));
+            }
+        }
+    }
+    None
 }
 
 fn assert_highlighted_footer(
@@ -664,6 +694,51 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
             Some(CommitDraftAuthorOutcome::Cancelled)
         );
     }
+    Ok(())
+}
+
+#[test]
+fn composer_layout_caps_at_eighty_columns_and_adapts_on_narrow_terminals()
+-> Result<(), Box<dyn Error>> {
+    let mut wide = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let buffer = rendered_buffer(&mut wide, 120, 32)?;
+    let edit = find_ascii(&buffer, 120, 32, "Edit form").ok_or("missing editor")?;
+    let fields = find_ascii(&buffer, 120, 32, "Fields").ok_or("missing fields")?;
+    let description = find_ascii(&buffer, 120, 32, "Description").ok_or("missing description")?;
+    let guidance = find_ascii(&buffer, 120, 32, "Concise").ok_or("missing guidance")?;
+
+    assert_eq!(edit.1, fields.1);
+    assert!(edit.0 < fields.0);
+    assert_eq!(fields.0, description.0);
+    assert!(description.1 > fields.1);
+    assert!(guidance.0 >= description.0.saturating_sub(1));
+    assert!(guidance.1 > description.1);
+    assert!(find_ascii(&buffer, 120, 32, "col 1/80").is_some());
+    assert_eq!(wide.composer.editor.wrap_mode(), WrapMode::WordOrGlyph);
+
+    let mut narrow = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let buffer = rendered_buffer(&mut narrow, 72, 24)?;
+    assert!(!narrow.too_small);
+    assert!(find_ascii(&buffer, 72, 24, "col 1/40").is_some());
+    Ok(())
+}
+
+#[test]
+fn soft_wrap_reports_the_visual_column_without_changing_authored_lines()
+-> Result<(), Box<dyn Error>> {
+    let mut word_wrap = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let value = format!("{} word", "x".repeat(76));
+    paste(&mut word_wrap, &value);
+    let buffer = rendered_buffer(&mut word_wrap, 120, 32)?;
+    assert_eq!(word_wrap.composer.editor.lines()[4], value);
+    assert!(find_ascii(&buffer, 120, 32, "col 5/80").is_some());
+
+    let mut glyph_wrap = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let value = "x".repeat(81);
+    paste(&mut glyph_wrap, &value);
+    let buffer = rendered_buffer(&mut glyph_wrap, 120, 32)?;
+    assert_eq!(glyph_wrap.composer.editor.lines()[4], value);
+    assert!(find_ascii(&buffer, 120, 32, "col 2/80").is_some());
     Ok(())
 }
 
