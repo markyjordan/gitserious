@@ -15,8 +15,11 @@ coordination remain in `gitserious-app`.
 
 1. select an effective commit type;
 2. author scope, subject, and schema-defined property values;
-3. review the exact canonical message; and
-4. confirm before Git creates the staged-index commit.
+3. review the exact canonical message and confirm before Git creates the
+   staged-index commit.
+
+The upper-right corner labels these views `1/3`, `2/3`, and `3/3`. A
+preselected commit type starts directly at `2/3`.
 
 `gitserious commit --type <COMMIT TYPE>` preselects the type and starts in the
 composer. Both forms require interactive standard input and output. There is no
@@ -24,8 +27,10 @@ configured-Git-editor fallback or non-interactive authoring mode in this slice.
 
 The composer places one prepopulated document on the left with `scope`,
 `subject`, and every schema-defined property header. The headers are immutable;
-values are authored beneath them without traversing separate controls. Blank
-nonrequired fields are omitted, while blank required fields block review.
+values are authored beneath them without traversing separate controls. The
+cursor starts in the scope value and skips over field headers when moving
+between editable regions. Blank nonrequired fields are omitted, while blank
+required fields block review.
 
 The right sidebar places the passive Fields HUD above the contextual Description
 pane. The HUD tracks complete, incomplete, and invalid values and shows each
@@ -53,8 +58,10 @@ Conventional mode provides cursor movement, selection, word movement,
 soft-wrapped Unicode input, paste, undo/redo, and `Ctrl+K` deletion to the end of
 the line through the text-area widget. The cursor uses a visible cell without
 underlining the input line. Navigation hints at the bottom of each terminal view
-use a highlighted strip, centered-dot separators, and lowercase `ctrl` labels
-for quick scanning.
+use a highlighted strip, bold `key: action` pairs, centered-dot separators, and
+lowercase `ctrl` labels for quick scanning. The validation row above the strip
+stays empty until an attempted review reports an error.
+
 The bounded Vim mode provides Normal and Insert modes plus `h`/`j`/`k`/`l`,
 `w`/`b`, `0`/`$`, `i`/`a`, `x`, `u`, and `Ctrl+R`. It intentionally does not
 implement operators, counts, registers, macros, Visual mode, or ex commands.
