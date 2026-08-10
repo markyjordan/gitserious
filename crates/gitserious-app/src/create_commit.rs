@@ -3,15 +3,13 @@ use std::fmt::{self, Display, Formatter};
 use std::path::Path;
 
 use gitserious_core::{
-    CommitTypeDefinition, CommitTypeId, CommitValidationErrors, annotate_commit_editor_document,
-    commit_editor_document_is_empty, parse_commit_editor_document, render_commit_editor_document,
-    render_commit_message,
+    CommitTypeDefinition, CommitTypeId, CommitValidationErrors, render_commit_message,
 };
 
 use crate::{
-    CommitDraftEditor, CommitOutput, CommitTypeCatalog, CommitTypeSelection, CommitTypeSelector,
-    CommitWriter, Fingerprint, ProjectState, ProjectStateStore, RepositoryLocator,
-    ResolveProjectPolicyError, fingerprint_commit_type_definition, resolve_project_lock,
+    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitTypeCatalog, CommitWriter,
+    Fingerprint, ProjectState, ProjectStateStore, RepositoryLocator, ResolveProjectPolicyError,
+    fingerprint_commit_type_definition, resolve_project_lock,
 };
 
 /// The result of an interactive commit workflow.
@@ -19,7 +17,7 @@ use crate::{
 pub enum CommitOutcome {
     /// Git created the commit and returned its exact process output.
     Created(CommitOutput),
-    /// The user left the selector or editor without an authored draft.
+    /// The user left authoring without a completed draft.
     Cancelled,
 }
 
@@ -91,14 +89,7 @@ impl Error for CommitPolicyError {
 
 /// Failure to author or create an interactive commit.
 #[derive(Debug)]
-pub enum CreateCommitError<
-    LocatorError,
-    StoreError,
-    CatalogError,
-    SelectorError,
-    EditorError,
-    WriterError,
-> {
+pub enum CreateCommitError<LocatorError, StoreError, CatalogError, AuthorError, WriterError> {
     /// Repository discovery failed.
     Repository(LocatorError),
     /// Repository-local project state could not be read.
@@ -107,8 +98,8 @@ pub enum CreateCommitError<
     Policy(CommitPolicyError),
     /// Effective commit-type catalog access failed.
     Catalog(CatalogError),
-    /// Interactive commit-type selection failed.
-    Selector(SelectorError),
+    /// Structured draft authoring failed.
+    Author(AuthorError),
     /// The requested or selected commit type is outside current policy.
     UnknownCommitType {
         /// Rejected open identifier.
@@ -116,49 +107,33 @@ pub enum CreateCommitError<
         /// Available identifiers in project-policy order.
         available: Vec<CommitTypeId>,
     },
-    /// Editor document preparation or execution failed.
-    Editor(EditorError),
-    /// A parsed draft unexpectedly failed canonical rendering.
+    /// The author returned a different type than the CLI preselected.
+    AuthoredTypeMismatch {
+        /// Type pinned by the delivery request.
+        expected: CommitTypeId,
+        /// Type returned by the authoring adapter.
+        actual: CommitTypeId,
+    },
+    /// An authored draft failed canonical validation or rendering.
     InvalidDraft(CommitValidationErrors),
     /// Git failed to create the commit.
     Writer(WriterError),
 }
 
-/// Result type for the six independently failing commit-workflow ports.
-pub type CreateCommitResult<
-    LocatorError,
-    StoreError,
-    CatalogError,
-    SelectorError,
-    EditorError,
-    WriterError,
-> = Result<
-    CommitOutcome,
-    CreateCommitError<
-        LocatorError,
-        StoreError,
-        CatalogError,
-        SelectorError,
-        EditorError,
-        WriterError,
-    >,
->;
+/// Result type for the five independently failing commit-workflow ports.
+pub type CreateCommitResult<LocatorError, StoreError, CatalogError, AuthorError, WriterError> =
+    Result<
+        CommitOutcome,
+        CreateCommitError<LocatorError, StoreError, CatalogError, AuthorError, WriterError>,
+    >;
 
-impl<LocatorError, StoreError, CatalogError, SelectorError, EditorError, WriterError> Display
-    for CreateCommitError<
-        LocatorError,
-        StoreError,
-        CatalogError,
-        SelectorError,
-        EditorError,
-        WriterError,
-    >
+impl<LocatorError, StoreError, CatalogError, AuthorError, WriterError> Display
+    for CreateCommitError<LocatorError, StoreError, CatalogError, AuthorError, WriterError>
 where
     LocatorError: Display,
     StoreError: Display,
     CatalogError: Display,
-    SelectorError: Display,
-    EditorError: Display,
+    AuthorError: Display,
     WriterError: Display,
 {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
@@ -167,7 +142,7 @@ where
             Self::Store(error) => Display::fmt(error, formatter),
             Self::Policy(error) => Display::fmt(error, formatter),
             Self::Catalog(error) => Display::fmt(error, formatter),
-            Self::Selector(error) => Display::fmt(error, formatter),
+            Self::Author(error) => Display::fmt(error, formatter),
             Self::UnknownCommitType {
                 requested,
                 available,
@@ -184,28 +159,23 @@ where
                 }
                 Ok(())
             }
-            Self::Editor(error) => Display::fmt(error, formatter),
+            Self::AuthoredTypeMismatch { expected, actual } => write!(
+                formatter,
+                "authored type {actual:?} does not match requested type {expected:?}"
+            ),
             Self::InvalidDraft(error) => Display::fmt(error, formatter),
             Self::Writer(error) => Display::fmt(error, formatter),
         }
     }
 }
 
-impl<LocatorError, StoreError, CatalogError, SelectorError, EditorError, WriterError> Error
-    for CreateCommitError<
-        LocatorError,
-        StoreError,
-        CatalogError,
-        SelectorError,
-        EditorError,
-        WriterError,
-    >
+impl<LocatorError, StoreError, CatalogError, AuthorError, WriterError> Error
+    for CreateCommitError<LocatorError, StoreError, CatalogError, AuthorError, WriterError>
 where
     LocatorError: Error + 'static,
     StoreError: Error + 'static,
     CatalogError: Error + 'static,
-    SelectorError: Error + 'static,
-    EditorError: Error + 'static,
+    AuthorError: Error + 'static,
     WriterError: Error + 'static,
 {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
@@ -214,11 +184,10 @@ where
             Self::Store(error) => Some(error),
             Self::Policy(error) => Some(error),
             Self::Catalog(error) => Some(error),
-            Self::Selector(error) => Some(error),
-            Self::Editor(error) => Some(error),
+            Self::Author(error) => Some(error),
             Self::InvalidDraft(error) => Some(error),
             Self::Writer(error) => Some(error),
-            Self::UnknownCommitType { .. } => None,
+            Self::UnknownCommitType { .. } | Self::AuthoredTypeMismatch { .. } => None,
         }
     }
 }
@@ -228,24 +197,22 @@ where
 /// # Errors
 ///
 /// Returns [`CreateCommitError`] when repository or policy discovery, catalog
-/// resolution, selection, editing, validation, or Git commit creation fails.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn create_commit<L, S, C, T, E, W>(
+/// resolution, authoring, validation, or Git commit creation fails.
+#[allow(clippy::type_complexity)]
+pub fn create_commit<L, S, C, A, W>(
     locator: &L,
     store: &S,
     catalog: &C,
-    selector: &T,
-    editor: &E,
+    author: &A,
     writer: &W,
     start: &Path,
     requested_type: Option<&CommitTypeId>,
-) -> CreateCommitResult<L::Error, S::Error, C::Error, T::Error, E::Error, W::Error>
+) -> CreateCommitResult<L::Error, S::Error, C::Error, A::Error, W::Error>
 where
     L: RepositoryLocator + ?Sized,
     S: ProjectStateStore + ?Sized,
     C: CommitTypeCatalog + ?Sized,
-    T: CommitTypeSelector + ?Sized,
-    E: CommitDraftEditor + ?Sized,
+    A: CommitDraftAuthor + ?Sized,
     W: CommitWriter + ?Sized,
 {
     let root = locator
@@ -275,51 +242,50 @@ where
     let catalog_definitions = catalog.list().map_err(CreateCommitError::Catalog)?;
     let definitions = resolve_locked_definitions(&lock, &catalog_definitions)
         .map_err(CreateCommitError::Policy)?;
-    let selected = match requested_type {
-        Some(requested) => requested.clone(),
-        None => match selector
-            .select(&definitions)
-            .map_err(CreateCommitError::Selector)?
-        {
-            CommitTypeSelection::Selected(selected) => selected,
-            CommitTypeSelection::Cancelled => return Ok(CommitOutcome::Cancelled),
-        },
+    let preselected = requested_type
+        .map(|requested| find_definition(&definitions, requested))
+        .transpose()?;
+    let draft = match author
+        .author(&definitions, preselected)
+        .map_err(CreateCommitError::Author)?
+    {
+        CommitDraftAuthorOutcome::Authored(draft) => draft,
+        CommitDraftAuthorOutcome::Cancelled => return Ok(CommitOutcome::Cancelled),
     };
-    let Some(definition) = definitions
+    if let Some(expected) = preselected
+        && expected.id() != draft.commit_type()
+    {
+        return Err(CreateCommitError::AuthoredTypeMismatch {
+            expected: expected.id().clone(),
+            actual: draft.commit_type().clone(),
+        });
+    }
+    let definition = find_definition(&definitions, draft.commit_type())?;
+    let message =
+        render_commit_message(definition, &draft).map_err(CreateCommitError::InvalidDraft)?;
+    let output = writer
+        .commit(&root, &message)
+        .map_err(CreateCommitError::Writer)?;
+    Ok(CommitOutcome::Created(output))
+}
+
+fn find_definition<'a, LocatorError, StoreError, CatalogError, AuthorError, WriterError>(
+    definitions: &'a [CommitTypeDefinition],
+    requested: &CommitTypeId,
+) -> Result<
+    &'a CommitTypeDefinition,
+    CreateCommitError<LocatorError, StoreError, CatalogError, AuthorError, WriterError>,
+> {
+    definitions
         .iter()
-        .find(|definition| definition.id() == &selected)
-    else {
-        return Err(CreateCommitError::UnknownCommitType {
-            requested: selected,
+        .find(|definition| definition.id() == requested)
+        .ok_or_else(|| CreateCommitError::UnknownCommitType {
+            requested: requested.clone(),
             available: definitions
                 .iter()
                 .map(|definition| definition.id().clone())
                 .collect(),
-        });
-    };
-
-    let mut document = render_commit_editor_document(definition);
-    loop {
-        let edited = editor
-            .edit(&root, &document)
-            .map_err(CreateCommitError::Editor)?;
-        if edited == document || commit_editor_document_is_empty(&edited) {
-            return Ok(CommitOutcome::Cancelled);
-        }
-        match parse_commit_editor_document(definition, &edited) {
-            Ok(draft) => {
-                let message = render_commit_message(definition, &draft)
-                    .map_err(CreateCommitError::InvalidDraft)?;
-                let output = writer
-                    .commit(&root, &message)
-                    .map_err(CreateCommitError::Writer)?;
-                return Ok(CommitOutcome::Created(output));
-            }
-            Err(errors) => {
-                document = annotate_commit_editor_document(&edited, &errors);
-            }
-        }
-    }
+        })
 }
 
 fn resolve_locked_definitions(

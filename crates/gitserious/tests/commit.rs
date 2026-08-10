@@ -5,8 +5,6 @@ use std::process::{Command, Output};
 
 use tempfile::TempDir;
 
-const MESSAGE: &str = "feat(cli): create commits\n\nintent:\n  author a durable message\n\nbehavior:\n  commit the staged index\n";
-
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_gitserious")
 }
@@ -70,60 +68,15 @@ fn initialize(directory: &Path) -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn configure_copy_editor(directory: &Path, message: &str) -> Result<(), Box<dyn Error>> {
-    let document = directory.join("authored message.txt");
-    let script = directory.join("editor script.sh");
-    fs::write(&document, message)?;
-    fs::write(&script, "#!/bin/sh\ncp \"$1\" \"$2\"\n")?;
-    let editor = format!("sh {} {}", shell_quote(&script), shell_quote(&document));
-    git_success(directory, &["config", "core.editor", &editor])?;
-    Ok(())
-}
-
-fn shell_quote(path: &Path) -> String {
-    let value = path.to_string_lossy();
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn commit_message(directory: &Path) -> Result<String, Box<dyn Error>> {
-    let output = git_success(directory, &["cat-file", "commit", "HEAD"])?;
-    let object = stdout(&output);
-    object
-        .split_once("\n\n")
-        .map(|(_, message)| message.to_owned())
-        .ok_or_else(|| "commit object has no message separator".into())
+fn head_exists(directory: &Path) -> Result<bool, Box<dyn Error>> {
+    Ok(git(directory, &["rev-parse", "--verify", "HEAD"])?
+        .status
+        .success())
 }
 
 #[test]
-fn type_option_opens_editor_and_commits_only_the_staged_index() -> Result<(), Box<dyn Error>> {
+fn project_policy_is_resolved_before_terminal_authoring() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
-    initialize(repository.path())?;
-    configure_copy_editor(repository.path(), MESSAGE)?;
-
-    fs::write(repository.path().join("staged.txt"), "staged\n")?;
-    fs::write(repository.path().join("unstaged.txt"), "unstaged\n")?;
-    git_success(repository.path(), &["add", "staged.txt"])?;
-
-    let output = run(repository.path(), &["commit", "--type", "feat"])?;
-
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert!(stdout(&output).contains("create commits"));
-    assert!(stderr(&output).is_empty());
-    assert_eq!(commit_message(repository.path())?, MESSAGE);
-    let tree = stdout(&git_success(
-        repository.path(),
-        &["ls-tree", "--name-only", "HEAD"],
-    )?);
-    assert_eq!(tree, "staged.txt\n");
-    assert!(repository.path().join("unstaged.txt").exists());
-    Ok(())
-}
-
-#[test]
-fn commit_requires_initialized_current_policy_before_opening_editor() -> Result<(), Box<dyn Error>>
-{
-    let repository = repository()?;
-    configure_copy_editor(repository.path(), MESSAGE)?;
 
     let absent = run(repository.path(), &["commit", "--type", "feat"])?;
     assert_eq!(absent.status.code(), Some(1));
@@ -141,18 +94,14 @@ fn commit_requires_initialized_current_policy_before_opening_editor() -> Result<
     assert_eq!(stale.status.code(), Some(1));
     assert!(stdout(&stale).is_empty());
     assert!(stderr(&stale).contains("stale"));
-    assert!(
-        git(repository.path(), &["rev-parse", "--verify", "HEAD"])
-            .map(|output| !output.status.success())?
-    );
+    assert!(!head_exists(repository.path())?);
     Ok(())
 }
 
 #[test]
-fn unavailable_type_reports_policy_order_without_opening_editor() -> Result<(), Box<dyn Error>> {
+fn unavailable_type_is_rejected_before_terminal_authoring() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     initialize(repository.path())?;
-    git_success(repository.path(), &["config", "core.editor", "false"])?;
 
     let output = run(repository.path(), &["commit", "--type", "custom"])?;
 
@@ -162,53 +111,29 @@ fn unavailable_type_reports_policy_order_without_opening_editor() -> Result<(), 
     assert!(error.contains("custom"));
     assert!(error.contains("choose one of: feat, fix"));
     assert!(error.contains("revert"));
-    assert!(!error.contains("configured Git editor exited"));
+    assert!(!error.contains("interactive terminal"));
+    assert!(!head_exists(repository.path())?);
     Ok(())
 }
 
 #[test]
-fn editor_cancellation_and_git_rejection_never_create_a_commit() -> Result<(), Box<dyn Error>> {
+fn bare_and_typed_commits_reject_non_terminal_execution_without_calling_git()
+-> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     initialize(repository.path())?;
-    git_success(repository.path(), &["config", "core.editor", "true"])?;
-
-    let cancelled = run(repository.path(), &["commit", "--type", "feat"])?;
-    assert_eq!(cancelled.status.code(), Some(1));
-    assert_eq!(stderr(&cancelled), "Commit cancelled.\n");
-
-    configure_copy_editor(repository.path(), MESSAGE)?;
+    git_success(repository.path(), &["config", "core.editor", "false"])?;
     fs::write(repository.path().join("staged.txt"), "staged\n")?;
     git_success(repository.path(), &["add", "staged.txt"])?;
-    let hooks = repository.path().join(".git/hooks");
-    let hook = hooks.join("pre-commit");
-    fs::write(
-        &hook,
-        "#!/bin/sh\necho 'hook rejected commit' >&2\nexit 1\n",
-    )?;
-    make_executable(&hook)?;
 
-    let rejected = run(repository.path(), &["commit", "--type", "feat"])?;
-    assert_eq!(rejected.status.code(), Some(1));
-    assert!(stdout(&rejected).is_empty());
-    assert!(stderr(&rejected).contains("hook rejected commit"));
-    assert!(
-        git(repository.path(), &["rev-parse", "--verify", "HEAD"])
-            .map(|output| !output.status.success())?
-    );
-    Ok(())
-}
-
-#[cfg(unix)]
-fn make_executable(path: &Path) -> Result<(), Box<dyn Error>> {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let mut permissions = fs::metadata(path)?.permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(path, permissions)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn make_executable(_path: &Path) -> Result<(), Box<dyn Error>> {
+    for arguments in [&["commit"][..], &["commit", "--type", "feat"][..]] {
+        let output = run(repository.path(), arguments)?;
+        assert_eq!(output.status.code(), Some(1));
+        assert!(stdout(&output).is_empty());
+        assert_eq!(
+            stderr(&output),
+            "error: commit authoring requires an interactive terminal\n"
+        );
+        assert!(!head_exists(repository.path())?);
+    }
     Ok(())
 }

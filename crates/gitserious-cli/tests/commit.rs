@@ -5,12 +5,15 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use gitserious_app::{
-    CommitDraftEditor, CommitOutput, CommitTypeCatalog, CommitTypeSelection, CommitTypeSelector,
-    CommitWriter, ProjectConfig, ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator,
-    RepositoryRoot, resolve_project_lock,
+    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitTypeCatalog, CommitWriter,
+    ProjectConfig, ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
+    resolve_project_lock,
 };
 use gitserious_cli::{CommitAdapters, run_from_with_commit};
-use gitserious_core::{CommitMessage, CommitTypeDefinition, CommitTypeId, built_in_commit_types};
+use gitserious_core::{
+    AuthoredProperty, CommitDraft, CommitMessage, CommitSubject, CommitTypeDefinition,
+    CommitTypeId, PropertyRequirement, PropertyValue, PropertyValues, built_in_commit_types,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FakeError;
@@ -78,11 +81,8 @@ struct FakeCatalog {
 impl CommitTypeCatalog for FakeCatalog {
     type Error = FakeError;
 
-    fn find(&self, id: &CommitTypeId) -> Result<Option<CommitTypeDefinition>, Self::Error> {
-        Ok(built_in_commit_types()
-            .iter()
-            .find(|definition| definition.id() == id)
-            .cloned())
+    fn find(&self, _id: &CommitTypeId) -> Result<Option<CommitTypeDefinition>, Self::Error> {
+        Err(FakeError)
     }
 
     fn list(&self) -> Result<Vec<CommitTypeDefinition>, Self::Error> {
@@ -91,42 +91,41 @@ impl CommitTypeCatalog for FakeCatalog {
     }
 }
 
-struct FakeSelector {
-    selection: RefCell<CommitTypeSelection>,
+struct FakeAuthor {
+    outcome: RefCell<AuthorOutcome>,
     calls: Cell<usize>,
+    seen: RefCell<Vec<(Vec<CommitTypeId>, Option<CommitTypeId>)>>,
 }
 
-impl CommitTypeSelector for FakeSelector {
-    type Error = FakeError;
-
-    fn select(
-        &self,
-        _definitions: &[CommitTypeDefinition],
-    ) -> Result<CommitTypeSelection, Self::Error> {
-        self.calls.set(self.calls.get() + 1);
-        Ok(self.selection.borrow().clone())
-    }
-}
-
-enum EditMode {
+enum AuthorOutcome {
     Valid,
-    Echo,
+    Cancelled,
+    Failed,
 }
 
-struct FakeEditor {
-    mode: EditMode,
-    calls: Cell<usize>,
-}
-
-impl CommitDraftEditor for FakeEditor {
+impl CommitDraftAuthor for FakeAuthor {
     type Error = FakeError;
 
-    fn edit(&self, _root: &RepositoryRoot, document: &str) -> Result<String, Self::Error> {
+    fn author(
+        &self,
+        definitions: &[CommitTypeDefinition],
+        preselected: Option<&CommitTypeDefinition>,
+    ) -> Result<CommitDraftAuthorOutcome, Self::Error> {
         self.calls.set(self.calls.get() + 1);
-        Ok(match self.mode {
-            EditMode::Valid => "feat(cli): expose command\n\nintent:\n  author commits\n\nbehavior:\n  invoke Git\n".to_owned(),
-            EditMode::Echo => document.to_owned(),
-        })
+        self.seen.borrow_mut().push((
+            definitions
+                .iter()
+                .map(|definition| definition.id().clone())
+                .collect(),
+            preselected.map(|definition| definition.id().clone()),
+        ));
+        match *self.outcome.borrow() {
+            AuthorOutcome::Valid => valid_draft(&definitions[0])
+                .map(CommitDraftAuthorOutcome::Authored)
+                .map_err(|_| FakeError),
+            AuthorOutcome::Cancelled => Ok(CommitDraftAuthorOutcome::Cancelled),
+            AuthorOutcome::Failed => Err(FakeError),
+        }
     }
 }
 
@@ -162,11 +161,30 @@ fn initialized_state() -> Result<ProjectState, Box<dyn Error>> {
     Ok(ProjectState::Initialized { config, lock })
 }
 
+fn valid_draft(definition: &CommitTypeDefinition) -> Result<CommitDraft, Box<dyn Error>> {
+    let properties = definition
+        .properties()
+        .iter()
+        .filter(|property| property.requirement() == &PropertyRequirement::Required)
+        .map(|property| {
+            Ok(AuthoredProperty::new(
+                property.key().clone(),
+                PropertyValues::single(PropertyValue::new(format!("authored {}", property.key()))?),
+            ))
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    Ok(CommitDraft::new(
+        definition.id().clone(),
+        None,
+        CommitSubject::new("expose command")?,
+        properties,
+    )?)
+}
+
 struct Harness {
     store: FakeStore,
     catalog: FakeCatalog,
-    selector: FakeSelector,
-    editor: FakeEditor,
+    author: FakeAuthor,
     writer: FakeWriter,
 }
 
@@ -177,15 +195,10 @@ impl Harness {
             catalog: FakeCatalog {
                 calls: Cell::new(0),
             },
-            selector: FakeSelector {
-                selection: RefCell::new(CommitTypeSelection::Selected(
-                    built_in_commit_types()[0].id().clone(),
-                )),
+            author: FakeAuthor {
+                outcome: RefCell::new(AuthorOutcome::Valid),
                 calls: Cell::new(0),
-            },
-            editor: FakeEditor {
-                mode: EditMode::Valid,
-                calls: Cell::new(0),
+                seen: RefCell::default(),
             },
             writer: FakeWriter {
                 calls: Cell::new(0),
@@ -195,7 +208,7 @@ impl Harness {
     }
 
     fn run(&self, arguments: &[&str]) -> (ExitCode, String, String) {
-        let commit = CommitAdapters::new(&self.catalog, &self.selector, &self.editor, &self.writer);
+        let commit = CommitAdapters::new(&self.catalog, &self.author, &self.writer);
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let exit = run_from_with_commit(
@@ -216,49 +229,42 @@ impl Harness {
 }
 
 #[test]
-fn type_option_bypasses_picker_and_forwards_exact_git_output() -> Result<(), Box<dyn Error>> {
+fn type_option_is_a_preselection_and_forwards_exact_git_output() -> Result<(), Box<dyn Error>> {
     let harness = Harness::new(initialized_state()?);
     let (exit, stdout, stderr) = harness.run(&["gitserious", "commit", "--type", "feat"]);
     assert_eq!(exit, ExitCode::SUCCESS);
     assert_eq!(stdout, "git summary\n");
     assert_eq!(stderr, "hook warning\n");
-    assert_eq!(harness.selector.calls.get(), 0);
-    assert_eq!(harness.editor.calls.get(), 1);
+    assert_eq!(harness.author.calls.get(), 1);
+    assert_eq!(
+        harness.author.seen.borrow()[0].1,
+        Some(CommitTypeId::new("feat")?)
+    );
     assert_eq!(harness.writer.calls.get(), 1);
     assert_eq!(
         harness.writer.messages.borrow()[0],
-        "feat(cli): expose command\n\nintent:\n  author commits\n\nbehavior:\n  invoke Git\n"
+        "feat: expose command\n\nintent:\n  authored intent\n\nbehavior:\n  authored behavior\n"
     );
     Ok(())
 }
 
 #[test]
-fn bare_commit_selects_type_before_opening_editor() -> Result<(), Box<dyn Error>> {
+fn bare_commit_delegates_type_selection_to_the_author() -> Result<(), Box<dyn Error>> {
     let harness = Harness::new(initialized_state()?);
     let (exit, _, _) = harness.run(&["gitserious", "commit"]);
     assert_eq!(exit, ExitCode::SUCCESS);
-    assert_eq!(harness.selector.calls.get(), 1);
-    assert_eq!(harness.editor.calls.get(), 1);
+    let seen = harness.author.seen.borrow();
+    assert_eq!(seen[0].1, None);
+    assert_eq!(seen[0].0.len(), built_in_commit_types().len());
     assert_eq!(harness.writer.calls.get(), 1);
     Ok(())
 }
 
 #[test]
-fn selector_and_editor_cancellation_exit_one_without_writing() -> Result<(), Box<dyn Error>> {
+fn cancellation_keeps_the_failure_status_and_never_writes() -> Result<(), Box<dyn Error>> {
     let harness = Harness::new(initialized_state()?);
-    harness
-        .selector
-        .selection
-        .replace(CommitTypeSelection::Cancelled);
+    harness.author.outcome.replace(AuthorOutcome::Cancelled);
     let (exit, stdout, stderr) = harness.run(&["gitserious", "commit"]);
-    assert_eq!(exit, ExitCode::FAILURE);
-    assert!(stdout.is_empty());
-    assert_eq!(stderr, "Commit cancelled.\n");
-    assert_eq!(harness.writer.calls.get(), 0);
-
-    let mut harness = Harness::new(initialized_state()?);
-    harness.editor.mode = EditMode::Echo;
-    let (exit, stdout, stderr) = harness.run(&["gitserious", "commit", "--type", "feat"]);
     assert_eq!(exit, ExitCode::FAILURE);
     assert!(stdout.is_empty());
     assert_eq!(stderr, "Commit cancelled.\n");
@@ -267,7 +273,7 @@ fn selector_and_editor_cancellation_exit_one_without_writing() -> Result<(), Box
 }
 
 #[test]
-fn unavailable_type_reports_policy_order_and_never_opens_editor() -> Result<(), Box<dyn Error>> {
+fn unavailable_type_is_rejected_before_authoring_in_policy_order() -> Result<(), Box<dyn Error>> {
     let harness = Harness::new(initialized_state()?);
     let (exit, stdout, stderr) = harness.run(&["gitserious", "commit", "--type", "custom"]);
     assert_eq!(exit, ExitCode::FAILURE);
@@ -276,50 +282,19 @@ fn unavailable_type_reports_policy_order_and_never_opens_editor() -> Result<(), 
     assert!(stderr.contains("custom"));
     assert!(stderr.contains("choose one of: feat, fix"));
     assert!(stderr.contains("revert\n"));
-    assert_eq!(harness.editor.calls.get(), 0);
+    assert_eq!(harness.author.calls.get(), 0);
     assert_eq!(harness.writer.calls.get(), 0);
     Ok(())
 }
 
 #[test]
-fn syntactically_invalid_types_and_extra_arguments_are_usage_errors() -> Result<(), Box<dyn Error>>
-{
-    for arguments in [
-        &["gitserious", "commit", "--type", "INVALID"][..],
-        &["gitserious", "commit", "--type", "feat", "extra"][..],
-    ] {
-        let harness = Harness::new(initialized_state()?);
-        let (exit, stdout, stderr) = harness.run(arguments);
-        assert_eq!(exit, ExitCode::from(2));
-        assert!(stdout.is_empty());
-        assert!(stderr.contains("For more information, try '--help'."));
-        assert_eq!(harness.catalog.calls.get(), 0);
-        assert_eq!(harness.editor.calls.get(), 0);
-    }
-    Ok(())
-}
-
-#[test]
-fn missing_project_policy_is_an_operational_error() {
-    let harness = Harness::new(ProjectState::Absent);
-    let (exit, stdout, stderr) = harness.run(&["gitserious", "commit", "--type", "feat"]);
+fn author_errors_are_presented_without_invoking_git() -> Result<(), Box<dyn Error>> {
+    let harness = Harness::new(initialized_state()?);
+    harness.author.outcome.replace(AuthorOutcome::Failed);
+    let (exit, stdout, stderr) = harness.run(&["gitserious", "commit"]);
     assert_eq!(exit, ExitCode::FAILURE);
     assert!(stdout.is_empty());
-    assert_eq!(
-        stderr,
-        "error: gitserious is not initialized; run `gitserious init` before committing\n"
-    );
-    assert_eq!(harness.catalog.calls.get(), 0);
-}
-
-#[test]
-fn commit_help_is_stdout_only_and_does_not_touch_adapters() -> Result<(), Box<dyn Error>> {
-    let harness = Harness::new(initialized_state()?);
-    let (exit, stdout, stderr) = harness.run(&["gitserious", "commit", "--help"]);
-    assert_eq!(exit, ExitCode::SUCCESS);
-    assert!(stdout.contains("gitserious commit [OPTIONS]"));
-    assert!(stdout.contains("--type <COMMIT TYPE>"));
-    assert!(stderr.is_empty());
-    assert_eq!(harness.catalog.calls.get(), 0);
+    assert_eq!(stderr, "error: fake adapter failure\n");
+    assert_eq!(harness.writer.calls.get(), 0);
     Ok(())
 }

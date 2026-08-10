@@ -1,15 +1,14 @@
 use std::error::Error;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Output};
 
-use gitserious_app::{CommitDraftEditor, CommitWriter, RepositoryRoot};
+use gitserious_app::{CommitWriter, RepositoryRoot};
 use gitserious_core::{
-    CommitMessage, built_in_commit_types, parse_commit_editor_document, render_commit_message,
+    AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, PropertyKey,
+    PropertyValue, PropertyValues, built_in_commit_types, render_commit_message,
 };
-use gitserious_fs::{
-    GitCommitDraftEditor, GitCommitDraftEditorError, GitCommitError, GitCommitWriter,
-};
+use gitserious_fs::{GitCommitError, GitCommitWriter};
 use tempfile::TempDir;
 
 fn git(directory: &Path, arguments: &[&str]) -> Result<Output, Box<dyn Error>> {
@@ -48,22 +47,30 @@ fn root(path: &Path) -> Result<RepositoryRoot, Box<dyn Error>> {
     Ok(RepositoryRoot::new(path.to_path_buf())?)
 }
 
+fn property(key: &str, text: &str) -> Result<AuthoredProperty, Box<dyn Error>> {
+    Ok(AuthoredProperty::new(
+        PropertyKey::new(key)?,
+        PropertyValues::single(PropertyValue::new(text)?),
+    ))
+}
+
 fn feat_message() -> Result<CommitMessage, Box<dyn Error>> {
     let definition = &built_in_commit_types()[0];
-    let document = "feat(fs): create commit\n\nintent:\n  exercise Git\n\nbehavior:\n  record the staged index\n";
-    let draft = parse_commit_editor_document(definition, document)?;
+    let draft = CommitDraft::new(
+        definition.id().clone(),
+        Some(CommitScope::new("fs")?),
+        CommitSubject::new("create commit")?,
+        vec![
+            property("intent", "exercise Git")?,
+            property("behavior", "record the staged index")?,
+        ],
+    )?;
     Ok(render_commit_message(definition, &draft)?)
 }
 
 fn shell_quote(path: &Path) -> String {
     let value = path.to_string_lossy();
     format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn write_editor_script(directory: &Path, body: &str) -> Result<PathBuf, Box<dyn Error>> {
-    let script = directory.join("editor script.sh");
-    fs::write(&script, format!("#!/bin/sh\nset -eu\n{body}\n"))?;
-    Ok(script)
 }
 
 #[cfg(unix)]
@@ -78,57 +85,6 @@ fn make_executable(path: &Path) -> Result<(), Box<dyn Error>> {
 
 #[cfg(not(unix))]
 fn make_executable(_path: &Path) -> Result<(), Box<dyn Error>> {
-    Ok(())
-}
-
-#[test]
-fn configured_editor_with_arguments_and_spaced_paths_replaces_document()
--> Result<(), Box<dyn Error>> {
-    let repository = repository()?;
-    let fixture_directory = repository.path().join("editor fixtures");
-    fs::create_dir(&fixture_directory)?;
-    let replacement = fixture_directory.join("replacement document.txt");
-    let expected =
-        "feat(fs): edited subject\n\nintent:\n  edited intent\n\nbehavior:\n  edited behavior\n";
-    fs::write(&replacement, expected)?;
-    let script = write_editor_script(&fixture_directory, "cp \"$1\" \"$2\"")?;
-    let command = format!("sh {} {}", shell_quote(&script), shell_quote(&replacement));
-    git_ok(repository.path(), &["config", "core.editor", &command])?;
-
-    let edited = GitCommitDraftEditor.edit(&root(repository.path())?, "initial document\n")?;
-    assert_eq!(edited, expected);
-    Ok(())
-}
-
-#[test]
-fn unsuccessful_editor_aborts_without_returning_a_document() -> Result<(), Box<dyn Error>> {
-    let repository = repository()?;
-    let script = write_editor_script(repository.path(), "exit 23")?;
-    let command = format!("sh {}", shell_quote(&script));
-    git_ok(repository.path(), &["config", "core.editor", &command])?;
-
-    let error = GitCommitDraftEditor
-        .edit(&root(repository.path())?, "initial\n")
-        .err()
-        .ok_or("failed editor unexpectedly succeeded")?;
-    assert!(matches!(error, GitCommitDraftEditorError::EditorFailed(_)));
-    assert!(error.to_string().contains("configured Git editor exited"));
-    assert!(error.source().is_none());
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn non_utf8_editor_output_is_rejected() -> Result<(), Box<dyn Error>> {
-    let repository = repository()?;
-    let script = write_editor_script(repository.path(), "printf '\\377' > \"$1\"")?;
-    let command = format!("sh {}", shell_quote(&script));
-    git_ok(repository.path(), &["config", "core.editor", &command])?;
-
-    assert!(matches!(
-        GitCommitDraftEditor.edit(&root(repository.path())?, "initial\n"),
-        Err(GitCommitDraftEditorError::InvalidDocumentEncoding(_))
-    ));
     Ok(())
 }
 
@@ -188,7 +144,7 @@ fn normal_pre_commit_and_commit_msg_hooks_run() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn hook_rejection_and_empty_index_preserve_git_diagnostics() -> Result<(), Box<dyn Error>> {
+fn hook_rejection_and_empty_index_preserve_exact_git_diagnostics() -> Result<(), Box<dyn Error>> {
     let rejected_repository = repository()?;
     let hooks = rejected_repository.path().join("hooks");
     fs::create_dir(&hooks)?;
@@ -208,8 +164,9 @@ fn hook_rejection_and_empty_index_preserve_git_diagnostics() -> Result<(), Box<d
         .commit(&root(rejected_repository.path())?, &feat_message()?)
         .err()
         .ok_or("rejecting hook unexpectedly committed")?;
+    let error_text = error.to_string();
     assert!(matches!(error, GitCommitError::Rejected { .. }));
-    assert!(error.to_string().contains("policy rejected commit"));
+    assert!(error_text.contains("policy rejected commit"));
     assert!(
         !git(
             rejected_repository.path(),
@@ -224,8 +181,9 @@ fn hook_rejection_and_empty_index_preserve_git_diagnostics() -> Result<(), Box<d
         .commit(&root(empty.path())?, &feat_message()?)
         .err()
         .ok_or("empty index unexpectedly committed")?;
+    let error_text = error.to_string();
     assert!(matches!(error, GitCommitError::Rejected { .. }));
-    assert!(!error.to_string().is_empty());
+    assert!(!error_text.is_empty());
     Ok(())
 }
 

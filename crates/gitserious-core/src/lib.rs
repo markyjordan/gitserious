@@ -18,9 +18,7 @@ pub use commit_draft::{
     CommitSubjectError,
 };
 pub use commit_message::{
-    CommitDocumentError, CommitDocumentErrors, CommitMessage, CommitValidationError,
-    CommitValidationErrors, annotate_commit_editor_document, commit_editor_document_is_empty,
-    parse_commit_editor_document, render_commit_editor_document, render_commit_message,
+    CommitMessage, CommitValidationError, CommitValidationErrors, render_commit_message,
     validate_commit_draft,
 };
 pub use commit_type::{CommitTypeDefinition, CommitTypeDefinitionError};

@@ -1,18 +1,18 @@
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gitserious_app::{
-    CommitDraftEditor, CommitOutcome, CommitOutput, CommitPolicyError, CommitTypeCatalog,
-    CommitTypeSelection, CommitTypeSelector, CommitWriter, CreateCommitError, ProjectConfig,
-    ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot, create_commit,
-    resolve_project_lock,
+    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitPolicyError,
+    CommitTypeCatalog, CommitWriter, CreateCommitError, ProjectConfig, ProjectLock, ProjectState,
+    ProjectStateStore, RepositoryLocator, RepositoryRoot, create_commit, resolve_project_lock,
 };
 use gitserious_core::{
-    CommitMessage, CommitTypeDefinition, CommitTypeId, SchemaVersion, built_in_commit_types,
+    AuthoredProperty, CommitDraft, CommitMessage, CommitSubject, CommitTypeDefinition,
+    CommitTypeId, PropertyRequirement, PropertyValue, PropertyValues, SchemaVersion,
+    built_in_commit_types,
 };
 
 type Trace = Rc<RefCell<Vec<&'static str>>>;
@@ -109,53 +109,40 @@ impl CommitTypeCatalog for FakeCatalog {
     }
 }
 
-struct FakeSelector {
-    result: RefCell<Result<CommitTypeSelection, FakeError>>,
-    seen: RefCell<Vec<Vec<CommitTypeId>>>,
+struct FakeAuthor {
+    result: RefCell<FakeAuthorResult>,
+    seen: RefCell<Vec<(Vec<CommitTypeId>, Option<CommitTypeId>)>>,
     trace: Trace,
 }
 
-impl CommitTypeSelector for FakeSelector {
+enum FakeAuthorResult {
+    Valid(usize),
+    Outcome(CommitDraftAuthorOutcome),
+    Error(FakeError),
+}
+
+impl CommitDraftAuthor for FakeAuthor {
     type Error = FakeError;
 
-    fn select(
+    fn author(
         &self,
         definitions: &[CommitTypeDefinition],
-    ) -> Result<CommitTypeSelection, Self::Error> {
-        self.trace.borrow_mut().push("select");
-        self.seen.borrow_mut().push(
+        preselected: Option<&CommitTypeDefinition>,
+    ) -> Result<CommitDraftAuthorOutcome, Self::Error> {
+        self.trace.borrow_mut().push("author");
+        self.seen.borrow_mut().push((
             definitions
                 .iter()
                 .map(|definition| definition.id().clone())
                 .collect(),
-        );
-        self.result.borrow().clone()
-    }
-}
-
-enum EditorResponse {
-    Text(String),
-    Echo,
-    Error,
-}
-
-struct FakeEditor {
-    responses: RefCell<VecDeque<EditorResponse>>,
-    documents: RefCell<Vec<String>>,
-    trace: Trace,
-}
-
-impl CommitDraftEditor for FakeEditor {
-    type Error = FakeError;
-
-    fn edit(&self, _root: &RepositoryRoot, document: &str) -> Result<String, Self::Error> {
-        self.trace.borrow_mut().push("edit");
-        self.documents.borrow_mut().push(document.to_owned());
-        match self.responses.borrow_mut().pop_front() {
-            Some(EditorResponse::Text(text)) => Ok(text),
-            Some(EditorResponse::Echo) => Ok(document.to_owned()),
-            Some(EditorResponse::Error) => Err(FakeError("editor failed")),
-            None => Err(FakeError("editor response missing")),
+            preselected.map(|definition| definition.id().clone()),
+        ));
+        match &*self.result.borrow() {
+            FakeAuthorResult::Valid(index) => valid_draft(&definitions[*index])
+                .map(CommitDraftAuthorOutcome::Authored)
+                .map_err(|_| FakeError("invalid fake draft")),
+            FakeAuthorResult::Outcome(outcome) => Ok(outcome.clone()),
+            FakeAuthorResult::Error(error) => Err(*error),
         }
     }
 }
@@ -197,9 +184,24 @@ fn initialized_state() -> Result<ProjectState, Box<dyn Error>> {
     Ok(ProjectState::Initialized { config, lock })
 }
 
-fn feat_document() -> String {
-    "feat(app): create durable commit\n\nintent:\n  coordinate ports\n\nbehavior:\n  create one commit\n"
-        .to_owned()
+fn valid_draft(definition: &CommitTypeDefinition) -> Result<CommitDraft, Box<dyn Error>> {
+    let properties = definition
+        .properties()
+        .iter()
+        .filter(|property| property.requirement() == &PropertyRequirement::Required)
+        .map(|property| {
+            Ok(AuthoredProperty::new(
+                property.key().clone(),
+                PropertyValues::single(PropertyValue::new(format!("authored {}", property.key()))?),
+            ))
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    Ok(CommitDraft::new(
+        definition.id().clone(),
+        None,
+        CommitSubject::new("create durable commit")?,
+        properties,
+    )?)
 }
 
 struct Harness {
@@ -207,8 +209,7 @@ struct Harness {
     locator: FakeLocator,
     store: FakeStore,
     catalog: FakeCatalog,
-    selector: FakeSelector,
-    editor: FakeEditor,
+    author: FakeAuthor,
     writer: FakeWriter,
 }
 
@@ -229,16 +230,9 @@ impl Harness {
                 fail: false,
                 trace: Rc::clone(&trace),
             },
-            selector: FakeSelector {
-                result: RefCell::new(Ok(CommitTypeSelection::Selected(
-                    built_in_commit_types()[0].id().clone(),
-                ))),
+            author: FakeAuthor {
+                result: RefCell::new(FakeAuthorResult::Valid(0)),
                 seen: RefCell::default(),
-                trace: Rc::clone(&trace),
-            },
-            editor: FakeEditor {
-                responses: RefCell::new(VecDeque::from([EditorResponse::Text(feat_document())])),
-                documents: RefCell::default(),
                 trace: Rc::clone(&trace),
             },
             writer: FakeWriter {
@@ -255,14 +249,13 @@ impl Harness {
         requested: Option<&CommitTypeId>,
     ) -> Result<
         CommitOutcome,
-        CreateCommitError<FakeError, FakeError, FakeError, FakeError, FakeError, FakeError>,
+        CreateCommitError<FakeError, FakeError, FakeError, FakeError, FakeError>,
     > {
         create_commit(
             &self.locator,
             &self.store,
             &self.catalog,
-            &self.selector,
-            &self.editor,
+            &self.author,
             &self.writer,
             &repository_path(),
             requested,
@@ -271,8 +264,8 @@ impl Harness {
 }
 
 #[test]
-fn requested_type_bypasses_selection_and_commits_once_in_port_order() -> Result<(), Box<dyn Error>>
-{
+fn requested_type_is_resolved_before_authoring_and_commits_once_in_port_order()
+-> Result<(), Box<dyn Error>> {
     let harness = Harness::new(initialized_state()?);
     let requested = CommitTypeId::new("feat")?;
     let outcome = harness.run(Some(&requested))?;
@@ -285,86 +278,50 @@ fn requested_type_bypasses_selection_and_commits_once_in_port_order() -> Result<
     );
     assert_eq!(
         harness.trace.borrow().as_slice(),
-        ["locate", "inspect", "catalog", "edit", "write"]
+        ["locate", "inspect", "catalog", "author", "write"]
     );
-    assert!(harness.selector.seen.borrow().is_empty());
+    let seen = harness.author.seen.borrow();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].1.as_ref(), Some(&requested));
+    assert_eq!(seen[0].0.len(), built_in_commit_types().len());
     assert_eq!(harness.writer.messages.borrow().len(), 1);
-    assert_eq!(
-        harness.writer.messages.borrow()[0],
-        "feat(app): create durable commit\n\nintent:\n  coordinate ports\n\nbehavior:\n  create one commit\n"
-    );
+    assert!(harness.writer.messages.borrow()[0].starts_with("feat: create durable commit\n"));
     Ok(())
 }
 
 #[test]
-fn omitted_type_selects_from_locked_policy_order() -> Result<(), Box<dyn Error>> {
+fn omitted_type_delegates_selection_with_locked_policy_order() -> Result<(), Box<dyn Error>> {
     let harness = Harness::new(initialized_state()?);
     assert!(matches!(harness.run(None)?, CommitOutcome::Created(_)));
-    assert_eq!(harness.selector.seen.borrow().len(), 1);
+    let seen = harness.author.seen.borrow();
+    assert_eq!(seen[0].1, None);
     assert_eq!(
-        harness.selector.seen.borrow()[0],
+        seen[0].0,
         built_in_commit_types()
             .iter()
             .map(|definition| definition.id().clone())
             .collect::<Vec<_>>()
     );
+    Ok(())
+}
+
+#[test]
+fn author_cancellation_never_invokes_the_writer() -> Result<(), Box<dyn Error>> {
+    let harness = Harness::new(initialized_state()?);
+    harness.author.result.replace(FakeAuthorResult::Outcome(
+        CommitDraftAuthorOutcome::Cancelled,
+    ));
+    assert_eq!(harness.run(None)?, CommitOutcome::Cancelled);
+    assert!(harness.writer.messages.borrow().is_empty());
     assert_eq!(
         harness.trace.borrow().as_slice(),
-        ["locate", "inspect", "catalog", "select", "edit", "write"]
+        ["locate", "inspect", "catalog", "author"]
     );
     Ok(())
 }
 
 #[test]
-fn selector_and_unchanged_or_empty_editor_cancellation_never_write() -> Result<(), Box<dyn Error>> {
-    let harness = Harness::new(initialized_state()?);
-    let _ = harness
-        .selector
-        .result
-        .replace(Ok(CommitTypeSelection::Cancelled));
-    assert_eq!(harness.run(None)?, CommitOutcome::Cancelled);
-    assert!(harness.editor.documents.borrow().is_empty());
-    assert!(harness.writer.messages.borrow().is_empty());
-
-    for response in [
-        EditorResponse::Echo,
-        EditorResponse::Text("# comment only\n".to_owned()),
-    ] {
-        let harness = Harness::new(initialized_state()?);
-        harness.editor.responses.replace(VecDeque::from([response]));
-        let requested = CommitTypeId::new("feat")?;
-        assert_eq!(harness.run(Some(&requested))?, CommitOutcome::Cancelled);
-        assert!(harness.writer.messages.borrow().is_empty());
-    }
-    Ok(())
-}
-
-#[test]
-fn invalid_partial_draft_is_annotated_and_reopened_before_one_write() -> Result<(), Box<dyn Error>>
-{
-    let harness = Harness::new(initialized_state()?);
-    harness.editor.responses.replace(VecDeque::from([
-        EditorResponse::Text("feat: partial\n".to_owned()),
-        EditorResponse::Text(feat_document()),
-    ]));
-    let requested = CommitTypeId::new("feat")?;
-    assert!(matches!(
-        harness.run(Some(&requested))?,
-        CommitOutcome::Created(_)
-    ));
-    let documents = harness.editor.documents.borrow();
-    assert_eq!(documents.len(), 2);
-    assert!(documents[1].starts_with("# gitserious could not use this draft:"));
-    assert!(documents[1].contains("complete required property"));
-    assert!(documents[1].contains("intent"));
-    assert!(documents[1].ends_with("feat: partial\n"));
-    assert_eq!(harness.writer.messages.borrow().len(), 1);
-    Ok(())
-}
-
-#[test]
-fn every_incomplete_project_state_is_rejected_before_catalog_access() -> Result<(), Box<dyn Error>>
-{
+fn every_incomplete_project_state_is_rejected_before_authoring() -> Result<(), Box<dyn Error>> {
     let config = ProjectConfig::default_channel()?;
     let lock = resolve_project_lock(&config)?;
     for (state, expected) in [
@@ -376,17 +333,15 @@ fn every_incomplete_project_state_is_rejected_before_catalog_access() -> Result<
         (ProjectState::LockOnly, CommitPolicyError::OrphanLock),
     ] {
         let harness = Harness::new(state);
-        let error = harness
-            .run(None)
-            .err()
-            .ok_or("state unexpectedly accepted")?;
-        assert!(matches!(error, CreateCommitError::Policy(actual) if actual == expected));
-        assert_eq!(harness.trace.borrow().as_slice(), ["locate", "inspect"]);
+        assert!(matches!(
+            harness.run(None),
+            Err(CreateCommitError::Policy(actual)) if actual == expected
+        ));
+        assert!(harness.author.seen.borrow().is_empty());
     }
 
-    let stale_config = ProjectConfig::default_channel()?;
     let stale = ProjectState::Initialized {
-        config: stale_config,
+        config: ProjectConfig::default_channel()?,
         lock: ProjectLock::new(
             lock.version(),
             "sha256:0000000000000000000000000000000000000000000000000000000000000000".parse()?,
@@ -394,45 +349,69 @@ fn every_incomplete_project_state_is_rejected_before_catalog_access() -> Result<
             lock.resolved_template().clone(),
         )?,
     };
-    let harness = Harness::new(stale);
     assert!(matches!(
-        harness.run(None),
+        Harness::new(stale).run(None),
         Err(CreateCommitError::Policy(CommitPolicyError::StaleLock))
     ));
     Ok(())
 }
 
 #[test]
-fn requested_and_selected_types_must_belong_to_current_policy() -> Result<(), Box<dyn Error>> {
+fn requested_and_authored_types_are_defended_at_the_application_boundary()
+-> Result<(), Box<dyn Error>> {
     let harness = Harness::new(initialized_state()?);
     let unknown = CommitTypeId::new("custom")?;
-    let error = harness
-        .run(Some(&unknown))
-        .err()
-        .ok_or("unknown type accepted")?;
-    match error {
-        CreateCommitError::UnknownCommitType {
-            requested,
-            available,
-        } => {
-            assert_eq!(requested, unknown);
-            assert_eq!(available.len(), 11);
-        }
-        other => return Err(format!("unexpected error: {other}").into()),
-    }
+    assert!(matches!(
+        harness.run(Some(&unknown)),
+        Err(CreateCommitError::UnknownCommitType { requested, .. }) if requested == unknown
+    ));
+    assert!(harness.author.seen.borrow().is_empty());
 
     let harness = Harness::new(initialized_state()?);
-    let _ = harness
-        .selector
-        .result
-        .replace(Ok(CommitTypeSelection::Selected(CommitTypeId::new(
-            "custom",
-        )?)));
+    harness.author.result.replace(FakeAuthorResult::Valid(1));
+    let feat = CommitTypeId::new("feat")?;
+    assert!(matches!(
+        harness.run(Some(&feat)),
+        Err(CreateCommitError::AuthoredTypeMismatch { expected, actual })
+            if expected == feat && actual == CommitTypeId::new("fix")?
+    ));
+    assert!(harness.writer.messages.borrow().is_empty());
+
+    let harness = Harness::new(initialized_state()?);
+    let custom = CommitDraft::new(
+        CommitTypeId::new("custom")?,
+        None,
+        CommitSubject::new("escape policy")?,
+        Vec::new(),
+    )?;
+    harness.author.result.replace(FakeAuthorResult::Outcome(
+        CommitDraftAuthorOutcome::Authored(custom),
+    ));
     assert!(matches!(
         harness.run(None),
         Err(CreateCommitError::UnknownCommitType { .. })
     ));
-    assert!(harness.editor.documents.borrow().is_empty());
+    assert!(harness.writer.messages.borrow().is_empty());
+    Ok(())
+}
+
+#[test]
+fn invalid_authored_draft_is_revalidated_before_writing() -> Result<(), Box<dyn Error>> {
+    let harness = Harness::new(initialized_state()?);
+    let incomplete = CommitDraft::new(
+        CommitTypeId::new("feat")?,
+        None,
+        CommitSubject::new("missing properties")?,
+        Vec::new(),
+    )?;
+    harness.author.result.replace(FakeAuthorResult::Outcome(
+        CommitDraftAuthorOutcome::Authored(incomplete),
+    ));
+    assert!(matches!(
+        harness.run(None),
+        Err(CreateCommitError::InvalidDraft(errors)) if errors.as_slice().len() == 2
+    ));
+    assert!(harness.writer.messages.borrow().is_empty());
     Ok(())
 }
 
@@ -447,30 +426,30 @@ fn locked_catalog_requires_every_exact_schema_and_fingerprint() -> Result<(), Bo
         ))
     ));
 
-    let mut version_harness = Harness::new(initialized_state()?);
     let original = &built_in_commit_types()[0];
-    version_harness.catalog.definitions[0] = CommitTypeDefinition::new(
+    let mut version = Harness::new(initialized_state()?);
+    version.catalog.definitions[0] = CommitTypeDefinition::new(
         SchemaVersion::new(2)?,
         original.id().clone(),
         original.description(),
         original.properties().to_vec(),
     )?;
     assert!(matches!(
-        version_harness.run(None),
+        version.run(None),
         Err(CreateCommitError::Policy(
             CommitPolicyError::SchemaVersionMismatch(_)
         ))
     ));
 
-    let mut fingerprint_harness = Harness::new(initialized_state()?);
-    fingerprint_harness.catalog.definitions[0] = CommitTypeDefinition::new(
+    let mut fingerprint = Harness::new(initialized_state()?);
+    fingerprint.catalog.definitions[0] = CommitTypeDefinition::new(
         original.schema_version(),
         original.id().clone(),
-        "A changed definition.",
+        "Changed definition.",
         original.properties().to_vec(),
     )?;
     assert!(matches!(
-        fingerprint_harness.run(None),
+        fingerprint.run(None),
         Err(CreateCommitError::Policy(
             CommitPolicyError::DefinitionFingerprintMismatch(_)
         ))
@@ -479,55 +458,45 @@ fn locked_catalog_requires_every_exact_schema_and_fingerprint() -> Result<(), Bo
 }
 
 #[test]
-fn each_port_failure_is_preserved_and_stops_downstream_calls() -> Result<(), Box<dyn Error>> {
-    let mut harness = Harness::new(initialized_state()?);
-    harness.locator.fail = true;
+fn every_port_failure_is_preserved_and_stops_downstream_calls() -> Result<(), Box<dyn Error>> {
+    let mut locator = Harness::new(initialized_state()?);
+    locator.locator.fail = true;
     assert!(matches!(
-        harness.run(None),
+        locator.run(None),
         Err(CreateCommitError::Repository(FakeError("locator failed")))
     ));
 
-    let harness = Harness::new(initialized_state()?);
-    let _ = harness.store.state.replace(Err(FakeError("store failed")));
+    let store = Harness::new(initialized_state()?);
+    let _ = store.store.state.replace(Err(FakeError("store failed")));
     assert!(matches!(
-        harness.run(None),
+        store.run(None),
         Err(CreateCommitError::Store(FakeError("store failed")))
     ));
 
-    let mut harness = Harness::new(initialized_state()?);
-    harness.catalog.fail = true;
+    let mut catalog = Harness::new(initialized_state()?);
+    catalog.catalog.fail = true;
     assert!(matches!(
-        harness.run(None),
+        catalog.run(None),
         Err(CreateCommitError::Catalog(FakeError("catalog failed")))
     ));
 
-    let harness = Harness::new(initialized_state()?);
-    let _ = harness
-        .selector
+    let author = Harness::new(initialized_state()?);
+    author
+        .author
         .result
-        .replace(Err(FakeError("selector failed")));
+        .replace(FakeAuthorResult::Error(FakeError("author failed")));
     assert!(matches!(
-        harness.run(None),
-        Err(CreateCommitError::Selector(FakeError("selector failed")))
+        author.run(None),
+        Err(CreateCommitError::Author(FakeError("author failed")))
     ));
+    assert!(author.writer.messages.borrow().is_empty());
 
-    let harness = Harness::new(initialized_state()?);
-    harness
-        .editor
-        .responses
-        .replace(VecDeque::from([EditorResponse::Error]));
-    let feat = CommitTypeId::new("feat")?;
+    let mut writer = Harness::new(initialized_state()?);
+    writer.writer.fail = true;
     assert!(matches!(
-        harness.run(Some(&feat)),
-        Err(CreateCommitError::Editor(FakeError("editor failed")))
-    ));
-
-    let mut harness = Harness::new(initialized_state()?);
-    harness.writer.fail = true;
-    assert!(matches!(
-        harness.run(Some(&feat)),
+        writer.run(None),
         Err(CreateCommitError::Writer(FakeError("writer failed")))
     ));
-    assert_eq!(harness.writer.messages.borrow().len(), 1);
+    assert_eq!(writer.writer.messages.borrow().len(), 1);
     Ok(())
 }

@@ -2,10 +2,8 @@ use std::io;
 use std::process::ExitCode;
 
 use gitserious_cli::CommitAdapters;
-use gitserious_fs::{
-    GitCommitDraftEditor, GitCommitWriter, GitRepositoryLocator, TomlProjectStateStore,
-};
-use gitserious_tui::RatatuiCommitTypeSelector;
+use gitserious_fs::{GitCommitWriter, GitRepositoryLocator, TomlProjectStateStore};
+use gitserious_tui::RatatuiCommitDraftAuthor;
 
 use crate::built_in_catalog::BuiltInCommitTypeCatalog;
 
@@ -15,10 +13,9 @@ fn main() -> ExitCode {
     let locator = GitRepositoryLocator;
     let store = TomlProjectStateStore;
     let catalog = BuiltInCommitTypeCatalog;
-    let selector = RatatuiCommitTypeSelector;
-    let editor = GitCommitDraftEditor;
+    let author = RatatuiCommitDraftAuthor;
     let writer = GitCommitWriter;
-    let commit = CommitAdapters::new(&catalog, &selector, &editor, &writer);
+    let commit = CommitAdapters::new(&catalog, &author, &writer);
     let mut stdout = io::stdout();
     let mut stderr = io::stderr();
 

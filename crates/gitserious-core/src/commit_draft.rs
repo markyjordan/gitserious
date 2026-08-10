@@ -94,12 +94,9 @@ impl CommitSubject {
     /// # Errors
     ///
     /// Returns [`CommitSubjectError`] when the subject is blank, spans lines,
-    /// retains the editor placeholder, or has surrounding whitespace.
+    /// or has surrounding whitespace.
     pub fn new(value: impl Into<String>) -> Result<Self, CommitSubjectError> {
         let value = value.into();
-        if value == crate::commit_message::SUBJECT_PLACEHOLDER {
-            return Err(CommitSubjectError::Placeholder);
-        }
         if value.trim().is_empty() {
             return Err(CommitSubjectError::Blank);
         }
@@ -138,8 +135,6 @@ pub enum CommitSubjectError {
     Blank,
     /// The subject contains a line break.
     LineBreak,
-    /// The subject still contains the editor placeholder.
-    Placeholder,
     /// The subject begins or ends with whitespace.
     SurroundingWhitespace,
 }
@@ -149,7 +144,6 @@ impl Display for CommitSubjectError {
         match self {
             Self::Blank => formatter.write_str("commit subject must contain non-whitespace text"),
             Self::LineBreak => formatter.write_str("commit subject must fit on one line"),
-            Self::Placeholder => formatter.write_str("replace the commit subject placeholder"),
             Self::SurroundingWhitespace => {
                 formatter.write_str("commit subject must not have surrounding whitespace")
             }
