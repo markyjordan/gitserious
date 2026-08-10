@@ -29,10 +29,17 @@ nonrequired fields are omitted, while blank required fields block review.
 
 The right sidebar places the passive Fields HUD above the contextual Description
 pane. The HUD tracks complete, incomplete, and invalid values and shows each
-field's schema requirement. The editor soft-wraps at 80 columns when space
-permits and adapts to narrower supported terminals. Its highlighted status strip
-reports the visual cursor column and active wrap width. `Ctrl+S` compiles the
-form into the exact canonical message shown during review.
+field's schema requirement. Scope and subject guidance illustrates the
+Conventional Commit header `type(scope): subject`, including the scope-free
+`type: subject` form.
+
+The `Compose commit message` view always edits an 80-column virtual surface. If
+the visible Edit form is narrower, it follows the cursor horizontally instead
+of wrapping early, then returns to column 1 when a word or glyph soft-wraps at
+column 80. Its highlighted status strip reports `col N/80`, separated from the
+key hints by `▌`. `Ctrl+S` compiles the form into the exact canonical message
+shown during review. Property values are rendered beneath their headings
+without automatic indentation.
 
 | Context | Controls |
 | --- | --- |
