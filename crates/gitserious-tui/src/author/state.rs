@@ -486,7 +486,11 @@ fn section_text(lines: &[String]) -> String {
         .iter()
         .rposition(|line| !line.trim().is_empty())
         .map_or(start, |index| index + 1);
-    lines[start..end].join("\n")
+    lines[start..end]
+        .iter()
+        .map(|line| line.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn parse_scope(parsed: &ParsedDocument, issues: &mut Vec<ValidationIssue>) -> Option<CommitScope> {
@@ -674,6 +678,16 @@ impl<'a> AuthoringSession<'a> {
             Event::Paste(text) if self.stage == Stage::Compose => {
                 if self.keymap == Keymap::Conventional || self.vim_mode == VimMode::Insert {
                     let definition = self.definition().clone();
+                    if text.contains(['\n', '\r'])
+                        && self
+                            .composer
+                            .current_field(&definition)
+                            .is_some_and(|field| {
+                                matches!(field, FieldKind::Scope | FieldKind::Subject)
+                            })
+                    {
+                        return None;
+                    }
                     self.composer
                         .edit_preserving_headings(&definition, |editor| {
                             editor.insert_str(text);
@@ -799,6 +813,14 @@ impl<'a> AuthoringSession<'a> {
 
     fn input_key(&mut self, key: KeyEvent) {
         let definition = self.definition().clone();
+        if key.code == KeyCode::Enter
+            && self
+                .composer
+                .current_field(&definition)
+                .is_some_and(|field| matches!(field, FieldKind::Scope | FieldKind::Subject))
+        {
+            return;
+        }
         self.composer
             .edit_preserving_headings(&definition, |editor| {
                 editor.input(Input::from(key));

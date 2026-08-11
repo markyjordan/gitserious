@@ -344,6 +344,57 @@ fn review_is_exact_backtracking_is_lossless_and_enter_returns_the_typed_draft()
 }
 
 #[test]
+fn review_trims_trailing_whitespace_from_every_encoded_field() -> Result<(), Box<dyn Error>> {
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let document = "scope:\napi \t\n\nsubject:\nship it  \n\nintent:\n  leading reason \t\n\nbehavior:\nfirst  \nsecond\t\n";
+    set_document(&mut session, document, 10);
+
+    modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
+
+    assert_eq!(session.stage, Stage::Review);
+    assert_eq!(
+        session
+            .review
+            .as_ref()
+            .ok_or("missing review")?
+            .message
+            .as_str(),
+        "feat(api): ship it\n\nintent:\n  leading reason\n\nbehavior:\nfirst\nsecond\n"
+    );
+    press(&mut session, KeyCode::Esc);
+    assert_eq!(
+        session.composer.editor.lines().join("\n"),
+        document.strip_suffix('\n').ok_or("missing final newline")?
+    );
+    Ok(())
+}
+
+#[test]
+fn scope_and_subject_reject_explicit_multiline_input() {
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let pristine = session.composer.editor.lines().to_vec();
+
+    paste(&mut session, "api\nserver");
+    assert_eq!(session.composer.editor.lines(), pristine);
+    paste(&mut session, "api");
+    let scope_cursor = session.composer.editor.cursor();
+    press(&mut session, KeyCode::Enter);
+    assert_eq!(session.composer.editor.cursor(), scope_cursor);
+
+    session.composer.editor.move_cursor(CursorMove::Jump(4, 0));
+    paste(&mut session, "ship\nchange");
+    assert!(session.composer.editor.lines()[4].is_empty());
+    paste(&mut session, "ship change");
+    let subject_cursor = session.composer.editor.cursor();
+    press(&mut session, KeyCode::Enter);
+    assert_eq!(session.composer.editor.cursor(), subject_cursor);
+
+    session.composer.editor.move_cursor(CursorMove::Jump(7, 0));
+    paste(&mut session, "first\nsecond");
+    assert_eq!(&session.composer.editor.lines()[7..=8], ["first", "second"]);
+}
+
+#[test]
 fn conventional_document_editing_preserves_ctrl_k_unicode_paste_and_history() {
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
     paste(&mut session, "alpha beta 🦀");
@@ -358,6 +409,7 @@ fn conventional_document_editing_preserves_ctrl_k_unicode_paste_and_history() {
     modified_press(&mut session, KeyCode::Char('r'), KeyModifiers::CONTROL);
     assert_eq!(session.composer.editor.lines()[1], "alpha beta ");
 
+    session.composer.editor.move_cursor(CursorMove::Jump(7, 0));
     paste(&mut session, "line one\nline two");
     assert!(
         session
@@ -372,6 +424,7 @@ fn conventional_document_editing_preserves_ctrl_k_unicode_paste_and_history() {
 #[test]
 fn bounded_vim_mode_uses_ctrl_t_and_supports_document_commands() {
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    session.composer.editor.move_cursor(CursorMove::Jump(7, 0));
     paste(&mut session, "one two\nthree");
     modified_press(&mut session, KeyCode::Char('t'), KeyModifiers::CONTROL);
     assert_eq!(session.keymap, Keymap::Vim);
