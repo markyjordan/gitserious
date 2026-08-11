@@ -519,26 +519,49 @@ fn conventional_and_vim_navigation_skip_schema_headings() {
     assert_eq!(session.composer.editor.cursor(), (1, 0));
 
     press(&mut session, KeyCode::Down);
-    assert_eq!(session.composer.editor.cursor(), (2, 0));
-    press(&mut session, KeyCode::Down);
     assert_eq!(session.composer.editor.cursor(), (4, 0));
     press(&mut session, KeyCode::Up);
-    assert_eq!(session.composer.editor.cursor(), (2, 0));
+    assert_eq!(session.composer.editor.cursor(), (1, 0));
     press(&mut session, KeyCode::Right);
     assert_eq!(session.composer.editor.cursor(), (4, 0));
     press(&mut session, KeyCode::Left);
-    assert_eq!(session.composer.editor.cursor(), (2, 0));
+    assert_eq!(session.composer.editor.cursor(), (1, 0));
 
     modified_press(&mut session, KeyCode::Char('t'), KeyModifiers::CONTROL);
     assert_eq!(session.vim_mode, VimMode::Normal);
     press(&mut session, KeyCode::Char('j'));
     assert_eq!(session.composer.editor.cursor(), (4, 0));
     press(&mut session, KeyCode::Char('k'));
-    assert_eq!(session.composer.editor.cursor(), (2, 0));
+    assert_eq!(session.composer.editor.cursor(), (1, 0));
     press(&mut session, KeyCode::Char('l'));
     assert_eq!(session.composer.editor.cursor(), (4, 0));
     press(&mut session, KeyCode::Char('h'));
-    assert_eq!(session.composer.editor.cursor(), (2, 0));
+    assert_eq!(session.composer.editor.cursor(), (1, 0));
+}
+
+#[test]
+fn backspace_and_delete_join_an_explicit_second_line_and_preserve_its_separator() {
+    for key in [KeyCode::Backspace, KeyCode::Delete] {
+        let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+        session.composer.editor.move_cursor(CursorMove::Jump(7, 0));
+        press(&mut session, KeyCode::Enter);
+        paste(&mut session, "moves up");
+        press(&mut session, KeyCode::Home);
+
+        press(&mut session, key);
+
+        assert_eq!(session.composer.editor.cursor(), (7, 0));
+        assert_eq!(session.composer.editor.lines()[7], "moves up");
+        assert!(session.composer.editor.lines()[8].is_empty());
+        assert_eq!(session.composer.editor.lines()[9], "behavior:");
+
+        modified_press(&mut session, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert!(session.composer.editor.lines()[7].is_empty());
+        assert_eq!(session.composer.editor.lines()[8], "moves up");
+        modified_press(&mut session, KeyCode::Char('r'), KeyModifiers::CONTROL);
+        assert_eq!(session.composer.editor.lines()[7], "moves up");
+        assert!(session.composer.editor.lines()[8].is_empty());
+    }
 }
 
 #[test]
