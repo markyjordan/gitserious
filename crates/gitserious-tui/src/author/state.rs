@@ -249,7 +249,7 @@ impl ComposerState {
         edit(&mut self.editor);
         if headings_are_intact(self.editor.lines(), definition) {
             apply_heading_guards(&mut self.editor, definition);
-            skip_heading_cursor(&mut self.editor, definition, previous_cursor);
+            skip_noneditable_cursor(&mut self.editor, definition, previous_cursor);
             self.issues.clear();
         } else {
             self.editor = previous;
@@ -259,7 +259,7 @@ impl ComposerState {
     fn move_cursor(&mut self, definition: &CommitTypeDefinition, movement: CursorMove) {
         let previous_cursor = self.editor.cursor();
         self.editor.move_cursor(movement);
-        skip_heading_cursor(&mut self.editor, definition, previous_cursor);
+        skip_noneditable_cursor(&mut self.editor, definition, previous_cursor);
         self.issues.clear();
     }
 }
@@ -317,8 +317,13 @@ fn headings_are_intact(lines: &[String], definition: &CommitTypeDefinition) -> b
     let trailing_input = headings
         .last()
         .is_some_and(|(line, _)| lines.len().saturating_sub(*line) >= 3);
+    let separators = headings.iter().skip(1).all(|(line, _)| {
+        lines
+            .get(line.saturating_sub(1))
+            .is_some_and(String::is_empty)
+    }) && lines.last().is_some_and(String::is_empty);
 
-    signature == expected_heading_signature(definition) && separated && trailing_input
+    signature == expected_heading_signature(definition) && separated && trailing_input && separators
 }
 
 fn terminal_line(line: usize) -> u16 {
@@ -329,28 +334,45 @@ fn terminal_column(column: usize) -> u16 {
     u16::try_from(column).unwrap_or(u16::MAX)
 }
 
-fn skip_heading_cursor(
+fn skip_noneditable_cursor(
     editor: &mut TextArea<'static>,
     definition: &CommitTypeDefinition,
     previous_cursor: (usize, usize),
 ) {
-    let cursor = editor.cursor();
-    let Some(line) = editor.lines().get(cursor.0) else {
-        return;
-    };
-    if exact_heading(line, definition).is_none() {
-        return;
+    let moving_forward = editor.cursor() > previous_cursor;
+    loop {
+        let cursor = editor.cursor();
+        let Some(line) = editor.lines().get(cursor.0) else {
+            return;
+        };
+        let target_line = if exact_heading(line, definition).is_some() {
+            if moving_forward || cursor.0 == 0 {
+                cursor.0.saturating_add(1)
+            } else {
+                cursor.0.saturating_sub(1)
+            }
+        } else if reserved_separator(editor.lines(), cursor.0, definition) {
+            if moving_forward && cursor.0 + 1 < editor.lines().len() {
+                cursor.0.saturating_add(2)
+            } else {
+                cursor.0.saturating_sub(1)
+            }
+        } else {
+            return;
+        };
+        editor.move_cursor(CursorMove::Jump(
+            terminal_line(target_line),
+            terminal_column(previous_cursor.1),
+        ));
     }
+}
 
-    let target_line = if cursor > previous_cursor || cursor.0 == 0 {
-        cursor.0.saturating_add(1)
-    } else {
-        cursor.0.saturating_sub(1)
-    };
-    editor.move_cursor(CursorMove::Jump(
-        terminal_line(target_line),
-        terminal_column(previous_cursor.1),
-    ));
+fn reserved_separator(lines: &[String], line: usize, definition: &CommitTypeDefinition) -> bool {
+    lines.get(line).is_some_and(String::is_empty)
+        && (line + 1 == lines.len()
+            || lines
+                .get(line + 1)
+                .is_some_and(|next| exact_heading(next, definition).is_some()))
 }
 
 fn scaffold_lines(definition: &CommitTypeDefinition) -> Vec<String> {
@@ -486,7 +508,11 @@ fn section_text(lines: &[String]) -> String {
         .iter()
         .rposition(|line| !line.trim().is_empty())
         .map_or(start, |index| index + 1);
-    lines[start..end].join("\n")
+    lines[start..end]
+        .iter()
+        .map(|line| line.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn parse_scope(parsed: &ParsedDocument, issues: &mut Vec<ValidationIssue>) -> Option<CommitScope> {
@@ -674,6 +700,16 @@ impl<'a> AuthoringSession<'a> {
             Event::Paste(text) if self.stage == Stage::Compose => {
                 if self.keymap == Keymap::Conventional || self.vim_mode == VimMode::Insert {
                     let definition = self.definition().clone();
+                    if text.contains(['\n', '\r'])
+                        && self
+                            .composer
+                            .current_field(&definition)
+                            .is_some_and(|field| {
+                                matches!(field, FieldKind::Scope | FieldKind::Subject)
+                            })
+                    {
+                        return None;
+                    }
                     self.composer
                         .edit_preserving_headings(&definition, |editor| {
                             editor.insert_str(text);
@@ -799,9 +835,37 @@ impl<'a> AuthoringSession<'a> {
 
     fn input_key(&mut self, key: KeyEvent) {
         let definition = self.definition().clone();
+        if key.code == KeyCode::Enter
+            && self
+                .composer
+                .current_field(&definition)
+                .is_some_and(|field| matches!(field, FieldKind::Scope | FieldKind::Subject))
+        {
+            return;
+        }
+        let (line, column) = self.composer.editor.cursor();
+        let join_empty_previous = matches!(key.code, KeyCode::Backspace | KeyCode::Delete)
+            && column == 0
+            && line > 0
+            && self
+                .composer
+                .editor
+                .lines()
+                .get(line - 1)
+                .is_some_and(String::is_empty)
+            && self
+                .composer
+                .editor
+                .lines()
+                .get(line)
+                .is_some_and(|current| exact_heading(current, &definition).is_none());
         self.composer
             .edit_preserving_headings(&definition, |editor| {
-                editor.input(Input::from(key));
+                if join_empty_previous {
+                    editor.delete_char();
+                } else {
+                    editor.input(Input::from(key));
+                }
             });
     }
 
