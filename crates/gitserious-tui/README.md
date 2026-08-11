@@ -25,16 +25,17 @@ preselected commit type starts directly at `2/3`.
 composer. Both forms require interactive standard input and output. There is no
 configured-Git-editor fallback or non-interactive authoring mode in this slice.
 
-The composer places one prepopulated document on the left with `scope`,
-`subject`, and every schema-defined property header. The headers are immutable;
-values are authored beneath them without traversing separate controls. The
-cursor starts in the scope value and skips over field headers when moving
-between editable regions. Blank nonrequired fields are omitted, while blank
-required fields block review.
+The composer places one prepopulated document in a full-width Edit form with
+`scope`, `subject`, and every schema-defined property header. The headers are
+immutable; values are authored beneath them without traversing separate
+controls. The cursor starts in the scope value and skips both field headers and
+their reserved blank separators when moving between editable regions. Scope and
+subject accept one authored line; schema properties remain multiline. Blank
+nonrequired fields are omitted, while blank required fields block review.
 
-The right sidebar places the passive Fields HUD above the contextual Description
-pane. The HUD tracks complete, incomplete, and invalid values and shows each
-field's schema requirement. Scope and subject guidance illustrates the
+The passive Fields HUD and contextual Description pane sit side by side above
+the Edit form. The HUD tracks complete, incomplete, and invalid values and shows
+each field's schema requirement. Scope and subject guidance illustrates the
 Conventional Commit header `type(scope): subject`, including the scope-free
 `type: subject` form.
 
@@ -43,8 +44,10 @@ the visible Edit form is narrower, it follows the cursor horizontally instead
 of wrapping early, then returns to column 1 when a word or glyph soft-wraps at
 column 80. Its highlighted status strip reports `col N/80`, separated from the
 key hints by `▌`. `Ctrl+S` compiles the form into the exact canonical message
-shown during review. Property values are rendered beneath their headings
-without automatic indentation.
+shown during review. Compilation removes trailing whitespace from every encoded
+line without changing the editor document or intentional leading whitespace.
+Property values are rendered beneath their headings without automatic
+indentation.
 
 | Context | Controls |
 | --- | --- |
@@ -56,11 +59,15 @@ without automatic indentation.
 
 Conventional mode provides cursor movement, selection, word movement,
 soft-wrapped Unicode input, paste, undo/redo, and `Ctrl+K` deletion to the end of
-the line through the text-area widget. The cursor uses a visible cell without
-underlining the input line. Navigation hints at the bottom of each terminal view
-use a highlighted strip, bold `key: action` pairs, centered-dot separators, and
-lowercase `ctrl` labels for quick scanning. The validation row above the strip
-stays empty until an attempted review reports an error.
+the line through the text-area widget. Explicit property lines join normally
+with Backspace or Delete, while a reserved blank row always separates authored
+text—including soft wraps—from the next immutable heading. The cursor uses a
+visible cell without underlining the input line. Navigation hints at the bottom
+of each terminal view use a highlighted strip, bold `key: action` pairs,
+centered-dot separators, and lowercase `ctrl` labels for quick scanning. The
+validation row above the strip stays empty until an attempted review reports an
+error. Dirty-draft confirmation centers its question and controls within the
+discard popup.
 
 The bounded Vim mode provides Normal and Insert modes plus `h`/`j`/`k`/`l`,
 `w`/`b`, `0`/`$`, `i`/`a`, `x`, `u`, and `Ctrl+R`. It intentionally does not
