@@ -11,6 +11,7 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::Line;
 use tui_textarea::{CursorMove, TextArea, WrapMode};
 
 use crate::{RatatuiCommitDraftAuthor, RatatuiCommitDraftAuthorError};
@@ -815,6 +816,23 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(text.contains("y: discard · Enter/Esc/n: keep editing"));
     assert!(text.contains("Review commit"));
     assert!(text.contains("3/3"));
+    let buffer = rendered_buffer(&mut review, 100, 24)?;
+    let title = find_ascii(&buffer, 100, 24, "Confirm discard").ok_or("missing dialog title")?;
+    let question = "Discard this draft and cancel the commit?";
+    let question_position =
+        find_ascii(&buffer, 100, 24, question).ok_or("missing centered question")?;
+    let hint = "y: discard · Enter/Esc/n: keep editing";
+    let hint_position = find_ascii(&buffer, 100, 24, hint).ok_or("missing centered hint")?;
+    let popup_left = title.0.saturating_sub(1);
+    let centered_x = |text: &str| {
+        popup_left
+            + 1
+            + (52_u16.saturating_sub(u16::try_from(Line::from(text).width()).unwrap_or(u16::MAX)))
+                / 2
+    };
+    assert_eq!(question_position, (centered_x(question), title.1 + 2));
+    assert!(hint_position.0.abs_diff(centered_x(hint)) <= 1);
+    assert_eq!(hint_position.1, title.1 + 4);
 
     for (width, height) in [(59, 24), (100, 17)] {
         let mut too_small = AuthoringSession::new(built_in_commit_types(), Some(0));
@@ -901,7 +919,7 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
 }
 
 #[test]
-fn composer_layout_caps_at_eighty_columns_and_adapts_on_narrow_terminals()
+fn composer_layout_stacks_context_above_a_full_width_fixed_wrap_editor()
 -> Result<(), Box<dyn Error>> {
     let mut wide = AuthoringSession::new(built_in_commit_types(), Some(0));
     let buffer = rendered_buffer(&mut wide, 120, 32)?;
@@ -911,10 +929,12 @@ fn composer_layout_caps_at_eighty_columns_and_adapts_on_narrow_terminals()
     let guidance =
         find_ascii(&buffer, 120, 32, "Optional affected area").ok_or("missing guidance")?;
 
-    assert_eq!(edit.1, fields.1);
-    assert!(edit.0 < fields.0);
-    assert_eq!(fields.0, description.0);
-    assert!(description.1 > fields.1);
+    assert_eq!(fields.1, description.1);
+    assert!(fields.0 < description.0);
+    assert!(edit.1 > fields.1);
+    assert_eq!(edit.0, fields.0);
+    assert_eq!(buffer[(0, edit.1)].symbol(), "┌");
+    assert_eq!(buffer[(119, edit.1)].symbol(), "┐");
     assert!(guidance.0 >= description.0.saturating_sub(1));
     assert!(guidance.1 > description.1);
     assert!(find_ascii(&buffer, 120, 32, "type(scope):").is_some());
@@ -939,26 +959,26 @@ fn narrow_editor_scrolls_until_fixed_width_wrap_then_returns_to_column_one()
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
     let initial = rendered_buffer(&mut session, 72, 24)?;
     let scope = find_ascii(&initial, 72, 24, "scope:").ok_or("missing scope")?;
-    let first_forty = "0123456789012345678901234567890123456789";
-    paste(&mut session, first_forty);
+    let first_seventy = "0123456789".repeat(7);
+    paste(&mut session, &first_seventy);
     let buffer = rendered_buffer(&mut session, 72, 24)?;
-    let visible = (1..=40)
+    let visible = (1..=70)
         .map(|column| buffer[(column, scope.1 + 1)].symbol())
         .collect::<String>();
-    assert_eq!(visible.trim_end(), &first_forty[1..]);
-    assert!(find_ascii(&buffer, 72, 24, "col 41/80").is_some());
+    assert_eq!(visible.trim_end(), &first_seventy[1..]);
+    assert!(find_ascii(&buffer, 72, 24, "col 71/80").is_some());
 
     press(&mut session, KeyCode::Left);
     let buffer = rendered_buffer(&mut session, 72, 24)?;
     assert_eq!(buffer[(1, scope.1 + 1)].symbol(), "0");
-    assert!(find_ascii(&buffer, 72, 24, "col 40/80").is_some());
+    assert!(find_ascii(&buffer, 72, 24, "col 70/80").is_some());
     press(&mut session, KeyCode::Right);
 
-    paste(&mut session, &"x".repeat(41));
+    paste(&mut session, &"x".repeat(11));
     let buffer = rendered_buffer(&mut session, 72, 24)?;
     assert_eq!(
         session.composer.editor.lines()[1],
-        format!("{first_forty}{}", "x".repeat(41))
+        format!("{first_seventy}{}", "x".repeat(11))
     );
     assert_eq!(buffer[(1, scope.1 + 2)].symbol(), "x");
     assert!(find_ascii(&buffer, 72, 24, "col 2/80").is_some());
@@ -989,6 +1009,29 @@ fn fixed_width_soft_wrap_reports_visual_columns_without_changing_authored_lines(
     assert_eq!(unicode.composer.editor.lines()[1], value);
     assert!(buffer.content().iter().any(|cell| cell.symbol() == "🦀"));
     assert!(find_ascii(&buffer, 72, 24, "col 43/80").is_some());
+    Ok(())
+}
+
+#[test]
+fn wrapped_and_explicit_lines_keep_a_blank_row_before_the_next_field() -> Result<(), Box<dyn Error>>
+{
+    let mut wrapped = AuthoringSession::new(built_in_commit_types(), Some(0));
+    paste(&mut wrapped, &"x".repeat(81));
+    let buffer = rendered_buffer(&mut wrapped, 72, 24)?;
+    let scope = find_ascii(&buffer, 72, 24, "scope:").ok_or("missing scope")?;
+    let subject = find_ascii(&buffer, 72, 24, "subject:").ok_or("missing subject")?;
+    assert_eq!(subject.1, scope.1 + 4);
+    assert!((1..71).all(|column| buffer[(column, scope.1 + 3)].symbol() == " "));
+
+    let mut explicit = AuthoringSession::new(built_in_commit_types(), Some(0));
+    explicit.composer.editor.move_cursor(CursorMove::Jump(7, 0));
+    paste(&mut explicit, "first");
+    press(&mut explicit, KeyCode::Enter);
+    let buffer = rendered_buffer(&mut explicit, 120, 32)?;
+    let intent = find_ascii(&buffer, 120, 32, "intent:").ok_or("missing intent")?;
+    let behavior = find_ascii(&buffer, 120, 32, "behavior:").ok_or("missing behavior")?;
+    assert_eq!(behavior.1, intent.1 + 4);
+    assert!((1..119).all(|column| buffer[(column, intent.1 + 3)].symbol() == " "));
     Ok(())
 }
 

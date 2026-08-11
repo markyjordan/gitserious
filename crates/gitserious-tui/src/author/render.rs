@@ -14,7 +14,7 @@ const MINIMUM_WIDTH: u16 = 60;
 const MINIMUM_HEIGHT: u16 = 18;
 const MAX_EDITOR_INNER_WIDTH: u16 = 80;
 const EDITOR_BORDER_WIDTH: u16 = 2;
-const MINIMUM_SIDEBAR_WIDTH: u16 = 30;
+const MINIMUM_EDITOR_HEIGHT: u16 = 5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CursorStatus {
@@ -139,15 +139,18 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         sections[0],
     );
 
-    let available_editor_width = sections[1].width.saturating_sub(MINIMUM_SIDEBAR_WIDTH);
-    let editor_width = available_editor_width.min(MAX_EDITOR_INNER_WIDTH + EDITOR_BORDER_WIDTH);
-    let body = Layout::horizontal([
-        Constraint::Length(editor_width),
-        Constraint::Min(MINIMUM_SIDEBAR_WIDTH),
+    let desired_context_height =
+        u16::try_from(session.definition().properties().len() + 4).unwrap_or(u16::MAX);
+    let context_height = desired_context_height
+        .min(sections[1].height.saturating_sub(MINIMUM_EDITOR_HEIGHT))
+        .max(3);
+    let body = Layout::vertical([
+        Constraint::Length(context_height),
+        Constraint::Min(MINIMUM_EDITOR_HEIGHT),
     ])
     .split(sections[1]);
-    let cursor_status = render_document_editor(frame, body[0], session);
-    render_field_sidebar(frame, body[1], session);
+    render_field_context(frame, body[0], session);
+    let cursor_status = render_document_editor(frame, body[1], session);
 
     let help: &[_] = match (session.keymap, session.vim_mode) {
         (Keymap::Conventional, _) => &[("ctrl+t", "vim"), ("ctrl+s", "review"), ("Esc", "back")],
@@ -182,14 +185,9 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     );
 }
 
-fn render_field_sidebar(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
-    let desired_fields_height =
-        u16::try_from(session.definition().properties().len() + 4).unwrap_or(u16::MAX);
-    let fields_height = desired_fields_height
-        .min(area.height.saturating_sub(3))
-        .max(3);
+fn render_field_context(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
     let sections =
-        Layout::vertical([Constraint::Length(fields_height), Constraint::Min(3)]).split(area);
+        Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(area);
     render_field_hud(frame, sections[0], session);
     render_field_description(frame, sections[1], session);
 }
@@ -312,10 +310,11 @@ fn render_document_editor(
         .map_or(1, |position| position.x)
         .clamp(1, MAX_EDITOR_INNER_WIDTH);
     let visible_width = area.width.saturating_sub(EDITOR_BORDER_WIDTH).max(1);
-    let horizontal_offset = column.saturating_sub(visible_width);
+    let viewport_width = visible_width.min(MAX_EDITOR_INNER_WIDTH);
+    let horizontal_offset = column.saturating_sub(viewport_width);
     let visible_height = area.height.saturating_sub(EDITOR_BORDER_WIDTH);
     for row in 0..visible_height {
-        for viewport_column in 0..visible_width {
+        for viewport_column in 0..viewport_width {
             let source = (1 + horizontal_offset + viewport_column, 1 + row);
             let destination = (area.x + 1 + viewport_column, area.y + 1 + row);
             frame.buffer_mut()[destination] = virtual_buffer[source].clone();
@@ -373,18 +372,23 @@ fn render_confirmation(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSes
         ConfirmationAction::ChangeType => "Discard this draft and choose another type?",
     };
     frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red))
+        .title(" Confirm discard ");
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    let content = Layout::vertical([Constraint::Length(3)])
+        .flex(Flex::Center)
+        .split(inner)[0];
     frame.render_widget(
-        Paragraph::new(format!(
-            "{message}\n\ny: discard · Enter/Esc/n: keep editing"
-        ))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Red))
-                .title(" Confirm discard "),
-        )
-        .wrap(Wrap { trim: true }),
-        popup,
+        Paragraph::new(vec![
+            Line::from(message),
+            Line::default(),
+            Line::from("y: discard · Enter/Esc/n: keep editing"),
+        ])
+        .centered(),
+        content,
     );
 }
 
