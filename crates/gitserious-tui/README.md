@@ -18,8 +18,11 @@ coordination remain in `gitserious-app`.
 3. review the exact canonical message and confirm before Git creates the
    staged-index commit.
 
-The upper-right corner labels these views `Step 1/3`, `Step 2/3`, and
-`Step 3/3`. A preselected commit type starts directly at `Step 2/3`.
+Each view starts with a borderless one-line header: `Select commit type`,
+`Compose commit message`, or `Review and commit` on the left, with `Step 1/3`,
+`Step 2/3`, or `Step 3/3` on the right. The composer keeps `Type: <type>`
+directly below its header. A preselected commit type starts directly at
+`Step 2/3`.
 
 `gitserious commit --type <COMMIT TYPE>` preselects the type and starts in the
 composer. Both forms require interactive standard input and output. There is no
