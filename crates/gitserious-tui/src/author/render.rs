@@ -54,16 +54,12 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
 
 fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
     let sections = Layout::vertical([
-        Constraint::Length(5),
+        Constraint::Length(1),
         Constraint::Min(6),
         Constraint::Length(1),
     ])
     .split(area);
-    frame.render_widget(
-        Paragraph::new("Choose the semantic contract for this commit.")
-            .block(stage_block(" gitserious commit ", 1)),
-        sections[0],
-    );
+    render_stage_header(frame, sections[0], "Select commit type", 1);
     let items = session
         .definitions
         .iter()
@@ -95,11 +91,13 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
 
 fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
     let sections = Layout::vertical([
-        Constraint::Length(5),
+        Constraint::Length(1),
+        Constraint::Length(1),
         Constraint::Min(12),
         Constraint::Length(2),
     ])
     .split(area);
+    render_stage_header(frame, sections[0], "Compose commit message", 2);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::raw("Type: "),
@@ -107,27 +105,26 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
                 session.definition().id().as_str(),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-        ]))
-        .block(stage_block(" Compose commit message ", 2)),
-        sections[0],
+        ])),
+        sections[1],
     );
 
     let desired_context_height =
         u16::try_from(session.definition().properties().len() + 6).unwrap_or(u16::MAX);
     let context_height = desired_context_height
-        .min(sections[1].height.saturating_sub(MINIMUM_EDITOR_HEIGHT))
+        .min(sections[2].height.saturating_sub(MINIMUM_EDITOR_HEIGHT))
         .max(3);
     let body = Layout::vertical([
         Constraint::Length(context_height),
         Constraint::Min(MINIMUM_EDITOR_HEIGHT),
     ])
-    .split(sections[1]);
+    .split(sections[2]);
     render_field_context(frame, body[0], session);
     let cursor_status = render_document_editor(frame, body[1], session);
 
     let help: &[_] = &[("↑/↓", "move"), ("esc", "back"), ("ctrl+s", "review")];
     let footer =
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(sections[2]);
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(sections[3]);
     if let Some(issue) = session.composer.issues.first() {
         frame.render_widget(
             Paragraph::new(issue.message.as_str()).style(Style::default().fg(Color::Red)),
@@ -302,16 +299,12 @@ fn render_document_editor(
 
 fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
     let sections = Layout::vertical([
-        Constraint::Length(5),
+        Constraint::Length(1),
         Constraint::Min(8),
         Constraint::Length(1),
     ])
     .split(area);
-    frame.render_widget(
-        Paragraph::new("Review the exact canonical message before Git creates the commit.")
-            .block(stage_block(" Review commit ", 3)),
-        sections[0],
-    );
+    render_stage_header(frame, sections[0], "Review and commit", 3);
     if let Some(review) = &session.review {
         frame.render_widget(
             Paragraph::new(review.message.as_str())
@@ -415,16 +408,22 @@ fn pane_block<'a>(title: impl Into<Line<'a>>) -> Block<'a> {
         .title(title)
 }
 
-fn stage_block(title: &'static str, step: u8) -> Block<'static> {
-    pane_block(title).title_top(
-        Line::styled(
-            format!(" Step {step}/3 "),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
-        .right_aligned(),
-    )
+fn render_stage_header(frame: &mut Frame<'_>, area: Rect, title: &'static str, step: u8) {
+    let columns = Layout::horizontal([Constraint::Min(0), Constraint::Length(8)]).split(area);
+    frame.render_widget(
+        Paragraph::new(title).style(Style::default().add_modifier(Modifier::BOLD)),
+        columns[0],
+    );
+    frame.render_widget(
+        Paragraph::new(format!("Step {step}/3"))
+            .right_aligned()
+            .style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        columns[1],
+    );
 }
 
 fn navigation_style() -> Style {
