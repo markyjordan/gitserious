@@ -31,14 +31,14 @@ enum ResumeStage {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FieldId {
     Scope,
-    Subject,
+    Description,
     Property(usize),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FieldKind {
     Scope,
-    Subject,
+    Description,
     Property {
         definition_index: usize,
         value_index: usize,
@@ -49,7 +49,7 @@ impl FieldKind {
     pub(crate) const fn id(self) -> FieldId {
         match self {
             Self::Scope => FieldId::Scope,
-            Self::Subject => FieldId::Subject,
+            Self::Description => FieldId::Description,
             Self::Property {
                 definition_index, ..
             } => FieldId::Property(definition_index),
@@ -92,8 +92,32 @@ struct ParsedDocument {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MessageSection {
+    Subject,
+    Body,
+    Footer,
+}
+
+impl MessageSection {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Subject => "Message Subject",
+            Self::Body => "Message Body",
+            Self::Footer => "Message Footer",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DocumentMarker {
+    Section(MessageSection),
+    Field(FieldId),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BoundaryKind {
     Known(FieldId),
+    Group,
     Invalid,
 }
 
@@ -113,7 +137,7 @@ impl ComposerState {
     fn new(definition: &CommitTypeDefinition) -> Self {
         let pristine = scaffold_lines(definition);
         let mut editor = text_area(pristine.clone(), definition);
-        editor.move_cursor(CursorMove::Jump(1, 0));
+        editor.move_cursor(CursorMove::Jump(3, 0));
         Self {
             editor,
             pristine,
@@ -140,7 +164,7 @@ impl ComposerState {
         issues.extend(self.issues.iter().cloned());
         let mut fields = Vec::with_capacity(definition.properties().len() + 2);
         for id in std::iter::once(FieldId::Scope)
-            .chain(std::iter::once(FieldId::Subject))
+            .chain(std::iter::once(FieldId::Description))
             .chain((0..definition.properties().len()).map(FieldId::Property))
         {
             let sections = parsed
@@ -153,7 +177,7 @@ impl ComposerState {
                     FieldId::Scope => {
                         !section.text.is_empty() && CommitScope::new(&section.text).is_err()
                     }
-                    FieldId::Subject => {
+                    FieldId::Description => {
                         !section.text.is_empty() && CommitSubject::new(&section.text).is_err()
                     }
                     FieldId::Property(_) => false,
@@ -184,7 +208,7 @@ impl ComposerState {
         let parsed = self.parse(definition);
         let mut issues = parsed.issues.clone();
         let scope = parse_scope(&parsed, &mut issues);
-        let subject = parse_subject(&parsed, &mut issues);
+        let subject = parse_description(&parsed, &mut issues);
         let authored = build_properties(&parsed, definition, &mut issues);
 
         if !issues.is_empty() {
@@ -260,7 +284,7 @@ impl ComposerState {
             return false;
         };
         let current = &parsed.sections[current_index];
-        let should_advance = matches!(current.kind, FieldKind::Scope | FieldKind::Subject)
+        let should_advance = matches!(current.kind, FieldKind::Scope | FieldKind::Description)
             || current.text.is_empty();
         if !should_advance {
             return false;
@@ -287,7 +311,7 @@ fn apply_heading_guards(editor: &mut TextArea<'static>, definition: &CommitTypeD
         .lines()
         .iter()
         .enumerate()
-        .filter(|(_, line)| exact_heading(line, definition).is_some())
+        .filter(|(_, line)| structural_marker(line, definition).is_some())
         .map(|(row, line)| AtomicRange {
             row,
             start_col: 0,
@@ -307,33 +331,56 @@ fn apply_heading_guards(editor: &mut TextArea<'static>, definition: &CommitTypeD
     }
 }
 
-fn expected_heading_signature(definition: &CommitTypeDefinition) -> Vec<FieldId> {
-    std::iter::once(FieldId::Scope)
-        .chain(std::iter::once(FieldId::Subject))
-        .chain((0..definition.properties().len()).map(FieldId::Property))
+fn expected_marker_signature(definition: &CommitTypeDefinition) -> Vec<DocumentMarker> {
+    std::iter::once(DocumentMarker::Section(MessageSection::Subject))
+        .chain(std::iter::once(DocumentMarker::Field(FieldId::Scope)))
+        .chain(std::iter::once(DocumentMarker::Field(FieldId::Description)))
+        .chain(std::iter::once(DocumentMarker::Section(
+            MessageSection::Body,
+        )))
+        .chain(
+            (0..definition.properties().len())
+                .map(FieldId::Property)
+                .map(DocumentMarker::Field),
+        )
+        .chain(std::iter::once(DocumentMarker::Section(
+            MessageSection::Footer,
+        )))
         .collect()
 }
 
 fn headings_are_intact(lines: &[String], definition: &CommitTypeDefinition) -> bool {
-    let headings = lines
+    let markers = lines
         .iter()
         .enumerate()
-        .filter_map(|(line_index, line)| exact_heading(line, definition).map(|id| (line_index, id)))
+        .filter_map(|(line_index, line)| {
+            structural_marker(line, definition).map(|marker| (line_index, marker))
+        })
         .collect::<Vec<_>>();
-    let signature = headings.iter().map(|(_, id)| *id).collect::<Vec<_>>();
+    let signature = markers
+        .iter()
+        .map(|(_, marker)| *marker)
+        .collect::<Vec<_>>();
+    let headings = markers
+        .iter()
+        .filter(|(_, marker)| matches!(marker, DocumentMarker::Field(_)))
+        .collect::<Vec<_>>();
     let separated = headings
         .windows(2)
         .all(|pair| pair[1].0.saturating_sub(pair[0].0) >= 3);
-    let trailing_input = headings
-        .last()
-        .is_some_and(|(line, _)| lines.len().saturating_sub(*line) >= 3);
-    let separators = headings.iter().skip(1).all(|(line, _)| {
-        lines
-            .get(line.saturating_sub(1))
-            .is_some_and(String::is_empty)
-    }) && lines.last().is_some_and(String::is_empty);
+    let groups_are_separated = markers.windows(2).all(|pair| {
+        let distance = pair[1].0.saturating_sub(pair[0].0);
+        match (pair[0].1, pair[1].1) {
+            (DocumentMarker::Section(_), DocumentMarker::Field(_)) => distance >= 2,
+            (DocumentMarker::Field(_), DocumentMarker::Section(_)) => distance >= 3,
+            _ => true,
+        }
+    });
 
-    signature == expected_heading_signature(definition) && separated && trailing_input && separators
+    signature == expected_marker_signature(definition)
+        && separated
+        && groups_are_separated
+        && lines.last().is_some_and(String::is_empty)
 }
 
 fn terminal_line(line: usize) -> u16 {
@@ -355,17 +402,32 @@ fn skip_noneditable_cursor(
         let Some(line) = editor.lines().get(cursor.0) else {
             return;
         };
-        let target_line = if exact_heading(line, definition).is_some() {
-            if moving_forward || cursor.0 == 0 {
-                cursor.0.saturating_add(1)
-            } else {
-                cursor.0.saturating_sub(1)
-            }
-        } else if reserved_separator(editor.lines(), cursor.0, definition) {
-            if moving_forward && cursor.0 + 1 < editor.lines().len() {
-                cursor.0.saturating_add(2)
-            } else {
-                cursor.0.saturating_sub(1)
+        let target_line = if structural_marker(line, definition).is_some()
+            || reserved_separator(editor.lines(), cursor.0, definition)
+        {
+            let direction = if moving_forward { 1 } else { -1 };
+            let mut target = cursor.0;
+            loop {
+                let Some(next) = target.checked_add_signed(direction) else {
+                    editor.move_cursor(CursorMove::Jump(
+                        terminal_line(previous_cursor.0),
+                        terminal_column(previous_cursor.1),
+                    ));
+                    return;
+                };
+                let Some(candidate) = editor.lines().get(next) else {
+                    editor.move_cursor(CursorMove::Jump(
+                        terminal_line(previous_cursor.0),
+                        terminal_column(previous_cursor.1),
+                    ));
+                    return;
+                };
+                target = next;
+                if structural_marker(candidate, definition).is_none()
+                    && !reserved_separator(editor.lines(), target, definition)
+                {
+                    break target;
+                }
             }
         } else {
             return;
@@ -382,24 +444,27 @@ fn reserved_separator(lines: &[String], line: usize, definition: &CommitTypeDefi
         && (line + 1 == lines.len()
             || lines
                 .get(line + 1)
-                .is_some_and(|next| exact_heading(next, definition).is_some()))
+                .is_some_and(|next| structural_marker(next, definition).is_some()))
 }
 
 fn scaffold_lines(definition: &CommitTypeDefinition) -> Vec<String> {
-    let mut lines = Vec::with_capacity((definition.properties().len() + 2) * 3);
-    for heading in std::iter::once("scope".to_owned())
-        .chain(std::iter::once("subject".to_owned()))
-        .chain(
-            definition
-                .properties()
-                .iter()
-                .map(|property| property.key().to_string()),
-        )
-    {
+    let mut lines = Vec::with_capacity((definition.properties().len() + 2) * 3 + 6);
+    lines.push(MessageSection::Subject.label().to_owned());
+    lines.push(String::new());
+    for heading in ["scope", "description"] {
         lines.push(format!("{heading}:"));
         lines.push(String::new());
         lines.push(String::new());
     }
+    lines.push(MessageSection::Body.label().to_owned());
+    lines.push(String::new());
+    for property in definition.properties() {
+        lines.push(format!("{}:", property.key()));
+        lines.push(String::new());
+        lines.push(String::new());
+    }
+    lines.push(MessageSection::Footer.label().to_owned());
+    lines.push(String::new());
     lines
 }
 
@@ -407,10 +472,14 @@ fn parse_document(lines: &[String], definition: &CommitTypeDefinition) -> Parsed
     let mut parsed = ParsedDocument::default();
     let mut boundaries = Vec::new();
     for (line_index, line) in lines.iter().enumerate() {
-        if let Some(id) = exact_heading(line, definition) {
+        if let Some(marker) = structural_marker(line, definition) {
+            let kind = match marker {
+                DocumentMarker::Field(id) => BoundaryKind::Known(id),
+                DocumentMarker::Section(_) => BoundaryKind::Group,
+            };
             boundaries.push(Boundary {
                 line: line_index,
-                kind: BoundaryKind::Known(id),
+                kind,
             });
         } else if looks_like_heading(line) || looks_like_malformed_known_heading(line, definition) {
             parsed.issues.push(ValidationIssue {
@@ -436,7 +505,7 @@ fn parse_document(lines: &[String], definition: &CommitTypeDefinition) -> Parsed
         let text = section_text(&lines[boundary.line + 1..end_line]);
         let kind = match id {
             FieldId::Scope => FieldKind::Scope,
-            FieldId::Subject => FieldKind::Subject,
+            FieldId::Description => FieldKind::Description,
             FieldId::Property(definition_index) => {
                 let value_index = occurrences[definition_index];
                 occurrences[definition_index] += 1;
@@ -455,7 +524,7 @@ fn parse_document(lines: &[String], definition: &CommitTypeDefinition) -> Parsed
     }
 
     for id in std::iter::once(FieldId::Scope)
-        .chain(std::iter::once(FieldId::Subject))
+        .chain(std::iter::once(FieldId::Description))
         .chain((0..definition.properties().len()).map(FieldId::Property))
     {
         let matching = parsed
@@ -477,10 +546,22 @@ fn parse_document(lines: &[String], definition: &CommitTypeDefinition) -> Parsed
     parsed
 }
 
+fn structural_marker(line: &str, definition: &CommitTypeDefinition) -> Option<DocumentMarker> {
+    let section = [
+        MessageSection::Subject,
+        MessageSection::Body,
+        MessageSection::Footer,
+    ]
+    .into_iter()
+    .find(|section| line == section.label())
+    .map(DocumentMarker::Section);
+    section.or_else(|| exact_heading(line, definition).map(DocumentMarker::Field))
+}
+
 fn exact_heading(line: &str, definition: &CommitTypeDefinition) -> Option<FieldId> {
     match line {
         "scope:" => Some(FieldId::Scope),
-        "subject:" => Some(FieldId::Subject),
+        "description:" => Some(FieldId::Description),
         _ => definition
             .properties()
             .iter()
@@ -502,7 +583,7 @@ fn looks_like_heading(line: &str) -> bool {
 fn looks_like_malformed_known_heading(line: &str, definition: &CommitTypeDefinition) -> bool {
     let trimmed = line.trim();
     trimmed == "scope"
-        || trimmed == "subject"
+        || trimmed == "description"
         || definition
             .properties()
             .iter()
@@ -546,19 +627,19 @@ fn parse_scope(parsed: &ParsedDocument, issues: &mut Vec<ValidationIssue>) -> Op
     }
 }
 
-fn parse_subject(
+fn parse_description(
     parsed: &ParsedDocument,
     issues: &mut Vec<ValidationIssue>,
 ) -> Option<CommitSubject> {
     let Some(section) = parsed
         .sections
         .iter()
-        .find(|section| section.kind == FieldKind::Subject)
+        .find(|section| section.kind == FieldKind::Description)
     else {
         issues.push(ValidationIssue {
-            field: Some(FieldId::Subject),
+            field: Some(FieldId::Description),
             line: 0,
-            message: "restore the subject field header".to_owned(),
+            message: "restore the description field header".to_owned(),
         });
         return None;
     };
@@ -566,7 +647,7 @@ fn parse_subject(
         Ok(subject) => Some(subject),
         Err(error) => {
             issues.push(ValidationIssue {
-                field: Some(FieldId::Subject),
+                field: Some(FieldId::Description),
                 line: section.heading_line + 1,
                 message: error.to_string(),
             });
@@ -637,7 +718,7 @@ fn build_properties(
 fn field_name(id: FieldId, definition: &CommitTypeDefinition) -> String {
     match id {
         FieldId::Scope => "scope".to_owned(),
-        FieldId::Subject => "subject".to_owned(),
+        FieldId::Description => "description".to_owned(),
         FieldId::Property(index) => definition.properties()[index].key().to_string(),
     }
 }
@@ -709,7 +790,9 @@ impl<'a> AuthoringSession<'a> {
                     && self
                         .composer
                         .current_field(&definition)
-                        .is_some_and(|field| matches!(field, FieldKind::Scope | FieldKind::Subject))
+                        .is_some_and(|field| {
+                            matches!(field, FieldKind::Scope | FieldKind::Description)
+                        })
                 {
                     return None;
                 }
@@ -838,7 +921,7 @@ impl<'a> AuthoringSession<'a> {
                 .editor
                 .lines()
                 .get(line)
-                .is_some_and(|current| exact_heading(current, &definition).is_none());
+                .is_some_and(|current| structural_marker(current, &definition).is_none());
         self.composer
             .edit_preserving_headings(&definition, |editor| {
                 if join_empty_previous {
