@@ -14,7 +14,11 @@ use super::state::{AuthoringSession, ConfirmationAction, FieldId, FieldKind, Fie
 const MINIMUM_WIDTH: u16 = 60;
 const MINIMUM_HEIGHT: u16 = 18;
 const MAX_EDITOR_INNER_WIDTH: u16 = 80;
-const PANE_PADDING: u16 = 1;
+const PANE_HORIZONTAL_PADDING: u16 = 2;
+const PANE_VERTICAL_PADDING: u16 = 1;
+const FIELD_COLUMN_SPACING: u16 = 2;
+const FIELD_MARKER_WIDTH: u16 = 1;
+const FIELD_REQUIREMENT_WIDTH: u16 = 11;
 const MINIMUM_EDITOR_HEIGHT: u16 = 7;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,7 +38,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
         };
         frame.render_widget(
             Paragraph::new(message)
-                .block(pane_block(" gitserious "))
+                .block(titled_pane_block(" gitserious "))
                 .wrap(Wrap { trim: true }),
             area,
         );
@@ -75,7 +79,7 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
         })
         .collect::<Vec<_>>();
     let list = List::new(items)
-        .block(pane_block(" Commit types "))
+        .block(pane_block())
         .highlight_symbol("› ")
         .highlight_style(navigation_key_style());
     let mut state = ListState::default();
@@ -156,13 +160,16 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
         .current_field(definition)
         .map(FieldKind::id);
     let fields = session.composer.hud_fields(definition);
+    let block = titled_pane_block(" Fields ");
+    let fixed_width =
+        FIELD_MARKER_WIDTH + FIELD_REQUIREMENT_WIDTH + FIELD_COLUMN_SPACING.saturating_mul(2);
     let name_width = fields
         .iter()
         .map(|field| field_columns(field.id, definition).0.chars().count())
         .max()
         .and_then(|width| u16::try_from(width).ok())
         .unwrap_or(1)
-        .min(area.width.saturating_sub(18).max(1));
+        .min(block.inner(area).width.saturating_sub(fixed_width).max(1));
     let rows = fields
         .into_iter()
         .map(|field| {
@@ -192,13 +199,13 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
         Table::new(
             rows,
             [
-                Constraint::Length(1),
+                Constraint::Length(FIELD_MARKER_WIDTH),
                 Constraint::Length(name_width),
-                Constraint::Length(11),
+                Constraint::Length(FIELD_REQUIREMENT_WIDTH),
             ],
         )
-        .column_spacing(1)
-        .block(pane_block(" Fields ")),
+        .column_spacing(FIELD_COLUMN_SPACING)
+        .block(block),
         area,
     );
 }
@@ -223,7 +230,7 @@ fn render_field_description(frame: &mut Frame<'_>, area: Rect, session: &Authori
             ),
             Line::from(description),
         ])
-        .block(pane_block(" Field guidance "))
+        .block(titled_pane_block(" Field guidance "))
         .wrap(Wrap { trim: true }),
         area,
     );
@@ -257,12 +264,12 @@ fn render_document_editor(
     } else {
         Style::default().fg(Color::Red)
     };
-    let editor_block = pane_block(editor_title).border_style(border_style);
+    let editor_block = titled_pane_block(editor_title).border_style(border_style);
     session.composer.editor.set_block(editor_block.clone());
 
     // Render against a stable 80-column editing surface, then copy the
     // cursor-following portion into the real pane without overwriting padding.
-    let virtual_width = MAX_EDITOR_INNER_WIDTH + 2 + PANE_PADDING * 2;
+    let virtual_width = MAX_EDITOR_INNER_WIDTH + 2 + PANE_HORIZONTAL_PADDING * 2;
     let virtual_area = Rect::new(0, 0, virtual_width, area.height);
     let virtual_content = editor_block.inner(virtual_area);
     let visible_content = editor_block.inner(area);
@@ -308,7 +315,7 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
     if let Some(review) = &session.review {
         frame.render_widget(
             Paragraph::new(review.message.as_str())
-                .block(pane_block(" Commit message "))
+                .block(titled_pane_block(" Commit message "))
                 .wrap(Wrap { trim: false })
                 .scroll((review.scroll, 0)),
             sections[1],
@@ -334,7 +341,8 @@ fn render_confirmation(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSes
         ConfirmationAction::ChangeType => "Discard this draft and choose another type?",
     };
     frame.render_widget(Clear, popup);
-    let block = pane_block(" Confirm discard ").border_style(Style::default().fg(Color::Red));
+    let block =
+        titled_pane_block(" Confirm discard ").border_style(Style::default().fg(Color::Red));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
     let content = Layout::vertical([Constraint::Length(3)])
@@ -401,11 +409,17 @@ fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String
     }
 }
 
-fn pane_block<'a>(title: impl Into<Line<'a>>) -> Block<'a> {
+fn pane_block() -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
-        .padding(Padding::uniform(PANE_PADDING))
-        .title(title)
+        .padding(Padding::symmetric(
+            PANE_HORIZONTAL_PADDING,
+            PANE_VERTICAL_PADDING,
+        ))
+}
+
+fn titled_pane_block<'a>(title: impl Into<Line<'a>>) -> Block<'a> {
+    pane_block().title(title)
 }
 
 fn render_stage_header(frame: &mut Frame<'_>, area: Rect, title: &'static str, step: u8) {
