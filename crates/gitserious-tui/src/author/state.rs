@@ -250,6 +250,28 @@ impl ComposerState {
         skip_noneditable_cursor(&mut self.editor, definition, previous_cursor);
         self.issues.clear();
     }
+
+    fn advance_on_enter(&mut self, definition: &CommitTypeDefinition) -> bool {
+        let cursor_line = self.editor.cursor().0;
+        let parsed = self.parse(definition);
+        let Some(current_index) = parsed.sections.iter().position(|section| {
+            cursor_line >= section.heading_line && cursor_line < section.end_line
+        }) else {
+            return false;
+        };
+        let current = &parsed.sections[current_index];
+        let should_advance = matches!(current.kind, FieldKind::Scope | FieldKind::Subject)
+            || current.text.is_empty();
+        if !should_advance {
+            return false;
+        }
+        if let Some(next) = parsed.sections.get(current_index + 1) {
+            self.editor
+                .move_cursor(CursorMove::Jump(terminal_line(next.heading_line + 1), 0));
+            self.issues.clear();
+        }
+        true
+    }
 }
 
 fn text_area(lines: Vec<String>, definition: &CommitTypeDefinition) -> TextArea<'static> {
@@ -787,13 +809,19 @@ impl<'a> AuthoringSession<'a> {
 
     fn input_key(&mut self, key: KeyEvent) {
         let definition = self.definition().clone();
-        if key.code == KeyCode::Enter
-            && self
-                .composer
-                .current_field(&definition)
-                .is_some_and(|field| matches!(field, FieldKind::Scope | FieldKind::Subject))
-        {
+        if key.code == KeyCode::Enter && self.composer.advance_on_enter(&definition) {
             return;
+        }
+        if !key.modifiers.contains(KeyModifiers::SHIFT) {
+            let movement = match key.code {
+                KeyCode::Up => Some(CursorMove::Up),
+                KeyCode::Down => Some(CursorMove::Down),
+                _ => None,
+            };
+            if let Some(movement) = movement {
+                self.composer.move_cursor(&definition, movement);
+                return;
+            }
         }
         let (line, column) = self.composer.editor.cursor();
         let join_empty_previous = matches!(key.code, KeyCode::Backspace | KeyCode::Delete)
