@@ -17,18 +17,6 @@ pub(crate) enum Stage {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Keymap {
-    Conventional,
-    Vim,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum VimMode {
-    Normal,
-    Insert,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ConfirmationAction {
     Cancel,
     ChangeType,
@@ -261,6 +249,28 @@ impl ComposerState {
         self.editor.move_cursor(movement);
         skip_noneditable_cursor(&mut self.editor, definition, previous_cursor);
         self.issues.clear();
+    }
+
+    fn advance_on_enter(&mut self, definition: &CommitTypeDefinition) -> bool {
+        let cursor_line = self.editor.cursor().0;
+        let parsed = self.parse(definition);
+        let Some(current_index) = parsed.sections.iter().position(|section| {
+            cursor_line >= section.heading_line && cursor_line < section.end_line
+        }) else {
+            return false;
+        };
+        let current = &parsed.sections[current_index];
+        let should_advance = matches!(current.kind, FieldKind::Scope | FieldKind::Subject)
+            || current.text.is_empty();
+        if !should_advance {
+            return false;
+        }
+        if let Some(next) = parsed.sections.get(current_index + 1) {
+            self.editor
+                .move_cursor(CursorMove::Jump(terminal_line(next.heading_line + 1), 0));
+            self.issues.clear();
+        }
+        true
     }
 }
 
@@ -645,8 +655,6 @@ pub(crate) struct AuthoringSession<'a> {
     pub(crate) stage: Stage,
     pub(crate) composer: ComposerState,
     pub(crate) review: Option<ReviewState>,
-    pub(crate) keymap: Keymap,
-    pub(crate) vim_mode: VimMode,
     pub(crate) confirmation: ConfirmationAction,
     confirmation_resume: ResumeStage,
     pub(crate) too_small: bool,
@@ -669,8 +677,6 @@ impl<'a> AuthoringSession<'a> {
             },
             composer: ComposerState::new(&definitions[selected_type]),
             review: None,
-            keymap: Keymap::Conventional,
-            vim_mode: VimMode::Insert,
             confirmation: ConfirmationAction::Cancel,
             confirmation_resume: ResumeStage::Compose,
             too_small: false,
@@ -698,23 +704,19 @@ impl<'a> AuthoringSession<'a> {
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => self.handle_key(key),
             Event::Paste(text) if self.stage == Stage::Compose => {
-                if self.keymap == Keymap::Conventional || self.vim_mode == VimMode::Insert {
-                    let definition = self.definition().clone();
-                    if text.contains(['\n', '\r'])
-                        && self
-                            .composer
-                            .current_field(&definition)
-                            .is_some_and(|field| {
-                                matches!(field, FieldKind::Scope | FieldKind::Subject)
-                            })
-                    {
-                        return None;
-                    }
-                    self.composer
-                        .edit_preserving_headings(&definition, |editor| {
-                            editor.insert_str(text);
-                        });
+                let definition = self.definition().clone();
+                if text.contains(['\n', '\r'])
+                    && self
+                        .composer
+                        .current_field(&definition)
+                        .is_some_and(|field| matches!(field, FieldKind::Scope | FieldKind::Subject))
+                {
+                    return None;
                 }
+                self.composer
+                    .edit_preserving_headings(&definition, |editor| {
+                        editor.insert_str(text);
+                    });
                 None
             }
             Event::Resize(_, _)
@@ -754,18 +756,16 @@ impl<'a> AuthoringSession<'a> {
 
     fn handle_picker_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up => {
                 self.selected_type = if self.selected_type == 0 {
                     self.definitions.len() - 1
                 } else {
                     self.selected_type - 1
                 };
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Down => {
                 self.selected_type = (self.selected_type + 1) % self.definitions.len();
             }
-            KeyCode::Home => self.selected_type = 0,
-            KeyCode::End => self.selected_type = self.definitions.len() - 1,
             KeyCode::Enter => {
                 self.composer = ComposerState::new(self.definition());
                 self.stage = Stage::Compose;
@@ -780,18 +780,6 @@ impl<'a> AuthoringSession<'a> {
     }
 
     fn handle_composer_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
-        if control(key, 't') {
-            self.keymap = match self.keymap {
-                Keymap::Conventional => Keymap::Vim,
-                Keymap::Vim => Keymap::Conventional,
-            };
-            self.vim_mode = if self.keymap == Keymap::Vim {
-                VimMode::Normal
-            } else {
-                VimMode::Insert
-            };
-            return None;
-        }
         if control(key, 's') {
             let definition = self.definition().clone();
             if let Some((draft, message)) = self.composer.validate(&definition) {
@@ -807,41 +795,33 @@ impl<'a> AuthoringSession<'a> {
         if control(key, 'c') {
             return self.request_confirmation(ConfirmationAction::Cancel, ResumeStage::Compose);
         }
-        match self.keymap {
-            Keymap::Conventional => {
-                if key.code == KeyCode::Esc {
-                    let action = if self.preselected {
-                        ConfirmationAction::Cancel
-                    } else {
-                        ConfirmationAction::ChangeType
-                    };
-                    return self.request_confirmation(action, ResumeStage::Compose);
-                }
-                self.input_key(key);
-            }
-            Keymap::Vim => match self.vim_mode {
-                VimMode::Insert => {
-                    if key.code == KeyCode::Esc {
-                        self.vim_mode = VimMode::Normal;
-                    } else {
-                        self.input_key(key);
-                    }
-                }
-                VimMode::Normal => return self.handle_vim_normal_key(key),
-            },
+        if key.code == KeyCode::Esc {
+            let action = if self.preselected {
+                ConfirmationAction::Cancel
+            } else {
+                ConfirmationAction::ChangeType
+            };
+            return self.request_confirmation(action, ResumeStage::Compose);
         }
+        self.input_key(key);
         None
     }
 
     fn input_key(&mut self, key: KeyEvent) {
         let definition = self.definition().clone();
-        if key.code == KeyCode::Enter
-            && self
-                .composer
-                .current_field(&definition)
-                .is_some_and(|field| matches!(field, FieldKind::Scope | FieldKind::Subject))
-        {
+        if key.code == KeyCode::Enter && self.composer.advance_on_enter(&definition) {
             return;
+        }
+        if !key.modifiers.contains(KeyModifiers::SHIFT) {
+            let movement = match key.code {
+                KeyCode::Up => Some(CursorMove::Up),
+                KeyCode::Down => Some(CursorMove::Down),
+                _ => None,
+            };
+            if let Some(movement) = movement {
+                self.composer.move_cursor(&definition, movement);
+                return;
+            }
         }
         let (line, column) = self.composer.editor.cursor();
         let join_empty_previous = matches!(key.code, KeyCode::Backspace | KeyCode::Delete)
@@ -869,71 +849,6 @@ impl<'a> AuthoringSession<'a> {
             });
     }
 
-    fn handle_vim_normal_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
-        let definition = self.definition().clone();
-        match key.code {
-            KeyCode::Char('h') | KeyCode::Left => {
-                self.composer.move_cursor(&definition, CursorMove::Back);
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.composer.move_cursor(&definition, CursorMove::Down);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.composer.move_cursor(&definition, CursorMove::Up);
-            }
-            KeyCode::Char('l') | KeyCode::Right => {
-                self.composer.move_cursor(&definition, CursorMove::Forward);
-            }
-            KeyCode::Char('w') => {
-                self.composer
-                    .move_cursor(&definition, CursorMove::WordForward);
-            }
-            KeyCode::Char('b') => {
-                self.composer.move_cursor(&definition, CursorMove::WordBack);
-            }
-            KeyCode::Char('0') | KeyCode::Home => {
-                self.composer.move_cursor(&definition, CursorMove::Head);
-            }
-            KeyCode::Char('$') | KeyCode::End => {
-                self.composer.move_cursor(&definition, CursorMove::End);
-            }
-            KeyCode::Char('i') => self.vim_mode = VimMode::Insert,
-            KeyCode::Char('a') => {
-                self.composer.move_cursor(&definition, CursorMove::Forward);
-                self.vim_mode = VimMode::Insert;
-            }
-            KeyCode::Char('x') | KeyCode::Delete => {
-                self.composer
-                    .edit_preserving_headings(&definition, |editor| {
-                        editor.delete_next_char();
-                    });
-            }
-            KeyCode::Char('u') => {
-                self.composer
-                    .edit_preserving_headings(&definition, |editor| {
-                        editor.undo();
-                    });
-            }
-            _ if control(key, 'r') => {
-                self.composer
-                    .edit_preserving_headings(&definition, |editor| {
-                        editor.redo();
-                    });
-            }
-            KeyCode::Char('q') => {
-                let action = if self.preselected {
-                    ConfirmationAction::Cancel
-                } else {
-                    ConfirmationAction::ChangeType
-                };
-                return self.request_confirmation(action, ResumeStage::Compose);
-            }
-            _ => {}
-        }
-        self.composer.issues.clear();
-        None
-    }
-
     fn handle_review_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
         match key.code {
             KeyCode::Enter => {
@@ -949,12 +864,12 @@ impl<'a> AuthoringSession<'a> {
             KeyCode::Char('q') => {
                 return self.request_confirmation(ConfirmationAction::Cancel, ResumeStage::Review);
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up => {
                 if let Some(review) = &mut self.review {
                     review.scroll = review.scroll.saturating_sub(1);
                 }
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Down => {
                 if let Some(review) = &mut self.review {
                     review.scroll = review.scroll.saturating_add(1);
                 }
