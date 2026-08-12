@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap};
 
 use super::state::{
-    AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, Keymap, Stage, VimMode,
+    AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, Stage,
 };
 
 const MINIMUM_WIDTH: u16 = 60;
@@ -120,11 +120,6 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         Constraint::Length(2),
     ])
     .split(area);
-    let keymap = match (session.keymap, session.vim_mode) {
-        (Keymap::Conventional, _) => "conventional",
-        (Keymap::Vim, VimMode::Normal) => "vim normal",
-        (Keymap::Vim, VimMode::Insert) => "vim insert",
-    };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::raw("Type: "),
@@ -132,8 +127,6 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
                 session.definition().id().as_str(),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw("   Keymap: "),
-            Span::styled(keymap, Style::default().fg(Color::Yellow)),
         ]))
         .block(stage_block(" Compose commit message ", "2/3")),
         sections[0],
@@ -152,20 +145,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     render_field_context(frame, body[0], session);
     let cursor_status = render_document_editor(frame, body[1], session);
 
-    let help: &[_] = match (session.keymap, session.vim_mode) {
-        (Keymap::Conventional, _) => &[("ctrl+t", "vim"), ("ctrl+s", "review"), ("Esc", "back")],
-        (Keymap::Vim, VimMode::Normal) => &[
-            ("ctrl+t", "conventional"),
-            ("ctrl+s", "review"),
-            ("i", "insert"),
-            ("q", "back"),
-        ],
-        (Keymap::Vim, VimMode::Insert) => &[
-            ("ctrl+t", "conventional"),
-            ("ctrl+s", "review"),
-            ("Esc", "normal"),
-        ],
-    };
+    let help: &[_] = &[("ctrl+s", "review"), ("Esc", "back")];
     let footer =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(sections[2]);
     if let Some(issue) = session.composer.issues.first() {
