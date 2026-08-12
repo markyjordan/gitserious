@@ -141,16 +141,19 @@ fn row_text(buffer: &Buffer, width: u16, row: u16) -> String {
         .collect()
 }
 
-fn assert_step_counter(
+fn assert_stage_header(
     session: &mut AuthoringSession<'_>,
     width: u16,
     height: u16,
-    expected: &str,
+    title: &str,
+    step: &str,
 ) -> Result<(), Box<dyn Error>> {
     let buffer = rendered_buffer(session, width, height)?;
-    let position = find_ascii(&buffer, width, height, expected).ok_or("missing step counter")?;
+    assert_eq!(find_ascii(&buffer, width, height, title), Some((0, 0)));
+    let position = find_ascii(&buffer, width, height, step).ok_or("missing step counter")?;
     assert_eq!(position.1, 0);
-    assert!(position.0 >= width.saturating_sub(12));
+    assert!(position.0 >= width.saturating_sub(8));
+    assert!((0..width).all(|column| !matches!(buffer[(column, 0)].symbol(), "─" | "┌" | "┐")));
     Ok(())
 }
 
@@ -891,7 +894,9 @@ fn review_cancellation_confirmation_can_resume_without_losing_the_preview()
 fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn Error>> {
     let mut picker = AuthoringSession::new(built_in_commit_types(), None);
     let text = rendered(&mut picker, 100, 24)?;
-    assert!(text.contains("gitserious commit"));
+    assert!(text.contains("Select commit type"));
+    assert!(!text.contains("gitserious commit"));
+    assert!(!text.contains("Choose the semantic contract for this commit."));
     assert!(text.contains("Commit types"));
     assert_eq!(
         text.matches("An intentional addition or expansion of capability.")
@@ -899,7 +904,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
         1
     );
     assert!(text.contains("Enter: select"));
-    assert_step_counter(&mut picker, 100, 24, "Step 1/3")?;
+    assert_stage_header(&mut picker, 100, 24, "Select commit type", "Step 1/3")?;
     assert_highlighted_footer(&mut picker, 100, 24)?;
 
     let definitions = vec![presentation_definition()?];
@@ -910,6 +915,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
         .move_cursor(CursorMove::Jump(20, 0));
     let text = rendered(&mut composer, 120, 32)?;
     assert!(text.contains("Compose commit message"));
+    assert!(text.contains("Type: custom"));
     assert!(!text.contains("Keymap:"));
     assert!(text.contains("○ description"));
     assert!(text.contains("conditional-field"));
@@ -918,7 +924,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(!text.contains("ctrl+t"));
     assert!(!text.contains("Complete every required field before review."));
     assert!(!text.contains("repeatable"));
-    assert_step_counter(&mut composer, 120, 32, "Step 2/3")?;
+    assert_stage_header(&mut composer, 120, 32, "Compose commit message", "Step 2/3")?;
     assert_highlighted_footer(&mut composer, 120, 32)?;
 
     modified_press(&mut composer, KeyCode::Char('s'), KeyModifiers::CONTROL);
@@ -928,10 +934,11 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
 
     let mut review = valid_feat_session();
     let text = rendered(&mut review, 100, 24)?;
-    assert!(text.contains("Review commit"));
+    assert!(text.contains("Review and commit"));
+    assert!(!text.contains("Review the exact canonical message before Git creates the commit."));
     assert!(text.contains("feat: compose durable message"));
     assert!(text.contains("Enter: commit"));
-    assert_step_counter(&mut review, 100, 24, "Step 3/3")?;
+    assert_stage_header(&mut review, 100, 24, "Review and commit", "Step 3/3")?;
     assert_highlighted_footer(&mut review, 100, 24)?;
 
     press(&mut review, KeyCode::Char('q'));
@@ -939,7 +946,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(text.contains("Confirm discard"));
     assert!(text.contains("Discard this draft and cancel"));
     assert!(text.contains("y: discard · Enter/Esc/n: keep editing"));
-    assert!(text.contains("Review commit"));
+    assert!(text.contains("Review and commit"));
     assert!(text.contains("Step 3/3"));
     let buffer = rendered_buffer(&mut review, 100, 24)?;
     let title = find_ascii(&buffer, 100, 24, "Confirm discard").ok_or("missing dialog title")?;
