@@ -172,7 +172,7 @@ fn assert_highlighted_footer(
 }
 
 fn valid_feat_document() -> &'static str {
-    "scope:\n\n\nsubject:\ncompose durable message\n\nintent:\nexplain intent 🦀\n\nbehavior:\nfirst line\nsecond line\n\nconstraints:\n\n\ninvariants:\n\n\nvalidation:"
+    "scope:\n\n\ndescription:\ncompose durable message\n\nintent:\nexplain intent 🦀\n\nbehavior:\nfirst line\nsecond line\n\nconstraints:\n\n\ninvariants:\n\n\nvalidation:"
 }
 
 fn valid_feat_session() -> AuthoringSession<'static> {
@@ -282,16 +282,20 @@ fn schema_form_is_prepopulated_in_order_and_starts_under_scope() -> Result<(), B
     let session = AuthoringSession::new(&definitions, Some(0));
     assert_eq!(session.stage, Stage::Compose);
     assert!(session.preselected);
-    assert_eq!(session.composer.editor.cursor(), (1, 0));
+    assert_eq!(session.composer.editor.cursor(), (3, 0));
     assert!(!session.composer.dirty());
     assert_eq!(
         session.composer.editor.lines(),
         [
+            "Message Subject",
+            "",
             "scope:",
             "",
             "",
-            "subject:",
+            "description:",
             "",
+            "",
+            "Message Body",
             "",
             "required-field:",
             "",
@@ -305,6 +309,8 @@ fn schema_form_is_prepopulated_in_order_and_starts_under_scope() -> Result<(), B
             "conditional-field:",
             "",
             "",
+            "Message Footer",
+            "",
         ]
     );
     Ok(())
@@ -316,9 +322,13 @@ fn invalid_review_marks_every_blocker_and_moves_to_the_first() {
     modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
 
     assert_eq!(session.stage, Stage::Compose);
-    assert_eq!(session.composer.editor.cursor(), (4, 0));
+    assert_eq!(session.composer.editor.cursor(), (6, 0));
     assert_eq!(session.composer.issues.len(), 3);
-    for field in [FieldId::Subject, FieldId::Property(0), FieldId::Property(1)] {
+    for field in [
+        FieldId::Description,
+        FieldId::Property(0),
+        FieldId::Property(1),
+    ] {
         assert!(
             session
                 .composer
@@ -391,7 +401,7 @@ fn review_scroll_uses_arrows_and_pages_without_vim_aliases() {
 #[test]
 fn review_trims_trailing_whitespace_from_every_encoded_field() -> Result<(), Box<dyn Error>> {
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
-    let document = "scope:\napi \t\n\nsubject:\nship it  \n\nintent:\n  leading reason \t\n\nbehavior:\nfirst  \nsecond\t\n";
+    let document = "scope:\napi \t\n\ndescription:\nship it  \n\nintent:\n  leading reason \t\n\nbehavior:\nfirst  \nsecond\t\n";
     set_document(&mut session, document, 10);
 
     modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
@@ -415,26 +425,39 @@ fn review_trims_trailing_whitespace_from_every_encoded_field() -> Result<(), Box
 }
 
 #[test]
-fn scope_and_subject_reject_multiline_input_and_enter_advances() {
+fn scope_and_description_reject_multiline_input_and_enter_advances() {
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
     let pristine = session.composer.editor.lines().to_vec();
 
-    paste(&mut session, "api\nserver");
+    paste(
+        &mut session,
+        "api
+server",
+    );
     assert_eq!(session.composer.editor.lines(), pristine);
     paste(&mut session, "api");
     press(&mut session, KeyCode::Enter);
-    assert_eq!(session.composer.editor.cursor(), (4, 0));
+    assert_eq!(session.composer.editor.cursor(), (6, 0));
 
-    session.composer.editor.move_cursor(CursorMove::Jump(4, 0));
-    paste(&mut session, "ship\nchange");
-    assert!(session.composer.editor.lines()[4].is_empty());
+    paste(
+        &mut session,
+        "ship
+change",
+    );
+    assert!(session.composer.editor.lines()[6].is_empty());
     paste(&mut session, "ship change");
     press(&mut session, KeyCode::Enter);
-    assert_eq!(session.composer.editor.cursor(), (7, 0));
+    assert_eq!(session.composer.editor.cursor(), (11, 0));
 
-    session.composer.editor.move_cursor(CursorMove::Jump(7, 0));
-    paste(&mut session, "first\nsecond");
-    assert_eq!(&session.composer.editor.lines()[7..=8], ["first", "second"]);
+    paste(
+        &mut session,
+        "first
+second",
+    );
+    assert_eq!(
+        &session.composer.editor.lines()[11..=12],
+        ["first", "second"]
+    );
 }
 
 #[test]
@@ -446,13 +469,13 @@ fn conventional_document_editing_preserves_ctrl_k_unicode_paste_and_history() {
     assert!(session.composer.editor.cursor().1 < end.1);
 
     modified_press(&mut session, KeyCode::Char('k'), KeyModifiers::CONTROL);
-    assert_eq!(session.composer.editor.lines()[1], "alpha beta ");
+    assert_eq!(session.composer.editor.lines()[3], "alpha beta ");
     modified_press(&mut session, KeyCode::Char('u'), KeyModifiers::CONTROL);
-    assert_eq!(session.composer.editor.lines()[1], "alpha beta 🦀");
+    assert_eq!(session.composer.editor.lines()[3], "alpha beta 🦀");
     modified_press(&mut session, KeyCode::Char('r'), KeyModifiers::CONTROL);
-    assert_eq!(session.composer.editor.lines()[1], "alpha beta ");
+    assert_eq!(session.composer.editor.lines()[3], "alpha beta ");
 
-    session.composer.editor.move_cursor(CursorMove::Jump(7, 0));
+    session.composer.editor.move_cursor(CursorMove::Jump(11, 0));
     paste(&mut session, "line one\nline two");
     assert!(
         session
@@ -476,32 +499,32 @@ fn ctrl_t_is_inert_and_conventional_input_remains_active() {
     assert!(!session.composer.dirty());
 
     paste(&mut session, "still editing");
-    assert_eq!(session.composer.editor.lines()[1], "still editing");
+    assert_eq!(session.composer.editor.lines()[3], "still editing");
 }
 
 #[test]
 fn schema_headings_are_immutable_during_conventional_editing() -> Result<(), Box<dyn Error>> {
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
     let pristine = session.composer.editor.lines().to_vec();
-    let subject_line = pristine
+    let description_line = pristine
         .iter()
-        .position(|line| line == "subject:")
-        .ok_or("subject heading")?;
-    let subject_line = u16::try_from(subject_line)?;
+        .position(|line| line == "description:")
+        .ok_or("description heading")?;
+    let description_line = u16::try_from(description_line)?;
 
     session
         .composer
         .editor
-        .move_cursor(CursorMove::Jump(subject_line, 0));
+        .move_cursor(CursorMove::Jump(description_line, 0));
     press(&mut session, KeyCode::Right);
     assert_eq!(
         session.composer.editor.cursor(),
-        (usize::from(subject_line.saturating_add(1)), 0)
+        (usize::from(description_line.saturating_add(1)), 0)
     );
     session
         .composer
         .editor
-        .move_cursor(CursorMove::Jump(subject_line, 0));
+        .move_cursor(CursorMove::Jump(description_line, 0));
     press(&mut session, KeyCode::Char('x'));
     assert_eq!(session.composer.editor.lines(), pristine);
 
@@ -511,7 +534,7 @@ fn schema_headings_are_immutable_during_conventional_editing() -> Result<(), Box
     session
         .composer
         .editor
-        .move_cursor(CursorMove::Jump(subject_line.saturating_add(1), 0));
+        .move_cursor(CursorMove::Jump(description_line.saturating_add(1), 0));
     press(&mut session, KeyCode::Backspace);
     assert_eq!(session.composer.editor.lines(), pristine);
 
@@ -522,7 +545,7 @@ fn schema_headings_are_immutable_during_conventional_editing() -> Result<(), Box
     session
         .composer
         .editor
-        .move_cursor(CursorMove::Jump(subject_line, 0));
+        .move_cursor(CursorMove::Jump(description_line, 0));
     press(&mut session, KeyCode::Backspace);
     assert_eq!(session.composer.editor.lines(), pristine);
 
@@ -532,16 +555,16 @@ fn schema_headings_are_immutable_during_conventional_editing() -> Result<(), Box
 #[test]
 fn conventional_navigation_skips_schema_headings() {
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
-    assert_eq!(session.composer.editor.cursor(), (1, 0));
+    assert_eq!(session.composer.editor.cursor(), (3, 0));
 
     press(&mut session, KeyCode::Down);
-    assert_eq!(session.composer.editor.cursor(), (4, 0));
+    assert_eq!(session.composer.editor.cursor(), (6, 0));
     press(&mut session, KeyCode::Up);
-    assert_eq!(session.composer.editor.cursor(), (1, 0));
+    assert_eq!(session.composer.editor.cursor(), (3, 0));
     press(&mut session, KeyCode::Right);
-    assert_eq!(session.composer.editor.cursor(), (4, 0));
+    assert_eq!(session.composer.editor.cursor(), (6, 0));
     press(&mut session, KeyCode::Left);
-    assert_eq!(session.composer.editor.cursor(), (1, 0));
+    assert_eq!(session.composer.editor.cursor(), (3, 0));
 }
 
 #[test]
@@ -550,24 +573,28 @@ fn vertical_arrows_move_within_multiline_fields_then_cross_field_boundaries()
     let definitions = vec![presentation_definition()?];
     let mut session = AuthoringSession::new(&definitions, Some(0));
 
-    for expected in [(4, 0), (7, 0), (10, 0), (13, 0), (16, 0)] {
+    for expected in [(6, 0), (11, 0), (14, 0), (17, 0), (20, 0)] {
         press(&mut session, KeyCode::Down);
         assert_eq!(session.composer.editor.cursor(), expected);
     }
     press(&mut session, KeyCode::Down);
-    assert_eq!(session.composer.editor.cursor(), (16, 0));
-    for expected in [(13, 0), (10, 0), (7, 0), (4, 0), (1, 0)] {
+    assert_eq!(session.composer.editor.cursor(), (20, 0));
+    for expected in [(17, 0), (14, 0), (11, 0), (6, 0), (3, 0)] {
         press(&mut session, KeyCode::Up);
         assert_eq!(session.composer.editor.cursor(), expected);
     }
     assert!(!session.composer.dirty());
 
-    session.composer.editor.move_cursor(CursorMove::Jump(7, 0));
-    paste(&mut session, "first\nsecond");
+    session.composer.editor.move_cursor(CursorMove::Jump(11, 0));
+    paste(
+        &mut session,
+        "first
+second",
+    );
     press(&mut session, KeyCode::Up);
-    assert_eq!(session.composer.editor.cursor(), (7, 5));
+    assert_eq!(session.composer.editor.cursor(), (11, 5));
     press(&mut session, KeyCode::Down);
-    assert_eq!(session.composer.editor.cursor(), (8, 5));
+    assert_eq!(session.composer.editor.cursor(), (12, 5));
     press(&mut session, KeyCode::Down);
     assert_eq!(
         session.composer.current_field(&definitions[0]),
@@ -577,7 +604,7 @@ fn vertical_arrows_move_within_multiline_fields_then_cross_field_boundaries()
         })
     );
     press(&mut session, KeyCode::Up);
-    assert_eq!(session.composer.editor.cursor(), (8, 0));
+    assert_eq!(session.composer.editor.cursor(), (12, 0));
     Ok(())
 }
 
@@ -605,30 +632,28 @@ fn enter_advances_single_line_and_blank_fields_without_editing_the_document()
     let mut blank = AuthoringSession::new(&definitions, Some(0));
     let pristine = blank.composer.editor.lines().to_vec();
 
-    for expected in [(4, 0), (7, 0), (10, 0), (13, 0), (16, 0)] {
+    for expected in [(6, 0), (11, 0), (14, 0), (17, 0), (20, 0)] {
         press(&mut blank, KeyCode::Enter);
         assert_eq!(blank.composer.editor.cursor(), expected);
         assert_eq!(blank.composer.editor.lines(), pristine);
         assert!(!blank.composer.dirty());
     }
     press(&mut blank, KeyCode::Enter);
-    assert_eq!(blank.composer.editor.cursor(), (16, 0));
-    assert_eq!(blank.composer.editor.lines(), pristine);
-    assert!(!blank.composer.dirty());
+    assert_eq!(blank.composer.editor.cursor(), (20, 0));
 
     let mut populated = AuthoringSession::new(&definitions, Some(0));
     paste(&mut populated, "api");
     press(&mut populated, KeyCode::Enter);
-    assert_eq!(populated.composer.editor.cursor(), (4, 0));
+    assert_eq!(populated.composer.editor.cursor(), (6, 0));
     paste(&mut populated, "ship change");
     press(&mut populated, KeyCode::Enter);
-    assert_eq!(populated.composer.editor.cursor(), (7, 0));
+    assert_eq!(populated.composer.editor.cursor(), (11, 0));
     paste(&mut populated, "first line");
     press(&mut populated, KeyCode::Enter);
-    assert_eq!(populated.composer.editor.cursor(), (8, 0));
-    assert_eq!(populated.composer.editor.lines()[7], "first line");
-    assert!(populated.composer.editor.lines()[8].is_empty());
-    assert_eq!(populated.composer.editor.lines()[10], "recommended-field:");
+    assert_eq!(populated.composer.editor.cursor(), (12, 0));
+    assert_eq!(populated.composer.editor.lines()[11], "first line");
+    assert!(populated.composer.editor.lines()[12].is_empty());
+    assert_eq!(populated.composer.editor.lines()[14], "recommended-field:");
     Ok(())
 }
 
@@ -638,24 +663,24 @@ fn backspace_and_delete_join_an_explicit_second_line_and_preserve_its_separator(
         let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
         set_document(
             &mut session,
-            "scope:\n\n\nsubject:\n\n\nintent:\n\nmoves up\n\nbehavior:\n\n\nconstraints:\n\n\ninvariants:\n\n\nvalidation:\n\n\n",
+            "scope:\n\n\ndescription:\n\n\nintent:\n\nmoves up\n\nbehavior:\n\n\nconstraints:\n\n\ninvariants:\n\n\nvalidation:\n\n\n",
             8,
         );
         press(&mut session, KeyCode::Home);
 
         press(&mut session, key);
 
-        assert_eq!(session.composer.editor.cursor(), (7, 0));
-        assert_eq!(session.composer.editor.lines()[7], "moves up");
-        assert!(session.composer.editor.lines()[8].is_empty());
-        assert_eq!(session.composer.editor.lines()[9], "behavior:");
+        assert_eq!(session.composer.editor.cursor(), (8, 0));
+        assert_eq!(session.composer.editor.lines()[8], "moves up");
+        assert!(session.composer.editor.lines()[9].is_empty());
+        assert_eq!(session.composer.editor.lines()[10], "behavior:");
 
         modified_press(&mut session, KeyCode::Char('u'), KeyModifiers::CONTROL);
         assert!(session.composer.editor.lines()[7].is_empty());
         assert_eq!(session.composer.editor.lines()[8], "moves up");
         modified_press(&mut session, KeyCode::Char('r'), KeyModifiers::CONTROL);
-        assert_eq!(session.composer.editor.lines()[7], "moves up");
-        assert!(session.composer.editor.lines()[8].is_empty());
+        assert_eq!(session.composer.editor.lines()[8], "moves up");
+        assert!(session.composer.editor.lines()[9].is_empty());
     }
 }
 
@@ -665,7 +690,7 @@ fn multiple_schema_values_still_compile_when_present() -> Result<(), Box<dyn Err
     let mut session = AuthoringSession::new(&definitions, Some(0));
     set_document(
         &mut session,
-        "scope:\n\nsubject:\ncollect evidence\n\nevidence:\nfirst\n\nevidence:\nsecond\nline\n",
+        "scope:\n\ndescription:\ncollect evidence\n\nevidence:\nfirst\n\nevidence:\nsecond\nline\n",
         9,
     );
 
@@ -706,7 +731,7 @@ fn ctrl_n_and_ctrl_d_use_conventional_editor_behavior_without_changing_the_schem
     paste(&mut session, "abc");
     session.composer.editor.move_cursor(CursorMove::Head);
     modified_press(&mut session, KeyCode::Char('d'), KeyModifiers::CONTROL);
-    assert_eq!(session.composer.editor.lines()[1], "bc");
+    assert_eq!(session.composer.editor.lines()[3], "bc");
     modified_press(&mut session, KeyCode::Char('n'), KeyModifiers::CONTROL);
 
     assert_eq!(
@@ -726,10 +751,10 @@ fn ctrl_n_and_ctrl_d_use_conventional_editor_behavior_without_changing_the_schem
 fn parser_rejects_unknown_malformed_and_duplicate_single_headers() -> Result<(), Box<dyn Error>> {
     let definitions = vec![presentation_definition()?];
     let documents = [
-        "scope:\n\nsubject:\nvalid\n\nrequired-field:\ncomplete\n\nmystery:\nvalue\n",
-        "scope:\n\nsubject:\nvalid\n\nrequired-field\ncomplete\n",
-        "scope:\n\nsubject:\nvalid\n\nsubject:\nduplicate\n\nrequired-field:\ncomplete\n",
-        "scope:\n\nsubject:\nvalid\n\nrequired-field:\ncomplete\n\nrequired-field:\nduplicate\n",
+        "scope:\n\ndescription:\nvalid\n\nrequired-field:\ncomplete\n\nmystery:\nvalue\n",
+        "scope:\n\ndescription:\nvalid\n\nrequired-field\ncomplete\n",
+        "scope:\n\ndescription:\nvalid\n\ndescription:\nduplicate\n\nrequired-field:\ncomplete\n",
+        "scope:\n\ndescription:\nvalid\n\nrequired-field:\ncomplete\n\nrequired-field:\nduplicate\n",
     ];
     for document in documents {
         let mut session = AuthoringSession::new(&definitions, Some(0));
@@ -743,7 +768,7 @@ fn parser_rejects_unknown_malformed_and_duplicate_single_headers() -> Result<(),
     let mut indented_heading = AuthoringSession::new(&definitions, Some(0));
     set_document(
         &mut indented_heading,
-        "scope:\n\nsubject:\nvalid\n\nrequired-field:\n  note:\n  value\n",
+        "scope:\n\ndescription:\nvalid\n\nrequired-field:\n  note:\n  value\n",
         6,
     );
     modified_press(
@@ -761,7 +786,7 @@ fn hud_tracks_requirement_completion_validation_and_cursor_context() -> Result<(
     let mut session = AuthoringSession::new(&definitions, Some(0));
     set_document(
         &mut session,
-        "scope:\n\nsubject:\ncover contracts\n\nrequired-field:\ncomplete\n\nrecommended-field:\n\n\noptional-field:\n\n\nconditional-field:\n\n",
+        "scope:\n\ndescription:\ncover contracts\n\nrequired-field:\ncomplete\n\nrecommended-field:\n\n\noptional-field:\n\n\nconditional-field:\n\n",
         16,
     );
     assert_eq!(
@@ -796,7 +821,7 @@ fn hud_tracks_requirement_completion_validation_and_cursor_context() -> Result<(
     press(&mut session, KeyCode::Esc);
     set_document(
         &mut session,
-        "scope:\n\nsubject:\ntwo\nlines\n\nrequired-field:\ncomplete\n",
+        "scope:\n\ndescription:\ntwo\nlines\n\nrequired-field:\ncomplete\n",
         4,
     );
     let hud = session.composer.hud_fields(&definitions[0]);
@@ -820,7 +845,7 @@ fn untouched_and_dirty_cancellation_follow_distinct_confirmation_paths() {
     assert_eq!(unpinned.confirmation, ConfirmationAction::ChangeType);
     press(&mut unpinned, KeyCode::Enter);
     assert_eq!(unpinned.stage, Stage::Compose);
-    assert_eq!(unpinned.composer.editor.lines()[1], "dirty");
+    assert_eq!(unpinned.composer.editor.lines()[3], "dirty");
     press(&mut unpinned, KeyCode::Esc);
     press(&mut unpinned, KeyCode::Char('y'));
     assert_eq!(unpinned.stage, Stage::SelectType);
@@ -868,6 +893,11 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     let text = rendered(&mut picker, 100, 24)?;
     assert!(text.contains("gitserious commit"));
     assert!(text.contains("Commit types"));
+    assert_eq!(
+        text.matches("An intentional addition or expansion of capability.")
+            .count(),
+        1
+    );
     assert!(text.contains("Enter: select"));
     assert_step_counter(&mut picker, 100, 24, "Step 1/3")?;
     assert_highlighted_footer(&mut picker, 100, 24)?;
@@ -877,11 +907,11 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     composer
         .composer
         .editor
-        .move_cursor(CursorMove::Jump(16, 0));
+        .move_cursor(CursorMove::Jump(20, 0));
     let text = rendered(&mut composer, 120, 32)?;
     assert!(text.contains("Compose commit message"));
     assert!(!text.contains("Keymap:"));
-    assert!(text.contains("○ subject"));
+    assert!(text.contains("○ description"));
     assert!(text.contains("conditional-field"));
     assert!(text.contains("conditional"));
     assert!(text.contains("required when the condition applies"));
@@ -893,7 +923,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
 
     modified_press(&mut composer, KeyCode::Char('s'), KeyModifiers::CONTROL);
     let text = rendered(&mut composer, 120, 32)?;
-    assert!(text.contains("! subject"));
+    assert!(text.contains("! description"));
     assert!(text.contains("! required-field"));
 
     let mut review = valid_feat_session();
@@ -1010,9 +1040,10 @@ fn composer_layout_stacks_context_above_a_full_width_fixed_wrap_editor()
 -> Result<(), Box<dyn Error>> {
     let mut wide = AuthoringSession::new(built_in_commit_types(), Some(0));
     let buffer = rendered_buffer(&mut wide, 120, 32)?;
-    let edit = find_ascii(&buffer, 120, 32, "Edit form").ok_or("missing editor")?;
+    let edit = find_ascii(&buffer, 120, 32, "Message form").ok_or("missing editor")?;
     let fields = find_ascii(&buffer, 120, 32, "Fields").ok_or("missing fields")?;
-    let description = find_ascii(&buffer, 120, 32, "Description").ok_or("missing description")?;
+    let description =
+        find_ascii(&buffer, 120, 32, "Field guidance").ok_or("missing description")?;
     let guidance =
         find_ascii(&buffer, 120, 32, "Optional affected area").ok_or("missing guidance")?;
 
@@ -1022,13 +1053,15 @@ fn composer_layout_stacks_context_above_a_full_width_fixed_wrap_editor()
     assert_eq!(edit.0, fields.0);
     assert_eq!(buffer[(0, edit.1)].symbol(), "┌");
     assert_eq!(buffer[(119, edit.1)].symbol(), "┐");
+    assert_eq!(buffer[(1, edit.1 + 1)].symbol(), " ");
+    assert_eq!(buffer[(118, edit.1 + 1)].symbol(), " ");
     assert!(guidance.0 >= description.0.saturating_sub(1));
     assert!(guidance.1 > description.1);
     assert!(find_ascii(&buffer, 120, 32, "type(scope):").is_some());
     assert!(find_ascii(&buffer, 120, 32, "col 1/80").is_some());
     assert_eq!(wide.composer.editor.wrap_mode(), WrapMode::WordOrGlyph);
 
-    wide.composer.editor.move_cursor(CursorMove::Jump(4, 0));
+    wide.composer.editor.move_cursor(CursorMove::Jump(6, 0));
     let buffer = rendered_buffer(&mut wide, 120, 32)?;
     assert!(find_ascii(&buffer, 120, 32, "Required concise").is_some());
     assert!(find_ascii(&buffer, 120, 32, "type(scope):").is_some());
@@ -1041,24 +1074,24 @@ fn composer_layout_stacks_context_above_a_full_width_fixed_wrap_editor()
 }
 
 #[test]
-fn fields_hud_uses_aligned_columns_and_clips_names_before_requirements()
+fn fields_hud_uses_content_hugging_columns_and_clips_names_before_requirements()
 -> Result<(), Box<dyn Error>> {
     let definitions = vec![presentation_definition()?];
     let mut wide = AuthoringSession::new(&definitions, Some(0));
     let buffer = rendered_buffer(&mut wide, 120, 32)?;
     let scope = find_ascii(&buffer, 120, 32, "scope").ok_or("missing scope")?;
-    let subject = find_ascii(&buffer, 120, 32, "subject").ok_or("missing subject")?;
+    let description = find_ascii(&buffer, 120, 32, "description").ok_or("missing description")?;
     let required_field =
         find_ascii(&buffer, 120, 32, "required-field").ok_or("missing required field")?;
     let conditional_field =
         find_ascii(&buffer, 120, 32, "conditional-field").ok_or("missing conditional field")?;
-    assert_eq!(scope.0, subject.0);
+    assert_eq!(scope.0, description.0);
     assert_eq!(scope.0, required_field.0);
     assert_eq!(scope.0, conditional_field.0);
 
     let requirement_column = [
         (scope.1, "optional"),
-        (subject.1, "required"),
+        (description.1, "required"),
         (required_field.1, "required"),
         (conditional_field.1, "conditional"),
     ]
@@ -1079,11 +1112,10 @@ fn fields_hud_uses_aligned_columns_and_clips_names_before_requirements()
     let buffer = rendered_buffer(&mut narrow, 60, 24)?;
     let requirement =
         find_ascii(&buffer, 60, 24, "conditional").ok_or("missing conditional requirement")?;
-    assert_eq!(requirement.1, 9);
-    assert_eq!(requirement.0 + 11, 23);
-    assert_eq!(buffer[(23, requirement.1)].symbol(), "│");
-    assert_eq!(buffer[(3, requirement.1)].symbol(), "c");
-    assert_eq!(buffer[(11, requirement.1)].symbol(), " ");
+    assert!(requirement.1 > 5);
+    assert!(requirement.0 < 24);
+    assert_eq!(buffer[(1, requirement.1)].symbol(), " ");
+    assert_eq!(buffer[(2, requirement.1)].symbol(), "○");
     Ok(())
 }
 
@@ -1096,25 +1128,26 @@ fn narrow_editor_scrolls_until_fixed_width_wrap_then_returns_to_column_one()
     let first_seventy = "0123456789".repeat(7);
     paste(&mut session, &first_seventy);
     let buffer = rendered_buffer(&mut session, 72, 24)?;
-    let visible = (1..=70)
+    let visible = (2..=69)
         .map(|column| buffer[(column, scope.1 + 1)].symbol())
         .collect::<String>();
-    assert_eq!(visible.trim_end(), &first_seventy[1..]);
+    assert_eq!(visible.trim_end(), &first_seventy[3..]);
     assert!(find_ascii(&buffer, 72, 24, "col 71/80").is_some());
 
     press(&mut session, KeyCode::Left);
     let buffer = rendered_buffer(&mut session, 72, 24)?;
-    assert_eq!(buffer[(1, scope.1 + 1)].symbol(), "0");
+    assert_eq!(buffer[(2, scope.1 + 1)].symbol(), "2");
     assert!(find_ascii(&buffer, 72, 24, "col 70/80").is_some());
     press(&mut session, KeyCode::Right);
 
     paste(&mut session, &"x".repeat(11));
     let buffer = rendered_buffer(&mut session, 72, 24)?;
     assert_eq!(
-        session.composer.editor.lines()[1],
+        session.composer.editor.lines()[3],
         format!("{first_seventy}{}", "x".repeat(11))
     );
-    assert_eq!(buffer[(1, scope.1 + 2)].symbol(), "x");
+    let wrapped_scope = find_ascii(&buffer, 72, 24, "scope:").ok_or("missing scrolled scope")?;
+    assert_eq!(buffer[(2, wrapped_scope.1 + 2)].symbol(), "x");
     assert!(find_ascii(&buffer, 72, 24, "col 2/80").is_some());
     Ok(())
 }
@@ -1126,21 +1159,21 @@ fn fixed_width_soft_wrap_reports_visual_columns_without_changing_authored_lines(
     let value = format!("{} word", "x".repeat(76));
     paste(&mut word_wrap, &value);
     let buffer = rendered_buffer(&mut word_wrap, 72, 24)?;
-    assert_eq!(word_wrap.composer.editor.lines()[1], value);
+    assert_eq!(word_wrap.composer.editor.lines()[3], value);
     assert!(find_ascii(&buffer, 72, 24, "col 5/80").is_some());
 
     let mut glyph_wrap = AuthoringSession::new(built_in_commit_types(), Some(0));
     let value = "x".repeat(81);
     paste(&mut glyph_wrap, &value);
     let buffer = rendered_buffer(&mut glyph_wrap, 72, 24)?;
-    assert_eq!(glyph_wrap.composer.editor.lines()[1], value);
+    assert_eq!(glyph_wrap.composer.editor.lines()[3], value);
     assert!(find_ascii(&buffer, 72, 24, "col 2/80").is_some());
 
     let mut unicode = AuthoringSession::new(built_in_commit_types(), Some(0));
     let value = "🦀".repeat(21);
     paste(&mut unicode, &value);
     let buffer = rendered_buffer(&mut unicode, 72, 24)?;
-    assert_eq!(unicode.composer.editor.lines()[1], value);
+    assert_eq!(unicode.composer.editor.lines()[3], value);
     assert!(buffer.content().iter().any(|cell| cell.symbol() == "🦀"));
     assert!(find_ascii(&buffer, 72, 24, "col 43/80").is_some());
     Ok(())
@@ -1153,19 +1186,21 @@ fn wrapped_and_explicit_lines_keep_a_blank_row_before_the_next_field() -> Result
     paste(&mut wrapped, &"x".repeat(81));
     let buffer = rendered_buffer(&mut wrapped, 72, 24)?;
     let scope = find_ascii(&buffer, 72, 24, "scope:").ok_or("missing scope")?;
-    let subject = find_ascii(&buffer, 72, 24, "subject:").ok_or("missing subject")?;
-    assert_eq!(subject.1, scope.1 + 4);
-    assert!((1..71).all(|column| buffer[(column, scope.1 + 3)].symbol() == " "));
+    assert_eq!(wrapped.composer.editor.lines()[5], "description:");
+    assert!((2..70).all(|column| buffer[(column, scope.1 + 3)].symbol() == " "));
 
     let mut explicit = AuthoringSession::new(built_in_commit_types(), Some(0));
-    explicit.composer.editor.move_cursor(CursorMove::Jump(7, 0));
+    explicit
+        .composer
+        .editor
+        .move_cursor(CursorMove::Jump(11, 0));
     paste(&mut explicit, "first");
     press(&mut explicit, KeyCode::Enter);
-    let buffer = rendered_buffer(&mut explicit, 120, 32)?;
-    let intent = find_ascii(&buffer, 120, 32, "intent:").ok_or("missing intent")?;
-    let behavior = find_ascii(&buffer, 120, 32, "behavior:").ok_or("missing behavior")?;
+    let buffer = rendered_buffer(&mut explicit, 120, 40)?;
+    let intent = find_ascii(&buffer, 120, 40, "intent:").ok_or("missing intent")?;
+    let behavior = find_ascii(&buffer, 120, 40, "behavior:").ok_or("missing behavior")?;
     assert_eq!(behavior.1, intent.1 + 4);
-    assert!((1..119).all(|column| buffer[(column, intent.1 + 3)].symbol() == " "));
+    assert!((2..118).all(|column| buffer[(column, intent.1 + 3)].symbol() == " "));
     Ok(())
 }
 

@@ -14,7 +14,7 @@ coordination remain in `gitserious-app`.
 `gitserious commit` runs one structured terminal session:
 
 1. select an effective commit type;
-2. author scope, subject, and schema-defined property values;
+2. author scope, description, and schema-defined property values;
 3. review the exact canonical message and confirm before Git creates the
    staged-index commit.
 
@@ -25,24 +25,28 @@ The upper-right corner labels these views `Step 1/3`, `Step 2/3`, and
 composer. Both forms require interactive standard input and output. There is no
 configured-Git-editor fallback or non-interactive authoring mode in this slice.
 
-The composer places one prepopulated document in a full-width Edit form with
-`scope`, `subject`, and every schema-defined property header. The headers are
-immutable; values are authored beneath them without traversing separate
-controls. The cursor starts in the scope value and skips both field headers and
-their reserved blank separators when moving between editable regions. Scope and
-subject accept one authored line; schema properties remain multiline. Blank
-nonrequired fields are omitted, while blank required fields block review.
+The composer presents one prepopulated document as three immutable structural
+sections. `Message Subject` contains optional `scope` and required `description`
+fields; `Message Body` contains the selected type's schema-defined properties;
+and `Message Footer` reserves a distinct boundary for future footer-specific
+properties. Section and field headings are immutable. Values are authored
+beneath field headings without traversing separate controls. The cursor starts
+in the scope value and skips structural headings and reserved separators. Scope
+and description accept one authored line; schema properties remain multiline.
+Blank nonrequired fields are omitted, while blank required fields block review.
+The core domain retains the Conventional Commit subject primitive internally;
+`description` is the adapter's user-facing vocabulary.
 
-The passive Fields HUD and contextual Description pane sit side by side above
-the Edit form. The HUD tracks complete, incomplete, and invalid values and
-aligns field names and schema requirements in separate responsive columns.
-Long names clip within the field column instead of colliding with requirement
-labels or the pane border. Scope and subject guidance illustrates the
-Conventional Commit header `type(scope): subject`, including the scope-free
-`type: subject` form.
+The passive Fields HUD and contextual Field guidance pane sit side by side above
+the message form. The HUD tracks complete, incomplete, and invalid values. Its
+field-name column hugs the widest visible name so requirement labels remain
+near their values, while long names clip before labels or pane borders. Scope
+and description guidance illustrates `type(scope): description`, including the
+scope-free `type: description` form. Every bordered pane uses equal one-cell
+padding on all four sides.
 
 The `Compose commit message` view always edits an 80-column virtual surface. If
-the visible Edit form is narrower, it follows the cursor horizontally instead
+the visible Message form is narrower, it follows the cursor horizontally instead
 of wrapping early, then returns to column 1 when a word or glyph soft-wraps at
 column 80. Its highlighted status strip reports `col N/80`, separated from the
 key hints by `▌`. `Ctrl+S` compiles the form into the exact canonical message
@@ -63,7 +67,7 @@ soft-wrapped Unicode input, paste, undo/redo, and `Ctrl+K` deletion to the end
 of the line through the text-area widget. `Up` and `Down` move by visual line
 inside multiline properties, then cross into adjacent fields without landing
 on immutable headers or reserved separators. `Enter` advances from scope or
-subject and skips a blank property; inside a populated property it inserts a
+description and skips a blank property; inside a populated property it inserts a
 newline normally. The final blank property does not cycle back to scope.
 
 Explicit property lines join normally with Backspace or Delete, while a
