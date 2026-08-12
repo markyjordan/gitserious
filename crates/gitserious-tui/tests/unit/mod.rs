@@ -897,7 +897,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(text.contains("Select commit type"));
     assert!(!text.contains("gitserious commit"));
     assert!(!text.contains("Choose the semantic contract for this commit."));
-    assert!(text.contains("Commit types"));
+    assert!(!text.contains("Commit types"));
     assert_eq!(
         text.matches("An intentional addition or expansion of capability.")
             .count(),
@@ -905,6 +905,14 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     );
     assert!(text.contains("Enter: select"));
     assert_stage_header(&mut picker, 100, 24, "Select commit type", "Step 1/3")?;
+    let picker_buffer = rendered_buffer(&mut picker, 100, 24)?;
+    assert_eq!(
+        row_text(&picker_buffer, 100, 1),
+        format!("┌{}┐", "─".repeat(98))
+    );
+    let selected = find_ascii(&picker_buffer, 100, 24, "› feat").ok_or("missing selection")?;
+    assert_eq!(selected.0, 3);
+    assert_eq!(selected.1, 3);
     assert_highlighted_footer(&mut picker, 100, 24)?;
 
     let definitions = vec![presentation_definition()?];
@@ -917,10 +925,11 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(text.contains("Compose commit message"));
     assert!(text.contains("Type: custom"));
     assert!(!text.contains("Keymap:"));
-    assert!(text.contains("○ description"));
+    assert!(text.contains("○  description"));
     assert!(text.contains("conditional-field"));
     assert!(text.contains("conditional"));
-    assert!(text.contains("required when the condition applies"));
+    assert!(text.contains("required when the condition"));
+    assert!(text.contains("applies"));
     assert!(!text.contains("ctrl+t"));
     assert!(!text.contains("Complete every required field before review."));
     assert!(!text.contains("repeatable"));
@@ -929,8 +938,8 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
 
     modified_press(&mut composer, KeyCode::Char('s'), KeyModifiers::CONTROL);
     let text = rendered(&mut composer, 120, 32)?;
-    assert!(text.contains("! description"));
-    assert!(text.contains("! required-field"));
+    assert!(text.contains("!  description"));
+    assert!(text.contains("!  required-field"));
 
     let mut review = valid_feat_session();
     let text = rendered(&mut review, 100, 24)?;
@@ -939,6 +948,11 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(text.contains("feat: compose durable message"));
     assert!(text.contains("Enter: commit"));
     assert_stage_header(&mut review, 100, 24, "Review and commit", "Step 3/3")?;
+    let review_buffer = rendered_buffer(&mut review, 100, 24)?;
+    assert_eq!(
+        find_ascii(&review_buffer, 100, 24, "feat: compose durable message"),
+        Some((3, 3)),
+    );
     assert_highlighted_footer(&mut review, 100, 24)?;
 
     press(&mut review, KeyCode::Char('q'));
@@ -1060,8 +1074,13 @@ fn composer_layout_stacks_context_above_a_full_width_fixed_wrap_editor()
     assert_eq!(edit.0, fields.0);
     assert_eq!(buffer[(0, edit.1)].symbol(), "┌");
     assert_eq!(buffer[(119, edit.1)].symbol(), "┐");
-    assert_eq!(buffer[(1, edit.1 + 1)].symbol(), " ");
-    assert_eq!(buffer[(118, edit.1 + 1)].symbol(), " ");
+    for column in [1, 2, 117, 118] {
+        assert_eq!(buffer[(column, edit.1 + 1)].symbol(), " ");
+    }
+    let editor_bottom = 29;
+    assert!((1..119).all(|column| buffer[(column, editor_bottom - 1)].symbol() == " "));
+    assert_eq!(buffer[(0, editor_bottom)].symbol(), "└");
+    assert_eq!(buffer[(119, editor_bottom)].symbol(), "┘");
     assert!(guidance.0 >= description.0.saturating_sub(1));
     assert!(guidance.1 > description.1);
     assert!(find_ascii(&buffer, 120, 32, "type(scope):").is_some());
@@ -1081,7 +1100,7 @@ fn composer_layout_stacks_context_above_a_full_width_fixed_wrap_editor()
 }
 
 #[test]
-fn fields_hud_uses_content_hugging_columns_and_clips_names_before_requirements()
+fn fields_hud_uses_spaced_content_hugging_columns_and_clips_names_before_requirements()
 -> Result<(), Box<dyn Error>> {
     let definitions = vec![presentation_definition()?];
     let mut wide = AuthoringSession::new(&definitions, Some(0));
@@ -1109,8 +1128,14 @@ fn fields_hud_uses_content_hugging_columns_and_clips_names_before_requirements()
     })
     .collect::<Result<Vec<_>, _>>()?;
     assert!(requirement_column.windows(2).all(|pair| pair[0] == pair[1]));
-    assert_eq!(buffer[(scope.0 - 2, scope.1)].symbol(), "○");
-    assert_eq!(buffer[(scope.0 - 2, scope.1)].fg, Color::DarkGray);
+    assert_eq!(buffer[(scope.0 - 3, scope.1)].symbol(), "○");
+    assert_eq!(buffer[(scope.0 - 3, scope.1)].fg, Color::DarkGray);
+    assert_eq!(buffer[(scope.0 - 2, scope.1)].symbol(), " ");
+    assert_eq!(buffer[(scope.0 - 1, scope.1)].symbol(), " ");
+    let name_end = scope.0 + u16::try_from("conditional-field".len())?;
+    assert_eq!(requirement_column[0], name_end + 2);
+    assert_eq!(buffer[(name_end, scope.1)].symbol(), " ");
+    assert_eq!(buffer[(name_end + 1, scope.1)].symbol(), " ");
     assert_eq!(buffer[scope].fg, Color::Yellow);
     assert!(buffer[scope].modifier.contains(Modifier::BOLD));
     assert_eq!(buffer[(requirement_column[0], scope.1)].fg, Color::Yellow);
@@ -1122,7 +1147,8 @@ fn fields_hud_uses_content_hugging_columns_and_clips_names_before_requirements()
     assert!(requirement.1 > 5);
     assert!(requirement.0 < 24);
     assert_eq!(buffer[(1, requirement.1)].symbol(), " ");
-    assert_eq!(buffer[(2, requirement.1)].symbol(), "○");
+    assert_eq!(buffer[(2, requirement.1)].symbol(), " ");
+    assert_eq!(buffer[(3, requirement.1)].symbol(), "○");
     Ok(())
 }
 
@@ -1135,15 +1161,15 @@ fn narrow_editor_scrolls_until_fixed_width_wrap_then_returns_to_column_one()
     let first_seventy = "0123456789".repeat(7);
     paste(&mut session, &first_seventy);
     let buffer = rendered_buffer(&mut session, 72, 24)?;
-    let visible = (2..=69)
+    let visible = (3..=68)
         .map(|column| buffer[(column, scope.1 + 1)].symbol())
         .collect::<String>();
-    assert_eq!(visible.trim_end(), &first_seventy[3..]);
+    assert_eq!(visible.trim_end(), &first_seventy[5..]);
     assert!(find_ascii(&buffer, 72, 24, "col 71/80").is_some());
 
     press(&mut session, KeyCode::Left);
     let buffer = rendered_buffer(&mut session, 72, 24)?;
-    assert_eq!(buffer[(2, scope.1 + 1)].symbol(), "2");
+    assert_eq!(buffer[(3, scope.1 + 1)].symbol(), "4");
     assert!(find_ascii(&buffer, 72, 24, "col 70/80").is_some());
     press(&mut session, KeyCode::Right);
 
@@ -1154,7 +1180,7 @@ fn narrow_editor_scrolls_until_fixed_width_wrap_then_returns_to_column_one()
         format!("{first_seventy}{}", "x".repeat(11))
     );
     let wrapped_scope = find_ascii(&buffer, 72, 24, "scope:").ok_or("missing scrolled scope")?;
-    assert_eq!(buffer[(2, wrapped_scope.1 + 2)].symbol(), "x");
+    assert_eq!(buffer[(3, wrapped_scope.1 + 2)].symbol(), "x");
     assert!(find_ascii(&buffer, 72, 24, "col 2/80").is_some());
     Ok(())
 }
