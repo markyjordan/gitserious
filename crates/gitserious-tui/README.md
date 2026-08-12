@@ -24,6 +24,13 @@ Each view starts with a borderless one-line header: `Select commit type`,
 directly below its header. A preselected commit type starts directly at
 `Step 2/3`.
 
+The views use a borderless, spacing-led hierarchy. Bold yellow section headings
+sit directly above unpadded content, and exactly one blank row separates major
+groups. The type list, message form, reviewed commit message, validation status,
+and navigation strip therefore use the terminal width from column zero without
+rectangular pane chrome. Discard confirmation is a centered five-line group;
+the too-small fallback uses the same borderless heading-and-content treatment.
+
 `gitserious commit --type <COMMIT TYPE>` preselects the type and starts in the
 composer. Both forms require interactive standard input and output. There is no
 configured-Git-editor fallback or non-interactive authoring mode in this slice.
@@ -40,24 +47,26 @@ Blank nonrequired fields are omitted, while blank required fields block review.
 The core domain retains the Conventional Commit subject primitive internally;
 `description` is the adapter's user-facing vocabulary.
 
-The passive Fields HUD and contextual Field guidance pane sit side by side above
-the message form. The HUD tracks complete, incomplete, and invalid values. Its
-field-name column hugs the widest visible name and leaves a two-cell gap between
-each column so requirement labels remain distinct, while long names clip before
-labels or pane borders. Scope and description guidance illustrates
+The passive `Fields` HUD and contextual `Field guidance` section sit side by
+side above the message form at a 40/60 split. The HUD tracks complete,
+incomplete, and invalid values. Its field-name column hugs the widest visible
+name and leaves a two-cell gap between each internal table column so requirement
+labels remain distinct, while long names clip before those labels. The shared
+context group takes the height of whichever side has more real content: the HUD
+rows or the wrapped guidance. Scope and description guidance illustrates
 `type(scope): description`, including the scope-free `type: description` form.
-Every bordered pane uses proportionally equal padding: one vertical cell and two
-horizontal cells.
+Neither section adds outer padding.
 
 The `Compose commit message` view always edits an 80-column virtual surface. If
-the visible Message form is narrower, it follows the cursor horizontally instead
+the visible message form is narrower, it follows the cursor horizontally instead
 of wrapping early, then returns to column 1 when a word or glyph soft-wraps at
-column 80. Its highlighted status strip reports `col N/80`, separated from the
-key hints by `▌`. `Ctrl+S` compiles the form into the exact canonical message
-shown during review. Compilation removes trailing whitespace from every encoded
-line without changing the editor document or intentional leading whitespace.
-Property values are rendered beneath their headings without automatic
-indentation.
+column 80. The editor renders directly from column zero and uses the full visible
+width up to that limit. Its highlighted status strip reports `col N/80`,
+separated from the key hints by `▌`. `Ctrl+S` compiles the form into the exact
+canonical message shown during review. Compilation removes trailing whitespace
+from every encoded line without changing the editor document or intentional
+leading whitespace. Property values are rendered beneath their headings without
+automatic indentation.
 
 | Context | Controls |
 | --- | --- |
@@ -81,4 +90,4 @@ input line. Navigation hints at the bottom of each terminal view use a
 highlighted strip, bold `key: action` pairs, centered-dot separators, and
 lowercase `ctrl` labels for quick scanning. The validation row above the strip
 stays empty until an attempted review reports an error. Dirty-draft confirmation
-centers its question and controls within the discard popup.
+centers its bold heading, question, and controls as a borderless group.

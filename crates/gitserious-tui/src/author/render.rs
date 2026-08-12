@@ -5,8 +5,7 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Cell, Clear, List, ListItem, ListState, Padding, Paragraph, Row, Table, Widget,
-    Wrap,
+    Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, Widget, Wrap,
 };
 
 use super::state::{AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, Stage};
@@ -14,12 +13,10 @@ use super::state::{AuthoringSession, ConfirmationAction, FieldId, FieldKind, Fie
 const MINIMUM_WIDTH: u16 = 60;
 const MINIMUM_HEIGHT: u16 = 18;
 const MAX_EDITOR_INNER_WIDTH: u16 = 80;
-const PANE_HORIZONTAL_PADDING: u16 = 2;
-const PANE_VERTICAL_PADDING: u16 = 1;
 const FIELD_COLUMN_SPACING: u16 = 2;
 const FIELD_MARKER_WIDTH: u16 = 1;
 const FIELD_REQUIREMENT_WIDTH: u16 = 11;
-const MINIMUM_EDITOR_HEIGHT: u16 = 7;
+const MINIMUM_EDITOR_HEIGHT: u16 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CursorStatus {
@@ -31,17 +28,23 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
     let area = frame.area();
     session.too_small = area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT;
     if session.too_small {
-        let message = if session.stage == Stage::Confirm {
-            "Discard this draft?\ny: discard · Enter/n: keep editing"
+        if session.stage == Stage::Confirm {
+            render_centered_notice(
+                frame,
+                area,
+                "Confirm discard",
+                "Discard this draft?",
+                Some("y: discard · Enter/n: keep editing"),
+            );
         } else {
-            "Terminal too small\nResize or press Esc/q to cancel"
-        };
-        frame.render_widget(
-            Paragraph::new(message)
-                .block(titled_pane_block(" gitserious "))
-                .wrap(Wrap { trim: true }),
-            area,
-        );
+            render_centered_notice(
+                frame,
+                area,
+                "Terminal too small",
+                "Resize or press Esc/q to cancel",
+                None,
+            );
+        }
         return;
     }
 
@@ -59,7 +62,8 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
 fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
     let sections = Layout::vertical([
         Constraint::Length(1),
-        Constraint::Min(6),
+        Constraint::Length(1),
+        Constraint::Min(1),
         Constraint::Length(1),
     ])
     .split(area);
@@ -79,29 +83,39 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
         })
         .collect::<Vec<_>>();
     let list = List::new(items)
-        .block(pane_block())
         .highlight_symbol("› ")
         .highlight_style(navigation_key_style());
     let mut state = ListState::default();
     state.select(Some(session.selected_type));
-    frame.render_stateful_widget(list, sections[1], &mut state);
+    frame.render_stateful_widget(list, sections[2], &mut state);
     render_navigation_row(
         frame,
-        sections[2],
+        sections[3],
         &[("↑/↓", "move"), ("Enter", "select"), ("Esc/q", "cancel")],
         None,
     );
 }
 
 fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
+    let desired_context_height = context_height(area, session);
+    let maximum_context_height = area
+        .height
+        .saturating_sub(2 + 1 + 1 + 1 + MINIMUM_EDITOR_HEIGHT + 1 + 1);
+    let context_height = desired_context_height.min(maximum_context_height).max(1);
     let sections = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(12),
         Constraint::Length(2),
+        Constraint::Length(1),
+        Constraint::Length(context_height),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(MINIMUM_EDITOR_HEIGHT),
+        Constraint::Length(1),
+        Constraint::Length(1),
     ])
     .split(area);
-    render_stage_header(frame, sections[0], "Compose commit message", 2);
+    let header =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(sections[0]);
+    render_stage_header(frame, header[0], "Compose commit message", 2);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::raw("Type: "),
@@ -110,34 +124,23 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
                 Style::default().add_modifier(Modifier::BOLD),
             ),
         ])),
-        sections[1],
+        header[1],
     );
 
-    let desired_context_height =
-        u16::try_from(session.definition().properties().len() + 6).unwrap_or(u16::MAX);
-    let context_height = desired_context_height
-        .min(sections[2].height.saturating_sub(MINIMUM_EDITOR_HEIGHT))
-        .max(3);
-    let body = Layout::vertical([
-        Constraint::Length(context_height),
-        Constraint::Min(MINIMUM_EDITOR_HEIGHT),
-    ])
-    .split(sections[2]);
-    render_field_context(frame, body[0], session);
-    let cursor_status = render_document_editor(frame, body[1], session);
+    render_field_context(frame, sections[2], session);
+    render_section_heading(frame, sections[4], "Message form");
+    let cursor_status = render_document_editor(frame, sections[5], session);
 
     let help: &[_] = &[("↑/↓", "move"), ("esc", "back"), ("ctrl+s", "review")];
-    let footer =
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(sections[3]);
     if let Some(issue) = session.composer.issues.first() {
         frame.render_widget(
             Paragraph::new(issue.message.as_str()).style(Style::default().fg(Color::Red)),
-            footer[0],
+            sections[6],
         );
     }
     render_navigation_row(
         frame,
-        footer[1],
+        sections[7],
         help,
         Some(&format!(
             "col {}/{}",
@@ -160,7 +163,6 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
         .current_field(definition)
         .map(FieldKind::id);
     let fields = session.composer.hud_fields(definition);
-    let block = titled_pane_block(" Fields ");
     let fixed_width =
         FIELD_MARKER_WIDTH + FIELD_REQUIREMENT_WIDTH + FIELD_COLUMN_SPACING.saturating_mul(2);
     let name_width = fields
@@ -169,7 +171,7 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
         .max()
         .and_then(|width| u16::try_from(width).ok())
         .unwrap_or(1)
-        .min(block.inner(area).width.saturating_sub(fixed_width).max(1));
+        .min(area.width.saturating_sub(fixed_width).max(1));
     let rows = fields
         .into_iter()
         .map(|field| {
@@ -195,6 +197,8 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
             ])
         })
         .collect::<Vec<_>>();
+    let sections = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
+    render_section_heading(frame, sections[0], "Fields");
     frame.render_widget(
         Table::new(
             rows,
@@ -204,9 +208,8 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
                 Constraint::Length(FIELD_REQUIREMENT_WIDTH),
             ],
         )
-        .column_spacing(FIELD_COLUMN_SPACING)
-        .block(block),
-        area,
+        .column_spacing(FIELD_COLUMN_SPACING),
+        sections[1],
     );
 }
 
@@ -222,6 +225,8 @@ fn render_field_description(frame: &mut Frame<'_>, area: Rect, session: &Authori
         },
         |kind| field_metadata(kind, &definition),
     );
+    let sections = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
+    render_section_heading(frame, sections[0], "Field guidance");
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled(
@@ -230,9 +235,8 @@ fn render_field_description(frame: &mut Frame<'_>, area: Rect, session: &Authori
             ),
             Line::from(description),
         ])
-        .block(titled_pane_block(" Field guidance "))
         .wrap(Wrap { trim: true }),
-        area,
+        sections[1],
     );
 }
 
@@ -241,59 +245,26 @@ fn render_document_editor(
     area: Rect,
     session: &mut AuthoringSession<'_>,
 ) -> CursorStatus {
-    let definition = session.definition().clone();
-    let current_id = session
-        .composer
-        .current_field(&definition)
-        .map(FieldKind::id);
-    let issues = session
-        .composer
-        .issues
-        .iter()
-        .filter(|issue| issue.field.is_none() || issue.field == current_id)
-        .map(|issue| issue.message.as_str())
-        .collect::<Vec<_>>()
-        .join("; ");
-    let editor_title = if issues.is_empty() {
-        " Message form ".to_owned()
-    } else {
-        format!(" Error: {issues} ")
-    };
-    let border_style = if issues.is_empty() {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default().fg(Color::Red)
-    };
-    let editor_block = titled_pane_block(editor_title).border_style(border_style);
-    session.composer.editor.set_block(editor_block.clone());
+    session.composer.editor.remove_block();
 
-    // Render against a stable 80-column editing surface, then copy the
-    // cursor-following portion into the real pane without overwriting padding.
-    let virtual_width = MAX_EDITOR_INNER_WIDTH + 2 + PANE_HORIZONTAL_PADDING * 2;
-    let virtual_area = Rect::new(0, 0, virtual_width, area.height);
-    let virtual_content = editor_block.inner(virtual_area);
-    let visible_content = editor_block.inner(area);
+    // Render against a stable 80-column editing surface, then copy its
+    // cursor-following portion directly into the unpadded visible area.
+    let virtual_area = Rect::new(0, 0, MAX_EDITOR_INNER_WIDTH, area.height);
     let mut virtual_buffer = Buffer::empty(virtual_area);
     Widget::render(&session.composer.editor, virtual_area, &mut virtual_buffer);
-    frame.render_widget(editor_block, area);
 
     let column = session
         .composer
         .editor
         .rendered_cursor_position()
-        .map_or(1, |position| {
-            position.x.saturating_sub(virtual_content.x) + 1
-        })
+        .map_or(1, |position| position.x + 1)
         .clamp(1, MAX_EDITOR_INNER_WIDTH);
-    let viewport_width = visible_content.width.clamp(1, MAX_EDITOR_INNER_WIDTH);
+    let viewport_width = area.width.clamp(1, MAX_EDITOR_INNER_WIDTH);
     let horizontal_offset = column.saturating_sub(viewport_width);
-    for row in 0..visible_content.height.min(virtual_content.height) {
+    for row in 0..area.height.min(virtual_area.height) {
         for viewport_column in 0..viewport_width {
-            let source = (
-                virtual_content.x + horizontal_offset + viewport_column,
-                virtual_content.y + row,
-            );
-            let destination = (visible_content.x + viewport_column, visible_content.y + row);
+            let source = (horizontal_offset + viewport_column, row);
+            let destination = (area.x + viewport_column, area.y + row);
             frame.buffer_mut()[destination] = virtual_buffer[source].clone();
         }
     }
@@ -307,23 +278,25 @@ fn render_document_editor(
 fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
     let sections = Layout::vertical([
         Constraint::Length(1),
-        Constraint::Min(8),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
         Constraint::Length(1),
     ])
     .split(area);
     render_stage_header(frame, sections[0], "Review and commit", 3);
+    render_section_heading(frame, sections[2], "Commit message");
     if let Some(review) = &session.review {
         frame.render_widget(
             Paragraph::new(review.message.as_str())
-                .block(titled_pane_block(" Commit message "))
                 .wrap(Wrap { trim: false })
                 .scroll((review.scroll, 0)),
-            sections[1],
+            sections[3],
         );
     }
     render_navigation_row(
         frame,
-        sections[2],
+        sections[4],
         &[
             ("Enter", "commit"),
             ("Esc", "edit"),
@@ -335,27 +308,16 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
 }
 
 fn render_confirmation(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
-    let popup = centered_rect(54, 7, area);
     let message = match session.confirmation {
         ConfirmationAction::Cancel => "Discard this draft and cancel the commit?",
         ConfirmationAction::ChangeType => "Discard this draft and choose another type?",
     };
-    frame.render_widget(Clear, popup);
-    let block =
-        titled_pane_block(" Confirm discard ").border_style(Style::default().fg(Color::Red));
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
-    let content = Layout::vertical([Constraint::Length(3)])
-        .flex(Flex::Center)
-        .split(inner)[0];
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(message),
-            Line::default(),
-            Line::from("y: discard · Enter/Esc/n: keep editing"),
-        ])
-        .centered(),
-        content,
+    render_centered_notice(
+        frame,
+        area,
+        "Confirm discard",
+        message,
+        Some("y: discard · Enter/Esc/n: keep editing"),
     );
 }
 
@@ -409,17 +371,87 @@ fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String
     }
 }
 
-fn pane_block() -> Block<'static> {
-    Block::default()
-        .borders(Borders::ALL)
-        .padding(Padding::symmetric(
-            PANE_HORIZONTAL_PADDING,
-            PANE_VERTICAL_PADDING,
-        ))
+fn context_height(area: Rect, session: &AuthoringSession<'_>) -> u16 {
+    let columns = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(Rect::new(0, 0, area.width, 1));
+    let hud_height = u16::try_from(session.composer.hud_fields(session.definition()).len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(1);
+    let definition = session.definition().clone();
+    let (title, description) = session.composer.current_field(&definition).map_or_else(
+        || {
+            (
+                " Commit form ".to_owned(),
+                "Edit values beneath the schema-generated field headers.".to_owned(),
+            )
+        },
+        |kind| field_metadata(kind, &definition),
+    );
+    let guidance_height = wrapped_line_count(title.trim(), columns[1].width)
+        .saturating_add(wrapped_line_count(&description, columns[1].width))
+        .saturating_add(1);
+    hud_height.max(guidance_height)
 }
 
-fn titled_pane_block<'a>(title: impl Into<Line<'a>>) -> Block<'a> {
-    pane_block().title(title)
+fn wrapped_line_count(text: &str, width: u16) -> u16 {
+    let width = usize::from(width.max(1));
+    let mut rows = 1_u16;
+    let mut used = 0_usize;
+    for word in text.split_whitespace() {
+        let word_width = Line::from(word).width();
+        if used > 0 && used.saturating_add(1).saturating_add(word_width) <= width {
+            used += 1 + word_width;
+            continue;
+        }
+        if used > 0 {
+            rows = rows.saturating_add(1);
+        }
+        let word_rows = word_width.max(1).div_ceil(width);
+        rows = rows.saturating_add(u16::try_from(word_rows.saturating_sub(1)).unwrap_or(u16::MAX));
+        used = word_width % width;
+        if used == 0 && word_width > 0 {
+            used = width;
+        }
+    }
+    rows
+}
+
+fn section_heading_style() -> Style {
+    Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn render_section_heading(frame: &mut Frame<'_>, area: Rect, title: &'static str) {
+    frame.render_widget(Paragraph::new(title).style(section_heading_style()), area);
+}
+
+fn render_centered_notice(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    heading: &'static str,
+    message: &'static str,
+    controls: Option<&'static str>,
+) {
+    let lines = if let Some(controls) = controls {
+        vec![
+            Line::styled(heading, section_heading_style()),
+            Line::default(),
+            Line::from(message),
+            Line::default(),
+            Line::from(controls),
+        ]
+    } else {
+        vec![
+            Line::styled(heading, section_heading_style()),
+            Line::default(),
+            Line::from(message),
+        ]
+    };
+    let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+    let popup = centered_rect(54, height, area);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(Paragraph::new(lines).centered(), popup);
 }
 
 fn render_stage_header(frame: &mut Frame<'_>, area: Rect, title: &'static str, step: u8) {
