@@ -42,11 +42,12 @@ The core domain retains the Conventional Commit subject primitive internally;
 
 The passive Fields HUD and contextual Field guidance pane sit side by side above
 the message form. The HUD tracks complete, incomplete, and invalid values. Its
-field-name column hugs the widest visible name so requirement labels remain
-near their values, while long names clip before labels or pane borders. Scope
-and description guidance illustrates `type(scope): description`, including the
-scope-free `type: description` form. Every bordered pane uses equal one-cell
-padding on all four sides.
+field-name column hugs the widest visible name and leaves a two-cell gap between
+each column so requirement labels remain distinct, while long names clip before
+labels or pane borders. Scope and description guidance illustrates
+`type(scope): description`, including the scope-free `type: description` form.
+Every bordered pane uses proportionally equal padding: one vertical cell and two
+horizontal cells.
 
 The `Compose commit message` view always edits an 80-column virtual surface. If
 the visible Message form is narrower, it follows the cursor horizontally instead
