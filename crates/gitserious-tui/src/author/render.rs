@@ -4,11 +4,11 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap};
-
-use super::state::{
-    AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, Stage,
+use ratatui::widgets::{
+    Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, Widget, Wrap,
 };
+
+use super::state::{AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, Stage};
 
 const MINIMUM_WIDTH: u16 = 60;
 const MINIMUM_HEIGHT: u16 = 18;
@@ -61,7 +61,7 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
     .split(area);
     frame.render_widget(
         Paragraph::new("Choose the semantic contract for this commit.")
-            .block(stage_block(" gitserious commit ", "1/3")),
+            .block(stage_block(" gitserious commit ", 1)),
         sections[0],
     );
     let items = session
@@ -102,13 +102,7 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
     render_navigation_row(
         frame,
         sections[3],
-        &[
-            ("↑/k", "move"),
-            ("↓/j", "move"),
-            ("Home/End", "jump"),
-            ("Enter", "select"),
-            ("Esc/q", "cancel"),
-        ],
+        &[("↑/↓", "move"), ("Enter", "select"), ("Esc/q", "cancel")],
         None,
     );
 }
@@ -128,7 +122,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
                 Style::default().add_modifier(Modifier::BOLD),
             ),
         ]))
-        .block(stage_block(" Compose commit message ", "2/3")),
+        .block(stage_block(" Compose commit message ", 2)),
         sections[0],
     );
 
@@ -145,7 +139,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     render_field_context(frame, body[0], session);
     let cursor_status = render_document_editor(frame, body[1], session);
 
-    let help: &[_] = &[("ctrl+s", "review"), ("Esc", "back")];
+    let help: &[_] = &[("↑/↓", "move"), ("esc", "back"), ("ctrl+s", "review")];
     let footer =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(sections[2]);
     if let Some(issue) = session.composer.issues.first() {
@@ -178,15 +172,17 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
         .composer
         .current_field(definition)
         .map(FieldKind::id);
-    let items = session
+    let rows = session
         .composer
         .hud_fields(definition)
         .into_iter()
         .map(|field| {
             let marker = match field.status {
-                FieldStatus::Invalid => Span::styled("! ", Style::default().fg(Color::Red)),
-                FieldStatus::Complete => Span::styled("✓ ", Style::default().fg(Color::Green)),
-                FieldStatus::Incomplete => Span::styled("○ ", Style::default().fg(Color::DarkGray)),
+                FieldStatus::Invalid => Cell::from("!").style(Style::default().fg(Color::Red)),
+                FieldStatus::Complete => Cell::from("✓").style(Style::default().fg(Color::Green)),
+                FieldStatus::Incomplete => {
+                    Cell::from("○").style(Style::default().fg(Color::DarkGray))
+                }
             };
             let style = if current == Some(field.id) {
                 Style::default()
@@ -195,14 +191,25 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
             } else {
                 Style::default()
             };
-            ListItem::new(Line::from(vec![
+            let (name, requirement) = field_columns(field.id, definition);
+            Row::new(vec![
                 marker,
-                Span::styled(field_label(field.id, definition), style),
-            ]))
+                Cell::from(name).style(style),
+                Cell::from(requirement).style(style),
+            ])
         })
         .collect::<Vec<_>>();
     frame.render_widget(
-        List::new(items).block(Block::default().borders(Borders::ALL).title(" Fields ")),
+        Table::new(
+            rows,
+            [
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(11),
+            ],
+        )
+        .column_spacing(1)
+        .block(Block::default().borders(Borders::ALL).title(" Fields ")),
         area,
     );
 }
@@ -316,7 +323,7 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
     .split(area);
     frame.render_widget(
         Paragraph::new("Review the exact canonical message before Git creates the commit.")
-            .block(stage_block(" Review commit ", "3/3")),
+            .block(stage_block(" Review commit ", 3)),
         sections[0],
     );
     if let Some(review) = &session.review {
@@ -372,10 +379,10 @@ fn render_confirmation(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSes
     );
 }
 
-fn field_label(id: FieldId, definition: &CommitTypeDefinition) -> String {
+fn field_columns(id: FieldId, definition: &CommitTypeDefinition) -> (String, &'static str) {
     match id {
-        FieldId::Scope => "scope · optional".to_owned(),
-        FieldId::Subject => "subject · required".to_owned(),
+        FieldId::Scope => ("scope".to_owned(), "optional"),
+        FieldId::Subject => ("subject".to_owned(), "required"),
         FieldId::Property(index) => {
             let property = &definition.properties()[index];
             let requirement = match property.requirement() {
@@ -384,7 +391,7 @@ fn field_label(id: FieldId, definition: &CommitTypeDefinition) -> String {
                 PropertyRequirement::Optional => "optional",
                 PropertyRequirement::Conditional(_) => "conditional",
             };
-            format!("{} · {requirement}", property.key())
+            (property.key().to_string(), requirement)
         }
     }
 }
@@ -422,13 +429,13 @@ fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String
     }
 }
 
-fn stage_block(title: &'static str, step: &'static str) -> Block<'static> {
+fn stage_block(title: &'static str, step: u8) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .title(title)
         .title_top(
             Line::styled(
-                format!(" {step} "),
+                format!(" Step {step}/3 "),
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
