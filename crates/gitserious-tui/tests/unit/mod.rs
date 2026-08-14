@@ -435,14 +435,45 @@ fn review_is_exact_backtracking_is_lossless_and_enter_returns_the_typed_draft()
 }
 
 #[test]
-fn review_scroll_uses_arrows_and_pages_without_vim_aliases() {
+fn short_review_locks_arrow_and_page_scrolling() -> Result<(), Box<dyn Error>> {
     let mut session = valid_feat_session();
+    let _ = rendered_buffer(&mut session, 100, 24)?;
     assert_eq!(session.review.as_ref().map(|review| review.scroll), Some(0));
+    assert_eq!(
+        session.review.as_ref().map(|review| review.scrollable),
+        Some(false)
+    );
 
-    for unsupported in [KeyCode::Char('j'), KeyCode::Char('k')] {
-        press(&mut session, unsupported);
+    for locked in [
+        KeyCode::Up,
+        KeyCode::Down,
+        KeyCode::PageUp,
+        KeyCode::PageDown,
+        KeyCode::Char('j'),
+        KeyCode::Char('k'),
+    ] {
+        press(&mut session, locked);
         assert_eq!(session.review.as_ref().map(|review| review.scroll), Some(0));
     }
+    Ok(())
+}
+
+#[test]
+fn long_review_scrolls_until_a_taller_viewport_locks_it() -> Result<(), Box<dyn Error>> {
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let behavior = (1..=30)
+        .map(|line| format!("behavior line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let document = valid_feat_document().replace("first line\nsecond line", &behavior);
+    set_document(&mut session, &document, 10);
+    modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
+
+    let _ = rendered_buffer(&mut session, 100, 24)?;
+    assert_eq!(
+        session.review.as_ref().map(|review| review.scrollable),
+        Some(true)
+    );
     press(&mut session, KeyCode::Down);
     assert_eq!(session.review.as_ref().map(|review| review.scroll), Some(1));
     press(&mut session, KeyCode::Up);
@@ -454,6 +485,18 @@ fn review_scroll_uses_arrows_and_pages_without_vim_aliases() {
     );
     press(&mut session, KeyCode::PageUp);
     assert_eq!(session.review.as_ref().map(|review| review.scroll), Some(0));
+
+    press(&mut session, KeyCode::PageDown);
+    let _ = rendered_buffer(&mut session, 100, 60)?;
+    assert_eq!(
+        session.review.as_ref().map(|review| review.scrollable),
+        Some(false)
+    );
+    assert_eq!(session.review.as_ref().map(|review| review.scroll), Some(0));
+    press(&mut session, KeyCode::Down);
+    press(&mut session, KeyCode::PageDown);
+    assert_eq!(session.review.as_ref().map(|review| review.scroll), Some(0));
+    Ok(())
 }
 
 #[test]

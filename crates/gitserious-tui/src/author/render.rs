@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, Widget, Wrap,
 };
-use tui_textarea::TextArea;
+use tui_textarea::{TextArea, WrapMode};
 
 use super::state::{
     AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, SCOPE_VALUE_LINE, Stage,
@@ -307,7 +307,7 @@ fn subject_context_fits(editor: &TextArea<'_>, viewport_height: u16) -> bool {
     subject.measure(MAX_EDITOR_INNER_WIDTH).content_rows <= viewport_height
 }
 
-fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
+fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
     let sections = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
@@ -318,7 +318,15 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
     .split(area);
     render_stage_header(frame, sections[0], "Review and commit", 3);
     render_section_heading(frame, sections[2], "Commit message");
-    if let Some(review) = &session.review {
+    if let Some(review) = &mut session.review {
+        let mut measured_message =
+            TextArea::new(review.message.as_str().lines().map(str::to_owned).collect());
+        measured_message.set_wrap_mode(WrapMode::WordOrGlyph);
+        review.scrollable =
+            measured_message.measure(sections[3].width).content_rows > sections[3].height;
+        if !review.scrollable {
+            review.scroll = 0;
+        }
         frame.render_widget(
             Paragraph::new(review.message.as_str())
                 .wrap(Wrap { trim: false })

@@ -730,6 +730,7 @@ pub(crate) struct ReviewState {
     pub(crate) draft: CommitDraft,
     pub(crate) message: CommitMessage,
     pub(crate) scroll: u16,
+    pub(crate) scrollable: bool,
 }
 
 pub(crate) struct AuthoringSession<'a> {
@@ -873,6 +874,7 @@ impl<'a> AuthoringSession<'a> {
                     draft,
                     message,
                     scroll: 0,
+                    scrollable: false,
                 });
                 self.stage = Stage::Review;
             }
@@ -951,22 +953,30 @@ impl<'a> AuthoringSession<'a> {
                 return self.request_confirmation(ConfirmationAction::Cancel, ResumeStage::Review);
             }
             KeyCode::Up => {
-                if let Some(review) = &mut self.review {
+                if let Some(review) = &mut self.review
+                    && review.scrollable
+                {
                     review.scroll = review.scroll.saturating_sub(1);
                 }
             }
             KeyCode::Down => {
-                if let Some(review) = &mut self.review {
+                if let Some(review) = &mut self.review
+                    && review.scrollable
+                {
                     review.scroll = review.scroll.saturating_add(1);
                 }
             }
             KeyCode::PageUp => {
-                if let Some(review) = &mut self.review {
+                if let Some(review) = &mut self.review
+                    && review.scrollable
+                {
                     review.scroll = review.scroll.saturating_sub(10);
                 }
             }
             KeyCode::PageDown => {
-                if let Some(review) = &mut self.review {
+                if let Some(review) = &mut self.review
+                    && review.scrollable
+                {
                     review.scroll = review.scroll.saturating_add(10);
                 }
             }

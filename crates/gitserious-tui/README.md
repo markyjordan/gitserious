@@ -72,7 +72,7 @@ automatic indentation.
 | --- | --- |
 | Type picker | `Up`/`Down` moves; `Enter` selects; `Esc`/`q` cancels |
 | Composer | Conventional document editing; `Up`/`Down` moves within and between fields; `Esc` goes back; `Ctrl+S` validates and reviews |
-| Review | `Enter` confirms; `Esc` returns to editing; arrows or Page Up/Page Down scroll; `q` cancels |
+| Review | `Enter` confirms; `Esc` returns to editing; arrows or Page Up/Page Down scroll when the message exceeds the viewport; `q` cancels |
 | Cancellation | Untouched drafts cancel immediately; dirty drafts require explicit discard confirmation |
 
 The composer uses conventional cursor movement, selection, word movement,
