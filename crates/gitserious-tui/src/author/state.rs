@@ -6,7 +6,9 @@ use gitserious_core::{
 };
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::style::{Color, Modifier, Style};
-use tui_textarea::{AtomicRange, CursorMove, Input, TextArea, WrapMode};
+use tui_textarea::{AtomicRange, CursorMove, CursorRenderMode, Input, TextArea, WrapMode};
+
+pub(crate) const SCOPE_VALUE_LINE: usize = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Stage {
@@ -137,7 +139,7 @@ impl ComposerState {
     fn new(definition: &CommitTypeDefinition) -> Self {
         let pristine = scaffold_lines(definition);
         let mut editor = text_area(pristine.clone(), definition);
-        editor.move_cursor(CursorMove::Jump(3, 0));
+        editor.move_cursor(CursorMove::Jump(terminal_line(SCOPE_VALUE_LINE), 0));
         Self {
             editor,
             pristine,
@@ -302,6 +304,7 @@ fn text_area(lines: Vec<String>, definition: &CommitTypeDefinition) -> TextArea<
     let mut editor = TextArea::new(lines);
     editor.set_wrap_mode(WrapMode::WordOrGlyph);
     editor.set_cursor_line_style(Style::default());
+    editor.set_cursor_render_mode(CursorRenderMode::Hidden);
     apply_heading_guards(&mut editor, definition);
     editor
 }
