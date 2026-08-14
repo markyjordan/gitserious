@@ -148,6 +148,13 @@ fn reversed_positions(buffer: &Buffer, width: u16, height: u16) -> Vec<(u16, u16
         .collect()
 }
 
+fn terminal_edge_cursor_positions(buffer: &Buffer, width: u16, height: u16) -> Vec<(u16, u16)> {
+    (0..height)
+        .flat_map(|row| (0..width).map(move |column| (column, row)))
+        .filter(|position| buffer[*position].symbol() == "█")
+        .collect()
+}
+
 fn assert_blank_row(buffer: &Buffer, width: u16, row: u16) {
     assert!(
         (0..width).all(|column| buffer[(column, row)].symbol() == " "),
@@ -435,14 +442,45 @@ fn review_is_exact_backtracking_is_lossless_and_enter_returns_the_typed_draft()
 }
 
 #[test]
-fn review_scroll_uses_arrows_and_pages_without_vim_aliases() {
+fn short_review_locks_arrow_and_page_scrolling() -> Result<(), Box<dyn Error>> {
     let mut session = valid_feat_session();
+    let _ = rendered_buffer(&mut session, 100, 24)?;
     assert_eq!(session.review.as_ref().map(|review| review.scroll), Some(0));
+    assert_eq!(
+        session.review.as_ref().map(|review| review.scrollable),
+        Some(false)
+    );
 
-    for unsupported in [KeyCode::Char('j'), KeyCode::Char('k')] {
-        press(&mut session, unsupported);
+    for locked in [
+        KeyCode::Up,
+        KeyCode::Down,
+        KeyCode::PageUp,
+        KeyCode::PageDown,
+        KeyCode::Char('j'),
+        KeyCode::Char('k'),
+    ] {
+        press(&mut session, locked);
         assert_eq!(session.review.as_ref().map(|review| review.scroll), Some(0));
     }
+    Ok(())
+}
+
+#[test]
+fn long_review_scrolls_until_a_taller_viewport_locks_it() -> Result<(), Box<dyn Error>> {
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let behavior = (1..=30)
+        .map(|line| format!("behavior line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let document = valid_feat_document().replace("first line\nsecond line", &behavior);
+    set_document(&mut session, &document, 10);
+    modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
+
+    let _ = rendered_buffer(&mut session, 100, 24)?;
+    assert_eq!(
+        session.review.as_ref().map(|review| review.scrollable),
+        Some(true)
+    );
     press(&mut session, KeyCode::Down);
     assert_eq!(session.review.as_ref().map(|review| review.scroll), Some(1));
     press(&mut session, KeyCode::Up);
@@ -454,6 +492,18 @@ fn review_scroll_uses_arrows_and_pages_without_vim_aliases() {
     );
     press(&mut session, KeyCode::PageUp);
     assert_eq!(session.review.as_ref().map(|review| review.scroll), Some(0));
+
+    press(&mut session, KeyCode::PageDown);
+    let _ = rendered_buffer(&mut session, 100, 60)?;
+    assert_eq!(
+        session.review.as_ref().map(|review| review.scrollable),
+        Some(false)
+    );
+    assert_eq!(session.review.as_ref().map(|review| review.scroll), Some(0));
+    press(&mut session, KeyCode::Down);
+    press(&mut session, KeyCode::PageDown);
+    assert_eq!(session.review.as_ref().map(|review| review.scroll), Some(0));
+    Ok(())
 }
 
 #[test]
@@ -1199,7 +1249,11 @@ fn returning_to_scope_restores_subject_context_after_vertical_scrolling()
     let scope = find_ascii(&buffer, 72, 24, "scope:").ok_or("missing scope context")?;
     assert_eq!(subject.0, 0);
     assert_eq!(scope, (0, subject.1 + 2));
-    assert_eq!(reversed_positions(&buffer, 72, 24), [(0, scope.1 + 1)]);
+    assert_eq!(reversed_positions(&buffer, 72, 24), []);
+    assert_eq!(
+        terminal_edge_cursor_positions(&buffer, 72, 24),
+        [(0, scope.1 + 1)]
+    );
     Ok(())
 }
 
@@ -1224,22 +1278,24 @@ fn oversized_scope_keeps_its_cursor_and_document_when_subject_context_cannot_fit
 }
 
 #[test]
-fn composer_renders_one_reverse_cursor_cell_across_field_transitions() -> Result<(), Box<dyn Error>>
-{
+fn composer_renders_one_cell_cursor_without_terminal_edge_bleed() -> Result<(), Box<dyn Error>> {
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
     let mut buffer = rendered_buffer(&mut session, 120, 32)?;
-    assert_eq!(reversed_positions(&buffer, 120, 32).len(), 1);
+    assert_eq!(reversed_positions(&buffer, 120, 32), []);
+    assert_eq!(terminal_edge_cursor_positions(&buffer, 120, 32).len(), 1);
 
     paste(&mut session, "a");
     buffer = rendered_buffer(&mut session, 120, 32)?;
     assert_eq!(session.composer.editor.cursor(), (3, 1));
     assert_eq!(reversed_positions(&buffer, 120, 32).len(), 1);
+    assert_eq!(terminal_edge_cursor_positions(&buffer, 120, 32), []);
 
     for expected_line in [6, 11, 14, 17, 20, 23] {
         press(&mut session, KeyCode::Down);
         buffer = rendered_buffer(&mut session, 120, 32)?;
         assert_eq!(session.composer.editor.cursor(), (expected_line, 0));
-        assert_eq!(reversed_positions(&buffer, 120, 32).len(), 1);
+        assert_eq!(reversed_positions(&buffer, 120, 32), []);
+        assert_eq!(terminal_edge_cursor_positions(&buffer, 120, 32).len(), 1);
     }
     Ok(())
 }

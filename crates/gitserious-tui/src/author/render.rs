@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, Widget, Wrap,
 };
-use tui_textarea::TextArea;
+use tui_textarea::{TextArea, WrapMode};
 
 use super::state::{
     AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, SCOPE_VALUE_LINE, Stage,
@@ -20,6 +20,7 @@ const FIELD_COLUMN_SPACING: u16 = 2;
 const FIELD_MARKER_WIDTH: u16 = 1;
 const FIELD_REQUIREMENT_WIDTH: u16 = 11;
 const MINIMUM_EDITOR_HEIGHT: u16 = 3;
+const TERMINAL_EDGE_CURSOR: &str = "█";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CursorStatus {
@@ -283,10 +284,18 @@ fn render_document_editor(
         && position.y < area.height
     {
         let destination = (area.x + viewport_column, area.y + position.y);
-        let cursor_style = frame.buffer_mut()[destination]
-            .style()
-            .patch(session.composer.editor.cursor_style());
-        frame.buffer_mut()[destination].set_style(cursor_style);
+        let cursor_cell = &mut frame.buffer_mut()[destination];
+        if destination.0 == 0 && cursor_cell.symbol().trim().is_empty() {
+            let style = cursor_cell.style().remove_modifier(Modifier::REVERSED);
+            cursor_cell
+                .set_symbol(TERMINAL_EDGE_CURSOR)
+                .set_style(style);
+        } else {
+            let cursor_style = cursor_cell
+                .style()
+                .patch(session.composer.editor.cursor_style());
+            cursor_cell.set_style(cursor_style);
+        }
     }
 
     CursorStatus {
@@ -307,7 +316,7 @@ fn subject_context_fits(editor: &TextArea<'_>, viewport_height: u16) -> bool {
     subject.measure(MAX_EDITOR_INNER_WIDTH).content_rows <= viewport_height
 }
 
-fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
+fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
     let sections = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
@@ -318,7 +327,15 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
     .split(area);
     render_stage_header(frame, sections[0], "Review and commit", 3);
     render_section_heading(frame, sections[2], "Commit message");
-    if let Some(review) = &session.review {
+    if let Some(review) = &mut session.review {
+        let mut measured_message =
+            TextArea::new(review.message.as_str().lines().map(str::to_owned).collect());
+        measured_message.set_wrap_mode(WrapMode::WordOrGlyph);
+        review.scrollable =
+            measured_message.measure(sections[3].width).content_rows > sections[3].height;
+        if !review.scrollable {
+            review.scroll = 0;
+        }
         frame.render_widget(
             Paragraph::new(review.message.as_str())
                 .wrap(Wrap { trim: false })
