@@ -86,8 +86,10 @@ newline normally. The final blank property does not cycle back to scope.
 Explicit property lines join normally with Backspace or Delete, while a
 reserved blank row always separates authored text—including soft wraps—from the
 next immutable heading. The cursor uses a visible cell without underlining the
-input line. Navigation hints at the bottom of each terminal view use a
-highlighted strip, bold `key: action` pairs, centered-dot separators, and
-lowercase `ctrl` labels for quick scanning. The validation row above the strip
-stays empty until an attempted review reports an error. Dirty-draft confirmation
-centers its bold heading, question, and controls as a borderless group.
+input line. A blank cursor at terminal column zero uses a one-cell foreground
+block so terminal background bleed cannot make it appear wider. Navigation
+hints at the bottom of each terminal view use a highlighted strip, bold
+`key: action` pairs, centered-dot separators, and lowercase `ctrl` labels for
+quick scanning. The validation row above the strip stays empty until an
+attempted review reports an error. Dirty-draft confirmation centers its bold
+heading, question, and controls as a borderless group.

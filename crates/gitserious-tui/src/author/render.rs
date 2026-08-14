@@ -20,6 +20,7 @@ const FIELD_COLUMN_SPACING: u16 = 2;
 const FIELD_MARKER_WIDTH: u16 = 1;
 const FIELD_REQUIREMENT_WIDTH: u16 = 11;
 const MINIMUM_EDITOR_HEIGHT: u16 = 3;
+const TERMINAL_EDGE_CURSOR: &str = "█";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CursorStatus {
@@ -283,10 +284,18 @@ fn render_document_editor(
         && position.y < area.height
     {
         let destination = (area.x + viewport_column, area.y + position.y);
-        let cursor_style = frame.buffer_mut()[destination]
-            .style()
-            .patch(session.composer.editor.cursor_style());
-        frame.buffer_mut()[destination].set_style(cursor_style);
+        let cursor_cell = &mut frame.buffer_mut()[destination];
+        if destination.0 == 0 && cursor_cell.symbol().trim().is_empty() {
+            let style = cursor_cell.style().remove_modifier(Modifier::REVERSED);
+            cursor_cell
+                .set_symbol(TERMINAL_EDGE_CURSOR)
+                .set_style(style);
+        } else {
+            let cursor_style = cursor_cell
+                .style()
+                .patch(session.composer.editor.cursor_style());
+            cursor_cell.set_style(cursor_style);
+        }
     }
 
     CursorStatus {

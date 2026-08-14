@@ -148,6 +148,13 @@ fn reversed_positions(buffer: &Buffer, width: u16, height: u16) -> Vec<(u16, u16
         .collect()
 }
 
+fn terminal_edge_cursor_positions(buffer: &Buffer, width: u16, height: u16) -> Vec<(u16, u16)> {
+    (0..height)
+        .flat_map(|row| (0..width).map(move |column| (column, row)))
+        .filter(|position| buffer[*position].symbol() == "█")
+        .collect()
+}
+
 fn assert_blank_row(buffer: &Buffer, width: u16, row: u16) {
     assert!(
         (0..width).all(|column| buffer[(column, row)].symbol() == " "),
@@ -1242,7 +1249,11 @@ fn returning_to_scope_restores_subject_context_after_vertical_scrolling()
     let scope = find_ascii(&buffer, 72, 24, "scope:").ok_or("missing scope context")?;
     assert_eq!(subject.0, 0);
     assert_eq!(scope, (0, subject.1 + 2));
-    assert_eq!(reversed_positions(&buffer, 72, 24), [(0, scope.1 + 1)]);
+    assert_eq!(reversed_positions(&buffer, 72, 24), []);
+    assert_eq!(
+        terminal_edge_cursor_positions(&buffer, 72, 24),
+        [(0, scope.1 + 1)]
+    );
     Ok(())
 }
 
@@ -1267,22 +1278,24 @@ fn oversized_scope_keeps_its_cursor_and_document_when_subject_context_cannot_fit
 }
 
 #[test]
-fn composer_renders_one_reverse_cursor_cell_across_field_transitions() -> Result<(), Box<dyn Error>>
-{
+fn composer_renders_one_cell_cursor_without_terminal_edge_bleed() -> Result<(), Box<dyn Error>> {
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
     let mut buffer = rendered_buffer(&mut session, 120, 32)?;
-    assert_eq!(reversed_positions(&buffer, 120, 32).len(), 1);
+    assert_eq!(reversed_positions(&buffer, 120, 32), []);
+    assert_eq!(terminal_edge_cursor_positions(&buffer, 120, 32).len(), 1);
 
     paste(&mut session, "a");
     buffer = rendered_buffer(&mut session, 120, 32)?;
     assert_eq!(session.composer.editor.cursor(), (3, 1));
     assert_eq!(reversed_positions(&buffer, 120, 32).len(), 1);
+    assert_eq!(terminal_edge_cursor_positions(&buffer, 120, 32), []);
 
     for expected_line in [6, 11, 14, 17, 20, 23] {
         press(&mut session, KeyCode::Down);
         buffer = rendered_buffer(&mut session, 120, 32)?;
         assert_eq!(session.composer.editor.cursor(), (expected_line, 0));
-        assert_eq!(reversed_positions(&buffer, 120, 32).len(), 1);
+        assert_eq!(reversed_positions(&buffer, 120, 32), []);
+        assert_eq!(terminal_edge_cursor_positions(&buffer, 120, 32).len(), 1);
     }
     Ok(())
 }
