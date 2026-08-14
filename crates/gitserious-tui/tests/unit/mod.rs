@@ -12,7 +12,7 @@ use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
-use tui_textarea::{CursorMove, TextArea, WrapMode};
+use tui_textarea::{CursorMove, CursorRenderMode, TextArea, WrapMode};
 
 use crate::{RatatuiCommitDraftAuthor, RatatuiCommitDraftAuthorError};
 
@@ -138,6 +138,13 @@ fn find_ascii_on_row_from_right(
 fn row_text(buffer: &Buffer, width: u16, row: u16) -> String {
     (0..width)
         .map(|column| buffer[(column, row)].symbol())
+        .collect()
+}
+
+fn reversed_positions(buffer: &Buffer, width: u16, height: u16) -> Vec<(u16, u16)> {
+    (0..height)
+        .flat_map(|row| (0..width).map(move |column| (column, row)))
+        .filter(|position| buffer[*position].modifier.contains(Modifier::REVERSED))
         .collect()
 }
 
@@ -1109,8 +1116,13 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
         composer.composer.editor.cursor_style(),
         Style::default().add_modifier(Modifier::REVERSED)
     );
+    assert_eq!(
+        composer.composer.editor.cursor_render_mode(),
+        CursorRenderMode::Hidden
+    );
     paste(&mut composer, "hello");
     let buffer = rendered_buffer(&mut composer, 120, 32)?;
+    assert_eq!(reversed_positions(&buffer, 120, 32).len(), 1);
     let scope = find_ascii(&buffer, 120, 32, "scope:").ok_or("missing scope label")?;
     for offset in 0..u16::try_from("scope:".len())? {
         let cell = &buffer[(scope.0 + offset, scope.1)];
@@ -1157,6 +1169,78 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     let footer = row_text(&buffer, 100, 23);
     assert!(footer.contains("Enter: commit · Esc: edit · ↑/↓: scroll · q/ctrl+c: cancel"));
     assert!(!footer.contains("Ctrl"));
+    Ok(())
+}
+
+#[test]
+fn returning_to_scope_restores_subject_context_after_vertical_scrolling()
+-> Result<(), Box<dyn Error>> {
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let pristine = session.composer.editor.lines().to_vec();
+    let mut buffer = rendered_buffer(&mut session, 72, 24)?;
+
+    for _ in 0..6 {
+        press(&mut session, KeyCode::Down);
+        buffer = rendered_buffer(&mut session, 72, 24)?;
+    }
+    assert_eq!(session.composer.editor.cursor(), (23, 0));
+    assert!(find_ascii(&buffer, 72, 24, "Message Subject").is_none());
+
+    for _ in 0..6 {
+        press(&mut session, KeyCode::Up);
+        buffer = rendered_buffer(&mut session, 72, 24)?;
+    }
+
+    assert_eq!(session.composer.editor.cursor(), (3, 0));
+    assert_eq!(session.composer.editor.lines(), pristine);
+    assert!(!session.composer.dirty());
+    let subject =
+        find_ascii(&buffer, 72, 24, "Message Subject").ok_or("missing subject context")?;
+    let scope = find_ascii(&buffer, 72, 24, "scope:").ok_or("missing scope context")?;
+    assert_eq!(subject.0, 0);
+    assert_eq!(scope, (0, subject.1 + 2));
+    assert_eq!(reversed_positions(&buffer, 72, 24), [(0, scope.1 + 1)]);
+    Ok(())
+}
+
+#[test]
+fn oversized_scope_keeps_its_cursor_and_document_when_subject_context_cannot_fit()
+-> Result<(), Box<dyn Error>> {
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let scope = "x".repeat(481);
+    paste(&mut session, &scope);
+    let cursor = session.composer.editor.cursor();
+    let document = session.composer.editor.lines().to_vec();
+
+    let buffer = rendered_buffer(&mut session, 72, 24)?;
+
+    assert_eq!(session.composer.editor.cursor(), cursor);
+    assert_eq!(session.composer.editor.lines(), document);
+    assert_eq!(session.composer.editor.lines()[3], scope);
+    assert!(find_ascii(&buffer, 72, 24, "Message Subject").is_none());
+    assert!(find_ascii(&buffer, 72, 24, "col 2/80").is_some());
+    assert_eq!(reversed_positions(&buffer, 72, 24).len(), 1);
+    Ok(())
+}
+
+#[test]
+fn composer_renders_one_reverse_cursor_cell_across_field_transitions() -> Result<(), Box<dyn Error>>
+{
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let mut buffer = rendered_buffer(&mut session, 120, 32)?;
+    assert_eq!(reversed_positions(&buffer, 120, 32).len(), 1);
+
+    paste(&mut session, "a");
+    buffer = rendered_buffer(&mut session, 120, 32)?;
+    assert_eq!(session.composer.editor.cursor(), (3, 1));
+    assert_eq!(reversed_positions(&buffer, 120, 32).len(), 1);
+
+    for expected_line in [6, 11, 14, 17, 20, 23] {
+        press(&mut session, KeyCode::Down);
+        buffer = rendered_buffer(&mut session, 120, 32)?;
+        assert_eq!(session.composer.editor.cursor(), (expected_line, 0));
+        assert_eq!(reversed_positions(&buffer, 120, 32).len(), 1);
+    }
     Ok(())
 }
 
