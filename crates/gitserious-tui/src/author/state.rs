@@ -8,6 +8,8 @@ use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModif
 use ratatui::style::{Color, Modifier, Style};
 use tui_textarea::{AtomicRange, CursorMove, Input, TextArea, WrapMode};
 
+pub(crate) const SCOPE_VALUE_LINE: usize = 3;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Stage {
     SelectType,
@@ -137,7 +139,7 @@ impl ComposerState {
     fn new(definition: &CommitTypeDefinition) -> Self {
         let pristine = scaffold_lines(definition);
         let mut editor = text_area(pristine.clone(), definition);
-        editor.move_cursor(CursorMove::Jump(3, 0));
+        editor.move_cursor(CursorMove::Jump(terminal_line(SCOPE_VALUE_LINE), 0));
         Self {
             editor,
             pristine,

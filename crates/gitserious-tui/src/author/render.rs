@@ -7,8 +7,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, Widget, Wrap,
 };
+use tui_textarea::TextArea;
 
-use super::state::{AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, Stage};
+use super::state::{
+    AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, SCOPE_VALUE_LINE, Stage,
+};
 
 const MINIMUM_WIDTH: u16 = 60;
 const MINIMUM_HEIGHT: u16 = 18;
@@ -252,6 +255,14 @@ fn render_document_editor(
     let virtual_area = Rect::new(0, 0, MAX_EDITOR_INNER_WIDTH, area.height);
     let mut virtual_buffer = Buffer::empty(virtual_area);
     Widget::render(&session.composer.editor, virtual_area, &mut virtual_buffer);
+    if subject_context_fits(&session.composer.editor, area.height) {
+        // The first render updates tui-textarea's private viewport dimensions.
+        // Resetting after that render cannot move the cursor because the complete
+        // subject prefix is known to fit in the current viewport.
+        session.composer.editor.scroll((-i16::MAX, 0));
+        virtual_buffer = Buffer::empty(virtual_area);
+        Widget::render(&session.composer.editor, virtual_area, &mut virtual_buffer);
+    }
 
     let column = session
         .composer
@@ -273,6 +284,18 @@ fn render_document_editor(
         column,
         wrap_width: MAX_EDITOR_INNER_WIDTH,
     }
+}
+
+fn subject_context_fits(editor: &TextArea<'_>, viewport_height: u16) -> bool {
+    if editor.cursor().0 != SCOPE_VALUE_LINE {
+        return false;
+    }
+    let Some(lines) = editor.lines().get(..=SCOPE_VALUE_LINE) else {
+        return false;
+    };
+    let mut subject = TextArea::new(lines.to_vec());
+    subject.set_wrap_mode(editor.wrap_mode());
+    subject.measure(MAX_EDITOR_INNER_WIDTH).content_rows <= viewport_height
 }
 
 fn render_review(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
