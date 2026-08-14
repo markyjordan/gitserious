@@ -6,7 +6,7 @@ use gitserious_core::{
 };
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::style::{Color, Modifier, Style};
-use tui_textarea::{AtomicRange, CursorMove, Input, TextArea, WrapMode};
+use tui_textarea::{AtomicRange, CursorMove, CursorRenderMode, Input, TextArea, WrapMode};
 
 pub(crate) const SCOPE_VALUE_LINE: usize = 3;
 
@@ -304,6 +304,7 @@ fn text_area(lines: Vec<String>, definition: &CommitTypeDefinition) -> TextArea<
     let mut editor = TextArea::new(lines);
     editor.set_wrap_mode(WrapMode::WordOrGlyph);
     editor.set_cursor_line_style(Style::default());
+    editor.set_cursor_render_mode(CursorRenderMode::Hidden);
     apply_heading_guards(&mut editor, definition);
     editor
 }

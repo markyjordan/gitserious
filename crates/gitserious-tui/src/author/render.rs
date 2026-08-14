@@ -264,10 +264,8 @@ fn render_document_editor(
         Widget::render(&session.composer.editor, virtual_area, &mut virtual_buffer);
     }
 
-    let column = session
-        .composer
-        .editor
-        .rendered_cursor_position()
+    let cursor_position = session.composer.editor.rendered_cursor_position();
+    let column = cursor_position
         .map_or(1, |position| position.x + 1)
         .clamp(1, MAX_EDITOR_INNER_WIDTH);
     let viewport_width = area.width.clamp(1, MAX_EDITOR_INNER_WIDTH);
@@ -278,6 +276,17 @@ fn render_document_editor(
             let destination = (area.x + viewport_column, area.y + row);
             frame.buffer_mut()[destination] = virtual_buffer[source].clone();
         }
+    }
+    if let Some(position) = cursor_position
+        && let Some(viewport_column) = position.x.checked_sub(horizontal_offset)
+        && viewport_column < viewport_width
+        && position.y < area.height
+    {
+        let destination = (area.x + viewport_column, area.y + position.y);
+        let cursor_style = frame.buffer_mut()[destination]
+            .style()
+            .patch(session.composer.editor.cursor_style());
+        frame.buffer_mut()[destination].set_style(cursor_style);
     }
 
     CursorStatus {
