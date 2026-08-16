@@ -526,6 +526,7 @@ fn render_document_rules(
                 .iter()
                 .map(|property| format!("{}:", property.key())),
         )
+        .chain(std::iter::once("breaking-change:".to_owned()))
         .collect::<Vec<_>>();
     for row in 0..area.height {
         if horizontal_offset == 0
@@ -672,6 +673,7 @@ fn field_columns(id: FieldId, definition: &CommitTypeDefinition) -> (String, &'s
             };
             (property.key().to_string(), requirement)
         }
+        FieldId::BreakingChange => ("breaking-change".to_owned(), "optional"),
     }
 }
 
@@ -705,6 +707,11 @@ fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String
                 property.description().to_owned(),
             )
         }
+        FieldKind::BreakingChange => (
+            " Breaking change · optional ".to_owned(),
+            "Describe an incompatible change. Review adds ! before the header colon and renders this value as an uppercase BREAKING CHANGE footer."
+                .to_owned(),
+        ),
     }
 }
 

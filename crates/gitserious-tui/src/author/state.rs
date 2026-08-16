@@ -35,6 +35,7 @@ pub(crate) enum FieldId {
     Scope,
     Description,
     Property(usize),
+    BreakingChange,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,6 +46,7 @@ pub(crate) enum FieldKind {
         definition_index: usize,
         value_index: usize,
     },
+    BreakingChange,
 }
 
 impl FieldKind {
@@ -55,6 +57,7 @@ impl FieldKind {
             Self::Property {
                 definition_index, ..
             } => FieldId::Property(definition_index),
+            Self::BreakingChange => FieldId::BreakingChange,
         }
     }
 }
@@ -164,10 +167,11 @@ impl ComposerState {
         let parsed = self.parse(definition);
         let mut issues = parsed.issues;
         issues.extend(self.issues.iter().cloned());
-        let mut fields = Vec::with_capacity(definition.properties().len() + 2);
+        let mut fields = Vec::with_capacity(definition.properties().len() + 3);
         for id in std::iter::once(FieldId::Scope)
             .chain(std::iter::once(FieldId::Description))
             .chain((0..definition.properties().len()).map(FieldId::Property))
+            .chain(std::iter::once(FieldId::BreakingChange))
         {
             let sections = parsed
                 .sections
@@ -182,7 +186,7 @@ impl ComposerState {
                     FieldId::Description => {
                         !section.text.is_empty() && CommitSubject::new(&section.text).is_err()
                     }
-                    FieldId::Property(_) => false,
+                    FieldId::Property(_) | FieldId::BreakingChange => false,
                 });
             let complete = sections.iter().any(|section| !section.text.is_empty());
             fields.push(HudField {
@@ -212,6 +216,7 @@ impl ComposerState {
         let scope = parse_scope(&parsed, &mut issues);
         let subject = parse_description(&parsed, &mut issues);
         let authored = build_properties(&parsed, definition, &mut issues);
+        let breaking_change = parse_breaking_change(&parsed, &mut issues);
 
         if !issues.is_empty() {
             issues.sort_by_key(|issue| issue.line);
@@ -232,6 +237,10 @@ impl ComposerState {
                 }];
                 return None;
             }
+        };
+        let draft = match breaking_change {
+            Some(value) => draft.with_breaking_change(value),
+            None => draft,
         };
         match render_commit_message(definition, &draft) {
             Ok(message) => {
@@ -357,6 +366,9 @@ fn expected_marker_signature(definition: &CommitTypeDefinition) -> Vec<DocumentM
         )
         .chain(std::iter::once(DocumentMarker::Section(
             MessageSection::Footer,
+        )))
+        .chain(std::iter::once(DocumentMarker::Field(
+            FieldId::BreakingChange,
         )))
         .collect()
 }
@@ -517,6 +529,8 @@ fn scaffold_lines(definition: &CommitTypeDefinition) -> Vec<String> {
         lines.push(String::new());
     }
     lines.push(MessageSection::Footer.label().to_owned());
+    lines.push("breaking-change:".to_owned());
+    lines.push(String::new());
     lines.push(String::new());
     lines
 }
@@ -567,6 +581,7 @@ fn parse_document(lines: &[String], definition: &CommitTypeDefinition) -> Parsed
                     value_index,
                 }
             }
+            FieldId::BreakingChange => FieldKind::BreakingChange,
         };
         parsed.sections.push(DocumentSection {
             kind,
@@ -579,6 +594,7 @@ fn parse_document(lines: &[String], definition: &CommitTypeDefinition) -> Parsed
     for id in std::iter::once(FieldId::Scope)
         .chain(std::iter::once(FieldId::Description))
         .chain((0..definition.properties().len()).map(FieldId::Property))
+        .chain(std::iter::once(FieldId::BreakingChange))
     {
         let matching = parsed
             .sections
@@ -615,6 +631,7 @@ fn exact_heading(line: &str, definition: &CommitTypeDefinition) -> Option<FieldI
     match line {
         "scope:" => Some(FieldId::Scope),
         "description:" => Some(FieldId::Description),
+        "breaking-change:" => Some(FieldId::BreakingChange),
         _ => definition
             .properties()
             .iter()
@@ -637,6 +654,7 @@ fn looks_like_malformed_known_heading(line: &str, definition: &CommitTypeDefinit
     let trimmed = line.trim();
     trimmed == "scope"
         || trimmed == "description"
+        || trimmed == "breaking-change"
         || definition
             .properties()
             .iter()
@@ -768,11 +786,36 @@ fn build_properties(
     authored
 }
 
+fn parse_breaking_change(
+    parsed: &ParsedDocument,
+    issues: &mut Vec<ValidationIssue>,
+) -> Option<PropertyValue> {
+    let section = parsed
+        .sections
+        .iter()
+        .find(|section| section.kind == FieldKind::BreakingChange)?;
+    if section.text.is_empty() {
+        return None;
+    }
+    match PropertyValue::new(&section.text) {
+        Ok(value) => Some(value),
+        Err(error) => {
+            issues.push(ValidationIssue {
+                field: Some(FieldId::BreakingChange),
+                line: section.heading_line + 1,
+                message: error.to_string(),
+            });
+            None
+        }
+    }
+}
+
 fn field_name(id: FieldId, definition: &CommitTypeDefinition) -> String {
     match id {
         FieldId::Scope => "scope".to_owned(),
         FieldId::Description => "description".to_owned(),
         FieldId::Property(index) => definition.properties()[index].key().to_string(),
+        FieldId::BreakingChange => "breaking-change".to_owned(),
     }
 }
 
