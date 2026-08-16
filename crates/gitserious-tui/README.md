@@ -24,12 +24,11 @@ Each view starts with a borderless one-line header: `Select commit type`,
 directly below its header. A preselected commit type starts directly at
 `Step 2/3`.
 
-The views use a borderless, spacing-led hierarchy. Bold yellow section headings
-sit directly above unpadded content, and exactly one blank row separates major
-groups. The type list, message form, reviewed commit message, validation status,
-and navigation strip therefore use the terminal width from column zero without
-rectangular pane chrome. Discard confirmation is a centered five-line group;
-the too-small fallback uses the same borderless heading-and-content treatment.
+Every view is painted on a black background. The picker, review, discard
+confirmation, and too-small fallback retain their borderless, spacing-led
+hierarchy. Bold yellow headings sit directly above unpadded content, and one
+blank row separates major groups. Discard confirmation is a centered five-line
+group; the too-small fallback uses the same heading-and-content treatment.
 
 `gitserious commit --type <COMMIT TYPE>` preselects the type and starts in the
 composer. Both forms require interactive standard input and output. There is no
@@ -47,39 +46,46 @@ Blank nonrequired fields are omitted, while blank required fields block review.
 The core domain retains the Conventional Commit subject primitive internally;
 `description` is the adapter's user-facing vocabulary.
 
-The passive `Fields` HUD and contextual `Field guidance` section sit side by
-side above the message form at a 40/60 split. The HUD tracks complete,
-incomplete, and invalid values. Its field-name column hugs the widest visible
-name and leaves a two-cell gap between each internal table column so requirement
-labels remain distinct, while long names clip before those labels. The shared
-context group takes the height of whichever side has more real content: the HUD
-rows or the wrapped guidance. Scope and description guidance illustrates
-`type(scope): description`, including the scope-free `type: description` form.
-Neither section adds outer padding.
+Step 2 places `Message Properties`, `Property Description`, the editor, and its
+validation row inside one dark-gray Unicode frame. The header and type metadata
+remain above that frame, and the navigation strip remains below it. The passive
+properties HUD and contextual description use a 40/60 split with one vertical
+divider. The HUD tracks complete, incomplete, and invalid values. Its field-name
+column hugs the widest visible name and leaves a two-cell gap between internal
+table columns so requirement labels remain distinct, while long names clip
+before those labels. The shared context area takes the height of whichever side
+has more real content: the HUD rows or the wrapped description. Scope and
+description guidance illustrates `type(scope): description`, including the
+scope-free `type: description` form. The composer requires at least 21 terminal
+rows so the context, three-row minimum editor, validation row, and separators
+remain usable.
 
 The `Compose commit message` view always edits an 80-column virtual surface. If
-the visible message form is narrower, it follows the cursor horizontally instead
-of wrapping early, then returns to column 1 when a word or glyph soft-wraps at
-column 80. The editor renders directly from column zero and uses the full visible
-width up to that limit. Its highlighted status strip reports `col N/80`,
-separated from the key hints by `▌`. `Ctrl+S` compiles the form into the exact
-canonical message shown during review. Compilation removes trailing whitespace
-from every encoded line without changing the editor document or intentional
-leading whitespace. Property values are rendered beneath their headings without
-automatic indentation.
+the framed editor is narrower, it follows the cursor horizontally instead of
+wrapping early, then returns to column 1 when a word or glyph soft-wraps at
+column 80. Immutable field labels are followed by a box-drawing rule that
+reaches the frame's right inner edge. Full-width rules introduce `Message Body`
+and `Message Footer`. These rules are render-only layout chrome, use `─`
+(`U+2500`) rather than em dashes, and never enter the authored document or Git
+message. The highlighted status strip reports `col N/80`, separated from the
+key hints by `▌`. `ctrl+s` compiles the form into the exact canonical message
+shown during review. Compilation removes trailing whitespace from every encoded
+line without changing the editor document or intentional leading whitespace.
+Property values are rendered beneath their headings without automatic
+indentation.
 
 | Context | Controls |
 | --- | --- |
-| Type picker | `Up`/`Down` moves; `Enter` selects; `Esc`/`q` cancels |
-| Composer | Conventional document editing; `Up`/`Down` moves within and between fields; `Esc` goes back; `Ctrl+S` validates and reviews |
-| Review | `Enter` confirms; `Esc` returns to editing; arrows or Page Up/Page Down scroll when the message exceeds the viewport; `q` cancels |
+| Type picker | `↑`/`↓` moves; `enter` selects; `esc`/`q` cancels |
+| Composer | Conventional document editing; `↑`/`↓` moves within and between fields; `esc` goes back; `ctrl+s` validates and reviews |
+| Review | `enter` confirms; `esc` returns to editing; arrows or page up/page down scroll when the message exceeds the viewport; `q` cancels |
 | Cancellation | Untouched drafts cancel immediately; dirty drafts require explicit discard confirmation |
 
 The composer uses conventional cursor movement, selection, word movement,
-soft-wrapped Unicode input, paste, undo/redo, and `Ctrl+K` deletion to the end
-of the line through the text-area widget. `Up` and `Down` move by visual line
+soft-wrapped Unicode input, paste, undo/redo, and `ctrl+k` deletion to the end
+of the line through the text-area widget. `up` and `down` move by visual line
 inside multiline properties, then cross into adjacent fields without landing
-on immutable headers or reserved separators. `Enter` advances from scope or
+on immutable headers or reserved separators. `enter` advances from scope or
 description and skips a blank property; inside a populated property it inserts a
 newline normally. The final blank property does not cycle back to scope.
 
@@ -89,7 +95,7 @@ next immutable heading. The cursor uses a visible cell without underlining the
 input line. A blank cursor at terminal column zero uses a one-cell foreground
 block so terminal background bleed cannot make it appear wider. Navigation
 hints at the bottom of each terminal view use a highlighted strip, bold
-`key: action` pairs, centered-dot separators, and lowercase `ctrl` labels for
-quick scanning. The validation row above the strip stays empty until an
-attempted review reports an error. Dirty-draft confirmation centers its bold
-heading, question, and controls as a borderless group.
+`key: action` pairs, ` | ` separators, and lowercase key names for quick
+scanning. The validation row above the strip stays empty until an attempted
+review reports an error. Dirty-draft confirmation centers its bold heading,
+question, and controls as a borderless group.

@@ -163,6 +163,37 @@ fn assert_blank_row(buffer: &Buffer, width: u16, row: u16) {
     );
 }
 
+fn assert_inner_blank_row(buffer: &Buffer, width: u16, row: u16) {
+    assert!(
+        (1..width.saturating_sub(1)).all(|column| buffer[(column, row)].symbol() == " "),
+        "inner row {row} was not blank: {:?}",
+        row_text(buffer, width, row)
+    );
+}
+
+fn assert_black_canvas(buffer: &Buffer) {
+    for (index, cell) in buffer.content().iter().enumerate() {
+        let width = usize::from(buffer.area.width);
+        let x = index % width;
+        let continuation = x > 0 && Line::from(buffer.content()[index - 1].symbol()).width() > 1;
+        assert!(
+            continuation || matches!(cell.bg, Color::Black | Color::Yellow),
+            "unexpected canvas background {:?} on symbol {:?} at ({}, {})",
+            cell.bg,
+            cell.symbol(),
+            x,
+            index / width
+        );
+    }
+    assert!(buffer.content().iter().any(|cell| cell.bg == Color::Black));
+}
+
+fn find_symbol(buffer: &Buffer, width: u16, height: u16, symbol: &str) -> Option<(u16, u16)> {
+    (0..height)
+        .flat_map(|row| (0..width).map(move |column| (column, row)))
+        .find(|position| buffer[*position].symbol() == symbol)
+}
+
 fn assert_no_box_drawing(buffer: &Buffer, width: u16, height: u16) {
     const BOX_DRAWING: [&str; 11] = ["┌", "┐", "└", "┘", "│", "─", "├", "┤", "┬", "┴", "┼"];
     assert!(
@@ -1008,11 +1039,12 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
             .count(),
         1
     );
-    assert!(text.contains("Enter: select"));
+    assert!(text.contains("enter: select"));
     assert_stage_header(&mut picker, 100, 24, "Select commit type", "Step 1/3")?;
     let picker_buffer = rendered_buffer(&mut picker, 100, 24)?;
     assert_blank_row(&picker_buffer, 100, 1);
     assert_no_box_drawing(&picker_buffer, 100, 24);
+    assert_black_canvas(&picker_buffer);
     let selected = find_ascii(&picker_buffer, 100, 24, "› feat").ok_or("missing selection")?;
     assert_eq!(selected, (0, 2));
     assert_highlighted_footer(&mut picker, 100, 24)?;
@@ -1037,15 +1069,14 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(!text.contains("repeatable"));
     assert_stage_header(&mut composer, 120, 32, "Compose commit message", "Step 2/3")?;
     let composer_buffer = rendered_buffer(&mut composer, 120, 32)?;
-    assert_no_box_drawing(&composer_buffer, 120, 32);
     assert_blank_row(&composer_buffer, 120, 2);
-    for heading in ["Fields", "Field guidance", "Message form"] {
+    for heading in ["Message Properties", "Property Description"] {
         assert_bold_yellow_heading(&composer_buffer, 120, 32, heading)?;
     }
+    assert!(find_ascii(&composer_buffer, 120, 32, "Message form").is_none());
+    assert_black_canvas(&composer_buffer);
     assert_highlighted_footer(&mut composer, 120, 32)?;
 
-    let message_form_before =
-        find_ascii(&composer_buffer, 120, 32, "Message form").ok_or("missing message heading")?;
     modified_press(&mut composer, KeyCode::Char('s'), KeyModifiers::CONTROL);
     let invalid_buffer = rendered_buffer(&mut composer, 120, 32)?;
     let text = invalid_buffer
@@ -1056,10 +1087,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(text.contains("!  description"));
     assert!(text.contains("!  required-field"));
     assert!(!text.contains("Error:"));
-    assert_eq!(
-        find_ascii(&invalid_buffer, 120, 32, "Message form"),
-        Some(message_form_before)
-    );
+    assert!(find_ascii(&invalid_buffer, 120, 32, "Message form").is_none());
     let issue = composer
         .composer
         .issues
@@ -1067,7 +1095,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
         .ok_or("missing validation issue")?;
     let issue_position = find_ascii(&invalid_buffer, 120, 32, issue.message.as_str())
         .ok_or("missing validation status")?;
-    assert_eq!(issue_position.1, 30);
+    assert_eq!(issue_position.1, 29);
     assert_eq!(invalid_buffer[issue_position].fg, Color::Red);
 
     let mut review = valid_feat_session();
@@ -1075,7 +1103,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(text.contains("Review and commit"));
     assert!(!text.contains("Review the exact canonical message before Git creates the commit."));
     assert!(text.contains("feat: compose durable message"));
-    assert!(text.contains("Enter: commit"));
+    assert!(text.contains("enter: commit"));
     assert_stage_header(&mut review, 100, 24, "Review and commit", "Step 3/3")?;
     let review_buffer = rendered_buffer(&mut review, 100, 24)?;
     assert_eq!(
@@ -1085,6 +1113,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert_blank_row(&review_buffer, 100, 1);
     assert_bold_yellow_heading(&review_buffer, 100, 24, "Commit message")?;
     assert_no_box_drawing(&review_buffer, 100, 24);
+    assert_black_canvas(&review_buffer);
     assert_highlighted_footer(&mut review, 100, 24)?;
     Ok(())
 }
@@ -1096,7 +1125,7 @@ fn confirmation_and_too_small_views_use_centered_borderless_groups() -> Result<(
     let text = rendered(&mut review, 100, 24)?;
     assert!(text.contains("Confirm discard"));
     assert!(text.contains("Discard this draft and cancel"));
-    assert!(text.contains("y: discard · Enter/Esc/n: keep editing"));
+    assert!(text.contains("y: discard | enter/esc/n: keep editing"));
     assert!(text.contains("Review and commit"));
     assert!(text.contains("Step 3/3"));
     let buffer = rendered_buffer(&mut review, 100, 24)?;
@@ -1104,7 +1133,7 @@ fn confirmation_and_too_small_views_use_centered_borderless_groups() -> Result<(
     let question = "Discard this draft and cancel the commit?";
     let question_position =
         find_ascii(&buffer, 100, 24, question).ok_or("missing centered question")?;
-    let hint = "y: discard · Enter/Esc/n: keep editing";
+    let hint = "y: discard | enter/esc/n: keep editing";
     let hint_position = find_ascii(&buffer, 100, 24, hint).ok_or("missing centered hint")?;
     let popup_left = (100_u16 - 54) / 2;
     let centered_x = |text: &str| {
@@ -1124,8 +1153,9 @@ fn confirmation_and_too_small_views_use_centered_borderless_groups() -> Result<(
     );
     assert_bold_yellow_heading(&buffer, 100, 24, "Confirm discard")?;
     assert_no_box_drawing(&buffer, 100, 24);
+    assert_black_canvas(&buffer);
 
-    for (width, height) in [(59, 24), (100, 17)] {
+    for (width, height) in [(59, 24), (100, 17), (60, 20)] {
         let mut too_small = AuthoringSession::new(built_in_commit_types(), Some(0));
         let buffer = rendered_buffer(&mut too_small, width, height)?;
         let text = buffer
@@ -1135,9 +1165,10 @@ fn confirmation_and_too_small_views_use_centered_borderless_groups() -> Result<(
             .collect::<String>();
         assert!(too_small.too_small);
         assert!(text.contains("Terminal too small"));
-        assert!(text.contains("Esc/q to cancel"));
+        assert!(text.contains("esc/q to cancel"));
         assert_bold_yellow_heading(&buffer, width, height, "Terminal too small")?;
         assert_no_box_drawing(&buffer, width, height);
+        assert_black_canvas(&buffer);
         assert_eq!(
             too_small.handle_event(key(KeyCode::Esc)),
             Some(CommitDraftAuthorOutcome::Cancelled)
@@ -1151,7 +1182,9 @@ fn confirmation_and_too_small_views_use_centered_borderless_groups() -> Result<(
     assert!(small_confirmation.too_small);
     assert_bold_yellow_heading(&buffer, 59, 24, "Confirm discard")?;
     assert!(find_ascii(&buffer, 59, 24, "Discard this draft?").is_some());
+    assert!(find_ascii(&buffer, 59, 24, "y: discard | enter/n: keep editing").is_some());
     assert_no_box_drawing(&buffer, 59, 24);
+    assert_black_canvas(&buffer);
     Ok(())
 }
 
@@ -1184,7 +1217,7 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     assert!(!buffer[authored].modifier.contains(Modifier::UNDERLINED));
 
     let footer = row_text(&buffer, 120, 31);
-    assert!(footer.contains("↑/↓: move · esc: back · ctrl+s: review"));
+    assert!(footer.contains("↑/↓: move | esc: back | ctrl+s: review"));
     assert!(footer.contains("▌ col 6/80 "));
     assert!(!footer.contains("Ctrl"));
     assert!(!footer.contains("ctrl+n"));
@@ -1209,7 +1242,7 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     let mut picker = AuthoringSession::new(built_in_commit_types(), None);
     let buffer = rendered_buffer(&mut picker, 100, 24)?;
     let footer = row_text(&buffer, 100, 23);
-    assert!(footer.contains("↑/↓: move · Enter: select · Esc/q: cancel"));
+    assert!(footer.contains("↑/↓: move | enter: select | esc/q: cancel"));
     assert!(!footer.contains("/j"));
     assert!(!footer.contains("/k"));
     assert!(!footer.contains("Home/End"));
@@ -1217,8 +1250,9 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     let mut review = valid_feat_session();
     let buffer = rendered_buffer(&mut review, 100, 24)?;
     let footer = row_text(&buffer, 100, 23);
-    assert!(footer.contains("Enter: commit · Esc: edit · ↑/↓: scroll · q/ctrl+c: cancel"));
+    assert!(footer.contains("enter: commit | esc: edit | ↑/↓: scroll | q/ctrl+c: cancel"));
     assert!(!footer.contains("Ctrl"));
+    assert!(!footer.contains('·'));
     Ok(())
 }
 
@@ -1247,13 +1281,10 @@ fn returning_to_scope_restores_subject_context_after_vertical_scrolling()
     let subject =
         find_ascii(&buffer, 72, 24, "Message Subject").ok_or("missing subject context")?;
     let scope = find_ascii(&buffer, 72, 24, "scope:").ok_or("missing scope context")?;
-    assert_eq!(subject.0, 0);
-    assert_eq!(scope, (0, subject.1 + 2));
-    assert_eq!(reversed_positions(&buffer, 72, 24), []);
-    assert_eq!(
-        terminal_edge_cursor_positions(&buffer, 72, 24),
-        [(0, scope.1 + 1)]
-    );
+    assert_eq!(subject.0, 1);
+    assert_eq!(scope, (1, subject.1 + 2));
+    assert_eq!(reversed_positions(&buffer, 72, 24), [(1, scope.1 + 1)]);
+    assert_eq!(terminal_edge_cursor_positions(&buffer, 72, 24), []);
     Ok(())
 }
 
@@ -1281,8 +1312,8 @@ fn oversized_scope_keeps_its_cursor_and_document_when_subject_context_cannot_fit
 fn composer_renders_one_cell_cursor_without_terminal_edge_bleed() -> Result<(), Box<dyn Error>> {
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
     let mut buffer = rendered_buffer(&mut session, 120, 32)?;
-    assert_eq!(reversed_positions(&buffer, 120, 32), []);
-    assert_eq!(terminal_edge_cursor_positions(&buffer, 120, 32).len(), 1);
+    assert_eq!(reversed_positions(&buffer, 120, 32).len(), 1);
+    assert_eq!(terminal_edge_cursor_positions(&buffer, 120, 32), []);
 
     paste(&mut session, "a");
     buffer = rendered_buffer(&mut session, 120, 32)?;
@@ -1294,46 +1325,60 @@ fn composer_renders_one_cell_cursor_without_terminal_edge_bleed() -> Result<(), 
         press(&mut session, KeyCode::Down);
         buffer = rendered_buffer(&mut session, 120, 32)?;
         assert_eq!(session.composer.editor.cursor(), (expected_line, 0));
-        assert_eq!(reversed_positions(&buffer, 120, 32), []);
-        assert_eq!(terminal_edge_cursor_positions(&buffer, 120, 32).len(), 1);
+        assert_eq!(reversed_positions(&buffer, 120, 32).len(), 1);
+        assert_eq!(terminal_edge_cursor_positions(&buffer, 120, 32), []);
     }
     Ok(())
 }
 
 #[test]
-fn composer_layout_uses_spacing_led_context_above_an_unpadded_fixed_wrap_editor()
--> Result<(), Box<dyn Error>> {
+fn composer_uses_one_framed_context_editor_and_validation_surface() -> Result<(), Box<dyn Error>> {
     let mut wide = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let pristine = wide.composer.editor.lines().to_vec();
     let buffer = rendered_buffer(&mut wide, 120, 32)?;
-    let edit = find_ascii(&buffer, 120, 32, "Message form").ok_or("missing editor")?;
-    let fields = find_ascii(&buffer, 120, 32, "Fields").ok_or("missing fields")?;
-    let description =
-        find_ascii(&buffer, 120, 32, "Field guidance").ok_or("missing description")?;
+    let properties =
+        find_ascii(&buffer, 120, 32, "Message Properties").ok_or("missing properties heading")?;
+    let description = find_ascii(&buffer, 120, 32, "Property Description")
+        .ok_or("missing description heading")?;
     let guidance =
         find_ascii(&buffer, 120, 32, "Optional affected area").ok_or("missing guidance")?;
 
-    assert_eq!(fields.1, description.1);
-    assert!(fields.0 < description.0);
-    assert!(edit.1 > fields.1);
-    assert_eq!(edit.0, fields.0);
-    assert_eq!(fields, (0, 3));
-    assert_eq!(description, (48, 3));
+    assert_eq!(properties, (1, 4));
+    assert_eq!(description, (48, 4));
     assert_blank_row(&buffer, 120, 2);
-    assert_blank_row(&buffer, 120, edit.1 - 1);
-    assert_eq!(
-        find_ascii(&buffer, 120, 32, "scope:"),
-        Some((0, edit.1 + 3))
-    );
-    assert_eq!(buffer[(0, fields.1 + 1)].symbol(), "○");
+    assert_eq!(buffer[(0, 3)].symbol(), "┌");
+    assert_eq!(buffer[(47, 3)].symbol(), "┬");
+    assert_eq!(buffer[(119, 3)].symbol(), "┐");
+    assert_eq!(buffer[(0, 5)].symbol(), "├");
+    assert_eq!(buffer[(47, 5)].symbol(), "┼");
+    assert_eq!(buffer[(119, 5)].symbol(), "┤");
+    assert_eq!(buffer[(47, 6)].symbol(), "│");
+    assert_eq!(buffer[(0, 13)].symbol(), "├");
+    assert_eq!(buffer[(47, 13)].symbol(), "┴");
+    assert_eq!(buffer[(119, 13)].symbol(), "┤");
+    assert_eq!(buffer[(0, 28)].symbol(), "├");
+    assert_eq!(buffer[(119, 28)].symbol(), "┤");
+    assert_eq!(buffer[(0, 30)].symbol(), "└");
+    assert_eq!(buffer[(119, 30)].symbol(), "┘");
+    assert_eq!(find_ascii(&buffer, 120, 32, "scope:"), Some((1, 16)));
+    assert_eq!(buffer[(1, 6)].symbol(), "○");
     assert!(guidance.0 >= description.0);
     assert!(guidance.1 > description.1);
     assert!(find_ascii(&buffer, 120, 32, "type(scope):").is_some());
     assert!(find_ascii(&buffer, 120, 32, "col 1/80").is_some());
-    for heading in ["Fields", "Field guidance", "Message form"] {
+    for heading in ["Message Properties", "Property Description"] {
         assert_bold_yellow_heading(&buffer, 120, 32, heading)?;
     }
-    assert_no_box_drawing(&buffer, 120, 32);
+    assert!(find_ascii(&buffer, 120, 32, "Message form").is_none());
+    assert_eq!(wide.composer.editor.lines(), pristine);
+    assert!(!wide.composer.dirty());
     assert_eq!(wide.composer.editor.wrap_mode(), WrapMode::WordOrGlyph);
+
+    let scope = find_ascii(&buffer, 120, 32, "scope:").ok_or("missing scope")?;
+    for column in scope.0 + 7..119 {
+        assert_eq!(buffer[(column, scope.1)].symbol(), "─");
+        assert_eq!(buffer[(column, scope.1)].fg, Color::DarkGray);
+    }
 
     wide.composer.editor.move_cursor(CursorMove::Jump(6, 0));
     let buffer = rendered_buffer(&mut wide, 120, 32)?;
@@ -1346,9 +1391,53 @@ fn composer_layout_uses_spacing_led_context_above_an_unpadded_fixed_wrap_editor(
     assert!(find_ascii(&buffer, 72, 24, "col 1/80").is_some());
     assert_eq!(
         find_ascii(&buffer, 72, 24, "scope:").map(|position| position.0),
-        Some(0)
+        Some(1)
     );
-    assert_no_box_drawing(&buffer, 72, 24);
+    assert_eq!(buffer[(0, 3)].symbol(), "┌");
+    assert_eq!(buffer[(71, 22)].symbol(), "┘");
+
+    let mut boundary = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let buffer = rendered_buffer(&mut boundary, 60, 21)?;
+    assert!(!boundary.too_small);
+    assert_eq!(buffer[(0, 13)].symbol(), "├");
+    assert_eq!(buffer[(0, 17)].symbol(), "├");
+    assert_eq!(buffer[(0, 19)].symbol(), "└");
+    Ok(())
+}
+
+#[test]
+fn decorative_rules_are_box_drawing_chrome_and_preserve_editor_state() -> Result<(), Box<dyn Error>>
+{
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    paste(&mut session, "draft");
+    let document = session.composer.editor.lines().to_vec();
+    let cursor = session.composer.editor.cursor();
+    let buffer = rendered_buffer(&mut session, 120, 40)?;
+
+    assert_eq!(session.composer.editor.lines(), document);
+    assert_eq!(session.composer.editor.cursor(), cursor);
+    let scope = find_ascii(&buffer, 120, 40, "scope:").ok_or("missing scope")?;
+    for column in scope.0 + 7..119 {
+        assert_eq!(buffer[(column, scope.1)].symbol(), "─");
+        assert_ne!(buffer[(column, scope.1)].symbol(), "—");
+    }
+    let body = find_ascii(&buffer, 120, 40, "Message Body").ok_or("missing body")?;
+    assert_eq!(buffer[(0, body.1 - 1)].symbol(), "├");
+    assert!((1..119).all(|column| buffer[(column, body.1 - 1)].symbol() == "─"));
+    assert_eq!(buffer[(119, body.1 - 1)].symbol(), "┤");
+
+    session.composer.editor.move_cursor(CursorMove::Jump(25, 0));
+    let footer_buffer = rendered_buffer(&mut session, 120, 40)?;
+    let footer = find_ascii(&footer_buffer, 120, 40, "Message Footer").ok_or("missing footer")?;
+    assert_eq!(footer_buffer[(0, footer.1 - 1)].symbol(), "├");
+    assert!((1..119).all(|column| footer_buffer[(column, footer.1 - 1)].symbol() == "─"));
+    assert_eq!(footer_buffer[(119, footer.1 - 1)].symbol(), "┤");
+
+    session.composer.editor.move_cursor(CursorMove::Jump(3, 5));
+    let _ = rendered_buffer(&mut session, 72, 24)?;
+    modified_press(&mut session, KeyCode::Char('u'), KeyModifiers::CONTROL);
+    assert_eq!(session.composer.editor.lines()[3], "");
+    assert!(!session.composer.dirty());
     Ok(())
 }
 
@@ -1359,7 +1448,8 @@ fn composer_context_height_hugs_the_taller_of_fields_and_wrapped_guidance()
     let mut short = AuthoringSession::new(&short_definitions, Some(0));
     short.composer.editor.move_cursor(CursorMove::Jump(11, 0));
     let short_buffer = rendered_buffer(&mut short, 60, 32)?;
-    let short_form = assert_bold_yellow_heading(&short_buffer, 60, 32, "Message form")?;
+    let short_separator =
+        find_symbol(&short_buffer, 60, 32, "┴").ok_or("missing short context separator")?;
 
     let long_definitions = vec![guidance_definition(
         "This guidance deliberately wraps across several visual rows so the context group follows its real content height without fixed pane slack.",
@@ -1367,20 +1457,20 @@ fn composer_context_height_hugs_the_taller_of_fields_and_wrapped_guidance()
     let mut long = AuthoringSession::new(&long_definitions, Some(0));
     long.composer.editor.move_cursor(CursorMove::Jump(11, 0));
     let long_buffer = rendered_buffer(&mut long, 60, 32)?;
-    let long_form = assert_bold_yellow_heading(&long_buffer, 60, 32, "Message form")?;
-    let fields = assert_bold_yellow_heading(&long_buffer, 60, 32, "Fields")?;
-    let guidance = assert_bold_yellow_heading(&long_buffer, 60, 32, "Field guidance")?;
+    let long_separator =
+        find_symbol(&long_buffer, 60, 32, "┴").ok_or("missing long context separator")?;
+    let properties = assert_bold_yellow_heading(&long_buffer, 60, 32, "Message Properties")?;
+    let guidance = assert_bold_yellow_heading(&long_buffer, 60, 32, "Property Description")?;
     let guidance_content =
         find_ascii(&long_buffer, 60, 32, "This guidance").ok_or("missing guidance content")?;
 
-    assert!(long_form.1 > short_form.1);
-    assert_eq!(fields, (0, 3));
-    assert_eq!(guidance, (24, 3));
+    assert!(long_separator.1 > short_separator.1);
+    assert_eq!(properties, (1, 4));
+    assert_eq!(guidance, (24, 4));
     assert!(guidance_content.0 >= 24);
-    assert_eq!(guidance_content.1, guidance.1 + 2);
-    assert_blank_row(&long_buffer, 60, long_form.1 - 1);
-    assert_no_box_drawing(&short_buffer, 60, 32);
-    assert_no_box_drawing(&long_buffer, 60, 32);
+    assert_eq!(guidance_content.1, guidance.1 + 3);
+    assert_eq!(long_buffer[(23, long_separator.1)].symbol(), "┴");
+    assert_eq!(short_buffer[(23, short_separator.1)].symbol(), "┴");
     Ok(())
 }
 
@@ -1408,7 +1498,7 @@ fn fields_hud_uses_spaced_content_hugging_columns_and_clips_names_before_require
     ]
     .into_iter()
     .map(|(row, requirement)| {
-        find_ascii_on_row_from_right(&buffer, 48, row, requirement)
+        find_ascii_on_row_from_right(&buffer, 47, row, requirement)
             .ok_or("missing aligned requirement")
     })
     .collect::<Result<Vec<_>, _>>()?;
@@ -1431,12 +1521,12 @@ fn fields_hud_uses_spaced_content_hugging_columns_and_clips_names_before_require
         find_ascii(&buffer, 60, 24, "conditional").ok_or("missing conditional requirement")?;
     assert!(requirement.1 > 5);
     assert!(requirement.0 < 24);
-    assert_eq!(requirement.0, 13);
-    assert_eq!(buffer[(0, requirement.1)].symbol(), "○");
-    assert_eq!(buffer[(1, requirement.1)].symbol(), " ");
+    assert_eq!(requirement.0, 12);
+    assert_eq!(buffer[(1, requirement.1)].symbol(), "○");
     assert_eq!(buffer[(2, requirement.1)].symbol(), " ");
-    assert_eq!(buffer[(3, requirement.1)].symbol(), "c");
-    assert_no_box_drawing(&buffer, 60, 24);
+    assert_eq!(buffer[(3, requirement.1)].symbol(), " ");
+    assert_eq!(buffer[(4, requirement.1)].symbol(), "c");
+    assert_eq!(buffer[(23, requirement.1)].symbol(), "│");
     Ok(())
 }
 
@@ -1449,15 +1539,15 @@ fn narrow_editor_scrolls_until_fixed_width_wrap_then_returns_to_column_one()
     let first_seventy_two = format!("{}01", "0123456789".repeat(7));
     paste(&mut session, &first_seventy_two);
     let buffer = rendered_buffer(&mut session, 72, 24)?;
-    let visible = (0..71)
+    let visible = (1..71)
         .map(|column| buffer[(column, scope.1 + 1)].symbol())
         .collect::<String>();
-    assert_eq!(visible, first_seventy_two[1..]);
+    assert_eq!(visible, format!("{} ", &first_seventy_two[3..]));
     assert!(find_ascii(&buffer, 72, 24, "col 73/80").is_some());
 
     press(&mut session, KeyCode::Left);
     let buffer = rendered_buffer(&mut session, 72, 24)?;
-    assert_eq!(buffer[(0, scope.1 + 1)].symbol(), "0");
+    assert_eq!(buffer[(1, scope.1 + 1)].symbol(), "2");
     assert!(find_ascii(&buffer, 72, 24, "col 72/80").is_some());
     press(&mut session, KeyCode::Right);
 
@@ -1468,7 +1558,7 @@ fn narrow_editor_scrolls_until_fixed_width_wrap_then_returns_to_column_one()
         format!("{first_seventy_two}{}", "x".repeat(9))
     );
     let wrapped_scope = find_ascii(&buffer, 72, 24, "scope:").ok_or("missing scrolled scope")?;
-    assert_eq!(buffer[(0, wrapped_scope.1 + 2)].symbol(), "x");
+    assert_eq!(buffer[(1, wrapped_scope.1 + 2)].symbol(), "x");
     assert!(find_ascii(&buffer, 72, 24, "col 2/80").is_some());
     Ok(())
 }
@@ -1508,7 +1598,7 @@ fn wrapped_and_explicit_lines_keep_a_blank_row_before_the_next_field() -> Result
     let buffer = rendered_buffer(&mut wrapped, 72, 24)?;
     let scope = find_ascii(&buffer, 72, 24, "scope:").ok_or("missing scope")?;
     assert_eq!(wrapped.composer.editor.lines()[5], "description:");
-    assert_blank_row(&buffer, 72, scope.1 + 3);
+    assert_inner_blank_row(&buffer, 72, scope.1 + 3);
 
     let mut explicit = AuthoringSession::new(built_in_commit_types(), Some(0));
     explicit
@@ -1521,7 +1611,7 @@ fn wrapped_and_explicit_lines_keep_a_blank_row_before_the_next_field() -> Result
     let intent = find_ascii(&buffer, 120, 40, "intent:").ok_or("missing intent")?;
     let behavior = find_ascii(&buffer, 120, 40, "behavior:").ok_or("missing behavior")?;
     assert_eq!(behavior.1, intent.1 + 4);
-    assert_blank_row(&buffer, 120, intent.1 + 3);
+    assert_inner_blank_row(&buffer, 120, intent.1 + 3);
     Ok(())
 }
 
