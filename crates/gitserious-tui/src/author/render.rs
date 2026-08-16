@@ -449,30 +449,34 @@ fn render_document_rules(
         if horizontal_offset == 0
             && let Some(heading) = field_headings
                 .iter()
-                .find(|heading| highlighted_heading_at(virtual_buffer, row, heading))
+                .find(|heading| bold_heading_at(virtual_buffer, row, heading))
         {
+            let visible_heading = heading.trim_end_matches(':');
             let heading_width =
-                u16::try_from(Line::from(heading.as_str()).width()).unwrap_or(u16::MAX);
-            let start = area.x.saturating_add(heading_width).saturating_add(1);
+                u16::try_from(Line::from(visible_heading).width()).unwrap_or(u16::MAX);
+            let colon = area.x.saturating_add(heading_width);
+            let colon_style = frame.buffer_mut()[(colon, area.y + row)].style();
+            frame.buffer_mut()[(colon, area.y + row)]
+                .set_symbol(" ")
+                .set_style(colon_style);
+            let start = colon.saturating_add(1);
             render_inner_rule(frame, start, area.right(), area.y + row);
         }
         if row > 0
             && ["Message Body", "Message Footer"]
                 .iter()
-                .any(|heading| highlighted_heading_at(virtual_buffer, row, heading))
+                .any(|heading| bold_heading_at(virtual_buffer, row, heading))
         {
             render_frame_rule(frame, outer, area.y + row - 1, None);
         }
     }
 }
 
-fn highlighted_heading_at(buffer: &Buffer, row: u16, heading: &str) -> bool {
+fn bold_heading_at(buffer: &Buffer, row: u16, heading: &str) -> bool {
     heading.chars().enumerate().all(|(column, character)| {
         u16::try_from(column).ok().is_some_and(|column| {
             let cell = &buffer[(column, row)];
-            cell.symbol() == character.to_string()
-                && cell.fg == Color::Yellow
-                && cell.modifier.contains(Modifier::BOLD)
+            cell.symbol() == character.to_string() && cell.modifier.contains(Modifier::BOLD)
         })
     })
 }
