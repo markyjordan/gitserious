@@ -955,9 +955,7 @@ impl<'a> AuthoringSession<'a> {
         if self.stage != Stage::Confirm || mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return None;
         }
-        let Some(buttons) = self.confirmation_buttons else {
-            return None;
-        };
+        let buttons = self.confirmation_buttons?;
         if contains(buttons.discard, mouse.column, mouse.row) {
             self.confirm_discard()
         } else if contains(buttons.keep_editing, mouse.column, mouse.row) {

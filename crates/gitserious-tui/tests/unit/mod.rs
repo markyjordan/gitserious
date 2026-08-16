@@ -556,11 +556,17 @@ fn breaking_change_footer_is_optional_multiline_and_normalizes_scope_only_in_out
     let expected = "feat(tui-editor)!: ship editor\n\nintent:\nreduce cost\n\nbehavior:\ncompose once\n\nBREAKING CHANGE: remove old fields\nuse fixed form\n";
     assert_eq!(review.message.as_str(), expected);
     assert_eq!(
-        review.draft.scope().map(|scope| scope.as_str()),
+        review
+            .draft
+            .scope()
+            .map(gitserious_core::CommitScope::as_str),
         Some("tui editor")
     );
     assert_eq!(
-        review.draft.breaking_change().map(|value| value.as_str()),
+        review
+            .draft
+            .breaking_change()
+            .map(gitserious_core::PropertyValue::as_str),
         Some("remove old fields\nuse fixed form")
     );
 
