@@ -11,7 +11,7 @@ use gitserious_app::{
 };
 use gitserious_cli::{CommitAdapters, run_from_with_commit};
 use gitserious_core::{
-    AuthoredProperty, CommitDraft, CommitMessage, CommitSubject, CommitTypeDefinition,
+    AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
     CommitTypeId, PropertyRequirement, PropertyValue, PropertyValues, built_in_commit_types,
 };
 
@@ -175,10 +175,11 @@ fn valid_draft(definition: &CommitTypeDefinition) -> Result<CommitDraft, Box<dyn
         .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
     Ok(CommitDraft::new(
         definition.id().clone(),
-        None,
+        Some(CommitScope::new("tui editor")?),
         CommitSubject::new("expose command")?,
         properties,
-    )?)
+    )?
+    .with_breaking_change(PropertyValue::new("replace CLI contract")?))
 }
 
 struct Harness {
@@ -243,7 +244,7 @@ fn type_option_is_a_preselection_and_forwards_exact_git_output() -> Result<(), B
     assert_eq!(harness.writer.calls.get(), 1);
     assert_eq!(
         harness.writer.messages.borrow()[0],
-        "feat: expose command\n\nintent:\nauthored intent\n\nbehavior:\nauthored behavior\n"
+        "feat(tui-editor)!: expose command\n\nintent:\nauthored intent\n\nbehavior:\nauthored behavior\n\nBREAKING CHANGE: replace CLI contract\n"
     );
     Ok(())
 }
