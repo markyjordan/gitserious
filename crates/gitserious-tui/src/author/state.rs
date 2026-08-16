@@ -452,11 +452,46 @@ fn skip_noneditable_cursor(
 }
 
 fn reserved_separator(lines: &[String], line: usize, definition: &CommitTypeDefinition) -> bool {
-    lines.get(line).is_some_and(String::is_empty)
-        && (line + 1 == lines.len()
-            || lines
-                .get(line + 1)
-                .is_some_and(|next| structural_marker(next, definition).is_some()))
+    if !lines.get(line).is_some_and(String::is_empty) {
+        return false;
+    }
+    let Some((heading_line, marker)) =
+        lines[..line]
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, candidate)| {
+                structural_marker(candidate, definition).map(|marker| (index, marker))
+            })
+    else {
+        return false;
+    };
+    let next_content = lines[line + 1..]
+        .iter()
+        .enumerate()
+        .find(|(_, candidate)| !candidate.is_empty());
+    let (boundary_line, next_marker) = match next_content {
+        Some((offset, candidate)) => {
+            let Some(marker) = structural_marker(candidate, definition) else {
+                return false;
+            };
+            (line.saturating_add(offset).saturating_add(1), Some(marker))
+        }
+        None => (lines.len(), None),
+    };
+    match marker {
+        DocumentMarker::Field(_) => {
+            let reserved_rows = if matches!(next_marker, Some(DocumentMarker::Section(_))) {
+                2
+            } else {
+                1
+            };
+            line > heading_line.saturating_add(1)
+                && boundary_line.saturating_sub(line) <= reserved_rows
+        }
+        DocumentMarker::Section(MessageSection::Body | MessageSection::Footer) => true,
+        DocumentMarker::Section(MessageSection::Subject) => false,
+    }
 }
 
 fn scaffold_lines(definition: &CommitTypeDefinition) -> Vec<String> {
