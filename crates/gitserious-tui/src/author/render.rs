@@ -5,7 +5,7 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, Widget, Wrap,
+    Block, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, Widget, Wrap,
 };
 use tui_textarea::{TextArea, WrapMode};
 
@@ -15,12 +15,29 @@ use super::state::{
 
 const MINIMUM_WIDTH: u16 = 60;
 const MINIMUM_HEIGHT: u16 = 18;
+const COMPOSER_MINIMUM_HEIGHT: u16 = 21;
 const MAX_EDITOR_INNER_WIDTH: u16 = 80;
 const FIELD_COLUMN_SPACING: u16 = 2;
 const FIELD_MARKER_WIDTH: u16 = 1;
 const FIELD_REQUIREMENT_WIDTH: u16 = 11;
 const MINIMUM_EDITOR_HEIGHT: u16 = 3;
 const TERMINAL_EDGE_CURSOR: &str = "█";
+const FRAME_FIXED_ROWS: u16 = 7;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ComposerFrame {
+    outer: Rect,
+    properties_heading: Rect,
+    description_heading: Rect,
+    properties: Rect,
+    description: Rect,
+    editor: Rect,
+    validation: Rect,
+    split_x: u16,
+    heading_separator_y: u16,
+    context_separator_y: u16,
+    validation_separator_y: u16,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CursorStatus {
@@ -30,7 +47,12 @@ struct CursorStatus {
 
 pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) {
     let area = frame.area();
-    session.too_small = area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT;
+    let minimum_height = if session.visible_stage() == Stage::Compose {
+        COMPOSER_MINIMUM_HEIGHT
+    } else {
+        MINIMUM_HEIGHT
+    };
+    session.too_small = area.width < MINIMUM_WIDTH || area.height < minimum_height;
     if session.too_small {
         if session.stage == Stage::Confirm {
             render_centered_notice(
@@ -101,19 +123,10 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
 }
 
 fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
-    let desired_context_height = context_height(area, session);
-    let maximum_context_height = area
-        .height
-        .saturating_sub(2 + 1 + 1 + 1 + MINIMUM_EDITOR_HEIGHT + 1 + 1);
-    let context_height = desired_context_height.min(maximum_context_height).max(1);
     let sections = Layout::vertical([
         Constraint::Length(2),
         Constraint::Length(1),
-        Constraint::Length(context_height),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(MINIMUM_EDITOR_HEIGHT),
-        Constraint::Length(1),
+        Constraint::Min(1),
         Constraint::Length(1),
     ])
     .split(area);
@@ -131,20 +144,33 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         header[1],
     );
 
-    render_field_context(frame, sections[2], session);
-    render_section_heading(frame, sections[4], "Message form");
-    let cursor_status = render_document_editor(frame, sections[5], session);
+    let composer_frame = composer_frame(sections[2], session);
+    render_composer_frame(frame, composer_frame);
+    render_section_heading(
+        frame,
+        composer_frame.properties_heading,
+        "Message Properties",
+    );
+    render_section_heading(
+        frame,
+        composer_frame.description_heading,
+        "Property Description",
+    );
+    render_field_hud(frame, composer_frame.properties, session);
+    render_field_description(frame, composer_frame.description, session);
+    let cursor_status =
+        render_document_editor(frame, composer_frame.editor, composer_frame.outer, session);
 
     let help: &[_] = &[("↑/↓", "move"), ("esc", "back"), ("ctrl+s", "review")];
     if let Some(issue) = session.composer.issues.first() {
         frame.render_widget(
             Paragraph::new(issue.message.as_str()).style(Style::default().fg(Color::Red)),
-            sections[6],
+            composer_frame.validation,
         );
     }
     render_navigation_row(
         frame,
-        sections[7],
+        sections[3],
         help,
         Some(&format!(
             "col {}/{}",
@@ -153,11 +179,83 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     );
 }
 
-fn render_field_context(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
-    let sections =
-        Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(area);
-    render_field_hud(frame, sections[0], session);
-    render_field_description(frame, sections[1], session);
+fn composer_frame(area: Rect, session: &AuthoringSession<'_>) -> ComposerFrame {
+    let inner = Rect::new(
+        area.x.saturating_add(1),
+        area.y.saturating_add(1),
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2),
+    );
+    let context_width = inner.width.saturating_sub(1);
+    let properties_width = context_width.saturating_mul(40) / 100;
+    let description_width = context_width.saturating_sub(properties_width);
+    let split_x = inner.x.saturating_add(properties_width);
+    let properties_heading = Rect::new(inner.x, inner.y, properties_width, 1);
+    let description_heading = Rect::new(split_x.saturating_add(1), inner.y, description_width, 1);
+    let heading_separator_y = inner.y.saturating_add(1);
+    let desired_context_height = context_content_height(description_width, session);
+    let maximum_context_height = area
+        .height
+        .saturating_sub(FRAME_FIXED_ROWS + MINIMUM_EDITOR_HEIGHT);
+    let context_height = desired_context_height.min(maximum_context_height).max(1);
+    let context_y = heading_separator_y.saturating_add(1);
+    let properties = Rect::new(inner.x, context_y, properties_width, context_height);
+    let description = Rect::new(
+        split_x.saturating_add(1),
+        context_y,
+        description_width,
+        context_height,
+    );
+    let context_separator_y = context_y.saturating_add(context_height);
+    let validation_separator_y = area.bottom().saturating_sub(3);
+    let editor_y = context_separator_y.saturating_add(1);
+    let editor = Rect::new(
+        inner.x,
+        editor_y,
+        inner.width,
+        validation_separator_y.saturating_sub(editor_y),
+    );
+    let validation = Rect::new(
+        inner.x,
+        validation_separator_y.saturating_add(1),
+        inner.width,
+        1,
+    );
+    ComposerFrame {
+        outer: area,
+        properties_heading,
+        description_heading,
+        properties,
+        description,
+        editor,
+        validation,
+        split_x,
+        heading_separator_y,
+        context_separator_y,
+        validation_separator_y,
+    }
+}
+
+fn render_composer_frame(frame: &mut Frame<'_>, composer: ComposerFrame) {
+    let style = frame_style();
+    frame.render_widget(Block::bordered().border_style(style), composer.outer);
+    set_rule_cell(frame, composer.split_x, composer.outer.y, "┬", style);
+    for y in composer.outer.y.saturating_add(1)..composer.context_separator_y {
+        set_rule_cell(frame, composer.split_x, y, "│", style);
+    }
+    render_frame_rule(
+        frame,
+        composer.outer,
+        composer.heading_separator_y,
+        Some((composer.split_x, "┼")),
+    );
+    render_frame_rule(
+        frame,
+        composer.outer,
+        composer.context_separator_y,
+        Some((composer.split_x, "┴")),
+    );
+    render_frame_rule(frame, composer.outer, composer.validation_separator_y, None);
 }
 
 fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
@@ -201,8 +299,6 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
             ])
         })
         .collect::<Vec<_>>();
-    let sections = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
-    render_section_heading(frame, sections[0], "Fields");
     frame.render_widget(
         Table::new(
             rows,
@@ -213,7 +309,7 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
             ],
         )
         .column_spacing(FIELD_COLUMN_SPACING),
-        sections[1],
+        area,
     );
 }
 
@@ -229,8 +325,6 @@ fn render_field_description(frame: &mut Frame<'_>, area: Rect, session: &Authori
         },
         |kind| field_metadata(kind, &definition),
     );
-    let sections = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
-    render_section_heading(frame, sections[0], "Field guidance");
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled(
@@ -240,13 +334,14 @@ fn render_field_description(frame: &mut Frame<'_>, area: Rect, session: &Authori
             Line::from(description),
         ])
         .wrap(Wrap { trim: true }),
-        sections[1],
+        area,
     );
 }
 
 fn render_document_editor(
     frame: &mut Frame<'_>,
     area: Rect,
+    outer: Rect,
     session: &mut AuthoringSession<'_>,
 ) -> CursorStatus {
     session.composer.editor.remove_block();
@@ -278,6 +373,14 @@ fn render_document_editor(
             frame.buffer_mut()[destination] = virtual_buffer[source].clone();
         }
     }
+    render_document_rules(
+        frame,
+        area,
+        outer,
+        &virtual_buffer,
+        horizontal_offset,
+        session.definition(),
+    );
     if let Some(position) = cursor_position
         && let Some(viewport_column) = position.x.checked_sub(horizontal_offset)
         && viewport_column < viewport_width
@@ -302,6 +405,85 @@ fn render_document_editor(
         column,
         wrap_width: MAX_EDITOR_INNER_WIDTH,
     }
+}
+
+fn render_document_rules(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    outer: Rect,
+    virtual_buffer: &Buffer,
+    horizontal_offset: u16,
+    definition: &CommitTypeDefinition,
+) {
+    let field_headings = ["scope:".to_owned(), "description:".to_owned()]
+        .into_iter()
+        .chain(
+            definition
+                .properties()
+                .iter()
+                .map(|property| format!("{}:", property.key())),
+        )
+        .collect::<Vec<_>>();
+    for row in 0..area.height {
+        if horizontal_offset == 0
+            && let Some(heading) = field_headings
+                .iter()
+                .find(|heading| highlighted_heading_at(virtual_buffer, row, heading))
+        {
+            let heading_width =
+                u16::try_from(Line::from(heading.as_str()).width()).unwrap_or(u16::MAX);
+            let start = area.x.saturating_add(heading_width).saturating_add(1);
+            render_inner_rule(frame, start, area.right(), area.y + row);
+        }
+        if row > 0
+            && ["Message Body", "Message Footer"]
+                .iter()
+                .any(|heading| highlighted_heading_at(virtual_buffer, row, heading))
+        {
+            render_frame_rule(frame, outer, area.y + row - 1, None);
+        }
+    }
+}
+
+fn highlighted_heading_at(buffer: &Buffer, row: u16, heading: &str) -> bool {
+    heading.chars().enumerate().all(|(column, character)| {
+        u16::try_from(column).ok().is_some_and(|column| {
+            let cell = &buffer[(column, row)];
+            cell.symbol() == character.to_string()
+                && cell.fg == Color::Yellow
+                && cell.modifier.contains(Modifier::BOLD)
+        })
+    })
+}
+
+fn render_inner_rule(frame: &mut Frame<'_>, start: u16, end: u16, y: u16) {
+    let style = frame_style();
+    for x in start..end {
+        set_rule_cell(frame, x, y, "─", style);
+    }
+}
+
+fn render_frame_rule(
+    frame: &mut Frame<'_>,
+    outer: Rect,
+    y: u16,
+    intersection: Option<(u16, &'static str)>,
+) {
+    let style = frame_style();
+    set_rule_cell(frame, outer.x, y, "├", style);
+    for x in outer.x.saturating_add(1)..outer.right().saturating_sub(1) {
+        set_rule_cell(frame, x, y, "─", style);
+    }
+    if let Some((x, symbol)) = intersection {
+        set_rule_cell(frame, x, y, symbol, style);
+    }
+    set_rule_cell(frame, outer.right().saturating_sub(1), y, "┤", style);
+}
+
+fn set_rule_cell(frame: &mut Frame<'_>, x: u16, y: u16, symbol: &'static str, style: Style) {
+    frame.buffer_mut()[(x, y)]
+        .set_symbol(symbol)
+        .set_style(style);
 }
 
 fn subject_context_fits(editor: &TextArea<'_>, viewport_height: u16) -> bool {
@@ -420,12 +602,9 @@ fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String
     }
 }
 
-fn context_height(area: Rect, session: &AuthoringSession<'_>) -> u16 {
-    let columns = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(Rect::new(0, 0, area.width, 1));
-    let hud_height = u16::try_from(session.composer.hud_fields(session.definition()).len())
-        .unwrap_or(u16::MAX)
-        .saturating_add(1);
+fn context_content_height(description_width: u16, session: &AuthoringSession<'_>) -> u16 {
+    let hud_height =
+        u16::try_from(session.composer.hud_fields(session.definition()).len()).unwrap_or(u16::MAX);
     let definition = session.definition().clone();
     let (title, description) = session.composer.current_field(&definition).map_or_else(
         || {
@@ -436,9 +615,8 @@ fn context_height(area: Rect, session: &AuthoringSession<'_>) -> u16 {
         },
         |kind| field_metadata(kind, &definition),
     );
-    let guidance_height = wrapped_line_count(title.trim(), columns[1].width)
-        .saturating_add(wrapped_line_count(&description, columns[1].width))
-        .saturating_add(1);
+    let guidance_height = wrapped_line_count(title.trim(), description_width)
+        .saturating_add(wrapped_line_count(&description, description_width));
     hud_height.max(guidance_height)
 }
 
@@ -469,6 +647,10 @@ fn section_heading_style() -> Style {
     Style::default()
         .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD)
+}
+
+fn frame_style() -> Style {
+    Style::default().fg(Color::DarkGray)
 }
 
 fn render_section_heading(frame: &mut Frame<'_>, area: Rect, title: &'static str) {
