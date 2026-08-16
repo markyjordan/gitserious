@@ -47,6 +47,10 @@ struct CursorStatus {
 
 pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) {
     let area = frame.area();
+    frame.render_widget(
+        Block::default().style(Style::default().bg(Color::Black)),
+        area,
+    );
     let minimum_height = if session.visible_stage() == Stage::Compose {
         COMPOSER_MINIMUM_HEIGHT
     } else {
@@ -60,17 +64,18 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
                 area,
                 "Confirm discard",
                 "Discard this draft?",
-                Some("y: discard · Enter/n: keep editing"),
+                Some("y: discard | enter/n: keep editing"),
             );
         } else {
             render_centered_notice(
                 frame,
                 area,
                 "Terminal too small",
-                "Resize or press Esc/q to cancel",
+                "Resize or press esc/q to cancel",
                 None,
             );
         }
+        normalize_background(frame, area);
         return;
     }
 
@@ -82,6 +87,18 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
     }
     if session.stage == Stage::Confirm {
         render_confirmation(frame, area, session);
+    }
+    normalize_background(frame, area);
+}
+
+fn normalize_background(frame: &mut Frame<'_>, area: Rect) {
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            let cell = &mut frame.buffer_mut()[(x, y)];
+            if cell.bg != Color::Yellow {
+                cell.set_bg(Color::Black);
+            }
+        }
     }
 }
 
@@ -117,7 +134,7 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
     render_navigation_row(
         frame,
         sections[3],
-        &[("↑/↓", "move"), ("Enter", "select"), ("Esc/q", "cancel")],
+        &[("↑/↓", "move"), ("enter", "select"), ("esc/q", "cancel")],
         None,
     );
 }
@@ -529,8 +546,8 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
         frame,
         sections[4],
         &[
-            ("Enter", "commit"),
-            ("Esc", "edit"),
+            ("enter", "commit"),
+            ("esc", "edit"),
             ("↑/↓", "scroll"),
             ("q/ctrl+c", "cancel"),
         ],
@@ -548,7 +565,7 @@ fn render_confirmation(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSes
         area,
         "Confirm discard",
         message,
-        Some("y: discard · Enter/Esc/n: keep editing"),
+        Some("y: discard | enter/esc/n: keep editing"),
     );
 }
 
@@ -682,6 +699,10 @@ fn render_centered_notice(
     let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
     let popup = centered_rect(54, height, area);
     frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Block::default().style(Style::default().bg(Color::Black)),
+        popup,
+    );
     frame.render_widget(Paragraph::new(lines).centered(), popup);
 }
 
@@ -715,7 +736,7 @@ fn navigation_line<'a>(hints: &'a [(&'a str, &'a str)]) -> Line<'a> {
     let mut spans = Vec::with_capacity(hints.len().saturating_mul(3));
     for (index, (key, action)) in hints.iter().copied().enumerate() {
         if index > 0 {
-            spans.push(Span::raw(" · "));
+            spans.push(Span::raw(" | "));
         }
         spans.push(Span::styled(key, navigation_key_style()));
         spans.push(Span::raw(": "));
