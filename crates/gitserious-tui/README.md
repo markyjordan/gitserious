@@ -24,11 +24,13 @@ Each view starts with a borderless one-line header: `Select commit type`,
 directly below its header. A preselected commit type starts directly at
 `Step 2/3`.
 
-Every view is painted on a black background. The picker, review, discard
-confirmation, and too-small fallback retain their borderless, spacing-led
-hierarchy. Bold yellow headings sit directly above unpadded content, and one
-blank row separates major groups. Discard confirmation is a centered five-line
-group; the too-small fallback uses the same heading-and-content treatment.
+Every view is painted on a true `#000000` background. The picker and composer
+use dark-gray Unicode frames inset one cell from each terminal edge. Their
+content starts one cell inside each border, matching the outer gutter. The
+picker frame begins directly below its header; the composer frame begins
+directly below `Type: <type>`. Review, discard confirmation, and the too-small
+fallback remain borderless. Discard confirmation is a centered five-line group;
+the too-small fallback uses the same heading-and-content treatment.
 
 `gitserious commit --type <COMMIT TYPE>` preselects the type and starts in the
 composer. Both forms require interactive standard input and output. There is no
@@ -38,13 +40,15 @@ The composer presents one prepopulated document as three immutable structural
 sections. `Message Subject` contains optional `scope` and required `description`
 fields; `Message Body` contains the selected type's schema-defined properties;
 and `Message Footer` reserves a distinct boundary for future footer-specific
-properties. Section and field headings are immutable. Values are authored
-beneath field headings without traversing separate controls. The cursor starts
-in the scope value and skips structural headings and reserved separators. Scope
-and description accept one authored line; schema properties remain multiline.
-Blank nonrequired fields are omitted, while blank required fields block review.
-The core domain retains the Conventional Commit subject primitive internally;
-`description` is the adapter's user-facing vocabulary.
+properties. Section and field headings are immutable. The form hides the
+scaffold's internal heading colons and displays each field as a bold neutral
+label followed by a dark-gray rule. Values are authored beneath field headings
+without traversing separate controls. The cursor starts in the scope value and
+skips structural headings and reserved separators. Scope and description accept
+one authored line; schema properties remain multiline. Blank nonrequired fields
+are omitted, while blank required fields block review. The core domain retains
+the Conventional Commit subject primitive internally; `description` is the
+adapter's user-facing vocabulary.
 
 Step 2 places `Message Properties`, `Property Description`, the editor, and its
 validation row inside one dark-gray Unicode frame. The header and type metadata
@@ -53,8 +57,10 @@ properties HUD and contextual description use a 40/60 split with one vertical
 divider. The HUD tracks complete, incomplete, and invalid values. Its field-name
 column hugs the widest visible name and leaves a two-cell gap between internal
 table columns so requirement labels remain distinct, while long names clip
-before those labels. The shared context area takes the height of whichever side
-has more real content: the HUD rows or the wrapped description. Scope and
+before those labels. Rows alternate between `#000000` and `#101010`; the current
+property uses a full black-on-yellow row while its status marker retains its
+semantic color. The shared context area takes the height of whichever side has
+more real content: the HUD rows or the wrapped description. Scope and
 description guidance illustrates `type(scope): description`, including the
 scope-free `type: description` form. The composer requires at least 21 terminal
 rows so the context, three-row minimum editor, validation row, and separators
@@ -63,16 +69,22 @@ remain usable.
 The `Compose commit message` view always edits an 80-column virtual surface. If
 the framed editor is narrower, it follows the cursor horizontally instead of
 wrapping early, then returns to column 1 when a word or glyph soft-wraps at
-column 80. Immutable field labels are followed by a box-drawing rule that
-reaches the frame's right inner edge. Full-width rules introduce `Message Body`
-and `Message Footer`. These rules are render-only layout chrome, use `─`
-(`U+2500`) rather than em dashes, and never enter the authored document or Git
-message. The highlighted status strip reports `col N/80`, separated from the
-key hints by `▌`. `ctrl+s` compiles the form into the exact canonical message
-shown during review. Compilation removes trailing whitespace from every encoded
-line without changing the editor document or intentional leading whitespace.
-Property values are rendered beneath their headings without automatic
-indentation.
+column 80. The rightmost inner editor column is reserved for an always-visible
+scrollbar with a dark-gray `│` track and yellow `┃` thumb. Its thumb fills the
+track when all content fits and follows the fixed-width soft-wrapped document
+when it overflows. Field rules stop before that reserved column. Full-width
+rules introduce `Message Body` and `Message Footer`. These rules are render-only
+layout chrome, use `─` (`U+2500`) rather than em dashes, and never enter the
+authored document or Git message. `Message Subject`, `Message Body`, and
+`Message Footer` remain the only yellow editor headings.
+
+The fixed validation row shows red errors on the left and the right-aligned
+`col N/80` status on the right, clipping long errors before the status. The
+yellow navigation strip contains only its pipe-delimited key hints. `ctrl+s`
+compiles the form into the exact canonical message shown during review.
+Compilation removes trailing whitespace from every encoded line without
+changing the editor document or intentional leading whitespace. Property
+values are rendered beneath their headings without automatic indentation.
 
 | Context | Controls |
 | --- | --- |
@@ -89,13 +101,13 @@ on immutable headers or reserved separators. `enter` advances from scope or
 description and skips a blank property; inside a populated property it inserts a
 newline normally. The final blank property does not cycle back to scope.
 
-Explicit property lines join normally with Backspace or Delete, while a
-reserved blank row always separates authored text—including soft wraps—from the
-next immutable heading. The cursor uses a visible cell without underlining the
-input line. A blank cursor at terminal column zero uses a one-cell foreground
-block so terminal background bleed cannot make it appear wider. Navigation
-hints at the bottom of each terminal view use a highlighted strip, bold
-`key: action` pairs, ` | ` separators, and lowercase key names for quick
-scanning. The validation row above the strip stays empty until an attempted
-review reports an error. Dirty-draft confirmation centers its bold heading,
-question, and controls as a borderless group.
+Explicit property lines join normally with Backspace or Delete. Each field has
+one empty value row and one reserved separator row; description and the final
+body property include an additional structural row consumed by their following
+section divider. The cursor uses a visible cell without underlining the input
+line. A blank cursor at terminal column zero uses a one-cell foreground block
+so terminal background bleed cannot make it appear wider. Navigation hints at
+the bottom of each terminal view use a highlighted strip, bold `key: action`
+pairs, ` | ` separators, and lowercase key names for quick scanning.
+Dirty-draft confirmation centers its bold heading, question, and controls as a
+borderless group.

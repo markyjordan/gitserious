@@ -5,9 +5,10 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, Widget, Wrap,
+    Block, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Scrollbar, ScrollbarOrientation,
+    ScrollbarState, Table, Widget, Wrap,
 };
-use tui_textarea::{TextArea, WrapMode};
+use tui_textarea::{CursorMove, TextArea, WrapMode};
 
 use super::state::{
     AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, SCOPE_VALUE_LINE, Stage,
@@ -16,6 +17,8 @@ use super::state::{
 const MINIMUM_WIDTH: u16 = 60;
 const MINIMUM_HEIGHT: u16 = 18;
 const COMPOSER_MINIMUM_HEIGHT: u16 = 21;
+const JET_BLACK: Color = Color::Rgb(0, 0, 0);
+const ZEBRA_BACKGROUND: Color = Color::Rgb(16, 16, 16);
 const MAX_EDITOR_INNER_WIDTH: u16 = 80;
 const FIELD_COLUMN_SPACING: u16 = 2;
 const FIELD_MARKER_WIDTH: u16 = 1;
@@ -43,14 +46,14 @@ struct ComposerFrame {
 struct CursorStatus {
     column: u16,
     wrap_width: u16,
+    content_rows: u16,
+    viewport_top: u16,
+    viewport_height: u16,
 }
 
 pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) {
     let area = frame.area();
-    frame.render_widget(
-        Block::default().style(Style::default().bg(Color::Black)),
-        area,
-    );
+    frame.render_widget(Block::default().style(Style::default().bg(JET_BLACK)), area);
     let minimum_height = if session.visible_stage() == Stage::Compose {
         COMPOSER_MINIMUM_HEIGHT
     } else {
@@ -95,8 +98,8 @@ fn normalize_background(frame: &mut Frame<'_>, area: Rect) {
     for y in area.y..area.bottom() {
         for x in area.x..area.right() {
             let cell = &mut frame.buffer_mut()[(x, y)];
-            if cell.bg != Color::Yellow {
-                cell.set_bg(Color::Black);
+            if matches!(cell.bg, Color::Reset | Color::Black) {
+                cell.set_bg(JET_BLACK);
             }
         }
     }
@@ -105,12 +108,19 @@ fn normalize_background(frame: &mut Frame<'_>, area: Rect) {
 fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
     let sections = Layout::vertical([
         Constraint::Length(1),
-        Constraint::Length(1),
         Constraint::Min(1),
         Constraint::Length(1),
     ])
     .split(area);
     render_stage_header(frame, sections[0], "Select commit type", 1);
+    let outer = inset_horizontally(sections[1], 1);
+    let list_area = Rect::new(
+        outer.x.saturating_add(1),
+        outer.y.saturating_add(1),
+        outer.width.saturating_sub(2),
+        outer.height.saturating_sub(2),
+    );
+    frame.render_widget(Block::bordered().border_style(frame_style()), outer);
     let items = session
         .definitions
         .iter()
@@ -130,19 +140,17 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
         .highlight_style(navigation_key_style());
     let mut state = ListState::default();
     state.select(Some(session.selected_type));
-    frame.render_stateful_widget(list, sections[2], &mut state);
+    frame.render_stateful_widget(list, list_area, &mut state);
     render_navigation_row(
         frame,
-        sections[3],
+        sections[2],
         &[("↑/↓", "move"), ("enter", "select"), ("esc/q", "cancel")],
-        None,
     );
 }
 
 fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
     let sections = Layout::vertical([
         Constraint::Length(2),
-        Constraint::Length(1),
         Constraint::Min(1),
         Constraint::Length(1),
     ])
@@ -161,7 +169,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         header[1],
     );
 
-    let composer_frame = composer_frame(sections[2], session);
+    let composer_frame = composer_frame(inset_horizontally(sections[1], 1), session);
     render_composer_frame(frame, composer_frame);
     render_section_heading(
         frame,
@@ -175,25 +183,30 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     );
     render_field_hud(frame, composer_frame.properties, session);
     render_field_description(frame, composer_frame.description, session);
+    let editor_content = Rect::new(
+        composer_frame.editor.x,
+        composer_frame.editor.y,
+        composer_frame.editor.width.saturating_sub(1),
+        composer_frame.editor.height,
+    );
+    let scrollbar_area = Rect::new(
+        composer_frame.editor.right().saturating_sub(1),
+        composer_frame.editor.y,
+        1,
+        composer_frame.editor.height,
+    );
     let cursor_status =
-        render_document_editor(frame, composer_frame.editor, composer_frame.outer, session);
+        render_document_editor(frame, editor_content, composer_frame.outer, session);
+    render_editor_scrollbar(frame, scrollbar_area, cursor_status);
 
     let help: &[_] = &[("↑/↓", "move"), ("esc", "back"), ("ctrl+s", "review")];
-    if let Some(issue) = session.composer.issues.first() {
-        frame.render_widget(
-            Paragraph::new(issue.message.as_str()).style(Style::default().fg(Color::Red)),
-            composer_frame.validation,
-        );
-    }
-    render_navigation_row(
+    render_validation_row(
         frame,
-        sections[3],
-        help,
-        Some(&format!(
-            "col {}/{}",
-            cursor_status.column, cursor_status.wrap_width
-        )),
+        composer_frame.validation,
+        session.composer.issues.first(),
+        cursor_status,
     );
+    render_navigation_row(frame, sections[2], help);
 }
 
 fn composer_frame(area: Rect, session: &AuthoringSession<'_>) -> ComposerFrame {
@@ -293,7 +306,8 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
         .min(area.width.saturating_sub(fixed_width).max(1));
     let rows = fields
         .into_iter()
-        .map(|field| {
+        .enumerate()
+        .map(|(index, field)| {
             let marker = match field.status {
                 FieldStatus::Invalid => Cell::from("!").style(Style::default().fg(Color::Red)),
                 FieldStatus::Complete => Cell::from("✓").style(Style::default().fg(Color::Green)),
@@ -301,19 +315,17 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
                     Cell::from("○").style(Style::default().fg(Color::DarkGray))
                 }
             };
-            let style = if current == Some(field.id) {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
+            let row_style = if current == Some(field.id) {
+                navigation_key_style()
             } else {
-                Style::default()
+                Style::default().bg(if index % 2 == 0 {
+                    JET_BLACK
+                } else {
+                    ZEBRA_BACKGROUND
+                })
             };
             let (name, requirement) = field_columns(field.id, definition);
-            Row::new(vec![
-                marker,
-                Cell::from(name).style(style),
-                Cell::from(requirement).style(style),
-            ])
+            Row::new(vec![marker, Cell::from(name), Cell::from(requirement)]).style(row_style)
         })
         .collect::<Vec<_>>();
     frame.render_widget(
@@ -387,7 +399,14 @@ fn render_document_editor(
         for viewport_column in 0..viewport_width {
             let source = (horizontal_offset + viewport_column, row);
             let destination = (area.x + viewport_column, area.y + row);
-            frame.buffer_mut()[destination] = virtual_buffer[source].clone();
+            let mut cell = virtual_buffer[source].clone();
+            let remaining_width = viewport_width.saturating_sub(viewport_column);
+            if u16::try_from(Line::from(cell.symbol()).width()).unwrap_or(u16::MAX)
+                > remaining_width
+            {
+                cell.set_symbol(" ");
+            }
+            frame.buffer_mut()[destination] = cell;
         }
     }
     render_document_rules(
@@ -421,7 +440,74 @@ fn render_document_editor(
     CursorStatus {
         column,
         wrap_width: MAX_EDITOR_INNER_WIDTH,
+        content_rows: session
+            .composer
+            .editor
+            .measure(MAX_EDITOR_INNER_WIDTH)
+            .content_rows,
+        viewport_top: absolute_viewport_top(
+            &session.composer.editor,
+            cursor_position.map_or(0, |position| position.y),
+        ),
+        viewport_height: area.height,
     }
+}
+
+fn absolute_viewport_top(editor: &TextArea<'_>, visible_cursor_row: u16) -> u16 {
+    let mut top_reset = editor.clone();
+    let content_rows = top_reset
+        .measure(MAX_EDITOR_INNER_WIDTH)
+        .content_rows
+        .max(1);
+    let cursor = top_reset.cursor();
+    top_reset.scroll((-i16::MAX, 0));
+    top_reset.move_cursor(CursorMove::Jump(
+        u16::try_from(cursor.0).unwrap_or(u16::MAX),
+        u16::try_from(cursor.1).unwrap_or(u16::MAX),
+    ));
+    let area = Rect::new(0, 0, MAX_EDITOR_INNER_WIDTH, content_rows);
+    let mut buffer = Buffer::empty(area);
+    Widget::render(&top_reset, area, &mut buffer);
+    top_reset
+        .rendered_cursor_position()
+        .map_or(0, |position| position.y.saturating_sub(visible_cursor_row))
+}
+
+fn render_editor_scrollbar(frame: &mut Frame<'_>, area: Rect, status: CursorStatus) {
+    let scroll_positions = status
+        .content_rows
+        .saturating_sub(status.viewport_height)
+        .saturating_add(1);
+    let mut state = ScrollbarState::new(usize::from(scroll_positions))
+        .position(usize::from(status.viewport_top))
+        .viewport_content_length(usize::from(status.viewport_height));
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .end_symbol(None)
+        .track_symbol(Some("│"))
+        .track_style(Style::default().fg(Color::DarkGray))
+        .thumb_symbol("┃")
+        .thumb_style(Style::default().fg(Color::Yellow));
+    frame.render_stateful_widget(scrollbar, area, &mut state);
+}
+
+fn render_validation_row(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    issue: Option<&super::state::ValidationIssue>,
+    cursor: CursorStatus,
+) {
+    let status = format!("col {}/{}", cursor.column, cursor.wrap_width);
+    let status_width = u16::try_from(Line::from(status.as_str()).width()).unwrap_or(u16::MAX);
+    let columns =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(status_width)]).split(area);
+    if let Some(issue) = issue {
+        frame.render_widget(
+            Paragraph::new(issue.message.as_str()).style(Style::default().fg(Color::Red)),
+            columns[0],
+        );
+    }
+    frame.render_widget(Paragraph::new(status).right_aligned(), columns[1]);
 }
 
 fn render_document_rules(
@@ -445,30 +531,34 @@ fn render_document_rules(
         if horizontal_offset == 0
             && let Some(heading) = field_headings
                 .iter()
-                .find(|heading| highlighted_heading_at(virtual_buffer, row, heading))
+                .find(|heading| bold_heading_at(virtual_buffer, row, heading))
         {
+            let visible_heading = heading.trim_end_matches(':');
             let heading_width =
-                u16::try_from(Line::from(heading.as_str()).width()).unwrap_or(u16::MAX);
-            let start = area.x.saturating_add(heading_width).saturating_add(1);
+                u16::try_from(Line::from(visible_heading).width()).unwrap_or(u16::MAX);
+            let colon = area.x.saturating_add(heading_width);
+            let colon_style = frame.buffer_mut()[(colon, area.y + row)].style();
+            frame.buffer_mut()[(colon, area.y + row)]
+                .set_symbol(" ")
+                .set_style(colon_style);
+            let start = colon.saturating_add(1);
             render_inner_rule(frame, start, area.right(), area.y + row);
         }
         if row > 0
             && ["Message Body", "Message Footer"]
                 .iter()
-                .any(|heading| highlighted_heading_at(virtual_buffer, row, heading))
+                .any(|heading| bold_heading_at(virtual_buffer, row, heading))
         {
             render_frame_rule(frame, outer, area.y + row - 1, None);
         }
     }
 }
 
-fn highlighted_heading_at(buffer: &Buffer, row: u16, heading: &str) -> bool {
+fn bold_heading_at(buffer: &Buffer, row: u16, heading: &str) -> bool {
     heading.chars().enumerate().all(|(column, character)| {
         u16::try_from(column).ok().is_some_and(|column| {
             let cell = &buffer[(column, row)];
-            cell.symbol() == character.to_string()
-                && cell.fg == Color::Yellow
-                && cell.modifier.contains(Modifier::BOLD)
+            cell.symbol() == character.to_string() && cell.modifier.contains(Modifier::BOLD)
         })
     })
 }
@@ -551,7 +641,6 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
             ("↑/↓", "scroll"),
             ("q/ctrl+c", "cancel"),
         ],
-        None,
     );
 }
 
@@ -700,7 +789,7 @@ fn render_centered_notice(
     let popup = centered_rect(54, height, area);
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Block::default().style(Style::default().bg(Color::Black)),
+        Block::default().style(Style::default().bg(JET_BLACK)),
         popup,
     );
     frame.render_widget(Paragraph::new(lines).centered(), popup);
@@ -725,7 +814,7 @@ fn render_stage_header(frame: &mut Frame<'_>, area: Rect, title: &'static str, s
 }
 
 fn navigation_style() -> Style {
-    Style::default().fg(Color::Black).bg(Color::Yellow)
+    Style::default().fg(JET_BLACK).bg(Color::Yellow)
 }
 
 fn navigation_key_style() -> Style {
@@ -745,26 +834,9 @@ fn navigation_line<'a>(hints: &'a [(&'a str, &'a str)]) -> Line<'a> {
     Line::from(spans)
 }
 
-fn render_navigation_row(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    hints: &[(&str, &str)],
-    status: Option<&str>,
-) {
+fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &[(&str, &str)]) {
     let line = navigation_line(hints);
-    let Some(status) = status else {
-        frame.render_widget(Paragraph::new(line).style(navigation_style()), area);
-        return;
-    };
-    let status = format!("▌ {status} ");
-    let status_width = u16::try_from(Line::from(status.as_str()).width()).unwrap_or(u16::MAX);
-    let sections =
-        Layout::horizontal([Constraint::Min(0), Constraint::Length(status_width)]).split(area);
-    frame.render_widget(Paragraph::new(line).style(navigation_style()), sections[0]);
-    frame.render_widget(
-        Paragraph::new(status).style(navigation_key_style()),
-        sections[1],
-    );
+    frame.render_widget(Paragraph::new(line).style(navigation_style()), area);
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
@@ -774,4 +846,13 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     Layout::horizontal([Constraint::Length(width.min(area.width))])
         .flex(Flex::Center)
         .split(vertical[0])[0]
+}
+
+const fn inset_horizontally(area: Rect, amount: u16) -> Rect {
+    Rect::new(
+        area.x.saturating_add(amount),
+        area.y,
+        area.width.saturating_sub(amount.saturating_mul(2)),
+        area.height,
+    )
 }

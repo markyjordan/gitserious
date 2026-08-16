@@ -8,7 +8,7 @@ use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModif
 use ratatui::style::{Color, Modifier, Style};
 use tui_textarea::{AtomicRange, CursorMove, CursorRenderMode, Input, TextArea, WrapMode};
 
-pub(crate) const SCOPE_VALUE_LINE: usize = 3;
+pub(crate) const SCOPE_VALUE_LINE: usize = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Stage {
@@ -314,21 +314,30 @@ fn apply_heading_guards(editor: &mut TextArea<'static>, definition: &CommitTypeD
         .lines()
         .iter()
         .enumerate()
-        .filter(|(_, line)| structural_marker(line, definition).is_some())
-        .map(|(row, line)| AtomicRange {
-            row,
-            start_col: 0,
-            end_col: line.chars().count(),
+        .filter_map(|(row, line)| {
+            structural_marker(line, definition).map(|marker| {
+                (
+                    AtomicRange {
+                        row,
+                        start_col: 0,
+                        end_col: line.chars().count(),
+                    },
+                    marker,
+                )
+            })
         })
         .collect::<Vec<_>>();
-    editor.set_atomic_ranges(ranges.iter().copied());
+    editor.set_atomic_ranges(ranges.iter().map(|(range, _)| *range));
     editor.clear_custom_highlight();
-    for range in ranges {
+    for (range, marker) in ranges {
+        let style = match marker {
+            DocumentMarker::Section(_) => Style::default().fg(Color::Yellow),
+            DocumentMarker::Field(_) => Style::default(),
+        }
+        .add_modifier(Modifier::BOLD);
         editor.custom_highlight(
             ((range.row, range.start_col), (range.row, range.end_col)),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
+            style,
             1,
         );
     }
@@ -374,8 +383,8 @@ fn headings_are_intact(lines: &[String], definition: &CommitTypeDefinition) -> b
     let groups_are_separated = markers.windows(2).all(|pair| {
         let distance = pair[1].0.saturating_sub(pair[0].0);
         match (pair[0].1, pair[1].1) {
-            (DocumentMarker::Section(_), DocumentMarker::Field(_)) => distance >= 2,
-            (DocumentMarker::Field(_), DocumentMarker::Section(_)) => distance >= 3,
+            (DocumentMarker::Section(_), DocumentMarker::Field(_)) => distance >= 1,
+            (DocumentMarker::Field(_), DocumentMarker::Section(_)) => distance >= 4,
             _ => true,
         }
     });
@@ -443,27 +452,68 @@ fn skip_noneditable_cursor(
 }
 
 fn reserved_separator(lines: &[String], line: usize, definition: &CommitTypeDefinition) -> bool {
-    lines.get(line).is_some_and(String::is_empty)
-        && (line + 1 == lines.len()
-            || lines
-                .get(line + 1)
-                .is_some_and(|next| structural_marker(next, definition).is_some()))
+    if !lines.get(line).is_some_and(String::is_empty) {
+        return false;
+    }
+    let Some((heading_line, marker)) =
+        lines[..line]
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, candidate)| {
+                structural_marker(candidate, definition).map(|marker| (index, marker))
+            })
+    else {
+        return false;
+    };
+    let next_content = lines[line + 1..]
+        .iter()
+        .enumerate()
+        .find(|(_, candidate)| !candidate.is_empty());
+    let (boundary_line, next_marker) = match next_content {
+        Some((offset, candidate)) => {
+            let Some(marker) = structural_marker(candidate, definition) else {
+                return false;
+            };
+            (line.saturating_add(offset).saturating_add(1), Some(marker))
+        }
+        None => (lines.len(), None),
+    };
+    match marker {
+        DocumentMarker::Field(_) => {
+            let reserved_rows = if matches!(next_marker, Some(DocumentMarker::Section(_))) {
+                2
+            } else {
+                1
+            };
+            line > heading_line.saturating_add(1)
+                && boundary_line.saturating_sub(line) <= reserved_rows
+        }
+        DocumentMarker::Section(MessageSection::Body | MessageSection::Footer) => true,
+        DocumentMarker::Section(MessageSection::Subject) => false,
+    }
 }
 
 fn scaffold_lines(definition: &CommitTypeDefinition) -> Vec<String> {
-    let mut lines = Vec::with_capacity((definition.properties().len() + 2) * 3 + 6);
+    let mut lines = Vec::with_capacity((definition.properties().len() + 2) * 3 + 7);
     lines.push(MessageSection::Subject.label().to_owned());
+    lines.push("scope:".to_owned());
     lines.push(String::new());
-    for heading in ["scope", "description"] {
-        lines.push(format!("{heading}:"));
-        lines.push(String::new());
-        lines.push(String::new());
-    }
+    lines.push(String::new());
+    lines.push("description:".to_owned());
+    lines.push(String::new());
+    lines.push(String::new());
+    lines.push(String::new());
     lines.push(MessageSection::Body.label().to_owned());
-    lines.push(String::new());
-    for property in definition.properties() {
+    for (index, property) in definition.properties().iter().enumerate() {
         lines.push(format!("{}:", property.key()));
         lines.push(String::new());
+        lines.push(String::new());
+        if index + 1 == definition.properties().len() {
+            lines.push(String::new());
+        }
+    }
+    if definition.properties().is_empty() {
         lines.push(String::new());
     }
     lines.push(MessageSection::Footer.label().to_owned());
