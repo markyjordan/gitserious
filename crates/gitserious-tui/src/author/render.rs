@@ -16,6 +16,7 @@ use super::state::{
 const MINIMUM_WIDTH: u16 = 60;
 const MINIMUM_HEIGHT: u16 = 18;
 const COMPOSER_MINIMUM_HEIGHT: u16 = 21;
+const JET_BLACK: Color = Color::Rgb(0, 0, 0);
 const MAX_EDITOR_INNER_WIDTH: u16 = 80;
 const FIELD_COLUMN_SPACING: u16 = 2;
 const FIELD_MARKER_WIDTH: u16 = 1;
@@ -47,10 +48,7 @@ struct CursorStatus {
 
 pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) {
     let area = frame.area();
-    frame.render_widget(
-        Block::default().style(Style::default().bg(Color::Black)),
-        area,
-    );
+    frame.render_widget(Block::default().style(Style::default().bg(JET_BLACK)), area);
     let minimum_height = if session.visible_stage() == Stage::Compose {
         COMPOSER_MINIMUM_HEIGHT
     } else {
@@ -95,8 +93,8 @@ fn normalize_background(frame: &mut Frame<'_>, area: Rect) {
     for y in area.y..area.bottom() {
         for x in area.x..area.right() {
             let cell = &mut frame.buffer_mut()[(x, y)];
-            if cell.bg != Color::Yellow {
-                cell.set_bg(Color::Black);
+            if matches!(cell.bg, Color::Reset | Color::Black) {
+                cell.set_bg(JET_BLACK);
             }
         }
     }
@@ -105,12 +103,19 @@ fn normalize_background(frame: &mut Frame<'_>, area: Rect) {
 fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
     let sections = Layout::vertical([
         Constraint::Length(1),
-        Constraint::Length(1),
         Constraint::Min(1),
         Constraint::Length(1),
     ])
     .split(area);
     render_stage_header(frame, sections[0], "Select commit type", 1);
+    let outer = inset_horizontally(sections[1], 1);
+    let list_area = Rect::new(
+        outer.x.saturating_add(1),
+        outer.y.saturating_add(1),
+        outer.width.saturating_sub(2),
+        outer.height.saturating_sub(2),
+    );
+    frame.render_widget(Block::bordered().border_style(frame_style()), outer);
     let items = session
         .definitions
         .iter()
@@ -130,10 +135,10 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
         .highlight_style(navigation_key_style());
     let mut state = ListState::default();
     state.select(Some(session.selected_type));
-    frame.render_stateful_widget(list, sections[2], &mut state);
+    frame.render_stateful_widget(list, list_area, &mut state);
     render_navigation_row(
         frame,
-        sections[3],
+        sections[2],
         &[("↑/↓", "move"), ("enter", "select"), ("esc/q", "cancel")],
         None,
     );
@@ -142,7 +147,6 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
 fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
     let sections = Layout::vertical([
         Constraint::Length(2),
-        Constraint::Length(1),
         Constraint::Min(1),
         Constraint::Length(1),
     ])
@@ -161,7 +165,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         header[1],
     );
 
-    let composer_frame = composer_frame(sections[2], session);
+    let composer_frame = composer_frame(inset_horizontally(sections[1], 1), session);
     render_composer_frame(frame, composer_frame);
     render_section_heading(
         frame,
@@ -187,7 +191,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     }
     render_navigation_row(
         frame,
-        sections[3],
+        sections[2],
         help,
         Some(&format!(
             "col {}/{}",
@@ -700,7 +704,7 @@ fn render_centered_notice(
     let popup = centered_rect(54, height, area);
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Block::default().style(Style::default().bg(Color::Black)),
+        Block::default().style(Style::default().bg(JET_BLACK)),
         popup,
     );
     frame.render_widget(Paragraph::new(lines).centered(), popup);
@@ -725,7 +729,7 @@ fn render_stage_header(frame: &mut Frame<'_>, area: Rect, title: &'static str, s
 }
 
 fn navigation_style() -> Style {
-    Style::default().fg(Color::Black).bg(Color::Yellow)
+    Style::default().fg(JET_BLACK).bg(Color::Yellow)
 }
 
 fn navigation_key_style() -> Style {
@@ -774,4 +778,13 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     Layout::horizontal([Constraint::Length(width.min(area.width))])
         .flex(Flex::Center)
         .split(vertical[0])[0]
+}
+
+const fn inset_horizontally(area: Rect, amount: u16) -> Rect {
+    Rect::new(
+        area.x.saturating_add(amount),
+        area.y,
+        area.width.saturating_sub(amount.saturating_mul(2)),
+        area.height,
+    )
 }
