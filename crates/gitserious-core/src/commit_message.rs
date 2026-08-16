@@ -44,7 +44,10 @@ pub fn render_commit_message(
 
     let mut message = draft.commit_type().to_string();
     if let Some(scope) = draft.scope() {
-        let _ = write!(message, "({scope})");
+        let _ = write!(message, "({})", normalized_scope(scope.as_str()));
+    }
+    if draft.breaking_change().is_some() {
+        message.push('!');
     }
     let _ = writeln!(message, ": {}", draft.subject());
 
@@ -64,7 +67,21 @@ pub fn render_commit_message(
         }
     }
 
+    if let Some(breaking_change) = draft.breaking_change() {
+        let mut lines = breaking_change.as_str().lines();
+        if let Some(first) = lines.next() {
+            let _ = writeln!(message, "\nBREAKING CHANGE: {first}");
+        }
+        for line in lines {
+            let _ = writeln!(message, "{line}");
+        }
+    }
+
     Ok(CommitMessage(message.into_boxed_str()))
+}
+
+fn normalized_scope(scope: &str) -> String {
+    scope.split_whitespace().collect::<Vec<_>>().join("-")
 }
 
 /// Validates a draft against a selected commit-type schema.

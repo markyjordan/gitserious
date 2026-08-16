@@ -103,6 +103,88 @@ fn canonical_render_uses_schema_order_and_preserves_multiline_values() -> Result
 }
 
 #[test]
+fn canonical_render_hyphenates_scope_whitespace() -> Result<(), Box<dyn Error>> {
+    let definition = &built_in_commit_types()[0];
+    for (scope, expected) in [
+        ("tui editor", "tui-editor"),
+        ("TUI\t editor", "TUI-editor"),
+        ("résumé  parser", "résumé-parser"),
+        ("already-hyphenated", "already-hyphenated"),
+    ] {
+        let draft = CommitDraft::new(
+            definition.id().clone(),
+            Some(CommitScope::new(scope)?),
+            CommitSubject::new("normalize scope")?,
+            vec![
+                authored("intent", PropertyValues::single(value("canonical output")?))?,
+                authored(
+                    "behavior",
+                    PropertyValues::single(value("replace whitespace")?),
+                )?,
+            ],
+        )?;
+        assert!(
+            render_commit_message(definition, &draft)?
+                .as_str()
+                .starts_with(&format!("feat({expected}): normalize scope\n"))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn breaking_change_adds_header_bang_and_uppercase_multiline_footer() -> Result<(), Box<dyn Error>> {
+    let definition = &built_in_commit_types()[0];
+    let draft = feat_draft(vec![
+        authored("intent", PropertyValues::single(value("replace API")?))?,
+        authored(
+            "behavior",
+            PropertyValues::single(value("require migration")?),
+        )?,
+    ])?
+    .with_breaking_change(value("remove the old API\nuse the replacement")?);
+
+    assert_eq!(
+        render_commit_message(definition, &draft)?.as_str(),
+        "feat(core)!: render typed drafts\n\nintent:\nreplace API\n\nbehavior:\nrequire migration\n\nBREAKING CHANGE: remove the old API\nuse the replacement\n"
+    );
+    assert_eq!(
+        draft.breaking_change().map(PropertyValue::as_str),
+        Some("remove the old API\nuse the replacement")
+    );
+    Ok(())
+}
+
+#[test]
+fn breaking_change_without_scope_or_body_preserves_canonical_separation()
+-> Result<(), Box<dyn Error>> {
+    let definition = CommitTypeDefinition::new(
+        SchemaVersion::V1,
+        CommitTypeId::new("custom")?,
+        "No body properties.",
+        vec![PropertyDefinition::new(
+            PropertyKey::new("notes")?,
+            "Optional body notes.",
+            PropertyRequirement::Optional,
+            PropertyMultiplicity::Single,
+        )?],
+    )?;
+    let draft = CommitDraft::new(
+        CommitTypeId::new("custom")?,
+        None,
+        CommitSubject::new("change contract")?,
+        Vec::new(),
+    )?
+    .with_breaking_change(value("new contract")?);
+
+    assert_eq!(
+        render_commit_message(&definition, &draft)?.as_str(),
+        "custom!: change contract\n\nBREAKING CHANGE: new contract\n"
+    );
+    Ok(())
+}
+
+#[test]
 fn validation_reports_type_unknown_required_and_multiplicity_failures() -> Result<(), Box<dyn Error>>
 {
     let feat = &built_in_commit_types()[0];
