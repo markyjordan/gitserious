@@ -28,3 +28,22 @@ Each property value begins at column 1. Rendering does not add indentation, so
 any leading whitespace is authored content and is preserved exactly. Blank
 nonrequired properties are omitted, repeatable values retain authored order,
 and every rendered message ends with a newline.
+
+Internal whitespace in a scope is normalized to a single hyphen only when the
+canonical message is rendered. For example, an authored `tui editor` scope is
+reviewed and written as `tui-editor`; the typed draft retains the authored
+scope.
+
+Drafts may also carry an optional breaking-change description. When present,
+the canonical renderer adds `!` immediately before the header colon and emits
+the Conventional Commits footer after the body:
+
+```text
+feat(parser)!: replace the token API
+
+BREAKING CHANGE: callers must use TokenStream
+remove calls to the legacy parser
+```
+
+The first line follows the uppercase footer token, multiline continuation text
+remains unindented, and blank breaking-change fields are omitted entirely.
