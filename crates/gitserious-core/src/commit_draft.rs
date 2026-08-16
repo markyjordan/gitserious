@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
-use crate::{CommitTypeId, PropertyKey, PropertyValues};
+use crate::{CommitTypeId, PropertyKey, PropertyValue, PropertyValues};
 
 /// An optional semantic area affected by a commit.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -187,6 +187,7 @@ pub struct CommitDraft {
     scope: Option<CommitScope>,
     subject: CommitSubject,
     properties: Vec<AuthoredProperty>,
+    breaking_change: Option<PropertyValue>,
 }
 
 impl CommitDraft {
@@ -213,7 +214,15 @@ impl CommitDraft {
             scope,
             subject,
             properties,
+            breaking_change: None,
         })
+    }
+
+    /// Adds an optional Conventional Commits breaking-change footer.
+    #[must_use]
+    pub fn with_breaking_change(mut self, breaking_change: PropertyValue) -> Self {
+        self.breaking_change = Some(breaking_change);
+        self
     }
 
     /// Returns the selected commit-type identifier.
@@ -238,6 +247,12 @@ impl CommitDraft {
     #[must_use]
     pub fn properties(&self) -> &[AuthoredProperty] {
         &self.properties
+    }
+
+    /// Returns the optional breaking-change footer description.
+    #[must_use]
+    pub const fn breaking_change(&self) -> Option<&PropertyValue> {
+        self.breaking_change.as_ref()
     }
 }
 

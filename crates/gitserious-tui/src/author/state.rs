@@ -4,7 +4,10 @@ use gitserious_core::{
     PropertyMultiplicity, PropertyRequirement, PropertyValue, PropertyValues,
     render_commit_message,
 };
-use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use tui_textarea::{AtomicRange, CursorMove, CursorRenderMode, Input, TextArea, WrapMode};
 
@@ -35,6 +38,7 @@ pub(crate) enum FieldId {
     Scope,
     Description,
     Property(usize),
+    BreakingChange,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,6 +49,7 @@ pub(crate) enum FieldKind {
         definition_index: usize,
         value_index: usize,
     },
+    BreakingChange,
 }
 
 impl FieldKind {
@@ -55,6 +60,7 @@ impl FieldKind {
             Self::Property {
                 definition_index, ..
             } => FieldId::Property(definition_index),
+            Self::BreakingChange => FieldId::BreakingChange,
         }
     }
 }
@@ -164,10 +170,11 @@ impl ComposerState {
         let parsed = self.parse(definition);
         let mut issues = parsed.issues;
         issues.extend(self.issues.iter().cloned());
-        let mut fields = Vec::with_capacity(definition.properties().len() + 2);
+        let mut fields = Vec::with_capacity(definition.properties().len() + 3);
         for id in std::iter::once(FieldId::Scope)
             .chain(std::iter::once(FieldId::Description))
             .chain((0..definition.properties().len()).map(FieldId::Property))
+            .chain(std::iter::once(FieldId::BreakingChange))
         {
             let sections = parsed
                 .sections
@@ -182,7 +189,7 @@ impl ComposerState {
                     FieldId::Description => {
                         !section.text.is_empty() && CommitSubject::new(&section.text).is_err()
                     }
-                    FieldId::Property(_) => false,
+                    FieldId::Property(_) | FieldId::BreakingChange => false,
                 });
             let complete = sections.iter().any(|section| !section.text.is_empty());
             fields.push(HudField {
@@ -212,6 +219,7 @@ impl ComposerState {
         let scope = parse_scope(&parsed, &mut issues);
         let subject = parse_description(&parsed, &mut issues);
         let authored = build_properties(&parsed, definition, &mut issues);
+        let breaking_change = parse_breaking_change(&parsed, &mut issues);
 
         if !issues.is_empty() {
             issues.sort_by_key(|issue| issue.line);
@@ -232,6 +240,10 @@ impl ComposerState {
                 }];
                 return None;
             }
+        };
+        let draft = match breaking_change {
+            Some(value) => draft.with_breaking_change(value),
+            None => draft,
         };
         match render_commit_message(definition, &draft) {
             Ok(message) => {
@@ -275,6 +287,20 @@ impl ComposerState {
         self.editor.move_cursor(movement);
         skip_noneditable_cursor(&mut self.editor, definition, previous_cursor);
         self.issues.clear();
+    }
+
+    fn move_horizontally_within_field(&mut self, definition: &CommitTypeDefinition, key: KeyEvent) {
+        let previous = self.editor.clone();
+        let previous_cursor = self.editor.cursor();
+        let previous_field = self.current_field(definition).map(FieldKind::id);
+        self.editor.input(Input::from(key));
+        skip_noneditable_cursor(&mut self.editor, definition, previous_cursor);
+        let current_field = self.current_field(definition).map(FieldKind::id);
+        if previous_field.is_none() || current_field != previous_field {
+            self.editor = previous;
+        } else {
+            self.issues.clear();
+        }
     }
 
     fn advance_on_enter(&mut self, definition: &CommitTypeDefinition) -> bool {
@@ -357,6 +383,9 @@ fn expected_marker_signature(definition: &CommitTypeDefinition) -> Vec<DocumentM
         )
         .chain(std::iter::once(DocumentMarker::Section(
             MessageSection::Footer,
+        )))
+        .chain(std::iter::once(DocumentMarker::Field(
+            FieldId::BreakingChange,
         )))
         .collect()
 }
@@ -517,6 +546,8 @@ fn scaffold_lines(definition: &CommitTypeDefinition) -> Vec<String> {
         lines.push(String::new());
     }
     lines.push(MessageSection::Footer.label().to_owned());
+    lines.push("breaking-change:".to_owned());
+    lines.push(String::new());
     lines.push(String::new());
     lines
 }
@@ -567,6 +598,7 @@ fn parse_document(lines: &[String], definition: &CommitTypeDefinition) -> Parsed
                     value_index,
                 }
             }
+            FieldId::BreakingChange => FieldKind::BreakingChange,
         };
         parsed.sections.push(DocumentSection {
             kind,
@@ -579,6 +611,7 @@ fn parse_document(lines: &[String], definition: &CommitTypeDefinition) -> Parsed
     for id in std::iter::once(FieldId::Scope)
         .chain(std::iter::once(FieldId::Description))
         .chain((0..definition.properties().len()).map(FieldId::Property))
+        .chain(std::iter::once(FieldId::BreakingChange))
     {
         let matching = parsed
             .sections
@@ -615,6 +648,7 @@ fn exact_heading(line: &str, definition: &CommitTypeDefinition) -> Option<FieldI
     match line {
         "scope:" => Some(FieldId::Scope),
         "description:" => Some(FieldId::Description),
+        "breaking-change:" => Some(FieldId::BreakingChange),
         _ => definition
             .properties()
             .iter()
@@ -637,6 +671,7 @@ fn looks_like_malformed_known_heading(line: &str, definition: &CommitTypeDefinit
     let trimmed = line.trim();
     trimmed == "scope"
         || trimmed == "description"
+        || trimmed == "breaking-change"
         || definition
             .properties()
             .iter()
@@ -768,11 +803,36 @@ fn build_properties(
     authored
 }
 
+fn parse_breaking_change(
+    parsed: &ParsedDocument,
+    issues: &mut Vec<ValidationIssue>,
+) -> Option<PropertyValue> {
+    let section = parsed
+        .sections
+        .iter()
+        .find(|section| section.kind == FieldKind::BreakingChange)?;
+    if section.text.is_empty() {
+        return None;
+    }
+    match PropertyValue::new(&section.text) {
+        Ok(value) => Some(value),
+        Err(error) => {
+            issues.push(ValidationIssue {
+                field: Some(FieldId::BreakingChange),
+                line: section.heading_line + 1,
+                message: error.to_string(),
+            });
+            None
+        }
+    }
+}
+
 fn field_name(id: FieldId, definition: &CommitTypeDefinition) -> String {
     match id {
         FieldId::Scope => "scope".to_owned(),
         FieldId::Description => "description".to_owned(),
         FieldId::Property(index) => definition.properties()[index].key().to_string(),
+        FieldId::BreakingChange => "breaking-change".to_owned(),
     }
 }
 
@@ -783,6 +843,12 @@ pub(crate) struct ReviewState {
     pub(crate) scrollable: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ConfirmationButtons {
+    pub(crate) discard: Rect,
+    pub(crate) keep_editing: Rect,
+}
+
 pub(crate) struct AuthoringSession<'a> {
     pub(crate) definitions: &'a [CommitTypeDefinition],
     pub(crate) selected_type: usize,
@@ -791,6 +857,7 @@ pub(crate) struct AuthoringSession<'a> {
     pub(crate) composer: ComposerState,
     pub(crate) review: Option<ReviewState>,
     pub(crate) confirmation: ConfirmationAction,
+    pub(crate) confirmation_buttons: Option<ConfirmationButtons>,
     confirmation_resume: ResumeStage,
     pub(crate) too_small: bool,
 }
@@ -813,6 +880,7 @@ impl<'a> AuthoringSession<'a> {
             composer: ComposerState::new(&definitions[selected_type]),
             review: None,
             confirmation: ConfirmationAction::Cancel,
+            confirmation_buttons: None,
             confirmation_resume: ResumeStage::Compose,
             too_small: false,
         }
@@ -838,6 +906,7 @@ impl<'a> AuthoringSession<'a> {
         }
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => self.handle_key(key),
+            Event::Mouse(mouse) => self.handle_mouse(mouse),
             Event::Paste(text) if self.stage == Stage::Compose => {
                 let definition = self.definition().clone();
                 if text.contains(['\n', '\r'])
@@ -859,24 +928,39 @@ impl<'a> AuthoringSession<'a> {
             Event::Resize(_, _)
             | Event::FocusGained
             | Event::FocusLost
-            | Event::Mouse(_)
             | Event::Paste(_)
             | Event::Key(_) => None,
         }
     }
 
     fn handle_too_small(&mut self, event: &Event) -> Option<CommitDraftAuthorOutcome> {
-        let Event::Key(key) = event else {
-            return None;
-        };
-        if key.kind != KeyEventKind::Press {
+        match event {
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                if self.stage == Stage::Confirm {
+                    self.handle_confirmation_key(*key)
+                } else if matches!(key.code, KeyCode::Esc | KeyCode::Char('q'))
+                    || control(*key, 'c')
+                {
+                    self.request_confirmation(ConfirmationAction::Cancel, ResumeStage::Compose)
+                } else {
+                    None
+                }
+            }
+            Event::Mouse(mouse) => self.handle_mouse(*mouse),
+            _ => None,
+        }
+    }
+
+    fn handle_mouse(&mut self, mouse: MouseEvent) -> Option<CommitDraftAuthorOutcome> {
+        if self.stage != Stage::Confirm || mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return None;
         }
-        if self.stage == Stage::Confirm {
-            return self.handle_confirmation_key(*key);
-        }
-        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) || control(*key, 'c') {
-            self.request_confirmation(ConfirmationAction::Cancel, ResumeStage::Compose)
+        let buttons = self.confirmation_buttons?;
+        if contains(buttons.discard, mouse.column, mouse.row) {
+            self.confirm_discard()
+        } else if contains(buttons.keep_editing, mouse.column, mouse.row) {
+            self.resume_after_confirmation();
+            None
         } else {
             None
         }
@@ -948,6 +1032,11 @@ impl<'a> AuthoringSession<'a> {
     fn input_key(&mut self, key: KeyEvent) {
         let definition = self.definition().clone();
         if key.code == KeyCode::Enter && self.composer.advance_on_enter(&definition) {
+            return;
+        }
+        if matches!(key.code, KeyCode::Left | KeyCode::Right) {
+            self.composer
+                .move_horizontally_within_field(&definition, key);
             return;
         }
         if !key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -1040,24 +1129,34 @@ impl<'a> AuthoringSession<'a> {
 
     fn handle_confirmation_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
         match key.code {
-            KeyCode::Char('y') => match self.confirmation {
-                ConfirmationAction::Cancel => Some(CommitDraftAuthorOutcome::Cancelled),
-                ConfirmationAction::ChangeType => {
-                    self.composer = ComposerState::new(self.definition());
-                    self.review = None;
-                    self.stage = Stage::SelectType;
-                    None
-                }
-            },
+            KeyCode::Char('y') => self.confirm_discard(),
             KeyCode::Char('n') | KeyCode::Esc | KeyCode::Enter => {
-                self.stage = match self.confirmation_resume {
-                    ResumeStage::Compose => Stage::Compose,
-                    ResumeStage::Review => Stage::Review,
-                };
+                self.resume_after_confirmation();
                 None
             }
             _ => None,
         }
+    }
+
+    fn confirm_discard(&mut self) -> Option<CommitDraftAuthorOutcome> {
+        self.confirmation_buttons = None;
+        match self.confirmation {
+            ConfirmationAction::Cancel => Some(CommitDraftAuthorOutcome::Cancelled),
+            ConfirmationAction::ChangeType => {
+                self.composer = ComposerState::new(self.definition());
+                self.review = None;
+                self.stage = Stage::SelectType;
+                None
+            }
+        }
+    }
+
+    fn resume_after_confirmation(&mut self) {
+        self.confirmation_buttons = None;
+        self.stage = match self.confirmation_resume {
+            ResumeStage::Compose => Stage::Compose,
+            ResumeStage::Review => Stage::Review,
+        };
     }
 
     fn request_confirmation(
@@ -1078,9 +1177,14 @@ impl<'a> AuthoringSession<'a> {
         }
         self.confirmation = action;
         self.confirmation_resume = resume;
+        self.confirmation_buttons = None;
         self.stage = Stage::Confirm;
         None
     }
+}
+
+fn contains(area: Rect, column: u16, row: u16) -> bool {
+    column >= area.x && column < area.right() && row >= area.y && row < area.bottom()
 }
 
 fn control(key: KeyEvent, character: char) -> bool {
