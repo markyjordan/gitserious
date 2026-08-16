@@ -286,6 +286,20 @@ impl ComposerState {
         self.issues.clear();
     }
 
+    fn move_horizontally_within_field(&mut self, definition: &CommitTypeDefinition, key: KeyEvent) {
+        let previous = self.editor.clone();
+        let previous_cursor = self.editor.cursor();
+        let previous_field = self.current_field(definition).map(FieldKind::id);
+        self.editor.input(Input::from(key));
+        skip_noneditable_cursor(&mut self.editor, definition, previous_cursor);
+        let current_field = self.current_field(definition).map(FieldKind::id);
+        if previous_field.is_none() || current_field != previous_field {
+            self.editor = previous;
+        } else {
+            self.issues.clear();
+        }
+    }
+
     fn advance_on_enter(&mut self, definition: &CommitTypeDefinition) -> bool {
         let cursor_line = self.editor.cursor().0;
         let parsed = self.parse(definition);
@@ -991,6 +1005,11 @@ impl<'a> AuthoringSession<'a> {
     fn input_key(&mut self, key: KeyEvent) {
         let definition = self.definition().clone();
         if key.code == KeyCode::Enter && self.composer.advance_on_enter(&definition) {
+            return;
+        }
+        if matches!(key.code, KeyCode::Left | KeyCode::Right) {
+            self.composer
+                .move_horizontally_within_field(&definition, key);
             return;
         }
         if !key.modifiers.contains(KeyModifiers::SHIFT) {
