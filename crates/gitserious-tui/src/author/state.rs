@@ -4,7 +4,10 @@ use gitserious_core::{
     PropertyMultiplicity, PropertyRequirement, PropertyValue, PropertyValues,
     render_commit_message,
 };
-use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use tui_textarea::{AtomicRange, CursorMove, CursorRenderMode, Input, TextArea, WrapMode};
 
@@ -840,6 +843,12 @@ pub(crate) struct ReviewState {
     pub(crate) scrollable: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ConfirmationButtons {
+    pub(crate) discard: Rect,
+    pub(crate) keep_editing: Rect,
+}
+
 pub(crate) struct AuthoringSession<'a> {
     pub(crate) definitions: &'a [CommitTypeDefinition],
     pub(crate) selected_type: usize,
@@ -848,6 +857,7 @@ pub(crate) struct AuthoringSession<'a> {
     pub(crate) composer: ComposerState,
     pub(crate) review: Option<ReviewState>,
     pub(crate) confirmation: ConfirmationAction,
+    pub(crate) confirmation_buttons: Option<ConfirmationButtons>,
     confirmation_resume: ResumeStage,
     pub(crate) too_small: bool,
 }
@@ -870,6 +880,7 @@ impl<'a> AuthoringSession<'a> {
             composer: ComposerState::new(&definitions[selected_type]),
             review: None,
             confirmation: ConfirmationAction::Cancel,
+            confirmation_buttons: None,
             confirmation_resume: ResumeStage::Compose,
             too_small: false,
         }
@@ -895,6 +906,7 @@ impl<'a> AuthoringSession<'a> {
         }
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => self.handle_key(key),
+            Event::Mouse(mouse) => self.handle_mouse(mouse),
             Event::Paste(text) if self.stage == Stage::Compose => {
                 let definition = self.definition().clone();
                 if text.contains(['\n', '\r'])
@@ -916,24 +928,41 @@ impl<'a> AuthoringSession<'a> {
             Event::Resize(_, _)
             | Event::FocusGained
             | Event::FocusLost
-            | Event::Mouse(_)
             | Event::Paste(_)
             | Event::Key(_) => None,
         }
     }
 
     fn handle_too_small(&mut self, event: &Event) -> Option<CommitDraftAuthorOutcome> {
-        let Event::Key(key) = event else {
+        match event {
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                if self.stage == Stage::Confirm {
+                    self.handle_confirmation_key(*key)
+                } else if matches!(key.code, KeyCode::Esc | KeyCode::Char('q'))
+                    || control(*key, 'c')
+                {
+                    self.request_confirmation(ConfirmationAction::Cancel, ResumeStage::Compose)
+                } else {
+                    None
+                }
+            }
+            Event::Mouse(mouse) => self.handle_mouse(*mouse),
+            _ => None,
+        }
+    }
+
+    fn handle_mouse(&mut self, mouse: MouseEvent) -> Option<CommitDraftAuthorOutcome> {
+        if self.stage != Stage::Confirm || mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return None;
+        }
+        let Some(buttons) = self.confirmation_buttons else {
             return None;
         };
-        if key.kind != KeyEventKind::Press {
-            return None;
-        }
-        if self.stage == Stage::Confirm {
-            return self.handle_confirmation_key(*key);
-        }
-        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) || control(*key, 'c') {
-            self.request_confirmation(ConfirmationAction::Cancel, ResumeStage::Compose)
+        if contains(buttons.discard, mouse.column, mouse.row) {
+            self.confirm_discard()
+        } else if contains(buttons.keep_editing, mouse.column, mouse.row) {
+            self.resume_after_confirmation();
+            None
         } else {
             None
         }
@@ -1102,24 +1131,34 @@ impl<'a> AuthoringSession<'a> {
 
     fn handle_confirmation_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
         match key.code {
-            KeyCode::Char('y') => match self.confirmation {
-                ConfirmationAction::Cancel => Some(CommitDraftAuthorOutcome::Cancelled),
-                ConfirmationAction::ChangeType => {
-                    self.composer = ComposerState::new(self.definition());
-                    self.review = None;
-                    self.stage = Stage::SelectType;
-                    None
-                }
-            },
+            KeyCode::Char('y') => self.confirm_discard(),
             KeyCode::Char('n') | KeyCode::Esc | KeyCode::Enter => {
-                self.stage = match self.confirmation_resume {
-                    ResumeStage::Compose => Stage::Compose,
-                    ResumeStage::Review => Stage::Review,
-                };
+                self.resume_after_confirmation();
                 None
             }
             _ => None,
         }
+    }
+
+    fn confirm_discard(&mut self) -> Option<CommitDraftAuthorOutcome> {
+        self.confirmation_buttons = None;
+        match self.confirmation {
+            ConfirmationAction::Cancel => Some(CommitDraftAuthorOutcome::Cancelled),
+            ConfirmationAction::ChangeType => {
+                self.composer = ComposerState::new(self.definition());
+                self.review = None;
+                self.stage = Stage::SelectType;
+                None
+            }
+        }
+    }
+
+    fn resume_after_confirmation(&mut self) {
+        self.confirmation_buttons = None;
+        self.stage = match self.confirmation_resume {
+            ResumeStage::Compose => Stage::Compose,
+            ResumeStage::Review => Stage::Review,
+        };
     }
 
     fn request_confirmation(
@@ -1140,9 +1179,14 @@ impl<'a> AuthoringSession<'a> {
         }
         self.confirmation = action;
         self.confirmation_resume = resume;
+        self.confirmation_buttons = None;
         self.stage = Stage::Confirm;
         None
     }
+}
+
+fn contains(area: Rect, column: u16, row: u16) -> bool {
+    column >= area.x && column < area.right() && row >= area.y && row < area.bottom()
 }
 
 fn control(key: KeyEvent, character: char) -> bool {

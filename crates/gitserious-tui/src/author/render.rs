@@ -5,13 +5,14 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Scrollbar, ScrollbarOrientation,
-    ScrollbarState, Table, Widget, Wrap,
+    Block, BorderType, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Scrollbar,
+    ScrollbarOrientation, ScrollbarState, Table, Widget, Wrap,
 };
 use tui_textarea::{CursorMove, TextArea, WrapMode};
 
 use super::state::{
-    AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, SCOPE_VALUE_LINE, Stage,
+    AuthoringSession, ConfirmationAction, ConfirmationButtons, FieldId, FieldKind, FieldStatus,
+    SCOPE_VALUE_LINE, Stage,
 };
 
 const MINIMUM_WIDTH: u16 = 60;
@@ -53,6 +54,7 @@ struct CursorStatus {
 
 pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) {
     let area = frame.area();
+    session.confirmation_buttons = None;
     frame.render_widget(Block::default().style(Style::default().bg(JET_BLACK)), area);
     let minimum_height = if session.visible_stage() == Stage::Compose {
         COMPOSER_MINIMUM_HEIGHT
@@ -62,13 +64,11 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
     session.too_small = area.width < MINIMUM_WIDTH || area.height < minimum_height;
     if session.too_small {
         if session.stage == Stage::Confirm {
-            render_centered_notice(
+            session.confirmation_buttons = Some(render_discard_confirmation(
                 frame,
                 area,
-                "Confirm discard",
                 "Discard this draft?",
-                Some("y: discard | enter/n: keep editing"),
-            );
+            ));
         } else {
             render_centered_notice(
                 frame,
@@ -667,18 +667,12 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
     );
 }
 
-fn render_confirmation(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
+fn render_confirmation(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
     let message = match session.confirmation {
         ConfirmationAction::Cancel => "Discard this draft and cancel the commit?",
         ConfirmationAction::ChangeType => "Discard this draft and choose another type?",
     };
-    render_centered_notice(
-        frame,
-        area,
-        "Confirm discard",
-        message,
-        Some("y: discard | enter/esc/n: keep editing"),
-    );
+    session.confirmation_buttons = Some(render_discard_confirmation(frame, area, message));
 }
 
 fn field_columns(id: FieldId, definition: &CommitTypeDefinition) -> (String, &'static str) {
@@ -822,6 +816,72 @@ fn render_centered_notice(
         popup,
     );
     frame.render_widget(Paragraph::new(lines).centered(), popup);
+}
+
+fn render_discard_confirmation(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    message: &'static str,
+) -> ConfirmationButtons {
+    const DISCARD: &str = "y: discard";
+    const KEEP_EDITING: &str = "enter/esc/n: keep editing";
+
+    let popup = centered_rect(58, 9, area);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Block::bordered()
+            .border_type(BorderType::Double)
+            .border_style(frame_style())
+            .style(Style::default().bg(JET_BLACK)),
+        popup,
+    );
+    let content = Rect::new(
+        popup.x.saturating_add(2),
+        popup.y.saturating_add(2),
+        popup.width.saturating_sub(4),
+        popup.height.saturating_sub(4),
+    );
+    frame.render_widget(
+        Paragraph::new("Discard Message")
+            .centered()
+            .style(section_heading_style()),
+        Rect::new(content.x, content.y, content.width, 1),
+    );
+    frame.render_widget(
+        Paragraph::new(message).centered(),
+        Rect::new(content.x, content.y.saturating_add(2), content.width, 1),
+    );
+
+    let discard_width = text_button_width(DISCARD);
+    let keep_width = text_button_width(KEEP_EDITING);
+    let button_row = Rect::new(content.x, content.y.saturating_add(4), content.width, 1);
+    let buttons = Layout::horizontal([
+        Constraint::Length(discard_width),
+        Constraint::Length(1),
+        Constraint::Length(keep_width),
+    ])
+    .flex(Flex::Center)
+    .split(button_row);
+    let discard = buttons[0];
+    let keep_editing = buttons[2];
+    frame.render_widget(
+        Paragraph::new(format!(" {DISCARD} ")).style(navigation_style()),
+        discard,
+    );
+    frame.render_widget(
+        Paragraph::new(format!(" {KEEP_EDITING} ")).style(navigation_style()),
+        keep_editing,
+    );
+    ConfirmationButtons {
+        discard,
+        keep_editing,
+    }
+}
+
+fn text_button_width(label: &str) -> u16 {
+    u16::try_from(Line::from(label).width())
+        .unwrap_or(u16::MAX)
+        .saturating_add(2)
 }
 
 fn render_stage_header(frame: &mut Frame<'_>, area: Rect, title: &'static str, step: u8) {

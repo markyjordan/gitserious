@@ -8,7 +8,10 @@ use std::io::{self, IsTerminal};
 use gitserious_app::{CommitDraftAuthor, CommitDraftAuthorOutcome};
 use gitserious_core::CommitTypeDefinition;
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event;
+use ratatui::crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture},
+    execute,
+};
 
 use self::state::AuthoringSession;
 
@@ -88,6 +91,7 @@ fn run_author(
     definitions: &[CommitTypeDefinition],
     preselected_index: Option<usize>,
 ) -> io::Result<CommitDraftAuthorOutcome> {
+    let _mouse_capture = MouseCaptureGuard::enable()?;
     let mut session = AuthoringSession::new(definitions, preselected_index);
     loop {
         terminal.draw(|frame| render::render(frame, &mut session))?;
@@ -95,5 +99,20 @@ fn run_author(
         if let Some(outcome) = session.handle_event(event) {
             return Ok(outcome);
         }
+    }
+}
+
+struct MouseCaptureGuard;
+
+impl MouseCaptureGuard {
+    fn enable() -> io::Result<Self> {
+        execute!(io::stdout(), EnableMouseCapture)?;
+        Ok(Self)
+    }
+}
+
+impl Drop for MouseCaptureGuard {
+    fn drop(&mut self) {
+        let _ = execute!(io::stdout(), DisableMouseCapture);
     }
 }
