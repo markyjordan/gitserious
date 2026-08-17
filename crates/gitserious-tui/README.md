@@ -73,9 +73,12 @@ cursor, selection, history, or viewport.
 Nested layouts give the headings, HUD, description, editor, and
 validation/status row independent content rectangles while one composite chrome
 pass keeps their shared borders single-width. The properties pane measures the
-complete marker, field-name, and requirement columns and takes only the width
-they require. Property names never clip. A definition whose complete table
-cannot fit uses a definition-specific too-small fallback. The HUD tracks
+complete marker, field-name, and requirement columns from the selected
+definition and takes only the width they require. The requirement column hugs
+the longest label in that definition (`recommended` / `conditional` stay
+eleven cells; `style` and `revert` shrink to `required` / `optional`).
+Property names never clip. A definition whose complete table cannot fit uses
+a definition-specific too-small fallback. The HUD tracks
 complete, incomplete, and invalid values and leaves a two-cell gap between its
 columns. Rows alternate between `#000000` and `#101010`; the current property
 uses a full black-on-yellow row while its status marker retains its semantic

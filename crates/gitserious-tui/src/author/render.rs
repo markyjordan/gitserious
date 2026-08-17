@@ -22,7 +22,6 @@ const ZEBRA_BACKGROUND: Color = Color::Rgb(16, 16, 16);
 const MAX_EDITOR_INNER_WIDTH: u16 = 80;
 const FIELD_COLUMN_SPACING: u16 = 2;
 const FIELD_MARKER_WIDTH: u16 = 1;
-const FIELD_REQUIREMENT_WIDTH: u16 = 11;
 const MINIMUM_EDITOR_HEIGHT: u16 = 3;
 const TERMINAL_EDGE_CURSOR: &str = "█";
 const COMPOSER_NON_CONTEXT_ROWS: u16 = 8;
@@ -476,6 +475,7 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
         .map(FieldKind::id);
     let fields = session.composer.hud_fields(definition);
     let name_width = field_hud_name_width(definition);
+    let requirement_width = field_hud_requirement_width(definition);
     let rows = fields
         .into_iter()
         .enumerate()
@@ -506,7 +506,7 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
             [
                 Constraint::Length(FIELD_MARKER_WIDTH),
                 Constraint::Length(name_width),
-                Constraint::Length(FIELD_REQUIREMENT_WIDTH),
+                Constraint::Length(requirement_width),
             ],
         )
         .column_spacing(FIELD_COLUMN_SPACING),
@@ -954,13 +954,25 @@ fn picker_type_width(definitions: &[CommitTypeDefinition], content_width: u16) -
     measured.min(maximum)
 }
 
-fn field_hud_name_width(definition: &CommitTypeDefinition) -> u16 {
+fn field_hud_ids(definition: &CommitTypeDefinition) -> impl Iterator<Item = FieldId> + '_ {
     std::iter::once(FieldId::Scope)
         .chain(std::iter::once(FieldId::Description))
         .chain((0..definition.properties().len()).map(FieldId::Property))
         .chain(std::iter::once(FieldId::BreakingChange))
+}
+
+fn field_hud_name_width(definition: &CommitTypeDefinition) -> u16 {
+    field_hud_ids(definition)
         .map(|id| field_columns(id, definition).0)
         .map(|name| u16::try_from(Line::from(name).width()).unwrap_or(u16::MAX))
+        .max()
+        .unwrap_or(1)
+}
+
+fn field_hud_requirement_width(definition: &CommitTypeDefinition) -> u16 {
+    field_hud_ids(definition)
+        .map(|id| field_columns(id, definition).1)
+        .map(|requirement| u16::try_from(Line::from(requirement).width()).unwrap_or(u16::MAX))
         .max()
         .unwrap_or(1)
 }
@@ -968,7 +980,7 @@ fn field_hud_name_width(definition: &CommitTypeDefinition) -> u16 {
 fn field_hud_content_width(definition: &CommitTypeDefinition) -> u16 {
     FIELD_MARKER_WIDTH
         .saturating_add(field_hud_name_width(definition))
-        .saturating_add(FIELD_REQUIREMENT_WIDTH)
+        .saturating_add(field_hud_requirement_width(definition))
         .saturating_add(FIELD_COLUMN_SPACING.saturating_mul(2))
 }
 
