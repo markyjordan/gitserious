@@ -1567,6 +1567,52 @@ fn composer_uses_one_framed_context_editor_and_validation_surface() -> Result<()
 }
 
 #[test]
+fn nested_panes_share_borders_and_apply_visual_insets() -> Result<(), Box<dyn Error>> {
+    let mut picker = AuthoringSession::new(built_in_commit_types(), None);
+    let picker = rendered_buffer(&mut picker, 100, 24)?;
+    assert_eq!(picker[(1, 2)].symbol(), "┌");
+    assert_eq!(picker[(2, 3)].symbol(), " ");
+    assert_eq!(find_ascii(&picker, 100, 24, "› feat"), Some((3, 3)));
+
+    let mut composer = AuthoringSession::new(built_in_commit_types(), Some(0));
+    let buffer = rendered_buffer(&mut composer, 120, 32)?;
+    assert_eq!(
+        find_ascii(&buffer, 120, 32, "Message Properties"),
+        Some((3, 4))
+    );
+    assert_eq!(
+        find_ascii(&buffer, 120, 32, "Property Description"),
+        Some((37, 4))
+    );
+    assert_eq!(buffer[(2, 4)].symbol(), " ");
+    assert_eq!(buffer[(34, 4)].symbol(), " ");
+    assert_eq!(buffer[(35, 4)].symbol(), "│");
+    assert_eq!(buffer[(36, 4)].symbol(), " ");
+    assert_eq!(buffer[(117, 4)].symbol(), " ");
+    assert_eq!(buffer[(35, 5)].symbol(), "┼");
+
+    assert_eq!(find_ascii(&buffer, 120, 32, "○  scope"), Some((3, 6)));
+    assert_eq!(
+        find_ascii(&buffer, 120, 32, "breaking-change"),
+        Some((6, 13))
+    );
+    assert_eq!(buffer[(1, 14)].symbol(), "├");
+    assert_eq!(buffer[(35, 14)].symbol(), "┴");
+    assert_eq!(
+        find_ascii(&buffer, 120, 32, "Message Subject"),
+        Some((3, 15))
+    );
+    assert_eq!(buffer[(2, 15)].symbol(), " ");
+
+    assert_eq!(buffer[(1, 27)].symbol(), "├");
+    assert_eq!(find_ascii(&buffer, 120, 32, "col 1/80"), Some((109, 28)));
+    assert_eq!(buffer[(117, 28)].symbol(), " ");
+    assert_eq!(buffer[(1, 29)].symbol(), "└");
+    assert_eq!(buffer[(118, 29)].symbol(), "┘");
+    Ok(())
+}
+
+#[test]
 fn decorative_rules_are_box_drawing_chrome_and_preserve_editor_state() -> Result<(), Box<dyn Error>>
 {
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
