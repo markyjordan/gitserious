@@ -87,6 +87,10 @@ including the scope-free `type: description` form. The composer requires at
 least 22 terminal rows so its context, editor, validation row, and separators
 remain usable.
 
+Step 3 places `Final Git Commit Message` in a heading pane with the same
+under-heading rule as the Step 2 context headings. The canonical message
+occupies the remaining framed area.
+
 The `Compose commit message` view always edits an 80-column virtual surface. If
 the framed editor is narrower, it follows the cursor horizontally instead of
 wrapping early, then returns to column 1 when a word or glyph soft-wraps at
