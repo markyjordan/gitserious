@@ -26,17 +26,32 @@ const FIELD_MARKER_WIDTH: u16 = 1;
 const FIELD_REQUIREMENT_WIDTH: u16 = 11;
 const MINIMUM_EDITOR_HEIGHT: u16 = 3;
 const TERMINAL_EDGE_CURSOR: &str = "█";
-const FRAME_FIXED_ROWS: u16 = 13;
+const COMPOSER_NON_CONTEXT_ROWS: u16 = 8;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Pane {
+    region: Rect,
+    content: Rect,
+}
+
+impl Pane {
+    const fn new(region: Rect) -> Self {
+        Self {
+            region,
+            content: inset_horizontally(region, 1),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ComposerFrame {
     outer: Rect,
-    properties_heading: Rect,
-    description_heading: Rect,
-    properties: Rect,
-    description: Rect,
-    editor: Rect,
-    validation: Rect,
+    properties_heading: Pane,
+    description_heading: Pane,
+    properties: Pane,
+    description: Pane,
+    editor: Pane,
+    validation: Pane,
     split_x: u16,
     heading_separator_y: u16,
     context_separator_y: u16,
@@ -118,9 +133,9 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
     let outer = inset_horizontally(sections[2], 1);
     let list_area = Rect::new(
         outer.x.saturating_add(2),
-        outer.y.saturating_add(2),
+        outer.y.saturating_add(1),
         outer.width.saturating_sub(4),
-        outer.height.saturating_sub(4),
+        outer.height.saturating_sub(2),
     );
     frame.render_widget(Block::bordered().border_style(frame_style()), outer);
     let items = session
@@ -177,27 +192,27 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     render_composer_frame(frame, composer_frame);
     render_section_heading(
         frame,
-        composer_frame.properties_heading,
+        composer_frame.properties_heading.content,
         "Message Properties",
     );
     render_section_heading(
         frame,
-        composer_frame.description_heading,
+        composer_frame.description_heading.content,
         "Property Description",
     );
-    render_field_hud(frame, composer_frame.properties, session);
-    render_field_description(frame, composer_frame.description, session);
+    render_field_hud(frame, composer_frame.properties.content, session);
+    render_field_description(frame, composer_frame.description.content, session);
     let editor_content = Rect::new(
-        composer_frame.editor.x,
-        composer_frame.editor.y,
-        composer_frame.editor.width.saturating_sub(1),
-        composer_frame.editor.height,
+        composer_frame.editor.content.x,
+        composer_frame.editor.content.y,
+        composer_frame.editor.content.width.saturating_sub(1),
+        composer_frame.editor.content.height,
     );
     let scrollbar_area = Rect::new(
-        composer_frame.editor.right().saturating_sub(1),
-        composer_frame.editor.y,
+        composer_frame.editor.content.right().saturating_sub(1),
+        composer_frame.editor.content.y,
         1,
-        composer_frame.editor.height,
+        composer_frame.editor.content.height,
     );
     let cursor_status =
         render_document_editor(frame, editor_content, composer_frame.outer, session);
@@ -206,7 +221,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     let help: &[_] = &[("↑/↓", "move"), ("esc", "back"), ("ctrl+s", "review")];
     render_validation_row(
         frame,
-        composer_frame.validation,
+        composer_frame.validation.content,
         session.composer.issues.first(),
         cursor_status,
     );
@@ -214,59 +229,54 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
 }
 
 fn composer_frame(area: Rect, session: &AuthoringSession<'_>) -> ComposerFrame {
-    let context_width = area.width.saturating_sub(3);
+    let inner = Rect::new(
+        area.x.saturating_add(1),
+        area.y.saturating_add(1),
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2),
+    );
+    let context_width = inner.width.saturating_sub(1);
     let properties_pane_width = context_width.saturating_mul(40) / 100;
     let description_pane_width = context_width.saturating_sub(properties_pane_width);
-    let split_x = area
-        .x
-        .saturating_add(1)
-        .saturating_add(properties_pane_width);
-    let properties_x = area.x.saturating_add(2);
-    let description_x = split_x.saturating_add(2);
-    let properties_width = properties_pane_width.saturating_sub(2);
     let description_width = description_pane_width.saturating_sub(2);
-    let heading_y = area.y.saturating_add(2);
-    let properties_heading = Rect::new(properties_x, heading_y, properties_width, 1);
-    let description_heading = Rect::new(description_x, heading_y, description_width, 1);
-    let heading_separator_y = area.y.saturating_add(3);
     let desired_context_height = context_content_height(description_width, session);
-    let maximum_context_height = area
-        .height
-        .saturating_sub(FRAME_FIXED_ROWS + MINIMUM_EDITOR_HEIGHT);
+    let maximum_context_height = inner.height.saturating_sub(COMPOSER_NON_CONTEXT_ROWS);
     let context_height = desired_context_height.min(maximum_context_height).max(1);
-    let context_y = heading_separator_y.saturating_add(1);
-    let properties = Rect::new(properties_x, context_y, properties_width, context_height);
-    let description = Rect::new(description_x, context_y, description_width, context_height);
-    let context_separator_y = context_y.saturating_add(context_height).saturating_add(1);
-    let validation_separator_y = area.bottom().saturating_sub(5);
-    let editor_y = context_separator_y.saturating_add(2);
-    let editor = Rect::new(
-        area.x.saturating_add(2),
-        editor_y,
-        area.width.saturating_sub(4),
-        validation_separator_y
-            .saturating_sub(1)
-            .saturating_sub(editor_y),
-    );
-    let validation = Rect::new(
-        area.x.saturating_add(2),
-        validation_separator_y.saturating_add(2),
-        area.width.saturating_sub(4),
-        1,
-    );
+    let rows = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(context_height),
+        Constraint::Length(1),
+        Constraint::Min(MINIMUM_EDITOR_HEIGHT),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+    let headings = split_context_row(rows[0], properties_pane_width);
+    let context = split_context_row(rows[2], properties_pane_width);
+    let split_x = headings[1].x;
     ComposerFrame {
         outer: area,
-        properties_heading,
-        description_heading,
-        properties,
-        description,
-        editor,
-        validation,
+        properties_heading: Pane::new(headings[0]),
+        description_heading: Pane::new(headings[2]),
+        properties: Pane::new(context[0]),
+        description: Pane::new(context[2]),
+        editor: Pane::new(rows[4]),
+        validation: Pane::new(rows[6]),
         split_x,
-        heading_separator_y,
-        context_separator_y,
-        validation_separator_y,
+        heading_separator_y: rows[1].y,
+        context_separator_y: rows[3].y,
+        validation_separator_y: rows[5].y,
     }
+}
+
+fn split_context_row(area: Rect, properties_width: u16) -> std::rc::Rc<[Rect]> {
+    Layout::horizontal([
+        Constraint::Length(properties_width),
+        Constraint::Length(1),
+        Constraint::Min(1),
+    ])
+    .split(area)
 }
 
 fn render_composer_frame(frame: &mut Frame<'_>, composer: ComposerFrame) {
