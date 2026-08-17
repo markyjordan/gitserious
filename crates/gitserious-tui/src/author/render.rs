@@ -28,7 +28,7 @@ const TERMINAL_EDGE_CURSOR: &str = "█";
 const COMPOSER_NON_CONTEXT_ROWS: u16 = 8;
 const COMPOSER_FRAME_WIDTH_OVERHEAD: u16 = 10;
 const WIDE_COMPOSER_BREAKPOINT: u16 = 101;
-const SCROLLBAR_WIDTH: u16 = 2;
+const SCROLLBAR_WIDTH: u16 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Pane {
@@ -636,15 +636,6 @@ fn render_editor_scrollbar(frame: &mut Frame<'_>, area: Rect, status: CursorStat
     let track_style = Style::default().fg(Color::DarkGray);
     for y in area.y..area.bottom() {
         set_rule_cell(frame, area.x, y, "│", track_style);
-        if area.width > 1 {
-            set_rule_cell(
-                frame,
-                area.x.saturating_add(1),
-                y,
-                " ",
-                Style::default().bg(JET_BLACK),
-            );
-        }
     }
     if status.content_rows <= status.viewport_height {
         for y in area.y..area.bottom() {
@@ -682,15 +673,6 @@ fn render_editor_scrollbar(frame: &mut Frame<'_>, area: Rect, status: CursorStat
 
 fn render_scrollbar_thumb_row(frame: &mut Frame<'_>, area: Rect, y: u16) {
     set_rule_cell(frame, area.x, y, "┃", Style::default().fg(Color::Yellow));
-    if area.width > 1 {
-        set_rule_cell(
-            frame,
-            area.x.saturating_add(1),
-            y,
-            "█",
-            Style::default().fg(Color::Gray),
-        );
-    }
 }
 
 fn meaningful_editor_rows(editor: &TextArea<'_>) -> u16 {
@@ -765,8 +747,16 @@ fn render_document_rules(
                 .iter()
                 .any(|heading| bold_heading_at(virtual_buffer, row, heading))
         {
-            render_frame_rule(frame, outer, area.y + row - 1, None);
+            render_editor_section_rule(frame, outer.x, area.right(), area.y + row - 1);
         }
+    }
+}
+
+fn render_editor_section_rule(frame: &mut Frame<'_>, start: u16, end: u16, y: u16) {
+    let style = frame_style();
+    merge_rule_cell(frame, start, y, "├", style);
+    for x in start.saturating_add(1)..end {
+        merge_rule_cell(frame, x, y, "─", style);
     }
 }
 
