@@ -37,6 +37,12 @@ borderless.
 composer. Both forms require interactive standard input and output. There is no
 configured-Git-editor fallback or non-interactive authoring mode in this slice.
 
+Step 1 lists the effective catalog as a table inside that shared frame: a
+one-cell `›` marker on the current type, type identifiers that hug the longest
+id, and descriptions in the remaining width. A two-cell gap separates the
+columns, matching Message Properties. Rows alternate between `#000000` and
+`#101010`; the current type uses a full black-on-yellow row.
+
 The composer presents one prepopulated document as three immutable structural
 sections. `Message Subject` contains optional `scope` and required `description`
 fields; `Message Body` contains the selected type's schema-defined properties;

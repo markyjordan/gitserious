@@ -1244,8 +1244,8 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert_eq!(picker_buffer[(0, 22)].symbol(), "└");
     assert_eq!(picker_buffer[(99, 22)].symbol(), "┘");
     assert_black_canvas(&picker_buffer);
-    let selected = find_ascii(&picker_buffer, 100, 24, "› feat").ok_or("missing selection")?;
-    assert_eq!(selected, (2, 2));
+    let selected = find_ascii(&picker_buffer, 100, 24, "feat").ok_or("missing selection")?;
+    assert_eq!(selected, (5, 2));
     assert_highlighted_footer(&mut picker, 100, 24)?;
 
     let definitions = vec![presentation_definition()?];
@@ -1672,7 +1672,7 @@ fn nested_panes_share_borders_and_apply_visual_insets() -> Result<(), Box<dyn Er
     let picker = rendered_buffer(&mut picker, 100, 24)?;
     assert_eq!(picker[(0, 1)].symbol(), "┌");
     assert_eq!(picker[(1, 2)].symbol(), " ");
-    assert_eq!(find_ascii(&picker, 100, 24, "› feat"), Some((2, 2)));
+    assert_eq!(find_ascii(&picker, 100, 24, "feat"), Some((5, 2)));
 
     let mut composer = AuthoringSession::new(built_in_commit_types(), Some(0));
     let buffer = rendered_buffer(&mut composer, 101, 32)?;
@@ -1713,6 +1713,58 @@ fn nested_panes_share_borders_and_apply_visual_insets() -> Result<(), Box<dyn Er
     assert_eq!(buffer[(99, 29)].symbol(), " ");
     assert_eq!(buffer[(0, 30)].symbol(), "└");
     assert_eq!(buffer[(100, 30)].symbol(), "┘");
+    Ok(())
+}
+
+#[test]
+fn type_picker_uses_spaced_content_hugging_columns() -> Result<(), Box<dyn Error>> {
+    let mut session = AuthoringSession::new(built_in_commit_types(), None);
+    let buffer = rendered_buffer(&mut session, 100, 24)?;
+    let feat = find_ascii(&buffer, 100, 24, "feat").ok_or("missing feat")?;
+    let fix = find_ascii(&buffer, 100, 24, "fix").ok_or("missing fix")?;
+    let refactor = find_ascii(&buffer, 100, 24, "refactor").ok_or("missing refactor")?;
+    let feat_description = find_ascii(
+        &buffer,
+        100,
+        24,
+        "An intentional addition or expansion of capability.",
+    )
+    .ok_or("missing feat description")?;
+    let fix_description = find_ascii(
+        &buffer,
+        100,
+        24,
+        "A causal correction of an observed failure or incorrect behavior.",
+    )
+    .ok_or("missing fix description")?;
+    let refactor_description = find_ascii(
+        &buffer,
+        100,
+        24,
+        "A structural transformation that preserves intended behavior.",
+    )
+    .ok_or("missing refactor description")?;
+
+    assert_eq!(feat, (5, 2));
+    assert_eq!(fix.0, feat.0);
+    assert_eq!(refactor.0, feat.0);
+    assert_eq!(feat_description, (15, 2));
+    assert_eq!(fix_description.0, feat_description.0);
+    assert_eq!(refactor_description.0, feat_description.0);
+    assert_eq!(buffer[(2, feat.1)].symbol(), "›");
+    assert_eq!(buffer[(3, feat.1)].symbol(), " ");
+    assert_eq!(buffer[(4, feat.1)].symbol(), " ");
+    assert_eq!(buffer[(13, refactor.1)].symbol(), " ");
+    assert_eq!(buffer[(14, refactor.1)].symbol(), " ");
+    assert_eq!(buffer[(2, fix.1)].symbol(), " ");
+    assert!(find_ascii(&buffer, 100, 24, " — ").is_none());
+
+    assert_eq!(buffer[feat].fg, JET_BLACK);
+    assert_eq!(buffer[feat].bg, Color::Yellow);
+    assert!(buffer[feat].modifier.contains(Modifier::BOLD));
+    assert!((2..98).all(|column| buffer[(column, feat.1)].bg == Color::Yellow));
+    assert_eq!(buffer[fix].bg, ZEBRA_BACKGROUND);
+    assert!((2..98).all(|column| buffer[(column, fix.1)].bg == ZEBRA_BACKGROUND));
     Ok(())
 }
 
