@@ -5,8 +5,7 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Scrollbar,
-    ScrollbarOrientation, ScrollbarState, Table, Widget, Wrap,
+    Block, BorderType, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, Widget, Wrap,
 };
 use tui_textarea::{CursorMove, TextArea, WrapMode};
 
@@ -27,6 +26,7 @@ const FIELD_REQUIREMENT_WIDTH: u16 = 11;
 const MINIMUM_EDITOR_HEIGHT: u16 = 3;
 const TERMINAL_EDGE_CURSOR: &str = "█";
 const COMPOSER_NON_CONTEXT_ROWS: u16 = 8;
+const COMPOSER_FRAME_WIDTH_OVERHEAD: u16 = 10;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Pane {
@@ -76,7 +76,12 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
     } else {
         MINIMUM_HEIGHT
     };
-    session.too_small = area.width < MINIMUM_WIDTH || area.height < minimum_height;
+    let minimum_width = if session.visible_stage() == Stage::Compose {
+        composer_minimum_width(session.definition())
+    } else {
+        MINIMUM_WIDTH
+    };
+    session.too_small = area.width < minimum_width || area.height < minimum_height;
     if session.too_small {
         if session.stage == Stage::Confirm {
             session.confirmation_buttons = Some(render_discard_confirmation(
@@ -236,7 +241,7 @@ fn composer_frame(area: Rect, session: &AuthoringSession<'_>) -> ComposerFrame {
         area.height.saturating_sub(2),
     );
     let context_width = inner.width.saturating_sub(1);
-    let properties_pane_width = context_width.saturating_mul(40) / 100;
+    let properties_pane_width = field_hud_content_width(session.definition()).saturating_add(2);
     let description_pane_width = context_width.saturating_sub(properties_pane_width);
     let description_width = description_pane_width.saturating_sub(2);
     let desired_context_height = context_content_height(description_width, session);
@@ -308,15 +313,7 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
         .current_field(definition)
         .map(FieldKind::id);
     let fields = session.composer.hud_fields(definition);
-    let fixed_width =
-        FIELD_MARKER_WIDTH + FIELD_REQUIREMENT_WIDTH + FIELD_COLUMN_SPACING.saturating_mul(2);
-    let name_width = fields
-        .iter()
-        .map(|field| field_columns(field.id, definition).0.chars().count())
-        .max()
-        .and_then(|width| u16::try_from(width).ok())
-        .unwrap_or(1)
-        .min(area.width.saturating_sub(fixed_width).max(1));
+    let name_width = field_hud_name_width(definition);
     let rows = fields
         .into_iter()
         .enumerate()
@@ -453,11 +450,7 @@ fn render_document_editor(
     CursorStatus {
         column,
         wrap_width: MAX_EDITOR_INNER_WIDTH,
-        content_rows: session
-            .composer
-            .editor
-            .measure(MAX_EDITOR_INNER_WIDTH)
-            .content_rows,
+        content_rows: meaningful_editor_rows(&session.composer.editor),
         viewport_top: absolute_viewport_top(
             &session.composer.editor,
             cursor_position.map_or(0, |position| position.y),
@@ -487,24 +480,64 @@ fn absolute_viewport_top(editor: &TextArea<'_>, visible_cursor_row: u16) -> u16 
 }
 
 fn render_editor_scrollbar(frame: &mut Frame<'_>, area: Rect, status: CursorStatus) {
+    if area.is_empty() {
+        return;
+    }
+    let track_style = Style::default().fg(Color::DarkGray);
+    for y in area.y..area.bottom() {
+        set_rule_cell(frame, area.x, y, "│", track_style);
+    }
     if status.content_rows <= status.viewport_height {
         for y in area.y..area.bottom() {
             set_rule_cell(frame, area.x, y, "┃", Style::default().fg(Color::Yellow));
         }
         return;
     }
+    let track_length = area.height;
+    let thumb_length = u16::try_from(
+        u32::from(status.viewport_height)
+            .saturating_mul(u32::from(track_length))
+            .div_ceil(u32::from(status.content_rows)),
+    )
+    .unwrap_or(track_length)
+    .clamp(1, track_length);
     let maximum_position = status.content_rows.saturating_sub(status.viewport_height);
-    let mut state = ScrollbarState::new(usize::from(status.content_rows.max(1)))
-        .position(usize::from(status.viewport_top.min(maximum_position)))
-        .viewport_content_length(usize::from(status.viewport_height));
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(None)
-        .end_symbol(None)
-        .track_symbol(Some("│"))
-        .track_style(Style::default().fg(Color::DarkGray))
-        .thumb_symbol("┃")
-        .thumb_style(Style::default().fg(Color::Yellow));
-    frame.render_stateful_widget(scrollbar, area, &mut state);
+    let position = status.viewport_top.min(maximum_position);
+    let maximum_thumb_offset = track_length.saturating_sub(thumb_length);
+    let thumb_offset = if maximum_position == 0 {
+        0
+    } else {
+        u16::try_from(
+            (u32::from(position)
+                .saturating_mul(u32::from(maximum_thumb_offset))
+                .saturating_add(u32::from(maximum_position) / 2))
+                / u32::from(maximum_position),
+        )
+        .unwrap_or(maximum_thumb_offset)
+        .min(maximum_thumb_offset)
+    };
+    for row in thumb_offset..thumb_offset.saturating_add(thumb_length) {
+        set_rule_cell(
+            frame,
+            area.x,
+            area.y.saturating_add(row),
+            "┃",
+            Style::default().fg(Color::Yellow),
+        );
+    }
+}
+
+fn meaningful_editor_rows(editor: &TextArea<'_>) -> u16 {
+    let mut lines = editor.lines().to_vec();
+    if lines.len() > 1 {
+        lines.pop();
+    }
+    let mut meaningful = TextArea::new(lines);
+    meaningful.set_wrap_mode(editor.wrap_mode());
+    meaningful
+        .measure(MAX_EDITOR_INNER_WIDTH)
+        .content_rows
+        .max(1)
 }
 
 fn render_validation_row(
@@ -701,6 +734,29 @@ fn field_columns(id: FieldId, definition: &CommitTypeDefinition) -> (String, &'s
         }
         FieldId::BreakingChange => ("breaking-change".to_owned(), "optional"),
     }
+}
+
+fn field_hud_name_width(definition: &CommitTypeDefinition) -> u16 {
+    std::iter::once(FieldId::Scope)
+        .chain(std::iter::once(FieldId::Description))
+        .chain((0..definition.properties().len()).map(FieldId::Property))
+        .chain(std::iter::once(FieldId::BreakingChange))
+        .map(|id| field_columns(id, definition).0)
+        .map(|name| u16::try_from(Line::from(name).width()).unwrap_or(u16::MAX))
+        .max()
+        .unwrap_or(1)
+}
+
+fn field_hud_content_width(definition: &CommitTypeDefinition) -> u16 {
+    FIELD_MARKER_WIDTH
+        .saturating_add(field_hud_name_width(definition))
+        .saturating_add(FIELD_REQUIREMENT_WIDTH)
+        .saturating_add(FIELD_COLUMN_SPACING.saturating_mul(2))
+}
+
+fn composer_minimum_width(definition: &CommitTypeDefinition) -> u16 {
+    MINIMUM_WIDTH
+        .max(field_hud_content_width(definition).saturating_add(COMPOSER_FRAME_WIDTH_OVERHEAD))
 }
 
 fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String, String) {

@@ -378,6 +378,20 @@ fn guidance_definition(description: &str) -> Result<CommitTypeDefinition, Box<dy
     )?)
 }
 
+fn wide_property_definition() -> Result<CommitTypeDefinition, Box<dyn Error>> {
+    let key = "a".repeat(70);
+    Ok(CommitTypeDefinition::new(
+        SchemaVersion::V1,
+        CommitTypeId::new("custom")?,
+        "Exercise definition-specific minimum widths.",
+        vec![property(
+            &key,
+            PropertyRequirement::Optional,
+            PropertyMultiplicity::Single,
+        )?],
+    )?)
+}
+
 fn repeatable_definition() -> Result<CommitTypeDefinition, Box<dyn Error>> {
     Ok(CommitTypeDefinition::new(
         SchemaVersion::V1,
@@ -1486,16 +1500,16 @@ fn composer_uses_one_framed_context_editor_and_validation_surface() -> Result<()
         find_ascii(&buffer, 120, 32, "Optional affected area").ok_or("missing guidance")?;
 
     assert_eq!(properties, (3, 4));
-    assert_eq!(description, (50, 4));
+    assert_eq!(description, (37, 4));
     assert_eq!(buffer[(1, 3)].symbol(), "┌");
-    assert_eq!(buffer[(48, 3)].symbol(), "┬");
+    assert_eq!(buffer[(35, 3)].symbol(), "┬");
     assert_eq!(buffer[(118, 3)].symbol(), "┐");
     assert_eq!(buffer[(1, 5)].symbol(), "├");
-    assert_eq!(buffer[(48, 5)].symbol(), "┼");
+    assert_eq!(buffer[(35, 5)].symbol(), "┼");
     assert_eq!(buffer[(118, 5)].symbol(), "┤");
-    assert_eq!(buffer[(48, 6)].symbol(), "│");
+    assert_eq!(buffer[(35, 6)].symbol(), "│");
     assert_eq!(buffer[(1, 14)].symbol(), "├");
-    assert_eq!(buffer[(48, 14)].symbol(), "┴");
+    assert_eq!(buffer[(35, 14)].symbol(), "┴");
     assert_eq!(buffer[(118, 14)].symbol(), "┤");
     assert_eq!(buffer[(1, 27)].symbol(), "├");
     assert_eq!(buffer[(118, 27)].symbol(), "┤");
@@ -1625,16 +1639,16 @@ fn composer_context_height_hugs_the_taller_of_fields_and_wrapped_guidance()
 
     assert!(long_separator.1 > short_separator.1);
     assert_eq!(properties, (3, 4));
-    assert_eq!(guidance, (26, 4));
-    assert!(guidance_content.0 >= 26);
+    assert_eq!(guidance, (37, 4));
+    assert!(guidance_content.0 >= 37);
     assert_eq!(guidance_content.1, guidance.1 + 3);
-    assert_eq!(long_buffer[(24, long_separator.1)].symbol(), "┴");
-    assert_eq!(short_buffer[(24, short_separator.1)].symbol(), "┴");
+    assert_eq!(long_buffer[(35, long_separator.1)].symbol(), "┴");
+    assert_eq!(short_buffer[(35, short_separator.1)].symbol(), "┴");
     Ok(())
 }
 
 #[test]
-fn fields_hud_uses_spaced_content_hugging_columns_and_clips_names_before_requirements()
+fn fields_hud_uses_spaced_content_hugging_columns_without_clipping_names()
 -> Result<(), Box<dyn Error>> {
     let definitions = vec![presentation_definition()?];
     let mut wide = AuthoringSession::new(&definitions, Some(0));
@@ -1676,8 +1690,8 @@ fn fields_hud_uses_spaced_content_hugging_columns_and_clips_names_before_require
     assert!(buffer[scope].modifier.contains(Modifier::BOLD));
     assert_eq!(buffer[(requirement_column[0], scope.1)].fg, JET_BLACK);
     assert_eq!(buffer[(requirement_column[0], scope.1)].bg, Color::Yellow);
-    assert!((3..47).all(|column| buffer[(column, scope.1)].bg == Color::Yellow));
-    assert!((3..47).all(|column| { buffer[(column, description.1)].bg == ZEBRA_BACKGROUND }));
+    assert!((3..36).all(|column| buffer[(column, scope.1)].bg == Color::Yellow));
+    assert!((3..36).all(|column| { buffer[(column, description.1)].bg == ZEBRA_BACKGROUND }));
 
     paste(&mut wide, "api");
     let complete = rendered_buffer(&mut wide, 120, 32)?;
@@ -1692,16 +1706,29 @@ fn fields_hud_uses_spaced_content_hugging_columns_and_clips_names_before_require
 
     let mut narrow = AuthoringSession::new(&definitions, Some(0));
     let buffer = rendered_buffer(&mut narrow, 60, 32)?;
-    let requirement =
-        find_ascii(&buffer, 60, 32, "conditional").ok_or("missing conditional requirement")?;
-    assert!(requirement.1 > 5);
-    assert!(requirement.0 < 24);
-    assert_eq!(requirement.0, 12);
-    assert_eq!(buffer[(3, requirement.1)].symbol(), "○");
-    assert_eq!(buffer[(4, requirement.1)].symbol(), " ");
-    assert_eq!(buffer[(5, requirement.1)].symbol(), " ");
-    assert_eq!(buffer[(6, requirement.1)].symbol(), "c");
-    assert_eq!(buffer[(24, requirement.1)].symbol(), "│");
+    let conditional = find_ascii(&buffer, 60, 32, "conditional-field")
+        .ok_or("missing complete conditional field name")?;
+    let requirement = find_ascii_on_row_from_right(&buffer, 60, conditional.1, "conditional")
+        .ok_or("missing conditional requirement")?;
+    assert_eq!(requirement, 25);
+    assert_eq!(buffer[(3, conditional.1)].symbol(), "○");
+    assert_eq!(buffer[(4, conditional.1)].symbol(), " ");
+    assert_eq!(buffer[(5, conditional.1)].symbol(), " ");
+    assert_eq!(buffer[(6, conditional.1)].symbol(), "c");
+    assert_eq!(buffer[(37, conditional.1)].symbol(), "│");
+    assert!(find_ascii(&buffer, 60, 32, "breaking-change").is_some());
+
+    let wide_definitions = vec![wide_property_definition()?];
+    let key = "a".repeat(70);
+    let mut too_narrow = AuthoringSession::new(&wide_definitions, Some(0));
+    let buffer = rendered_buffer(&mut too_narrow, 95, 32)?;
+    assert!(too_narrow.too_small);
+    assert!(find_ascii(&buffer, 95, 32, "Terminal too small").is_some());
+
+    let mut exact = AuthoringSession::new(&wide_definitions, Some(0));
+    let buffer = rendered_buffer(&mut exact, 96, 32)?;
+    assert!(!exact.too_small);
+    assert!(find_ascii(&buffer, 96, 32, &key).is_some());
     Ok(())
 }
 
@@ -1817,6 +1844,15 @@ fn editor_scrollbar_tracks_the_fixed_width_viewport_without_mutating_editor_stat
             .collect::<Vec<_>>(),
         [16]
     );
+
+    let mut tall_bottom = AuthoringSession::new(built_in_commit_types(), Some(0));
+    for _ in 0..7 {
+        press(&mut tall_bottom, KeyCode::Down);
+    }
+    let buffer = rendered_buffer(&mut tall_bottom, 120, 32)?;
+    assert_eq!(tall_bottom.composer.editor.cursor(), (27, 0));
+    assert_eq!(buffer[(116, 26)].symbol(), "┃");
+    assert_eq!(buffer[(116, 27)].symbol(), "─");
 
     let mut unicode = AuthoringSession::new(built_in_commit_types(), Some(0));
     let value = "🦀".repeat(121);
