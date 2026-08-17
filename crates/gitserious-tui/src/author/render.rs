@@ -68,7 +68,9 @@ enum ComposerChrome {
     },
     Wide {
         split_x: u16,
+        properties_heading_separator_y: u16,
         properties_separator_y: u16,
+        description_heading_separator_y: u16,
     },
 }
 
@@ -187,9 +189,7 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
 fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
     let sections = Layout::vertical([
         Constraint::Length(2),
-        Constraint::Length(1),
         Constraint::Min(1),
-        Constraint::Length(1),
         Constraint::Length(1),
     ])
     .split(area);
@@ -207,11 +207,8 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         header[1],
     );
 
-    let composer_frame = composer_frame(
-        inset_horizontally(sections[2], 1),
-        session,
-        area.width >= WIDE_COMPOSER_BREAKPOINT,
-    );
+    let composer_frame =
+        composer_frame(sections[1], session, area.width >= WIDE_COMPOSER_BREAKPOINT);
     render_composer_frame(frame, composer_frame);
     render_section_heading(
         frame,
@@ -260,7 +257,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         session.composer.issues.first(),
         cursor_status,
     );
-    render_navigation_row(frame, sections[4], help);
+    render_navigation_row(frame, sections[2], help);
 }
 
 fn composer_frame(area: Rect, session: &AuthoringSession<'_>, wide: bool) -> ComposerFrame {
@@ -335,19 +332,27 @@ fn wide_composer_frame(area: Rect, session: &AuthoringSession<'_>) -> ComposerFr
     let split_x = columns[1].x;
     let properties_height = u16::try_from(session.composer.hud_fields(session.definition()).len())
         .unwrap_or(u16::MAX)
-        .saturating_add(1)
-        .min(main.height.saturating_sub(3))
+        .saturating_add(2)
+        .min(main.height.saturating_sub(4))
         .max(1);
     let left_rows = Layout::vertical([
         Constraint::Length(properties_height),
         Constraint::Length(1),
-        Constraint::Min(2),
+        Constraint::Min(3),
     ])
     .split(columns[0]);
-    let properties_rows =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(left_rows[0]);
-    let description_rows =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(left_rows[2]);
+    let properties_rows = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .split(left_rows[0]);
+    let description_rows = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .split(left_rows[2]);
     let editor_rule_outer = Rect::new(
         split_x,
         area.y,
@@ -358,13 +363,15 @@ fn wide_composer_frame(area: Rect, session: &AuthoringSession<'_>) -> ComposerFr
         outer: area,
         properties_heading: Pane::new(properties_rows[0]),
         description_heading: Pane::new(description_rows[0]),
-        properties: Pane::new(properties_rows[1]),
-        description: Pane::new(description_rows[1]),
+        properties: Pane::new(properties_rows[2]),
+        description: Pane::new(description_rows[2]),
         editor: Pane::new(columns[2]),
         validation: Pane::new(vertical[2]),
         chrome: ComposerChrome::Wide {
             split_x,
+            properties_heading_separator_y: properties_rows[1].y,
             properties_separator_y: left_rows[1].y,
+            description_heading_separator_y: description_rows[1].y,
         },
         editor_rule_outer,
         validation_separator_y: vertical[1].y,
@@ -409,13 +416,27 @@ fn render_composer_frame(frame: &mut Frame<'_>, composer: ComposerFrame) {
         }
         ComposerChrome::Wide {
             split_x,
+            properties_heading_separator_y,
             properties_separator_y,
+            description_heading_separator_y,
         } => {
             set_rule_cell(frame, split_x, composer.outer.y, "┬", style);
             for y in composer.outer.y.saturating_add(1)..composer.validation_separator_y {
                 set_rule_cell(frame, split_x, y, "│", style);
             }
+            render_partial_frame_rule(
+                frame,
+                composer.outer.x,
+                split_x,
+                properties_heading_separator_y,
+            );
             render_partial_frame_rule(frame, composer.outer.x, split_x, properties_separator_y);
+            render_partial_frame_rule(
+                frame,
+                composer.outer.x,
+                split_x,
+                description_heading_separator_y,
+            );
             render_frame_rule(
                 frame,
                 composer.outer,
