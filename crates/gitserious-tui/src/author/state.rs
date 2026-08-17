@@ -282,6 +282,24 @@ impl ComposerState {
         }
     }
 
+    fn edit_within_current_field(
+        &mut self,
+        definition: &CommitTypeDefinition,
+        edit: impl FnOnce(&mut TextArea<'static>),
+    ) {
+        let previous_editor = self.editor.clone();
+        let previous_issues = self.issues.clone();
+        let previous_field = self.current_field(definition).map(FieldKind::id);
+        if previous_field.is_none() {
+            return;
+        }
+        self.edit_preserving_headings(definition, edit);
+        if self.current_field(definition).map(FieldKind::id) != previous_field {
+            self.editor = previous_editor;
+            self.issues = previous_issues;
+        }
+    }
+
     fn move_cursor(&mut self, definition: &CommitTypeDefinition, movement: CursorMove) {
         let previous_cursor = self.editor.cursor();
         self.editor.move_cursor(movement);
@@ -417,10 +435,14 @@ fn headings_are_intact(lines: &[String], definition: &CommitTypeDefinition) -> b
             _ => true,
         }
     });
+    let final_field_is_separated = headings
+        .last()
+        .is_some_and(|(line, _)| lines.len().saturating_sub(*line) >= 3);
 
     signature == expected_marker_signature(definition)
         && separated
         && groups_are_separated
+        && final_field_is_separated
         && lines.last().is_some_and(String::is_empty)
 }
 
@@ -1050,29 +1072,35 @@ impl<'a> AuthoringSession<'a> {
                 return;
             }
         }
-        let (line, column) = self.composer.editor.cursor();
-        let join_empty_previous = matches!(key.code, KeyCode::Backspace | KeyCode::Delete)
-            && column == 0
-            && line > 0
-            && self
-                .composer
-                .editor
-                .lines()
-                .get(line - 1)
-                .is_some_and(String::is_empty)
-            && self
-                .composer
-                .editor
-                .lines()
-                .get(line)
-                .is_some_and(|current| structural_marker(current, &definition).is_none());
+        if matches!(key.code, KeyCode::Backspace | KeyCode::Delete) {
+            let (line, column) = self.composer.editor.cursor();
+            let join_empty_previous = column == 0
+                && line > 0
+                && self
+                    .composer
+                    .editor
+                    .lines()
+                    .get(line - 1)
+                    .is_some_and(String::is_empty)
+                && self
+                    .composer
+                    .editor
+                    .lines()
+                    .get(line)
+                    .is_some_and(|current| structural_marker(current, &definition).is_none());
+            self.composer
+                .edit_within_current_field(&definition, |editor| {
+                    if join_empty_previous {
+                        editor.delete_char();
+                    } else {
+                        editor.input(Input::from(key));
+                    }
+                });
+            return;
+        }
         self.composer
             .edit_preserving_headings(&definition, |editor| {
-                if join_empty_previous {
-                    editor.delete_char();
-                } else {
-                    editor.input(Input::from(key));
-                }
+                editor.input(Input::from(key));
             });
     }
 
