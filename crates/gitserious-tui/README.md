@@ -51,13 +51,17 @@ adapter's user-facing vocabulary.
 
 Step 2 places `Message Properties`, `Property Description`, the editor, and its
 validation row inside one dark-gray Unicode frame. The header and type metadata
-remain above that frame, and the navigation strip remains below it. At up to
-100 terminal columns, the properties and description remain side by side above
-the full-width editor. At 101 columns and wider, the properties table hugs its
-content in the upper-left pane, the description fills the lower-left pane, and
-the editor occupies the right pane. The validation and column-status row stays
-fixed across the complete frame bottom in both layouts. Resizing across the
-breakpoint does not alter the document, cursor, selection, history, or viewport.
+remain above that frame, and the navigation strip remains below it. The frame
+immediately follows the type metadata and immediately precedes the navigation
+strip, with no additional outer spacer row or column. Its nested panes retain a
+one-column content inset. At up to 100 terminal columns, the properties and
+description remain side by side above the full-width editor. At 101 columns and
+wider, the properties table hugs its content in the upper-left pane, the
+description fills the lower-left pane, and the editor occupies the right pane.
+Both wide left-pane headings retain a horizontal rule beneath them. The
+validation and column-status row stays fixed across the complete frame bottom
+in both layouts. Resizing across the breakpoint does not alter the document,
+cursor, selection, history, or viewport.
 
 Nested layouts give the headings, HUD, description, editor, and
 validation/status row independent content rectangles while one composite chrome
@@ -76,19 +80,18 @@ remain usable.
 The `Compose commit message` view always edits an 80-column virtual surface. If
 the framed editor is narrower, it follows the cursor horizontally instead of
 wrapping early, then returns to column 1 when a word or glyph soft-wraps at
-column 80. The two rightmost inner editor columns are reserved for an
-always-visible scrollbar. It combines a dark-gray `│` track and yellow `┃`
-thumb with a muted-gray `█` extension to the thumb's right. Both thumb cells
-fill the track when all content fits. When content overflows, deterministic
-viewport geometry maps the first and final meaningful document rows to the
-exact ends of the track; the final reserved scaffold separator does not extend
-the scroll range. The track covers only the editable viewport and excludes pane
-padding, validation errors, and column status. Field rules use `⠒`, stop before
-both reserved columns, and remain distinct from the single-line frame dividers.
-Full-width rules introduce `Message Body` and `Message Footer`. All rules are
-render-only chrome and never enter the authored document or Git message.
-`Message Subject`, `Message Body`, and `Message Footer` remain the only yellow
-editor headings.
+column 80. The rightmost inner editor column is reserved for an always-visible
+scrollbar with a dark-gray `│` track and yellow `┃` thumb. The thumb fills the
+track when all content fits. When content overflows, deterministic viewport
+geometry maps the first and final meaningful document rows to the exact ends of
+the track; the final reserved scaffold separator does not extend the scroll
+range. The track covers only the editable viewport and excludes pane padding,
+validation errors, and column status. Field rules use `⠒` and stop before the
+reserved column. The single-line rules introducing `Message Body` and
+`Message Footer` also stop before the scrollbar, leaving the trailing inset and
+outer frame border clear. All rules are render-only chrome and never enter the
+authored document or Git message. `Message Subject`, `Message Body`, and
+`Message Footer` remain the only yellow editor headings.
 
 Backspace and Delete operate only inside the active semantic field. They may
 join explicit lines within a multiline value, but an edit that would cross a
