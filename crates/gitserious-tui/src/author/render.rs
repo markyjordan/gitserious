@@ -31,6 +31,13 @@ const WIDE_COMPOSER_BREAKPOINT: u16 = 101;
 const SCROLLBAR_WIDTH: u16 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StageShell {
+    header: Rect,
+    frame: Rect,
+    navigation: Rect,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Pane {
     region: Rect,
     content: Rect,
@@ -142,23 +149,9 @@ fn normalize_background(frame: &mut Frame<'_>, area: Rect) {
 }
 
 fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
-    let sections = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .split(area);
-    render_stage_header(frame, sections[0], "Select commit type", 1);
-    let outer = inset_horizontally(sections[2], 1);
-    let list_area = Rect::new(
-        outer.x.saturating_add(2),
-        outer.y.saturating_add(1),
-        outer.width.saturating_sub(4),
-        outer.height.saturating_sub(2),
-    );
-    frame.render_widget(Block::bordered().border_style(frame_style()), outer);
+    let shell = stage_shell(area, 1);
+    render_stage_header(frame, shell.header, "Select commit type", 1);
+    frame.render_widget(Block::bordered().border_style(frame_style()), shell.frame);
     let items = session
         .definitions
         .iter()
@@ -178,23 +171,18 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
         .highlight_style(navigation_key_style());
     let mut state = ListState::default();
     state.select(Some(session.selected_type));
-    frame.render_stateful_widget(list, list_area, &mut state);
+    frame.render_stateful_widget(list, framed_content(shell.frame), &mut state);
     render_navigation_row(
         frame,
-        sections[4],
+        shell.navigation,
         &[("↑/↓", "move"), ("enter", "select"), ("esc/q", "cancel")],
     );
 }
 
 fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
-    let sections = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .split(area);
+    let shell = stage_shell(area, 2);
     let header =
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(sections[0]);
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(shell.header);
     render_stage_header(frame, header[0], "Compose commit message", 2);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
@@ -208,7 +196,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     );
 
     let composer_frame =
-        composer_frame(sections[1], session, area.width >= WIDE_COMPOSER_BREAKPOINT);
+        composer_frame(shell.frame, session, area.width >= WIDE_COMPOSER_BREAKPOINT);
     render_composer_frame(frame, composer_frame);
     render_section_heading(
         frame,
@@ -257,7 +245,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         session.composer.issues.first(),
         cursor_status,
     );
-    render_navigation_row(frame, sections[2], help);
+    render_navigation_row(frame, shell.navigation, help);
 }
 
 fn composer_frame(area: Rect, session: &AuthoringSession<'_>, wide: bool) -> ComposerFrame {
@@ -859,29 +847,15 @@ fn subject_context_fits(editor: &TextArea<'_>, viewport_height: u16) -> bool {
 }
 
 fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
-    let sections = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .split(area);
-    render_stage_header(frame, sections[0], "Review and commit", 3);
-    let outer = inset_horizontally(sections[2], 1);
-    frame.render_widget(Block::bordered().border_style(frame_style()), outer);
-    let content = Rect::new(
-        outer.x.saturating_add(2),
-        outer.y.saturating_add(2),
-        outer.width.saturating_sub(4),
-        outer.height.saturating_sub(4),
-    );
+    let shell = stage_shell(area, 1);
+    render_stage_header(frame, shell.header, "Review and commit", 3);
+    frame.render_widget(Block::bordered().border_style(frame_style()), shell.frame);
     let review_sections = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Min(1),
     ])
-    .split(content);
+    .split(framed_content(shell.frame));
     render_section_heading(frame, review_sections[0], "Commit message");
     if let Some(review) = &mut session.review {
         let mut measured_message =
@@ -903,7 +877,7 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
     }
     render_navigation_row(
         frame,
-        sections[4],
+        shell.navigation,
         &[
             ("enter", "commit"),
             ("esc", "edit"),
@@ -1204,6 +1178,29 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     Layout::horizontal([Constraint::Length(width.min(area.width))])
         .flex(Flex::Center)
         .split(vertical[0])[0]
+}
+
+fn stage_shell(area: Rect, header_rows: u16) -> StageShell {
+    let sections = Layout::vertical([
+        Constraint::Length(header_rows),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .split(area);
+    StageShell {
+        header: sections[0],
+        frame: sections[1],
+        navigation: sections[2],
+    }
+}
+
+fn framed_content(outer: Rect) -> Rect {
+    Rect::new(
+        outer.x.saturating_add(2),
+        outer.y.saturating_add(1),
+        outer.width.saturating_sub(4),
+        outer.height.saturating_sub(2),
+    )
 }
 
 const fn inset_horizontally(area: Rect, amount: u16) -> Rect {
