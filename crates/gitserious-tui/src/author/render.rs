@@ -28,6 +28,7 @@ const TERMINAL_EDGE_CURSOR: &str = "█";
 const COMPOSER_NON_CONTEXT_ROWS: u16 = 8;
 const COMPOSER_FRAME_WIDTH_OVERHEAD: u16 = 10;
 const WIDE_COMPOSER_BREAKPOINT: u16 = 101;
+const SCROLLBAR_WIDTH: u16 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Pane {
@@ -227,13 +228,21 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     let editor_content = Rect::new(
         composer_frame.editor.content.x,
         composer_frame.editor.content.y,
-        composer_frame.editor.content.width.saturating_sub(1),
+        composer_frame
+            .editor
+            .content
+            .width
+            .saturating_sub(SCROLLBAR_WIDTH),
         composer_frame.editor.content.height,
     );
     let scrollbar_area = Rect::new(
-        composer_frame.editor.content.right().saturating_sub(1),
+        composer_frame
+            .editor
+            .content
+            .right()
+            .saturating_sub(SCROLLBAR_WIDTH),
         composer_frame.editor.content.y,
-        1,
+        SCROLLBAR_WIDTH.min(composer_frame.editor.content.width),
         composer_frame.editor.content.height,
     );
     let cursor_status = render_document_editor(
@@ -606,10 +615,19 @@ fn render_editor_scrollbar(frame: &mut Frame<'_>, area: Rect, status: CursorStat
     let track_style = Style::default().fg(Color::DarkGray);
     for y in area.y..area.bottom() {
         set_rule_cell(frame, area.x, y, "│", track_style);
+        if area.width > 1 {
+            set_rule_cell(
+                frame,
+                area.x.saturating_add(1),
+                y,
+                " ",
+                Style::default().bg(JET_BLACK),
+            );
+        }
     }
     if status.content_rows <= status.viewport_height {
         for y in area.y..area.bottom() {
-            set_rule_cell(frame, area.x, y, "┃", Style::default().fg(Color::Yellow));
+            render_scrollbar_thumb_row(frame, area, y);
         }
         return;
     }
@@ -637,12 +655,19 @@ fn render_editor_scrollbar(frame: &mut Frame<'_>, area: Rect, status: CursorStat
         .min(maximum_thumb_offset)
     };
     for row in thumb_offset..thumb_offset.saturating_add(thumb_length) {
+        render_scrollbar_thumb_row(frame, area, area.y.saturating_add(row));
+    }
+}
+
+fn render_scrollbar_thumb_row(frame: &mut Frame<'_>, area: Rect, y: u16) {
+    set_rule_cell(frame, area.x, y, "┃", Style::default().fg(Color::Yellow));
+    if area.width > 1 {
         set_rule_cell(
             frame,
-            area.x,
-            area.y.saturating_add(row),
-            "┃",
-            Style::default().fg(Color::Yellow),
+            area.x.saturating_add(1),
+            y,
+            "█",
+            Style::default().fg(Color::Gray),
         );
     }
 }
