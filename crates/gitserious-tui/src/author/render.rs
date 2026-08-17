@@ -27,6 +27,7 @@ const MINIMUM_EDITOR_HEIGHT: u16 = 3;
 const TERMINAL_EDGE_CURSOR: &str = "█";
 const COMPOSER_NON_CONTEXT_ROWS: u16 = 8;
 const COMPOSER_FRAME_WIDTH_OVERHEAD: u16 = 10;
+const WIDE_COMPOSER_BREAKPOINT: u16 = 101;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Pane {
@@ -52,10 +53,22 @@ struct ComposerFrame {
     description: Pane,
     editor: Pane,
     validation: Pane,
-    split_x: u16,
-    heading_separator_y: u16,
-    context_separator_y: u16,
+    chrome: ComposerChrome,
+    editor_rule_outer: Rect,
     validation_separator_y: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ComposerChrome {
+    Compact {
+        split_x: u16,
+        heading_separator_y: u16,
+        context_separator_y: u16,
+    },
+    Wide {
+        split_x: u16,
+        properties_separator_y: u16,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -193,7 +206,11 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         header[1],
     );
 
-    let composer_frame = composer_frame(inset_horizontally(sections[2], 1), session);
+    let composer_frame = composer_frame(
+        inset_horizontally(sections[2], 1),
+        session,
+        area.width >= WIDE_COMPOSER_BREAKPOINT,
+    );
     render_composer_frame(frame, composer_frame);
     render_section_heading(
         frame,
@@ -219,8 +236,12 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
         1,
         composer_frame.editor.content.height,
     );
-    let cursor_status =
-        render_document_editor(frame, editor_content, composer_frame.outer, session);
+    let cursor_status = render_document_editor(
+        frame,
+        editor_content,
+        composer_frame.editor_rule_outer,
+        session,
+    );
     render_editor_scrollbar(frame, scrollbar_area, cursor_status);
 
     let help: &[_] = &[("↑/↓", "move"), ("esc", "back"), ("ctrl+s", "review")];
@@ -233,7 +254,15 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     render_navigation_row(frame, sections[4], help);
 }
 
-fn composer_frame(area: Rect, session: &AuthoringSession<'_>) -> ComposerFrame {
+fn composer_frame(area: Rect, session: &AuthoringSession<'_>, wide: bool) -> ComposerFrame {
+    if wide {
+        wide_composer_frame(area, session)
+    } else {
+        compact_composer_frame(area, session)
+    }
+}
+
+fn compact_composer_frame(area: Rect, session: &AuthoringSession<'_>) -> ComposerFrame {
     let inner = Rect::new(
         area.x.saturating_add(1),
         area.y.saturating_add(1),
@@ -268,10 +297,68 @@ fn composer_frame(area: Rect, session: &AuthoringSession<'_>) -> ComposerFrame {
         description: Pane::new(context[2]),
         editor: Pane::new(rows[4]),
         validation: Pane::new(rows[6]),
-        split_x,
-        heading_separator_y: rows[1].y,
-        context_separator_y: rows[3].y,
+        chrome: ComposerChrome::Compact {
+            split_x,
+            heading_separator_y: rows[1].y,
+            context_separator_y: rows[3].y,
+        },
+        editor_rule_outer: area,
         validation_separator_y: rows[5].y,
+    }
+}
+
+fn wide_composer_frame(area: Rect, session: &AuthoringSession<'_>) -> ComposerFrame {
+    let inner = Rect::new(
+        area.x.saturating_add(1),
+        area.y.saturating_add(1),
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2),
+    );
+    let vertical = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+    let main = vertical[0];
+    let properties_pane_width = field_hud_content_width(session.definition()).saturating_add(2);
+    let columns = split_context_row(main, properties_pane_width);
+    let split_x = columns[1].x;
+    let properties_height = u16::try_from(session.composer.hud_fields(session.definition()).len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(1)
+        .min(main.height.saturating_sub(3))
+        .max(1);
+    let left_rows = Layout::vertical([
+        Constraint::Length(properties_height),
+        Constraint::Length(1),
+        Constraint::Min(2),
+    ])
+    .split(columns[0]);
+    let properties_rows =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(left_rows[0]);
+    let description_rows =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(left_rows[2]);
+    let editor_rule_outer = Rect::new(
+        split_x,
+        area.y,
+        area.right().saturating_sub(split_x),
+        vertical[1].y.saturating_sub(area.y).saturating_add(1),
+    );
+    ComposerFrame {
+        outer: area,
+        properties_heading: Pane::new(properties_rows[0]),
+        description_heading: Pane::new(description_rows[0]),
+        properties: Pane::new(properties_rows[1]),
+        description: Pane::new(description_rows[1]),
+        editor: Pane::new(columns[2]),
+        validation: Pane::new(vertical[2]),
+        chrome: ComposerChrome::Wide {
+            split_x,
+            properties_separator_y: left_rows[1].y,
+        },
+        editor_rule_outer,
+        validation_separator_y: vertical[1].y,
     }
 }
 
@@ -287,23 +374,56 @@ fn split_context_row(area: Rect, properties_width: u16) -> std::rc::Rc<[Rect]> {
 fn render_composer_frame(frame: &mut Frame<'_>, composer: ComposerFrame) {
     let style = frame_style();
     frame.render_widget(Block::bordered().border_style(style), composer.outer);
-    set_rule_cell(frame, composer.split_x, composer.outer.y, "┬", style);
-    for y in composer.outer.y.saturating_add(1)..composer.context_separator_y {
-        set_rule_cell(frame, composer.split_x, y, "│", style);
+    match composer.chrome {
+        ComposerChrome::Compact {
+            split_x,
+            heading_separator_y,
+            context_separator_y,
+        } => {
+            set_rule_cell(frame, split_x, composer.outer.y, "┬", style);
+            for y in composer.outer.y.saturating_add(1)..context_separator_y {
+                set_rule_cell(frame, split_x, y, "│", style);
+            }
+            render_frame_rule(
+                frame,
+                composer.outer,
+                heading_separator_y,
+                Some((split_x, "┼")),
+            );
+            render_frame_rule(
+                frame,
+                composer.outer,
+                context_separator_y,
+                Some((split_x, "┴")),
+            );
+            render_frame_rule(frame, composer.outer, composer.validation_separator_y, None);
+        }
+        ComposerChrome::Wide {
+            split_x,
+            properties_separator_y,
+        } => {
+            set_rule_cell(frame, split_x, composer.outer.y, "┬", style);
+            for y in composer.outer.y.saturating_add(1)..composer.validation_separator_y {
+                set_rule_cell(frame, split_x, y, "│", style);
+            }
+            render_partial_frame_rule(frame, composer.outer.x, split_x, properties_separator_y);
+            render_frame_rule(
+                frame,
+                composer.outer,
+                composer.validation_separator_y,
+                Some((split_x, "┴")),
+            );
+        }
     }
-    render_frame_rule(
-        frame,
-        composer.outer,
-        composer.heading_separator_y,
-        Some((composer.split_x, "┼")),
-    );
-    render_frame_rule(
-        frame,
-        composer.outer,
-        composer.context_separator_y,
-        Some((composer.split_x, "┴")),
-    );
-    render_frame_rule(frame, composer.outer, composer.validation_separator_y, None);
+}
+
+fn render_partial_frame_rule(frame: &mut Frame<'_>, start: u16, end: u16, y: u16) {
+    let style = frame_style();
+    merge_rule_cell(frame, start, y, "├", style);
+    for x in start.saturating_add(1)..end {
+        merge_rule_cell(frame, x, y, "─", style);
+    }
+    merge_rule_cell(frame, end, y, "┤", style);
 }
 
 fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
@@ -627,14 +747,61 @@ fn render_frame_rule(
     intersection: Option<(u16, &'static str)>,
 ) {
     let style = frame_style();
-    set_rule_cell(frame, outer.x, y, "├", style);
+    merge_rule_cell(frame, outer.x, y, "├", style);
     for x in outer.x.saturating_add(1)..outer.right().saturating_sub(1) {
-        set_rule_cell(frame, x, y, "─", style);
+        merge_rule_cell(frame, x, y, "─", style);
     }
     if let Some((x, symbol)) = intersection {
-        set_rule_cell(frame, x, y, symbol, style);
+        merge_rule_cell(frame, x, y, symbol, style);
     }
-    set_rule_cell(frame, outer.right().saturating_sub(1), y, "┤", style);
+    merge_rule_cell(frame, outer.right().saturating_sub(1), y, "┤", style);
+}
+
+fn merge_rule_cell(frame: &mut Frame<'_>, x: u16, y: u16, incoming: &'static str, style: Style) {
+    const LEFT: u8 = 1;
+    const RIGHT: u8 = 2;
+    const UP: u8 = 4;
+    const DOWN: u8 = 8;
+
+    fn connections(symbol: &str) -> u8 {
+        match symbol {
+            "─" => LEFT | RIGHT,
+            "│" => UP | DOWN,
+            "┌" => RIGHT | DOWN,
+            "┐" => LEFT | DOWN,
+            "└" => RIGHT | UP,
+            "┘" => LEFT | UP,
+            "├" => RIGHT | UP | DOWN,
+            "┤" => LEFT | UP | DOWN,
+            "┬" => LEFT | RIGHT | DOWN,
+            "┴" => LEFT | RIGHT | UP,
+            "┼" => LEFT | RIGHT | UP | DOWN,
+            _ => 0,
+        }
+    }
+
+    fn rule_symbol(connections: u8, fallback: &'static str) -> &'static str {
+        match connections {
+            value if value == LEFT | RIGHT => "─",
+            value if value == UP | DOWN => "│",
+            value if value == RIGHT | DOWN => "┌",
+            value if value == LEFT | DOWN => "┐",
+            value if value == RIGHT | UP => "└",
+            value if value == LEFT | UP => "┘",
+            value if value == RIGHT | UP | DOWN => "├",
+            value if value == LEFT | UP | DOWN => "┤",
+            value if value == LEFT | RIGHT | DOWN => "┬",
+            value if value == LEFT | RIGHT | UP => "┴",
+            value if value == LEFT | RIGHT | UP | DOWN => "┼",
+            _ => fallback,
+        }
+    }
+
+    let existing = frame.buffer_mut()[(x, y)].symbol().to_owned();
+    let merged = connections(&existing) | connections(incoming);
+    frame.buffer_mut()[(x, y)]
+        .set_symbol(rule_symbol(merged, incoming))
+        .set_style(style);
 }
 
 fn set_rule_cell(frame: &mut Frame<'_>, x: u16, y: u16, symbol: &'static str, style: Style) {
