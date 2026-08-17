@@ -1291,7 +1291,14 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
         find_ascii(&review_buffer, 100, 24, "feat: compose durable message"),
         Some((2, 4)),
     );
-    assert_bold_yellow_heading(&review_buffer, 100, 24, "Commit message")?;
+    assert_eq!(
+        find_ascii(&review_buffer, 100, 24, "Final Git Commit Message"),
+        Some((2, 2)),
+    );
+    assert_bold_yellow_heading(&review_buffer, 100, 24, "Final Git Commit Message")?;
+    assert!(find_ascii(&review_buffer, 100, 24, "Commit message").is_none());
+    assert_eq!(review_buffer[(0, 3)].symbol(), "├");
+    assert_eq!(review_buffer[(99, 3)].symbol(), "┤");
     assert_eq!(review_buffer[(0, 1)].symbol(), "┌");
     assert_eq!(review_buffer[(99, 22)].symbol(), "┘");
     assert_black_canvas(&review_buffer);
@@ -1843,11 +1850,11 @@ fn composer_context_height_hugs_the_taller_of_fields_and_wrapped_guidance()
 
     assert!(long_separator.1 > short_separator.1);
     assert_eq!(properties, (2, 3));
-    assert_eq!(guidance, (36, 3));
-    assert!(guidance_content.0 >= 36);
+    assert_eq!(guidance, (33, 3));
+    assert!(guidance_content.0 >= 33);
     assert_eq!(guidance_content.1, guidance.1 + 3);
-    assert_eq!(long_buffer[(34, long_separator.1)].symbol(), "┴");
-    assert_eq!(short_buffer[(34, short_separator.1)].symbol(), "┴");
+    assert_eq!(long_buffer[(31, long_separator.1)].symbol(), "┴");
+    assert_eq!(short_buffer[(31, short_separator.1)].symbol(), "┴");
 
     let mut wide = AuthoringSession::new(&long_definitions, Some(0));
     wide.composer.editor.move_cursor(CursorMove::Jump(10, 0));
@@ -1862,9 +1869,9 @@ fn composer_context_height_hugs_the_taller_of_fields_and_wrapped_guidance()
     );
     assert_eq!(
         find_ascii(&wide_buffer, 101, 22, "Message Subject"),
-        Some((36, 3))
+        Some((33, 3))
     );
-    assert_eq!(wide_buffer[(34, 9)].symbol(), "┤");
+    assert_eq!(wide_buffer[(31, 9)].symbol(), "┤");
     Ok(())
 }
 
@@ -1943,14 +1950,54 @@ fn fields_hud_uses_spaced_content_hugging_columns_without_clipping_names()
     let wide_definitions = vec![wide_property_definition()?];
     let key = "a".repeat(70);
     let mut too_narrow = AuthoringSession::new(&wide_definitions, Some(0));
-    let buffer = rendered_buffer(&mut too_narrow, 95, 32)?;
+    let buffer = rendered_buffer(&mut too_narrow, 92, 32)?;
     assert!(too_narrow.too_small);
-    assert!(find_ascii(&buffer, 95, 32, "Terminal too small").is_some());
+    assert!(find_ascii(&buffer, 92, 32, "Terminal too small").is_some());
 
     let mut exact = AuthoringSession::new(&wide_definitions, Some(0));
-    let buffer = rendered_buffer(&mut exact, 96, 32)?;
+    let buffer = rendered_buffer(&mut exact, 93, 32)?;
     assert!(!exact.too_small);
-    assert!(find_ascii(&buffer, 96, 32, &key).is_some());
+    assert!(find_ascii(&buffer, 93, 32, &key).is_some());
+    Ok(())
+}
+
+#[test]
+fn fields_hud_requirement_column_hugs_the_selected_definition() -> Result<(), Box<dyn Error>> {
+    let catalog = built_in_commit_types();
+    let style = catalog
+        .iter()
+        .position(|definition| definition.id().as_str() == "style")
+        .ok_or("missing style")?;
+    let revert = catalog
+        .iter()
+        .position(|definition| definition.id().as_str() == "revert")
+        .ok_or("missing revert")?;
+
+    let mut style_session = AuthoringSession::new(catalog, Some(style));
+    let style_buffer = rendered_buffer(&mut style_session, 101, 32)?;
+    let impact =
+        find_ascii(&style_buffer, 101, 32, "○  behavioral-impact").ok_or("missing style name")?;
+    let optional = find_ascii_on_row_from_right(&style_buffer, 48, 5, "optional")
+        .ok_or("missing style requirement")?;
+    assert_eq!(impact, (2, 8));
+    assert_eq!(optional, 24);
+    assert_eq!(style_buffer[(31, 5)].symbol(), "l");
+    assert_eq!(style_buffer[(32, 5)].symbol(), " ");
+    assert_eq!(style_buffer[(33, 5)].symbol(), "│");
+    assert_eq!(style_buffer[(33, 2)].symbol(), "┬");
+
+    let mut revert_session = AuthoringSession::new(catalog, Some(revert));
+    let revert_buffer = rendered_buffer(&mut revert_session, 101, 32)?;
+    let breaking =
+        find_ascii(&revert_buffer, 101, 32, "○  breaking-change").ok_or("missing revert name")?;
+    let optional = find_ascii_on_row_from_right(&revert_buffer, 48, breaking.1, "optional")
+        .ok_or("missing revert requirement")?;
+    assert_eq!(breaking.0, 2);
+    assert_eq!(optional, 22);
+    assert_eq!(revert_buffer[(29, breaking.1)].symbol(), "l");
+    assert_eq!(revert_buffer[(30, breaking.1)].symbol(), " ");
+    assert_eq!(revert_buffer[(31, breaking.1)].symbol(), "│");
+    assert_eq!(revert_buffer[(31, 2)].symbol(), "┬");
     Ok(())
 }
 

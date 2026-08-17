@@ -73,9 +73,12 @@ cursor, selection, history, or viewport.
 Nested layouts give the headings, HUD, description, editor, and
 validation/status row independent content rectangles while one composite chrome
 pass keeps their shared borders single-width. The properties pane measures the
-complete marker, field-name, and requirement columns and takes only the width
-they require. Property names never clip. A definition whose complete table
-cannot fit uses a definition-specific too-small fallback. The HUD tracks
+complete marker, field-name, and requirement columns from the selected
+definition and takes only the width they require. The requirement column hugs
+the longest label in that definition (`recommended` / `conditional` stay
+eleven cells; `style` and `revert` shrink to `required` / `optional`).
+Property names never clip. A definition whose complete table cannot fit uses
+a definition-specific too-small fallback. The HUD tracks
 complete, incomplete, and invalid values and leaves a two-cell gap between its
 columns. Rows alternate between `#000000` and `#101010`; the current property
 uses a full black-on-yellow row while its status marker retains its semantic
@@ -83,6 +86,10 @@ color. Scope and description guidance illustrates `type(scope): description`,
 including the scope-free `type: description` form. The composer requires at
 least 22 terminal rows so its context, editor, validation row, and separators
 remain usable.
+
+Step 3 places `Final Git Commit Message` in a heading pane with the same
+under-heading rule as the Step 2 context headings. The canonical message
+occupies the remaining framed area.
 
 The `Compose commit message` view always edits an 80-column virtual surface. If
 the framed editor is narrower, it follows the cursor horizontally instead of

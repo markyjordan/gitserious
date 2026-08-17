@@ -22,7 +22,6 @@ const ZEBRA_BACKGROUND: Color = Color::Rgb(16, 16, 16);
 const MAX_EDITOR_INNER_WIDTH: u16 = 80;
 const FIELD_COLUMN_SPACING: u16 = 2;
 const FIELD_MARKER_WIDTH: u16 = 1;
-const FIELD_REQUIREMENT_WIDTH: u16 = 11;
 const MINIMUM_EDITOR_HEIGHT: u16 = 3;
 const TERMINAL_EDGE_CURSOR: &str = "█";
 const COMPOSER_NON_CONTEXT_ROWS: u16 = 8;
@@ -476,6 +475,7 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
         .map(FieldKind::id);
     let fields = session.composer.hud_fields(definition);
     let name_width = field_hud_name_width(definition);
+    let requirement_width = field_hud_requirement_width(definition);
     let rows = fields
         .into_iter()
         .enumerate()
@@ -506,7 +506,7 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
             [
                 Constraint::Length(FIELD_MARKER_WIDTH),
                 Constraint::Length(name_width),
-                Constraint::Length(FIELD_REQUIREMENT_WIDTH),
+                Constraint::Length(requirement_width),
             ],
         )
         .column_spacing(FIELD_COLUMN_SPACING),
@@ -874,21 +874,30 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
     let shell = stage_shell(area, 1);
     render_stage_header(frame, shell.header, "Review and commit", 3);
     frame.render_widget(Block::bordered().border_style(frame_style()), shell.frame);
+    let inner = Rect::new(
+        shell.frame.x.saturating_add(1),
+        shell.frame.y.saturating_add(1),
+        shell.frame.width.saturating_sub(2),
+        shell.frame.height.saturating_sub(2),
+    );
     let review_sections = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Min(1),
     ])
-    .split(framed_content(shell.frame));
-    render_section_heading(frame, review_sections[0], "Commit message");
+    .split(inner);
+    render_section_heading(
+        frame,
+        Pane::new(review_sections[0]).content,
+        "Final Git Commit Message",
+    );
+    render_frame_rule(frame, shell.frame, review_sections[1].y, None);
+    let message = Pane::new(review_sections[2]).content;
     if let Some(review) = &mut session.review {
         let mut measured_message =
             TextArea::new(review.message.as_str().lines().map(str::to_owned).collect());
         measured_message.set_wrap_mode(WrapMode::WordOrGlyph);
-        review.scrollable = measured_message
-            .measure(review_sections[2].width)
-            .content_rows
-            > review_sections[2].height;
+        review.scrollable = measured_message.measure(message.width).content_rows > message.height;
         if !review.scrollable {
             review.scroll = 0;
         }
@@ -896,7 +905,7 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
             Paragraph::new(review.message.as_str())
                 .wrap(Wrap { trim: false })
                 .scroll((review.scroll, 0)),
-            review_sections[2],
+            message,
         );
     }
     render_navigation_row(
@@ -954,13 +963,25 @@ fn picker_type_width(definitions: &[CommitTypeDefinition], content_width: u16) -
     measured.min(maximum)
 }
 
-fn field_hud_name_width(definition: &CommitTypeDefinition) -> u16 {
+fn field_hud_ids(definition: &CommitTypeDefinition) -> impl Iterator<Item = FieldId> + '_ {
     std::iter::once(FieldId::Scope)
         .chain(std::iter::once(FieldId::Description))
         .chain((0..definition.properties().len()).map(FieldId::Property))
         .chain(std::iter::once(FieldId::BreakingChange))
+}
+
+fn field_hud_name_width(definition: &CommitTypeDefinition) -> u16 {
+    field_hud_ids(definition)
         .map(|id| field_columns(id, definition).0)
         .map(|name| u16::try_from(Line::from(name).width()).unwrap_or(u16::MAX))
+        .max()
+        .unwrap_or(1)
+}
+
+fn field_hud_requirement_width(definition: &CommitTypeDefinition) -> u16 {
+    field_hud_ids(definition)
+        .map(|id| field_columns(id, definition).1)
+        .map(|requirement| u16::try_from(Line::from(requirement).width()).unwrap_or(u16::MAX))
         .max()
         .unwrap_or(1)
 }
@@ -968,7 +989,7 @@ fn field_hud_name_width(definition: &CommitTypeDefinition) -> u16 {
 fn field_hud_content_width(definition: &CommitTypeDefinition) -> u16 {
     FIELD_MARKER_WIDTH
         .saturating_add(field_hud_name_width(definition))
-        .saturating_add(FIELD_REQUIREMENT_WIDTH)
+        .saturating_add(field_hud_requirement_width(definition))
         .saturating_add(FIELD_COLUMN_SPACING.saturating_mul(2))
 }
 
