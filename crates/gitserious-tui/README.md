@@ -51,38 +51,49 @@ adapter's user-facing vocabulary.
 
 Step 2 places `Message Properties`, `Property Description`, the editor, and its
 validation row inside one dark-gray Unicode frame. The header and type metadata
-remain above that frame, and the navigation strip remains below it. Nested
-layouts give the headings, HUD, description, editor, and validation/status row
-independent content rectangles while one composite chrome pass keeps their
-shared borders single-width. The properties pane measures the complete marker,
-field-name, and requirement columns and takes only the width they require; the
-description pane receives the remaining width and wraps. Property names never
-clip. A definition whose complete table cannot fit uses a definition-specific
-too-small fallback. The HUD tracks complete, incomplete, and invalid values and
-leaves a two-cell gap between its columns. Rows alternate between `#000000` and
-`#101010`; the current property uses a full black-on-yellow row while its status
-marker retains its semantic color. The shared context area takes the height of
-whichever side has more real content: the HUD rows or the wrapped description.
-Scope and description guidance illustrates `type(scope): description`,
+remain above that frame, and the navigation strip remains below it. At up to
+100 terminal columns, the properties and description remain side by side above
+the full-width editor. At 101 columns and wider, the properties table hugs its
+content in the upper-left pane, the description fills the lower-left pane, and
+the editor occupies the right pane. The validation and column-status row stays
+fixed across the complete frame bottom in both layouts. Resizing across the
+breakpoint does not alter the document, cursor, selection, history, or viewport.
+
+Nested layouts give the headings, HUD, description, editor, and
+validation/status row independent content rectangles while one composite chrome
+pass keeps their shared borders single-width. The properties pane measures the
+complete marker, field-name, and requirement columns and takes only the width
+they require. Property names never clip. A definition whose complete table
+cannot fit uses a definition-specific too-small fallback. The HUD tracks
+complete, incomplete, and invalid values and leaves a two-cell gap between its
+columns. Rows alternate between `#000000` and `#101010`; the current property
+uses a full black-on-yellow row while its status marker retains its semantic
+color. Scope and description guidance illustrates `type(scope): description`,
 including the scope-free `type: description` form. The composer requires at
-least 22 terminal rows so the context, three-row minimum editor, validation row,
-and separators remain usable.
+least 22 terminal rows so its context, editor, validation row, and separators
+remain usable.
 
 The `Compose commit message` view always edits an 80-column virtual surface. If
 the framed editor is narrower, it follows the cursor horizontally instead of
 wrapping early, then returns to column 1 when a word or glyph soft-wraps at
-column 80. The rightmost inner editor column is reserved for an always-visible
-scrollbar with a dark-gray `│` track and yellow `┃` thumb. Its thumb fills the
-track when all content fits. When content overflows, deterministic viewport
-geometry maps the first and final meaningful document rows to the exact ends of
-the track; the final reserved scaffold separator does not extend the scroll
-range. The track covers only the editable viewport and excludes pane padding,
-validation errors, and column status. Field rules use `⠒`, stop before that
-reserved column, and remain distinct from the single-line frame dividers.
+column 80. The two rightmost inner editor columns are reserved for an
+always-visible scrollbar. It combines a dark-gray `│` track and yellow `┃`
+thumb with a muted-gray `█` extension to the thumb's right. Both thumb cells
+fill the track when all content fits. When content overflows, deterministic
+viewport geometry maps the first and final meaningful document rows to the
+exact ends of the track; the final reserved scaffold separator does not extend
+the scroll range. The track covers only the editable viewport and excludes pane
+padding, validation errors, and column status. Field rules use `⠒`, stop before
+both reserved columns, and remain distinct from the single-line frame dividers.
 Full-width rules introduce `Message Body` and `Message Footer`. All rules are
 render-only chrome and never enter the authored document or Git message.
 `Message Subject`, `Message Body`, and `Message Footer` remain the only yellow
 editor headings.
+
+Backspace and Delete operate only inside the active semantic field. They may
+join explicit lines within a multiline value, but an edit that would cross a
+field heading or reserved separator is rejected without changing text, cursor,
+selection, or undo history. This includes the final `breaking-change` field.
 
 The fixed validation row shows red errors on the left and the right-aligned
 `col N/80` status on the right, clipping long errors before the status. The
