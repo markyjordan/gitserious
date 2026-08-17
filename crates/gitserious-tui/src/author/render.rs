@@ -5,7 +5,7 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, Widget, Wrap,
+    Block, BorderType, Cell, Clear, Paragraph, Row, Table, TableState, Widget, Wrap,
 };
 use tui_textarea::{CursorMove, TextArea, WrapMode};
 
@@ -152,26 +152,50 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
     let shell = stage_shell(area, 1);
     render_stage_header(frame, shell.header, "Select commit type", 1);
     frame.render_widget(Block::bordered().border_style(frame_style()), shell.frame);
-    let items = session
+    let content = framed_content(shell.frame);
+    let type_width = picker_type_width(session.definitions, content.width);
+    let rows = session
         .definitions
         .iter()
-        .map(|definition| {
-            ListItem::new(Line::from(vec![
-                Span::styled(
-                    definition.id().as_str(),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" — "),
-                Span::raw(definition.description()),
-            ]))
+        .enumerate()
+        .map(|(index, definition)| {
+            let row_style = if index == session.selected_type {
+                navigation_key_style()
+            } else {
+                Style::default().bg(if index % 2 == 0 {
+                    JET_BLACK
+                } else {
+                    ZEBRA_BACKGROUND
+                })
+            };
+            let marker = if index == session.selected_type {
+                "›"
+            } else {
+                " "
+            };
+            Row::new(vec![
+                Cell::from(marker),
+                Cell::from(definition.id().as_str()),
+                Cell::from(definition.description()),
+            ])
+            .style(row_style)
         })
         .collect::<Vec<_>>();
-    let list = List::new(items)
-        .highlight_symbol("› ")
-        .highlight_style(navigation_key_style());
-    let mut state = ListState::default();
+    let mut state = TableState::default();
     state.select(Some(session.selected_type));
-    frame.render_stateful_widget(list, framed_content(shell.frame), &mut state);
+    frame.render_stateful_widget(
+        Table::new(
+            rows,
+            [
+                Constraint::Length(FIELD_MARKER_WIDTH),
+                Constraint::Length(type_width),
+                Constraint::Min(1),
+            ],
+        )
+        .column_spacing(FIELD_COLUMN_SPACING),
+        content,
+        &mut state,
+    );
     render_navigation_row(
         frame,
         shell.navigation,
@@ -911,6 +935,23 @@ fn field_columns(id: FieldId, definition: &CommitTypeDefinition) -> (String, &'s
         }
         FieldId::BreakingChange => ("breaking-change".to_owned(), "optional"),
     }
+}
+
+fn picker_type_width(definitions: &[CommitTypeDefinition], content_width: u16) -> u16 {
+    let measured = definitions
+        .iter()
+        .map(|definition| {
+            u16::try_from(Line::from(definition.id().as_str()).width()).unwrap_or(u16::MAX)
+        })
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let maximum = content_width
+        .saturating_sub(FIELD_MARKER_WIDTH)
+        .saturating_sub(FIELD_COLUMN_SPACING.saturating_mul(2))
+        .saturating_sub(1)
+        .max(1);
+    measured.min(maximum)
 }
 
 fn field_hud_name_width(definition: &CommitTypeDefinition) -> u16 {
