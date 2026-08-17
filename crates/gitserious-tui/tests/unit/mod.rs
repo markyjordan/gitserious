@@ -169,14 +169,6 @@ fn terminal_edge_cursor_positions(buffer: &Buffer, width: u16, height: u16) -> V
         .collect()
 }
 
-fn assert_blank_row(buffer: &Buffer, width: u16, row: u16) {
-    assert!(
-        (0..width).all(|column| buffer[(column, row)].symbol() == " "),
-        "row {row} was not blank: {:?}",
-        row_text(buffer, width, row)
-    );
-}
-
 fn assert_black_canvas(buffer: &Buffer) {
     for (index, cell) in buffer.content().iter().enumerate() {
         let width = usize::from(buffer.area.width);
@@ -1247,13 +1239,13 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(text.contains("enter: select"));
     assert_stage_header(&mut picker, 100, 24, "Select commit type", "Step 1/3")?;
     let picker_buffer = rendered_buffer(&mut picker, 100, 24)?;
-    assert_eq!(picker_buffer[(1, 2)].symbol(), "┌");
-    assert_eq!(picker_buffer[(98, 2)].symbol(), "┐");
-    assert_eq!(picker_buffer[(1, 21)].symbol(), "└");
-    assert_eq!(picker_buffer[(98, 21)].symbol(), "┘");
+    assert_eq!(picker_buffer[(0, 1)].symbol(), "┌");
+    assert_eq!(picker_buffer[(99, 1)].symbol(), "┐");
+    assert_eq!(picker_buffer[(0, 22)].symbol(), "└");
+    assert_eq!(picker_buffer[(99, 22)].symbol(), "┘");
     assert_black_canvas(&picker_buffer);
     let selected = find_ascii(&picker_buffer, 100, 24, "› feat").ok_or("missing selection")?;
-    assert_eq!(selected, (3, 3));
+    assert_eq!(selected, (2, 2));
     assert_highlighted_footer(&mut picker, 100, 24)?;
 
     let definitions = vec![presentation_definition()?];
@@ -1297,12 +1289,11 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     let review_buffer = rendered_buffer(&mut review, 100, 24)?;
     assert_eq!(
         find_ascii(&review_buffer, 100, 24, "feat: compose durable message"),
-        Some((3, 6)),
+        Some((2, 4)),
     );
-    assert_blank_row(&review_buffer, 100, 1);
     assert_bold_yellow_heading(&review_buffer, 100, 24, "Commit message")?;
-    assert_eq!(review_buffer[(1, 2)].symbol(), "┌");
-    assert_eq!(review_buffer[(98, 21)].symbol(), "┘");
+    assert_eq!(review_buffer[(0, 1)].symbol(), "┌");
+    assert_eq!(review_buffer[(99, 22)].symbol(), "┘");
     assert_black_canvas(&review_buffer);
     assert_highlighted_footer(&mut review, 100, 24)?;
     Ok(())
@@ -1679,9 +1670,9 @@ fn resizing_across_the_composer_breakpoint_preserves_editor_state() -> Result<()
 fn nested_panes_share_borders_and_apply_visual_insets() -> Result<(), Box<dyn Error>> {
     let mut picker = AuthoringSession::new(built_in_commit_types(), None);
     let picker = rendered_buffer(&mut picker, 100, 24)?;
-    assert_eq!(picker[(1, 2)].symbol(), "┌");
-    assert_eq!(picker[(2, 3)].symbol(), " ");
-    assert_eq!(find_ascii(&picker, 100, 24, "› feat"), Some((3, 3)));
+    assert_eq!(picker[(0, 1)].symbol(), "┌");
+    assert_eq!(picker[(1, 2)].symbol(), " ");
+    assert_eq!(find_ascii(&picker, 100, 24, "› feat"), Some((2, 2)));
 
     let mut composer = AuthoringSession::new(built_in_commit_types(), Some(0));
     let buffer = rendered_buffer(&mut composer, 101, 32)?;

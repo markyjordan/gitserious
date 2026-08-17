@@ -25,11 +25,13 @@ directly below its header. A preselected commit type starts directly at
 `Step 2/3`.
 
 Every view is painted on a true `#000000` background. The picker, composer, and
-review use dark-gray Unicode frames with one blank terminal cell outside every
-edge. Framed content retains one blank column on its left and right and occupies
-the row immediately inside horizontal borders; this avoids the visually taller
-inset produced by a full blank terminal row. Headers and navigation strips
-remain outside the frames. The too-small fallback remains borderless.
+review use dark-gray Unicode frames that consume the leftover area between the
+header chrome and the navigation strip, with no extra outer spacer row or
+column. Framed content retains one blank column on its left and right and
+occupies the row immediately inside horizontal borders; this avoids the
+visually taller inset produced by a full blank terminal row. Headers and
+navigation strips remain outside the frames. The too-small fallback remains
+borderless.
 
 `gitserious commit --type <COMMIT TYPE>` preselects the type and starts in the
 composer. Both forms require interactive standard input and output. There is no
@@ -51,13 +53,12 @@ adapter's user-facing vocabulary.
 
 Step 2 places `Message Properties`, `Property Description`, the editor, and its
 validation row inside one dark-gray Unicode frame. The header and type metadata
-remain above that frame, and the navigation strip remains below it. The frame
-immediately follows the type metadata and immediately precedes the navigation
-strip, with no additional outer spacer row or column. Its nested panes retain a
-one-column content inset. At up to 100 terminal columns, the properties and
-description remain side by side above the full-width editor. At 101 columns and
-wider, the properties table hugs its content in the upper-left pane, the
-description fills the lower-left pane, and the editor occupies the right pane.
+remain above that frame, and the navigation strip remains below it. Nested
+panes retain a one-column content inset. At up to 100 terminal columns, the
+properties and description remain side by side above the full-width editor.
+At 101 columns and wider, the properties table hugs its content in the
+upper-left pane, the description fills the lower-left pane, and the editor
+occupies the right pane.
 Both wide left-pane headings retain a horizontal rule beneath them. The
 validation and column-status row stays fixed across the complete frame bottom
 in both layouts. Resizing across the breakpoint does not alter the document,
