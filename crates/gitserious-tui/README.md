@@ -37,11 +37,15 @@ borderless.
 composer. Both forms require interactive standard input and output. There is no
 configured-Git-editor fallback or non-interactive authoring mode in this slice.
 
-Step 1 lists the effective catalog as a table inside that shared frame: a
+Step 1 lists the effective catalog as a table inside that shared frame. A
+`CONVENTIONAL` tab pane sits above a fused heading rule, then the type table: a
 one-cell `›` marker on the current type, type identifiers that hug the longest
 id, and descriptions in the remaining width. A two-cell gap separates the
 columns, matching Message Properties. Rows alternate between `#000000` and
-`#101010`; the current type uses a full black-on-yellow row.
+`#101010`; the current type uses a full black-on-yellow row. The selected
+catalog tab uses the same black-on-yellow chip; `tab` cycles available type
+sets and a click on a chip selects that set. Only the Conventional set exists
+today, so `tab` and a click on `CONVENTIONAL` keep the current table.
 
 The composer presents one prepopulated document as three immutable structural
 sections. `Message Subject` contains optional `scope` and required `description`
@@ -125,7 +129,7 @@ uppercase `BREAKING CHANGE:` footer; a blank value adds neither.
 
 | Context | Controls |
 | --- | --- |
-| Type picker | `↑`/`↓` moves; `enter` selects; `esc`/`q` cancels |
+| Type picker | `tab` switches type set; `↑`/`↓` moves; `enter` selects; `esc`/`q` cancels |
 | Composer | Conventional document editing; `↑`/`↓` moves within and between fields; `esc` goes back; `ctrl+s` validates and reviews |
 | Review | `enter` confirms; `esc` returns to editing; arrows or page up/page down scroll when the message exceeds the viewport; `q` cancels |
 | Cancellation | Untouched drafts cancel immediately; dirty drafts require explicit keyboard or mouse confirmation |

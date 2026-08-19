@@ -871,15 +871,41 @@ pub(crate) struct ConfirmationButtons {
     pub(crate) keep_editing: Rect,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum TypeCatalogKind {
+    #[default]
+    Conventional,
+}
+
+impl TypeCatalogKind {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Conventional => "CONVENTIONAL",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CatalogTab {
+    pub(crate) kind: TypeCatalogKind,
+    pub(crate) area: Rect,
+}
+
+pub(crate) fn available_type_catalogs() -> &'static [TypeCatalogKind] {
+    &[TypeCatalogKind::Conventional]
+}
+
 pub(crate) struct AuthoringSession<'a> {
     pub(crate) definitions: &'a [CommitTypeDefinition],
     pub(crate) selected_type: usize,
+    pub(crate) type_catalog: TypeCatalogKind,
     pub(crate) preselected: bool,
     pub(crate) stage: Stage,
     pub(crate) composer: ComposerState,
     pub(crate) review: Option<ReviewState>,
     pub(crate) confirmation: ConfirmationAction,
     pub(crate) confirmation_buttons: Option<ConfirmationButtons>,
+    pub(crate) catalog_tabs: Vec<CatalogTab>,
     confirmation_resume: ResumeStage,
     pub(crate) too_small: bool,
 }
@@ -893,6 +919,7 @@ impl<'a> AuthoringSession<'a> {
         Self {
             definitions,
             selected_type,
+            type_catalog: TypeCatalogKind::Conventional,
             preselected: preselected_index.is_some(),
             stage: if preselected_index.is_some() {
                 Stage::Compose
@@ -903,6 +930,7 @@ impl<'a> AuthoringSession<'a> {
             review: None,
             confirmation: ConfirmationAction::Cancel,
             confirmation_buttons: None,
+            catalog_tabs: Vec::new(),
             confirmation_resume: ResumeStage::Compose,
             too_small: false,
         }
@@ -910,6 +938,19 @@ impl<'a> AuthoringSession<'a> {
 
     pub(crate) fn definition(&self) -> &CommitTypeDefinition {
         &self.definitions[self.selected_type]
+    }
+
+    fn cycle_type_catalog(&mut self) {
+        let catalogs = available_type_catalogs();
+        let current = catalogs
+            .iter()
+            .position(|kind| *kind == self.type_catalog)
+            .unwrap_or(0);
+        self.select_type_catalog(catalogs[(current + 1) % catalogs.len()]);
+    }
+
+    fn select_type_catalog(&mut self, kind: TypeCatalogKind) {
+        self.type_catalog = kind;
     }
 
     pub(crate) fn visible_stage(&self) -> Stage {
@@ -974,18 +1015,28 @@ impl<'a> AuthoringSession<'a> {
     }
 
     fn handle_mouse(&mut self, mouse: MouseEvent) -> Option<CommitDraftAuthorOutcome> {
-        if self.stage != Stage::Confirm || mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return None;
         }
-        let buttons = self.confirmation_buttons?;
-        if contains(buttons.discard, mouse.column, mouse.row) {
-            self.confirm_discard()
-        } else if contains(buttons.keep_editing, mouse.column, mouse.row) {
-            self.resume_after_confirmation();
-            None
-        } else {
-            None
+        if self.stage == Stage::Confirm {
+            let buttons = self.confirmation_buttons?;
+            if contains(buttons.discard, mouse.column, mouse.row) {
+                return self.confirm_discard();
+            }
+            if contains(buttons.keep_editing, mouse.column, mouse.row) {
+                self.resume_after_confirmation();
+            }
+            return None;
         }
+        if self.stage == Stage::SelectType
+            && let Some(tab) = self
+                .catalog_tabs
+                .iter()
+                .find(|tab| contains(tab.area, mouse.column, mouse.row))
+        {
+            self.select_type_catalog(tab.kind);
+        }
+        None
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
@@ -1009,6 +1060,7 @@ impl<'a> AuthoringSession<'a> {
             KeyCode::Down => {
                 self.selected_type = (self.selected_type + 1) % self.definitions.len();
             }
+            KeyCode::Tab => self.cycle_type_catalog(),
             KeyCode::Enter => {
                 self.composer = ComposerState::new(self.definition());
                 self.stage = Stage::Compose;

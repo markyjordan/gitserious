@@ -10,8 +10,8 @@ use ratatui::widgets::{
 use tui_textarea::{CursorMove, TextArea, WrapMode};
 
 use super::state::{
-    AuthoringSession, ConfirmationAction, ConfirmationButtons, FieldId, FieldKind, FieldStatus,
-    SCOPE_VALUE_LINE, Stage,
+    AuthoringSession, CatalogTab, ConfirmationAction, ConfirmationButtons, FieldId, FieldKind,
+    FieldStatus, SCOPE_VALUE_LINE, Stage, available_type_catalogs,
 };
 
 const MINIMUM_WIDTH: u16 = 60;
@@ -92,6 +92,7 @@ struct CursorStatus {
 pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) {
     let area = frame.area();
     session.confirmation_buttons = None;
+    session.catalog_tabs.clear();
     frame.render_widget(Block::default().style(Style::default().bg(JET_BLACK)), area);
     let minimum_height = if session.visible_stage() == Stage::Compose {
         COMPOSER_MINIMUM_HEIGHT
@@ -147,11 +148,25 @@ fn normalize_background(frame: &mut Frame<'_>, area: Rect) {
     }
 }
 
-fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
+fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
     let shell = stage_shell(area, 1);
     render_stage_header(frame, shell.header, "Select commit type", 1);
     frame.render_widget(Block::bordered().border_style(frame_style()), shell.frame);
-    let content = framed_content(shell.frame);
+    let inner = Rect::new(
+        shell.frame.x.saturating_add(1),
+        shell.frame.y.saturating_add(1),
+        shell.frame.width.saturating_sub(2),
+        shell.frame.height.saturating_sub(2),
+    );
+    let picker_sections = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+    ])
+    .split(inner);
+    render_catalog_tabs(frame, Pane::new(picker_sections[0]).content, session);
+    render_frame_rule(frame, shell.frame, picker_sections[1].y, None);
+    let content = Pane::new(picker_sections[2]).content;
     let type_width = picker_type_width(session.definitions, content.width);
     let rows = session
         .definitions
@@ -198,8 +213,38 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'
     render_navigation_row(
         frame,
         shell.navigation,
-        &[("↑/↓", "move"), ("enter", "select"), ("esc/q", "cancel")],
+        &[
+            ("tab", "switch"),
+            ("↑/↓", "move"),
+            ("enter", "select"),
+            ("esc/q", "cancel"),
+        ],
     );
+}
+
+fn render_catalog_tabs(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
+    let mut x = area.x;
+    for kind in available_type_catalogs() {
+        if x >= area.right() {
+            break;
+        }
+        let width = text_button_width(kind.label()).min(area.right().saturating_sub(x));
+        let button = Rect::new(x, area.y, width, 1);
+        let style = if session.type_catalog == *kind {
+            navigation_key_style()
+        } else {
+            Style::default()
+        };
+        frame.render_widget(
+            Paragraph::new(format!(" {} ", kind.label())).style(style),
+            button,
+        );
+        session.catalog_tabs.push(CatalogTab {
+            kind: *kind,
+            area: button,
+        });
+        x = x.saturating_add(width).saturating_add(1);
+    }
 }
 
 fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
@@ -1254,15 +1299,6 @@ fn stage_shell(area: Rect, header_rows: u16) -> StageShell {
         frame: sections[1],
         navigation: sections[2],
     }
-}
-
-fn framed_content(outer: Rect) -> Rect {
-    Rect::new(
-        outer.x.saturating_add(2),
-        outer.y.saturating_add(1),
-        outer.width.saturating_sub(4),
-        outer.height.saturating_sub(2),
-    )
 }
 
 const fn inset_horizontally(area: Rect, amount: u16) -> Rect {
