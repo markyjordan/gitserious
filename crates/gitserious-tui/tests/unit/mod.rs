@@ -30,7 +30,8 @@ mod author_harness {
 
 use author_harness::render::render;
 use author_harness::state::{
-    AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, Stage, ValidationIssue,
+    AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, Stage, TypeCatalogKind,
+    ValidationIssue,
 };
 
 const JET_BLACK: Color = Color::Rgb(0, 0, 0);
@@ -407,6 +408,10 @@ fn picker_navigation_wraps_selects_and_cancels() {
     assert_eq!(session.selected_type, definitions.len() - 1);
     press(&mut session, KeyCode::Down);
     assert_eq!(session.selected_type, 0);
+    press(&mut session, KeyCode::Tab);
+    assert_eq!(session.stage, Stage::SelectType);
+    assert_eq!(session.selected_type, 0);
+    assert_eq!(session.type_catalog, TypeCatalogKind::Conventional);
     for unsupported in [
         KeyCode::Char('j'),
         KeyCode::Char('k'),
@@ -430,6 +435,33 @@ fn picker_navigation_wraps_selects_and_cancels() {
         cancelled.handle_event(modified_key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
         Some(CommitDraftAuthorOutcome::Cancelled)
     );
+}
+
+#[test]
+fn picker_catalog_tab_click_selects_the_visible_set() -> Result<(), Box<dyn Error>> {
+    let mut session = AuthoringSession::new(built_in_commit_types(), None);
+    let buffer = rendered_buffer(&mut session, 100, 24)?;
+    let tab = *session
+        .catalog_tabs
+        .first()
+        .ok_or("missing conventional tab")?;
+    assert_eq!(tab.kind, TypeCatalogKind::Conventional);
+    assert_eq!(buffer[(tab.area.x, tab.area.y)].bg, Color::Yellow);
+    assert_eq!(buffer[(tab.area.right() - 1, tab.area.y)].bg, Color::Yellow);
+    assert!(
+        session
+            .handle_event(left_click(tab.area.x, tab.area.y))
+            .is_none()
+    );
+    assert_eq!(session.type_catalog, TypeCatalogKind::Conventional);
+    assert_eq!(session.stage, Stage::SelectType);
+    assert!(
+        session
+            .handle_event(left_click(tab.area.right() - 1, tab.area.y))
+            .is_none()
+    );
+    assert_eq!(session.type_catalog, TypeCatalogKind::Conventional);
+    Ok(())
 }
 
 #[test]
@@ -1237,15 +1269,22 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
         1
     );
     assert!(text.contains("enter: select"));
+    assert!(text.contains("tab: switch"));
     assert_stage_header(&mut picker, 100, 24, "Select commit type", "Step 1/3")?;
     let picker_buffer = rendered_buffer(&mut picker, 100, 24)?;
     assert_eq!(picker_buffer[(0, 1)].symbol(), "┌");
     assert_eq!(picker_buffer[(99, 1)].symbol(), "┐");
     assert_eq!(picker_buffer[(0, 22)].symbol(), "└");
     assert_eq!(picker_buffer[(99, 22)].symbol(), "┘");
+    assert_eq!(picker_buffer[(0, 3)].symbol(), "├");
+    assert_eq!(picker_buffer[(99, 3)].symbol(), "┤");
+    assert_eq!(
+        find_ascii(&picker_buffer, 100, 24, "CONVENTIONAL"),
+        Some((3, 2)),
+    );
     assert_black_canvas(&picker_buffer);
     let selected = find_ascii(&picker_buffer, 100, 24, "feat").ok_or("missing selection")?;
-    assert_eq!(selected, (5, 2));
+    assert_eq!(selected, (5, 4));
     assert_highlighted_footer(&mut picker, 100, 24)?;
 
     let definitions = vec![presentation_definition()?];
@@ -1451,7 +1490,7 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     let mut picker = AuthoringSession::new(built_in_commit_types(), None);
     let buffer = rendered_buffer(&mut picker, 100, 24)?;
     let footer = row_text(&buffer, 100, 23);
-    assert!(footer.contains("↑/↓: move | enter: select | esc/q: cancel"));
+    assert!(footer.contains("tab: switch | ↑/↓: move | enter: select | esc/q: cancel"));
     assert!(!footer.contains("/j"));
     assert!(!footer.contains("/k"));
     assert!(!footer.contains("Home/End"));
@@ -1679,7 +1718,7 @@ fn nested_panes_share_borders_and_apply_visual_insets() -> Result<(), Box<dyn Er
     let picker = rendered_buffer(&mut picker, 100, 24)?;
     assert_eq!(picker[(0, 1)].symbol(), "┌");
     assert_eq!(picker[(1, 2)].symbol(), " ");
-    assert_eq!(find_ascii(&picker, 100, 24, "feat"), Some((5, 2)));
+    assert_eq!(find_ascii(&picker, 100, 24, "feat"), Some((5, 4)));
 
     let mut composer = AuthoringSession::new(built_in_commit_types(), Some(0));
     let buffer = rendered_buffer(&mut composer, 101, 32)?;
@@ -1752,10 +1791,10 @@ fn type_picker_uses_spaced_content_hugging_columns() -> Result<(), Box<dyn Error
     )
     .ok_or("missing refactor description")?;
 
-    assert_eq!(feat, (5, 2));
+    assert_eq!(feat, (5, 4));
     assert_eq!(fix.0, feat.0);
     assert_eq!(refactor.0, feat.0);
-    assert_eq!(feat_description, (15, 2));
+    assert_eq!(feat_description, (15, 4));
     assert_eq!(fix_description.0, feat_description.0);
     assert_eq!(refactor_description.0, feat_description.0);
     assert_eq!(buffer[(2, feat.1)].symbol(), "›");
