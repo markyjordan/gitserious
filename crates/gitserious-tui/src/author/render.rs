@@ -291,11 +291,11 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     let scrollbar_area = Rect::new(
         composer_frame
             .editor
-            .content
+            .region
             .right()
             .saturating_sub(SCROLLBAR_WIDTH),
         composer_frame.editor.content.y,
-        SCROLLBAR_WIDTH.min(composer_frame.editor.content.width),
+        SCROLLBAR_WIDTH.min(composer_frame.editor.region.width),
         composer_frame.editor.content.height,
     );
     let cursor_status = render_document_editor(
@@ -562,21 +562,15 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
 fn render_field_description(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
     let definition = session.definition().clone();
     let current = session.composer.current_field(&definition);
-    let metadata = current.map_or_else(
-        || {
-            FieldMetadata::new(
-                " Commit form ",
-                "Edit values beneath the schema-generated field headers.",
-            )
-        },
-        |kind| field_metadata(kind, &definition),
+    let guidance = current.map_or_else(
+        || FieldGuidance::new("Edit values beneath the schema-generated field headers."),
+        |kind| field_guidance(kind, &definition),
     );
-    let lines = std::iter::once(Line::styled(
-        metadata.title.trim().to_owned(),
-        Style::default().add_modifier(Modifier::BOLD),
-    ))
-    .chain(metadata.paragraphs.into_iter().map(Line::from))
-    .collect::<Vec<_>>();
+    let lines = guidance
+        .paragraphs
+        .into_iter()
+        .map(Line::from)
+        .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
 }
 
@@ -1039,29 +1033,25 @@ fn composer_minimum_width(definition: &CommitTypeDefinition) -> u16 {
         .max(field_hud_content_width(definition).saturating_add(COMPOSER_FRAME_WIDTH_OVERHEAD))
 }
 
-struct FieldMetadata {
-    title: String,
+struct FieldGuidance {
     paragraphs: Vec<String>,
 }
 
-impl FieldMetadata {
-    fn new(title: impl Into<String>, description: impl Into<String>) -> Self {
+impl FieldGuidance {
+    fn new(description: impl Into<String>) -> Self {
         Self {
-            title: title.into(),
             paragraphs: vec![description.into()],
         }
     }
 }
 
-fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> FieldMetadata {
+fn field_guidance(kind: FieldKind, definition: &CommitTypeDefinition) -> FieldGuidance {
     match kind {
-        FieldKind::Scope => FieldMetadata::new(
-            " Scope · optional ".to_owned(),
+        FieldKind::Scope => FieldGuidance::new(
             "Optional affected area in a Conventional Commit: type(scope): description. Leave blank for type: description."
                 .to_owned(),
         ),
-        FieldKind::Description => FieldMetadata::new(
-            " Description · required ".to_owned(),
+        FieldKind::Description => FieldGuidance::new(
             "Required concise description in a Conventional Commit: type(scope): description, or type: description without a scope."
                 .to_owned(),
         ),
@@ -1070,23 +1060,13 @@ fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> FieldMe
             value_index: _,
         } => {
             let property = &definition.properties()[definition_index];
-            let requirement = match property.requirement() {
-                PropertyRequirement::Required => "required".to_owned(),
-                PropertyRequirement::Recommended => "recommended".to_owned(),
-                PropertyRequirement::Optional => "optional".to_owned(),
-                PropertyRequirement::Conditional(_) => "conditional".to_owned(),
-            };
-            let mut metadata = FieldMetadata::new(
-                format!(" {} · {requirement} ", property.key()),
-                property.description(),
-            );
+            let mut guidance = FieldGuidance::new(property.description());
             if let PropertyRequirement::Conditional(condition) = property.requirement() {
-                metadata.paragraphs.push(condition.rationale().to_owned());
+                guidance.paragraphs.push(condition.rationale().to_owned());
             }
-            metadata
+            guidance
         }
-        FieldKind::BreakingChange => FieldMetadata::new(
-            " Breaking change · optional ".to_owned(),
+        FieldKind::BreakingChange => FieldGuidance::new(
             "Describe an incompatible change. Review adds ! before the header colon and renders this value as an uppercase BREAKING CHANGE footer."
                 .to_owned(),
         ),
@@ -1097,19 +1077,13 @@ fn context_content_height(description_width: u16, session: &AuthoringSession<'_>
     let hud_height =
         u16::try_from(session.composer.hud_fields(session.definition()).len()).unwrap_or(u16::MAX);
     let definition = session.definition().clone();
-    let metadata = session.composer.current_field(&definition).map_or_else(
-        || {
-            FieldMetadata::new(
-                " Commit form ",
-                "Edit values beneath the schema-generated field headers.",
-            )
-        },
-        |kind| field_metadata(kind, &definition),
+    let guidance = session.composer.current_field(&definition).map_or_else(
+        || FieldGuidance::new("Edit values beneath the schema-generated field headers."),
+        |kind| field_guidance(kind, &definition),
     );
-    let guidance_height = metadata.paragraphs.iter().fold(
-        wrapped_line_count(metadata.title.trim(), description_width),
-        |height, paragraph| height.saturating_add(wrapped_line_count(paragraph, description_width)),
-    );
+    let guidance_height = guidance.paragraphs.iter().fold(0_u16, |height, paragraph| {
+        height.saturating_add(wrapped_line_count(paragraph, description_width))
+    });
     hud_height.max(guidance_height)
 }
 

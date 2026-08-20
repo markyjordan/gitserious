@@ -156,6 +156,12 @@ fn row_text(buffer: &Buffer, width: u16, row: u16) -> String {
         .collect()
 }
 
+fn rows_with_symbols(buffer: &Buffer, column: u16, height: u16, symbols: &[&str]) -> Vec<u16> {
+    (0..height)
+        .filter(|row| symbols.contains(&buffer[(column, *row)].symbol()))
+        .collect()
+}
+
 fn compact_rendered_text(text: &str) -> String {
     text.chars()
         .filter(|character| {
@@ -192,6 +198,30 @@ fn compact_region_text(
         })
         .collect::<String>();
     compact_rendered_text(&text)
+}
+
+fn rendered_property_guidance(
+    session: &mut AuthoringSession<'_>,
+    width: u16,
+    height: u16,
+) -> Result<String, Box<dyn Error>> {
+    let buffer = rendered_buffer(session, width, height)?;
+    let heading = find_ascii(&buffer, width, height, "Property Description")
+        .ok_or("missing property description heading")?;
+    let end_column = if width <= 100 {
+        width.saturating_sub(1)
+    } else {
+        find_ascii(&buffer, width, height, "Message Subject")
+            .ok_or("missing editor heading")?
+            .0
+            .saturating_sub(2)
+    };
+    Ok(compact_region_text(
+        &buffer,
+        heading.0,
+        end_column,
+        heading.1.saturating_add(2),
+    ))
 }
 
 fn requirement_label(requirement: &PropertyRequirement) -> &'static str {
@@ -1699,8 +1729,8 @@ fn composer_switches_between_compact_and_wide_framed_geometry() -> Result<(), Bo
         assert_eq!(buffer[(column, scope.1)].symbol(), "⠒");
         assert_eq!(buffer[(column, scope.1)].fg, Color::DarkGray);
     }
-    assert_eq!(buffer[(98, scope.1)].symbol(), "█");
-    assert_eq!(buffer[(99, scope.1)].symbol(), " ");
+    assert_eq!(buffer[(98, scope.1)].symbol(), " ");
+    assert_eq!(buffer[(99, scope.1)].symbol(), "█");
 
     wide.composer.editor.move_cursor(CursorMove::Jump(5, 0));
     let buffer = rendered_buffer(&mut wide, 101, 32)?;
@@ -1710,7 +1740,7 @@ fn composer_switches_between_compact_and_wide_framed_geometry() -> Result<(), Bo
     let mut boundary = AuthoringSession::new(built_in_commit_types(), Some(0));
     let buffer = rendered_buffer(&mut boundary, 60, 22)?;
     assert!(!boundary.too_small);
-    assert_eq!(buffer[(0, 12)].symbol(), "├");
+    assert_eq!(buffer[(0, 11)].symbol(), "├");
     assert_eq!(buffer[(0, 18)].symbol(), "├");
     assert_eq!(buffer[(0, 20)].symbol(), "└");
 
@@ -1781,7 +1811,8 @@ fn nested_panes_share_borders_and_apply_visual_insets() -> Result<(), Box<dyn Er
     assert_eq!(buffer[(33, 3)].symbol(), " ");
     assert_eq!(buffer[(34, 3)].symbol(), "│");
     assert_eq!(buffer[(35, 3)].symbol(), " ");
-    assert_eq!(buffer[(99, 3)].symbol(), " ");
+    assert_eq!(buffer[(98, 3)].symbol(), " ");
+    assert_eq!(buffer[(99, 3)].symbol(), "█");
 
     assert_eq!(find_ascii(&buffer, 101, 32, "○  scope"), Some((2, 5)));
     assert_eq!(
@@ -1958,27 +1989,11 @@ fn composer_renders_each_catalog_schema_and_its_property_guidance() -> Result<()
                 .editor
                 .move_cursor(CursorMove::Jump(u16::try_from(value_line)?, 0));
             for (width, height) in [(60, 60), (120, 60)] {
-                let buffer = rendered_buffer(&mut session, width, height)?;
-                let guidance_heading = find_ascii(&buffer, width, height, "Property Description")
-                    .ok_or("missing property description heading")?;
-                let guidance_end = if width <= 100 {
-                    width.saturating_sub(1)
-                } else {
-                    find_ascii(&buffer, width, height, "Message Subject")
-                        .ok_or("missing editor heading")?
-                        .0
-                        .saturating_sub(2)
-                };
-                let guidance = compact_region_text(
-                    &buffer,
-                    guidance_heading.0,
-                    guidance_end,
-                    guidance_heading.1.saturating_add(2),
-                );
+                let guidance = rendered_property_guidance(&mut session, width, height)?;
                 let title = format!("{} · {requirement}", property.key());
                 assert!(
-                    guidance.contains(&compact_rendered_text(&title)),
-                    "missing guidance title for {} at {width} columns",
+                    !guidance.contains(&compact_rendered_text(&title)),
+                    "redundant guidance title for {} at {width} columns",
                     property.key(),
                 );
                 assert!(
@@ -1995,6 +2010,20 @@ fn composer_renders_each_catalog_schema_and_its_property_guidance() -> Result<()
                 }
             }
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn property_description_omits_global_field_metadata_without_losing_guidance()
+-> Result<(), Box<dyn Error>> {
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    for (width, height) in [(60, 32), (120, 32)] {
+        let guidance = rendered_property_guidance(&mut session, width, height)?;
+        assert!(!guidance.contains(&compact_rendered_text("Scope · optional")));
+        assert!(guidance.contains(&compact_rendered_text(
+            "Optional affected area in a Conventional Commit: type(scope): description. Leave blank for type: description."
+        )));
     }
     Ok(())
 }
@@ -2018,14 +2047,14 @@ fn decorative_rules_are_box_drawing_chrome_and_preserve_editor_state() -> Result
         assert_eq!(buffer[(column, scope.1)].symbol(), "⠒");
         assert_ne!(buffer[(column, scope.1)].symbol(), "—");
     }
-    assert_eq!(buffer[(98, scope.1)].symbol(), "█");
-    assert_eq!(buffer[(99, scope.1)].symbol(), " ");
+    assert_eq!(buffer[(98, scope.1)].symbol(), " ");
+    assert_eq!(buffer[(99, scope.1)].symbol(), "█");
     let body = find_ascii(&buffer, 101, 40, "Message Body").ok_or("missing body")?;
     assert_eq!(buffer[(0, body.1 - 1)].symbol(), "│");
     assert_eq!(buffer[(34, body.1 - 1)].symbol(), "├");
     assert!((35..98).all(|column| buffer[(column, body.1 - 1)].symbol() == "─"));
-    assert!(matches!(buffer[(98, body.1 - 1)].symbol(), "│" | "█"));
-    assert_eq!(buffer[(99, body.1 - 1)].symbol(), " ");
+    assert_eq!(buffer[(98, body.1 - 1)].symbol(), " ");
+    assert!(matches!(buffer[(99, body.1 - 1)].symbol(), "│" | "█"));
     assert_eq!(buffer[(100, body.1 - 1)].symbol(), "│");
 
     session.composer.editor.move_cursor(CursorMove::Jump(21, 0));
@@ -2034,11 +2063,11 @@ fn decorative_rules_are_box_drawing_chrome_and_preserve_editor_state() -> Result
     assert_eq!(footer_buffer[(0, footer.1 - 1)].symbol(), "│");
     assert_eq!(footer_buffer[(34, footer.1 - 1)].symbol(), "├");
     assert!((35..98).all(|column| footer_buffer[(column, footer.1 - 1)].symbol() == "─"));
+    assert_eq!(footer_buffer[(98, footer.1 - 1)].symbol(), " ");
     assert!(matches!(
-        footer_buffer[(98, footer.1 - 1)].symbol(),
+        footer_buffer[(99, footer.1 - 1)].symbol(),
         "│" | "█"
     ));
-    assert_eq!(footer_buffer[(99, footer.1 - 1)].symbol(), " ");
     assert_eq!(footer_buffer[(100, footer.1 - 1)].symbol(), "│");
 
     session.composer.editor.move_cursor(CursorMove::Jump(2, 5));
@@ -2076,7 +2105,7 @@ fn composer_context_height_hugs_the_taller_of_fields_and_wrapped_guidance()
     assert_eq!(properties, (2, 3));
     assert_eq!(guidance, (33, 3));
     assert!(guidance_content.0 >= 33);
-    assert_eq!(guidance_content.1, guidance.1 + 3);
+    assert_eq!(guidance_content.1, guidance.1 + 2);
     assert_eq!(long_buffer[(31, long_separator.1)].symbol(), "┴");
     assert_eq!(short_buffer[(31, short_separator.1)].symbol(), "┴");
 
@@ -2089,7 +2118,7 @@ fn composer_context_height_hugs_the_taller_of_fields_and_wrapped_guidance()
     );
     assert_eq!(
         find_ascii(&wide_buffer, 101, 22, "This guidance"),
-        Some((2, 13))
+        Some((2, 12))
     );
     assert_eq!(
         find_ascii(&wide_buffer, 101, 22, "Message Subject"),
@@ -2298,8 +2327,9 @@ fn editor_scrollbar_uses_a_full_block_thumb_without_mutating_editor_state()
     assert_eq!(fitting.composer.editor.lines(), fitting_document);
     assert_eq!(fitting.composer.editor.cursor(), fitting_cursor);
     assert!((3..56).all(|row| {
-        fitting_buffer[(117, row)].symbol() == "█" && fitting_buffer[(117, row)].fg == Color::Yellow
+        fitting_buffer[(118, row)].symbol() == "█" && fitting_buffer[(118, row)].fg == Color::Yellow
     }));
+    assert!((3..56).all(|row| fitting_buffer[(117, row)].symbol() == " "));
     assert!(
         fitting_buffer
             .content()
@@ -2319,27 +2349,29 @@ fn editor_scrollbar_uses_a_full_block_thumb_without_mutating_editor_state()
     let top = rendered_buffer(&mut overflowing, 60, 22)?;
     assert_eq!(overflowing.composer.editor.lines(), top_document);
     assert_eq!(overflowing.composer.editor.cursor(), top_cursor);
-    assert_eq!(
-        (14..18)
-            .filter(|row| top[(57, *row)].symbol() == "█")
-            .collect::<Vec<_>>(),
-        [14]
+    let track_rows = rows_with_symbols(&top, 58, 22, &["█", "│"]);
+    let top_thumb_rows = rows_with_symbols(&top, 58, 22, &["█"]);
+    assert_eq!(top_thumb_rows.first(), track_rows.first());
+    assert!(
+        top_thumb_rows
+            .iter()
+            .all(|row| top[(58, *row)].fg == Color::Yellow)
     );
-    assert_eq!(top[(57, 14)].fg, Color::Yellow);
-    assert_eq!(top[(57, 15)].symbol(), "│");
-    assert_eq!(top[(57, 15)].fg, Color::DarkGray);
+    assert!(
+        track_rows
+            .iter()
+            .filter(|row| top[(58, **row)].symbol() == "│")
+            .all(|row| top[(58, *row)].fg == Color::DarkGray)
+    );
+    assert!(track_rows.iter().all(|row| top[(57, *row)].symbol() == " "));
 
     let mut middle = top;
     for _ in 0..3 {
         press(&mut overflowing, KeyCode::Down);
         middle = rendered_buffer(&mut overflowing, 60, 22)?;
     }
-    assert_eq!(
-        (14..18)
-            .filter(|row| middle[(57, *row)].symbol() == "█")
-            .collect::<Vec<_>>(),
-        [16]
-    );
+    let middle_thumb_rows = rows_with_symbols(&middle, 58, 22, &["█"]);
+    assert!(middle_thumb_rows.first() > top_thumb_rows.first());
 
     let mut bottom = middle;
     for _ in 0..4 {
@@ -2347,12 +2379,8 @@ fn editor_scrollbar_uses_a_full_block_thumb_without_mutating_editor_state()
         bottom = rendered_buffer(&mut overflowing, 60, 22)?;
     }
     assert_eq!(overflowing.composer.editor.cursor(), (21, 0));
-    assert_eq!(
-        (14..18)
-            .filter(|row| bottom[(57, *row)].symbol() == "█")
-            .collect::<Vec<_>>(),
-        [17]
-    );
+    let bottom_thumb_rows = rows_with_symbols(&bottom, 58, 22, &["█"]);
+    assert_eq!(bottom_thumb_rows.last(), track_rows.last());
 
     let mut tall_bottom = AuthoringSession::new(built_in_commit_types(), Some(0));
     for _ in 0..5 {
@@ -2360,8 +2388,9 @@ fn editor_scrollbar_uses_a_full_block_thumb_without_mutating_editor_state()
     }
     let buffer = rendered_buffer(&mut tall_bottom, 120, 32)?;
     assert_eq!(tall_bottom.composer.editor.cursor(), (21, 0));
-    assert_eq!(buffer[(117, 21)].symbol(), "█");
-    assert_eq!(buffer[(117, 21)].fg, Color::Yellow);
+    assert_eq!(buffer[(117, 21)].symbol(), " ");
+    assert_eq!(buffer[(118, 21)].symbol(), "█");
+    assert_eq!(buffer[(118, 21)].fg, Color::Yellow);
     assert_eq!(buffer[(117, 28)].symbol(), "─");
 
     let mut unicode = AuthoringSession::new(built_in_commit_types(), Some(0));
@@ -2372,11 +2401,9 @@ fn editor_scrollbar_uses_a_full_block_thumb_without_mutating_editor_state()
     let buffer = rendered_buffer(&mut unicode, 60, 22)?;
     assert_eq!(unicode.composer.editor.lines(), document);
     assert_eq!(unicode.composer.editor.cursor(), cursor);
-    let scrollbar_symbols = (12..19)
-        .map(|row| buffer[(57, row)].symbol())
-        .collect::<Vec<_>>();
+    let scrollbar_symbols = rows_with_symbols(&buffer, 58, 22, &["█"]);
     assert!(
-        scrollbar_symbols.contains(&"█"),
+        !scrollbar_symbols.is_empty(),
         "missing thumb in {scrollbar_symbols:?}"
     );
     modified_press(&mut unicode, KeyCode::Char('u'), KeyModifiers::CONTROL);
