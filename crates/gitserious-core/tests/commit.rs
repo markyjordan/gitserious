@@ -71,9 +71,9 @@ fn drafts_reject_duplicate_keys_and_preserve_authored_order() -> Result<(), Box<
         )?))
     );
 
-    let behavior = authored("behavior", PropertyValues::single(value("behavior")?))?;
-    let draft = feat_draft(vec![behavior.clone(), first])?;
-    assert_eq!(draft.properties()[0], behavior);
+    let decision = authored("decision", PropertyValues::single(value("decision")?))?;
+    let draft = feat_draft(vec![decision.clone(), first])?;
+    assert_eq!(draft.properties()[0], decision);
     Ok(())
 }
 
@@ -82,7 +82,7 @@ fn canonical_render_uses_schema_order_and_preserves_multiline_values() -> Result
 {
     let draft = feat_draft(vec![
         authored(
-            "behavior",
+            "decision",
             PropertyValues::single(value("render one message")?),
         )?,
         authored(
@@ -97,7 +97,7 @@ fn canonical_render_uses_schema_order_and_preserves_multiline_values() -> Result
 
     assert_eq!(
         message.as_str(),
-        "feat(core): render typed drafts\n\nintent:\ncentralize validation\n  preserve authored indentation 🦀\n\nbehavior:\nrender one message\n"
+        "feat(core): render typed drafts\n\nintent:\ncentralize validation\n  preserve authored indentation 🦀\n\ndecision:\nrender one message\n"
     );
     Ok(())
 }
@@ -118,7 +118,7 @@ fn canonical_render_hyphenates_scope_whitespace() -> Result<(), Box<dyn Error>> 
             vec![
                 authored("intent", PropertyValues::single(value("canonical output")?))?,
                 authored(
-                    "behavior",
+                    "decision",
                     PropertyValues::single(value("replace whitespace")?),
                 )?,
             ],
@@ -138,7 +138,7 @@ fn breaking_change_adds_header_bang_and_uppercase_multiline_footer() -> Result<(
     let draft = feat_draft(vec![
         authored("intent", PropertyValues::single(value("replace API")?))?,
         authored(
-            "behavior",
+            "decision",
             PropertyValues::single(value("require migration")?),
         )?,
     ])?
@@ -146,7 +146,7 @@ fn breaking_change_adds_header_bang_and_uppercase_multiline_footer() -> Result<(
 
     assert_eq!(
         render_commit_message(definition, &draft)?.as_str(),
-        "feat(core)!: render typed drafts\n\nintent:\nreplace API\n\nbehavior:\nrequire migration\n\nBREAKING CHANGE: remove the old API\nuse the replacement\n"
+        "feat(core)!: render typed drafts\n\nintent:\nreplace API\n\ndecision:\nrequire migration\n\nBREAKING CHANGE: remove the old API\nuse the replacement\n"
     );
     assert_eq!(
         draft.breaking_change().map(PropertyValue::as_str),
@@ -200,7 +200,7 @@ fn validation_reports_type_unknown_required_and_multiplicity_failures() -> Resul
                 "unknown"
             )?))
     );
-    for key in ["intent", "behavior"] {
+    for key in ["intent", "decision"] {
         assert!(
             errors
                 .as_slice()
@@ -230,7 +230,7 @@ fn validation_reports_type_unknown_required_and_multiplicity_failures() -> Resul
     )?;
     let mismatch = feat_draft(vec![
         multiple,
-        authored("behavior", PropertyValues::single(value("behavior")?))?,
+        authored("decision", PropertyValues::single(value("decision")?))?,
     ])?;
     assert!(matches!(
         validate_commit_draft(feat, &mismatch),

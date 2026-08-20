@@ -62,7 +62,7 @@ fn feat_message() -> Result<CommitMessage, Box<dyn Error>> {
         CommitSubject::new("create commit")?,
         vec![
             property("intent", "exercise Git")?,
-            property("behavior", "record the staged index")?,
+            property("decision", "record the staged index")?,
         ],
     )?;
     Ok(render_commit_message(definition, &draft)?)
