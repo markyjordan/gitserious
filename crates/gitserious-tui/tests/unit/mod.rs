@@ -200,6 +200,30 @@ fn compact_region_text(
     compact_rendered_text(&text)
 }
 
+fn rendered_property_guidance(
+    session: &mut AuthoringSession<'_>,
+    width: u16,
+    height: u16,
+) -> Result<String, Box<dyn Error>> {
+    let buffer = rendered_buffer(session, width, height)?;
+    let heading = find_ascii(&buffer, width, height, "Property Description")
+        .ok_or("missing property description heading")?;
+    let end_column = if width <= 100 {
+        width.saturating_sub(1)
+    } else {
+        find_ascii(&buffer, width, height, "Message Subject")
+            .ok_or("missing editor heading")?
+            .0
+            .saturating_sub(2)
+    };
+    Ok(compact_region_text(
+        &buffer,
+        heading.0,
+        end_column,
+        heading.1.saturating_add(2),
+    ))
+}
+
 fn requirement_label(requirement: &PropertyRequirement) -> &'static str {
     match requirement {
         PropertyRequirement::Required => "required",
@@ -1716,7 +1740,7 @@ fn composer_switches_between_compact_and_wide_framed_geometry() -> Result<(), Bo
     let mut boundary = AuthoringSession::new(built_in_commit_types(), Some(0));
     let buffer = rendered_buffer(&mut boundary, 60, 22)?;
     assert!(!boundary.too_small);
-    assert_eq!(buffer[(0, 12)].symbol(), "├");
+    assert_eq!(buffer[(0, 11)].symbol(), "├");
     assert_eq!(buffer[(0, 18)].symbol(), "├");
     assert_eq!(buffer[(0, 20)].symbol(), "└");
 
@@ -1965,27 +1989,11 @@ fn composer_renders_each_catalog_schema_and_its_property_guidance() -> Result<()
                 .editor
                 .move_cursor(CursorMove::Jump(u16::try_from(value_line)?, 0));
             for (width, height) in [(60, 60), (120, 60)] {
-                let buffer = rendered_buffer(&mut session, width, height)?;
-                let guidance_heading = find_ascii(&buffer, width, height, "Property Description")
-                    .ok_or("missing property description heading")?;
-                let guidance_end = if width <= 100 {
-                    width.saturating_sub(1)
-                } else {
-                    find_ascii(&buffer, width, height, "Message Subject")
-                        .ok_or("missing editor heading")?
-                        .0
-                        .saturating_sub(2)
-                };
-                let guidance = compact_region_text(
-                    &buffer,
-                    guidance_heading.0,
-                    guidance_end,
-                    guidance_heading.1.saturating_add(2),
-                );
+                let guidance = rendered_property_guidance(&mut session, width, height)?;
                 let title = format!("{} · {requirement}", property.key());
                 assert!(
-                    guidance.contains(&compact_rendered_text(&title)),
-                    "missing guidance title for {} at {width} columns",
+                    !guidance.contains(&compact_rendered_text(&title)),
+                    "redundant guidance title for {} at {width} columns",
                     property.key(),
                 );
                 assert!(
@@ -2002,6 +2010,20 @@ fn composer_renders_each_catalog_schema_and_its_property_guidance() -> Result<()
                 }
             }
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn property_description_omits_global_field_metadata_without_losing_guidance()
+-> Result<(), Box<dyn Error>> {
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    for (width, height) in [(60, 32), (120, 32)] {
+        let guidance = rendered_property_guidance(&mut session, width, height)?;
+        assert!(!guidance.contains(&compact_rendered_text("Scope · optional")));
+        assert!(guidance.contains(&compact_rendered_text(
+            "Optional affected area in a Conventional Commit: type(scope): description. Leave blank for type: description."
+        )));
     }
     Ok(())
 }
@@ -2083,7 +2105,7 @@ fn composer_context_height_hugs_the_taller_of_fields_and_wrapped_guidance()
     assert_eq!(properties, (2, 3));
     assert_eq!(guidance, (33, 3));
     assert!(guidance_content.0 >= 33);
-    assert_eq!(guidance_content.1, guidance.1 + 3);
+    assert_eq!(guidance_content.1, guidance.1 + 2);
     assert_eq!(long_buffer[(31, long_separator.1)].symbol(), "┴");
     assert_eq!(short_buffer[(31, short_separator.1)].symbol(), "┴");
 
@@ -2096,7 +2118,7 @@ fn composer_context_height_hugs_the_taller_of_fields_and_wrapped_guidance()
     );
     assert_eq!(
         find_ascii(&wide_buffer, 101, 22, "This guidance"),
-        Some((2, 13))
+        Some((2, 12))
     );
     assert_eq!(
         find_ascii(&wide_buffer, 101, 22, "Message Subject"),
