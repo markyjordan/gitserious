@@ -89,10 +89,12 @@ columns. Rows alternate between `#000000` and `#101010`; the current property
 uses a full black-on-yellow row while its status marker retains its semantic
 color. Property guidance comes directly from the selected core definition. A
 conditional property shows its description followed by the catalog's separate
-`Required when...` rationale while remaining nonblocking. Scope and description
-guidance illustrates `type(scope): description`, including the scope-free
-`type: description` form. The composer requires at least 22 terminal rows so
-its context, editor, validation row, and separators remain usable.
+`Required when...` rationale while remaining nonblocking. The description pane
+does not repeat the selected field name or requirement already shown in Message
+Properties. Scope and description guidance illustrates `type(scope):
+description`, including the scope-free `type: description` form. The composer
+requires at least 22 terminal rows so its context, editor, validation row, and
+separators remain usable.
 
 Step 3 places `Final Git Commit Message` in a heading pane with the same
 under-heading rule as the Step 2 context headings. The canonical message
