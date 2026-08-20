@@ -45,7 +45,8 @@ columns, matching Message Properties. Rows alternate between `#000000` and
 `#101010`; the current type uses a full black-on-yellow row. The selected
 catalog tab uses the same black-on-yellow chip; `tab` cycles available type
 sets and a click on a chip selects that set. Only the Conventional set exists
-today, so `tab` and a click on `CONVENTIONAL` keep the current table.
+today, so `tab` and a click on `CONVENTIONAL` keep the current table. Type ids,
+ordering, and descriptions come directly from the effective core catalog.
 
 The composer presents one prepopulated document as three immutable structural
 sections. `Message Subject` contains optional `scope` and required `description`
@@ -86,10 +87,12 @@ a definition-specific too-small fallback. The HUD tracks
 complete, incomplete, and invalid values and leaves a two-cell gap between its
 columns. Rows alternate between `#000000` and `#101010`; the current property
 uses a full black-on-yellow row while its status marker retains its semantic
-color. Scope and description guidance illustrates `type(scope): description`,
-including the scope-free `type: description` form. The composer requires at
-least 22 terminal rows so its context, editor, validation row, and separators
-remain usable.
+color. Property guidance comes directly from the selected core definition. A
+conditional property shows its description followed by the catalog's separate
+`Required when...` rationale while remaining nonblocking. Scope and description
+guidance illustrates `type(scope): description`, including the scope-free
+`type: description` form. The composer requires at least 22 terminal rows so
+its context, editor, validation row, and separators remain usable.
 
 Step 3 places `Final Git Commit Message` in a heading pane with the same
 under-heading rule as the Step 2 context headings. The canonical message
