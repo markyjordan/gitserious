@@ -725,7 +725,7 @@ fn render_editor_scrollbar(frame: &mut Frame<'_>, area: Rect, status: CursorStat
 }
 
 fn render_scrollbar_thumb_row(frame: &mut Frame<'_>, area: Rect, y: u16) {
-    set_rule_cell(frame, area.x, y, "┃", Style::default().fg(Color::Yellow));
+    set_rule_cell(frame, area.x, y, "█", Style::default().fg(Color::Yellow));
 }
 
 fn meaningful_editor_rows(editor: &TextArea<'_>) -> u16 {

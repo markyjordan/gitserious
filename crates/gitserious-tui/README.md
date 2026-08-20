@@ -102,7 +102,7 @@ The `Compose commit message` view always edits an 80-column virtual surface. If
 the framed editor is narrower, it follows the cursor horizontally instead of
 wrapping early, then returns to column 1 when a word or glyph soft-wraps at
 column 80. The rightmost inner editor column is reserved for an always-visible
-scrollbar with a dark-gray `│` track and yellow `┃` thumb. The thumb fills the
+scrollbar with a dark-gray `│` track and solid yellow `█` thumb. The thumb fills the
 track when all content fits. When content overflows, deterministic viewport
 geometry maps the first and final meaningful document rows to the exact ends of
 the track; the final reserved scaffold separator does not extend the scroll
