@@ -156,6 +156,52 @@ fn row_text(buffer: &Buffer, width: u16, row: u16) -> String {
         .collect()
 }
 
+fn compact_rendered_text(text: &str) -> String {
+    text.chars()
+        .filter(|character| {
+            !character.is_whitespace()
+                && !matches!(
+                    character,
+                    '┌' | '┐'
+                        | '└'
+                        | '┘'
+                        | '│'
+                        | '─'
+                        | '├'
+                        | '┤'
+                        | '┬'
+                        | '┴'
+                        | '┼'
+                        | '┃'
+                        | '⠒'
+                )
+        })
+        .collect()
+}
+
+fn compact_region_text(
+    buffer: &Buffer,
+    start_column: u16,
+    end_column: u16,
+    start_row: u16,
+) -> String {
+    let text = (start_row..buffer.area.height)
+        .flat_map(|row| {
+            (start_column..end_column).map(move |column| buffer[(column, row)].symbol().to_owned())
+        })
+        .collect::<String>();
+    compact_rendered_text(&text)
+}
+
+fn requirement_label(requirement: &PropertyRequirement) -> &'static str {
+    match requirement {
+        PropertyRequirement::Required => "required",
+        PropertyRequirement::Recommended => "recommended",
+        PropertyRequirement::Optional => "optional",
+        PropertyRequirement::Conditional(_) => "conditional",
+    }
+}
+
 fn reversed_positions(buffer: &Buffer, width: u16, height: u16) -> Vec<(u16, u16)> {
     (0..height)
         .flat_map(|row| (0..width).map(move |column| (column, row)))
@@ -1806,6 +1852,149 @@ fn type_picker_uses_spaced_content_hugging_columns() -> Result<(), Box<dyn Error
     assert!((2..98).all(|column| buffer[(column, feat.1)].bg == Color::Yellow));
     assert_eq!(buffer[fix].bg, ZEBRA_BACKGROUND);
     assert!((2..98).all(|column| buffer[(column, fix.1)].bg == ZEBRA_BACKGROUND));
+    Ok(())
+}
+
+#[test]
+fn type_picker_renders_the_complete_effective_conventional_catalog() -> Result<(), Box<dyn Error>> {
+    let definitions = built_in_commit_types();
+    assert_eq!(
+        definitions
+            .iter()
+            .map(|definition| definition.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "feat", "fix", "refactor", "perf", "test", "docs", "chore", "build", "ci", "style",
+            "revert",
+        ]
+    );
+
+    let mut session = AuthoringSession::new(definitions, None);
+    let buffer = rendered_buffer(&mut session, 120, 24)?;
+    for (index, definition) in definitions.iter().enumerate() {
+        let row = 4_u16.saturating_add(u16::try_from(index)?);
+        for (offset, character) in definition.id().as_str().chars().enumerate() {
+            assert_eq!(
+                buffer[(5 + u16::try_from(offset)?, row)].symbol(),
+                character.to_string(),
+                "missing type id {} on catalog row {row}",
+                definition.id()
+            );
+        }
+        for (offset, character) in definition.description().chars().enumerate() {
+            assert_eq!(
+                buffer[(15 + u16::try_from(offset)?, row)].symbol(),
+                character.to_string(),
+                "missing description for {} on catalog row {row}",
+                definition.id()
+            );
+        }
+    }
+
+    assert!((2..118).all(|column| buffer[(column, 4)].bg == Color::Yellow));
+    assert!((2..118).all(|column| buffer[(column, 5)].bg == ZEBRA_BACKGROUND));
+    Ok(())
+}
+
+#[test]
+fn composer_renders_each_catalog_schema_and_its_property_guidance() -> Result<(), Box<dyn Error>> {
+    let definitions = built_in_commit_types();
+    for (definition_index, definition) in definitions.iter().enumerate() {
+        let mut session = AuthoringSession::new(definitions, Some(definition_index));
+        let expected_headings = std::iter::once("scope".to_owned())
+            .chain(std::iter::once("description".to_owned()))
+            .chain(
+                definition
+                    .properties()
+                    .iter()
+                    .map(|property| property.key().to_string()),
+            )
+            .chain(std::iter::once("breaking-change".to_owned()))
+            .collect::<Vec<_>>();
+        let actual_headings = session
+            .composer
+            .editor
+            .lines()
+            .iter()
+            .filter_map(|line| line.strip_suffix(':').map(str::to_owned))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual_headings,
+            expected_headings,
+            "incorrect scaffold for {}",
+            definition.id()
+        );
+
+        let buffer = rendered_buffer(&mut session, 160, 60)?;
+        for (property_index, property) in definition.properties().iter().enumerate() {
+            let row = 7_u16.saturating_add(u16::try_from(property_index)?);
+            let requirement = requirement_label(property.requirement());
+            let row = row_text(&buffer, 48, row);
+            assert!(
+                row.contains(property.key().as_str()),
+                "missing property {} for {}",
+                property.key(),
+                definition.id()
+            );
+            assert!(
+                row.contains(requirement),
+                "missing {requirement} label for {} on {}",
+                property.key(),
+                definition.id()
+            );
+
+            let heading = format!("{}:", property.key());
+            let value_line = session
+                .composer
+                .editor
+                .lines()
+                .iter()
+                .position(|line| line == &heading)
+                .ok_or("missing property heading")?
+                .saturating_add(1);
+            session
+                .composer
+                .editor
+                .move_cursor(CursorMove::Jump(u16::try_from(value_line)?, 0));
+            for (width, height) in [(60, 60), (120, 60)] {
+                let buffer = rendered_buffer(&mut session, width, height)?;
+                let guidance_heading = find_ascii(&buffer, width, height, "Property Description")
+                    .ok_or("missing property description heading")?;
+                let guidance_end = if width <= 100 {
+                    width.saturating_sub(1)
+                } else {
+                    find_ascii(&buffer, width, height, "Message Subject")
+                        .ok_or("missing editor heading")?
+                        .0
+                        .saturating_sub(2)
+                };
+                let guidance = compact_region_text(
+                    &buffer,
+                    guidance_heading.0,
+                    guidance_end,
+                    guidance_heading.1.saturating_add(2),
+                );
+                let title = format!("{} · {requirement}", property.key());
+                assert!(
+                    guidance.contains(&compact_rendered_text(&title)),
+                    "missing guidance title for {} at {width} columns",
+                    property.key(),
+                );
+                assert!(
+                    guidance.contains(&compact_rendered_text(property.description())),
+                    "missing description for {} at {width} columns",
+                    property.key(),
+                );
+                if let PropertyRequirement::Conditional(condition) = property.requirement() {
+                    assert!(
+                        guidance.contains(&compact_rendered_text(condition.rationale())),
+                        "missing condition for {} at {width} columns",
+                        property.key(),
+                    );
+                }
+            }
+        }
+    }
     Ok(())
 }
 
