@@ -244,7 +244,7 @@ fn type_option_is_a_preselection_and_forwards_exact_git_output() -> Result<(), B
     assert_eq!(harness.writer.calls.get(), 1);
     assert_eq!(
         harness.writer.messages.borrow()[0],
-        "feat(tui-editor)!: expose command\n\nintent:\nauthored intent\n\nbehavior:\nauthored behavior\n\nBREAKING CHANGE: replace CLI contract\n"
+        "feat(tui-editor)!: expose command\n\nintent:\nauthored intent\n\ndecision:\nauthored decision\n\nBREAKING CHANGE: replace CLI contract\n"
     );
     Ok(())
 }
