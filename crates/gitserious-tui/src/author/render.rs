@@ -562,26 +562,22 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
 fn render_field_description(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
     let definition = session.definition().clone();
     let current = session.composer.current_field(&definition);
-    let (title, description) = current.map_or_else(
+    let metadata = current.map_or_else(
         || {
-            (
-                " Commit form ".to_owned(),
-                "Edit values beneath the schema-generated field headers.".to_owned(),
+            FieldMetadata::new(
+                " Commit form ",
+                "Edit values beneath the schema-generated field headers.",
             )
         },
         |kind| field_metadata(kind, &definition),
     );
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::styled(
-                title.trim().to_owned(),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Line::from(description),
-        ])
-        .wrap(Wrap { trim: true }),
-        area,
-    );
+    let lines = std::iter::once(Line::styled(
+        metadata.title.trim().to_owned(),
+        Style::default().add_modifier(Modifier::BOLD),
+    ))
+    .chain(metadata.paragraphs.into_iter().map(Line::from))
+    .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
 }
 
 fn render_document_editor(
@@ -729,7 +725,7 @@ fn render_editor_scrollbar(frame: &mut Frame<'_>, area: Rect, status: CursorStat
 }
 
 fn render_scrollbar_thumb_row(frame: &mut Frame<'_>, area: Rect, y: u16) {
-    set_rule_cell(frame, area.x, y, "┃", Style::default().fg(Color::Yellow));
+    set_rule_cell(frame, area.x, y, "█", Style::default().fg(Color::Yellow));
 }
 
 fn meaningful_editor_rows(editor: &TextArea<'_>) -> u16 {
@@ -1043,14 +1039,28 @@ fn composer_minimum_width(definition: &CommitTypeDefinition) -> u16 {
         .max(field_hud_content_width(definition).saturating_add(COMPOSER_FRAME_WIDTH_OVERHEAD))
 }
 
-fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String, String) {
+struct FieldMetadata {
+    title: String,
+    paragraphs: Vec<String>,
+}
+
+impl FieldMetadata {
+    fn new(title: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            paragraphs: vec![description.into()],
+        }
+    }
+}
+
+fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> FieldMetadata {
     match kind {
-        FieldKind::Scope => (
+        FieldKind::Scope => FieldMetadata::new(
             " Scope · optional ".to_owned(),
             "Optional affected area in a Conventional Commit: type(scope): description. Leave blank for type: description."
                 .to_owned(),
         ),
-        FieldKind::Description => (
+        FieldKind::Description => FieldMetadata::new(
             " Description · required ".to_owned(),
             "Required concise description in a Conventional Commit: type(scope): description, or type: description without a scope."
                 .to_owned(),
@@ -1064,16 +1074,18 @@ fn field_metadata(kind: FieldKind, definition: &CommitTypeDefinition) -> (String
                 PropertyRequirement::Required => "required".to_owned(),
                 PropertyRequirement::Recommended => "recommended".to_owned(),
                 PropertyRequirement::Optional => "optional".to_owned(),
-                PropertyRequirement::Conditional(condition) => {
-                    format!("conditional: {}", condition.rationale())
-                }
+                PropertyRequirement::Conditional(_) => "conditional".to_owned(),
             };
-            (
+            let mut metadata = FieldMetadata::new(
                 format!(" {} · {requirement} ", property.key()),
-                property.description().to_owned(),
-            )
+                property.description(),
+            );
+            if let PropertyRequirement::Conditional(condition) = property.requirement() {
+                metadata.paragraphs.push(condition.rationale().to_owned());
+            }
+            metadata
         }
-        FieldKind::BreakingChange => (
+        FieldKind::BreakingChange => FieldMetadata::new(
             " Breaking change · optional ".to_owned(),
             "Describe an incompatible change. Review adds ! before the header colon and renders this value as an uppercase BREAKING CHANGE footer."
                 .to_owned(),
@@ -1085,17 +1097,19 @@ fn context_content_height(description_width: u16, session: &AuthoringSession<'_>
     let hud_height =
         u16::try_from(session.composer.hud_fields(session.definition()).len()).unwrap_or(u16::MAX);
     let definition = session.definition().clone();
-    let (title, description) = session.composer.current_field(&definition).map_or_else(
+    let metadata = session.composer.current_field(&definition).map_or_else(
         || {
-            (
-                " Commit form ".to_owned(),
-                "Edit values beneath the schema-generated field headers.".to_owned(),
+            FieldMetadata::new(
+                " Commit form ",
+                "Edit values beneath the schema-generated field headers.",
             )
         },
         |kind| field_metadata(kind, &definition),
     );
-    let guidance_height = wrapped_line_count(title.trim(), description_width)
-        .saturating_add(wrapped_line_count(&description, description_width));
+    let guidance_height = metadata.paragraphs.iter().fold(
+        wrapped_line_count(metadata.title.trim(), description_width),
+        |height, paragraph| height.saturating_add(wrapped_line_count(paragraph, description_width)),
+    );
     hud_height.max(guidance_height)
 }
 

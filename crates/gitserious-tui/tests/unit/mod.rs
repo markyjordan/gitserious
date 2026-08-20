@@ -156,6 +156,53 @@ fn row_text(buffer: &Buffer, width: u16, row: u16) -> String {
         .collect()
 }
 
+fn compact_rendered_text(text: &str) -> String {
+    text.chars()
+        .filter(|character| {
+            !character.is_whitespace()
+                && !matches!(
+                    character,
+                    '┌' | '┐'
+                        | '└'
+                        | '┘'
+                        | '│'
+                        | '─'
+                        | '├'
+                        | '┤'
+                        | '┬'
+                        | '┴'
+                        | '┼'
+                        | '┃'
+                        | '█'
+                        | '⠒'
+                )
+        })
+        .collect()
+}
+
+fn compact_region_text(
+    buffer: &Buffer,
+    start_column: u16,
+    end_column: u16,
+    start_row: u16,
+) -> String {
+    let text = (start_row..buffer.area.height)
+        .flat_map(|row| {
+            (start_column..end_column).map(move |column| buffer[(column, row)].symbol().to_owned())
+        })
+        .collect::<String>();
+    compact_rendered_text(&text)
+}
+
+fn requirement_label(requirement: &PropertyRequirement) -> &'static str {
+    match requirement {
+        PropertyRequirement::Required => "required",
+        PropertyRequirement::Recommended => "recommended",
+        PropertyRequirement::Optional => "optional",
+        PropertyRequirement::Conditional(_) => "conditional",
+    }
+}
+
 fn reversed_positions(buffer: &Buffer, width: u16, height: u16) -> Vec<(u16, u16)> {
     (0..height)
         .flat_map(|row| (0..width).map(move |column| (column, row)))
@@ -163,9 +210,9 @@ fn reversed_positions(buffer: &Buffer, width: u16, height: u16) -> Vec<(u16, u16
         .collect()
 }
 
-fn terminal_edge_cursor_positions(buffer: &Buffer, width: u16, height: u16) -> Vec<(u16, u16)> {
+fn terminal_edge_cursor_positions(buffer: &Buffer, _width: u16, height: u16) -> Vec<(u16, u16)> {
     (0..height)
-        .flat_map(|row| (0..width).map(move |column| (column, row)))
+        .map(|row| (0, row))
         .filter(|position| buffer[*position].symbol() == "█" && buffer[*position].fg != Color::Gray)
         .collect()
 }
@@ -1652,7 +1699,7 @@ fn composer_switches_between_compact_and_wide_framed_geometry() -> Result<(), Bo
         assert_eq!(buffer[(column, scope.1)].symbol(), "⠒");
         assert_eq!(buffer[(column, scope.1)].fg, Color::DarkGray);
     }
-    assert_eq!(buffer[(98, scope.1)].symbol(), "┃");
+    assert_eq!(buffer[(98, scope.1)].symbol(), "█");
     assert_eq!(buffer[(99, scope.1)].symbol(), " ");
 
     wide.composer.editor.move_cursor(CursorMove::Jump(5, 0));
@@ -1810,6 +1857,149 @@ fn type_picker_uses_spaced_content_hugging_columns() -> Result<(), Box<dyn Error
 }
 
 #[test]
+fn type_picker_renders_the_complete_effective_conventional_catalog() -> Result<(), Box<dyn Error>> {
+    let definitions = built_in_commit_types();
+    assert_eq!(
+        definitions
+            .iter()
+            .map(|definition| definition.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "feat", "fix", "refactor", "perf", "test", "docs", "chore", "build", "ci", "style",
+            "revert",
+        ]
+    );
+
+    let mut session = AuthoringSession::new(definitions, None);
+    let buffer = rendered_buffer(&mut session, 120, 24)?;
+    for (index, definition) in definitions.iter().enumerate() {
+        let row = 4_u16.saturating_add(u16::try_from(index)?);
+        for (offset, character) in definition.id().as_str().chars().enumerate() {
+            assert_eq!(
+                buffer[(5 + u16::try_from(offset)?, row)].symbol(),
+                character.to_string(),
+                "missing type id {} on catalog row {row}",
+                definition.id()
+            );
+        }
+        for (offset, character) in definition.description().chars().enumerate() {
+            assert_eq!(
+                buffer[(15 + u16::try_from(offset)?, row)].symbol(),
+                character.to_string(),
+                "missing description for {} on catalog row {row}",
+                definition.id()
+            );
+        }
+    }
+
+    assert!((2..118).all(|column| buffer[(column, 4)].bg == Color::Yellow));
+    assert!((2..118).all(|column| buffer[(column, 5)].bg == ZEBRA_BACKGROUND));
+    Ok(())
+}
+
+#[test]
+fn composer_renders_each_catalog_schema_and_its_property_guidance() -> Result<(), Box<dyn Error>> {
+    let definitions = built_in_commit_types();
+    for (definition_index, definition) in definitions.iter().enumerate() {
+        let mut session = AuthoringSession::new(definitions, Some(definition_index));
+        let expected_headings = std::iter::once("scope".to_owned())
+            .chain(std::iter::once("description".to_owned()))
+            .chain(
+                definition
+                    .properties()
+                    .iter()
+                    .map(|property| property.key().to_string()),
+            )
+            .chain(std::iter::once("breaking-change".to_owned()))
+            .collect::<Vec<_>>();
+        let actual_headings = session
+            .composer
+            .editor
+            .lines()
+            .iter()
+            .filter_map(|line| line.strip_suffix(':').map(str::to_owned))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual_headings,
+            expected_headings,
+            "incorrect scaffold for {}",
+            definition.id()
+        );
+
+        let buffer = rendered_buffer(&mut session, 160, 60)?;
+        for (property_index, property) in definition.properties().iter().enumerate() {
+            let row = 7_u16.saturating_add(u16::try_from(property_index)?);
+            let requirement = requirement_label(property.requirement());
+            let row = row_text(&buffer, 48, row);
+            assert!(
+                row.contains(property.key().as_str()),
+                "missing property {} for {}",
+                property.key(),
+                definition.id()
+            );
+            assert!(
+                row.contains(requirement),
+                "missing {requirement} label for {} on {}",
+                property.key(),
+                definition.id()
+            );
+
+            let heading = format!("{}:", property.key());
+            let value_line = session
+                .composer
+                .editor
+                .lines()
+                .iter()
+                .position(|line| line == &heading)
+                .ok_or("missing property heading")?
+                .saturating_add(1);
+            session
+                .composer
+                .editor
+                .move_cursor(CursorMove::Jump(u16::try_from(value_line)?, 0));
+            for (width, height) in [(60, 60), (120, 60)] {
+                let buffer = rendered_buffer(&mut session, width, height)?;
+                let guidance_heading = find_ascii(&buffer, width, height, "Property Description")
+                    .ok_or("missing property description heading")?;
+                let guidance_end = if width <= 100 {
+                    width.saturating_sub(1)
+                } else {
+                    find_ascii(&buffer, width, height, "Message Subject")
+                        .ok_or("missing editor heading")?
+                        .0
+                        .saturating_sub(2)
+                };
+                let guidance = compact_region_text(
+                    &buffer,
+                    guidance_heading.0,
+                    guidance_end,
+                    guidance_heading.1.saturating_add(2),
+                );
+                let title = format!("{} · {requirement}", property.key());
+                assert!(
+                    guidance.contains(&compact_rendered_text(&title)),
+                    "missing guidance title for {} at {width} columns",
+                    property.key(),
+                );
+                assert!(
+                    guidance.contains(&compact_rendered_text(property.description())),
+                    "missing description for {} at {width} columns",
+                    property.key(),
+                );
+                if let PropertyRequirement::Conditional(condition) = property.requirement() {
+                    assert!(
+                        guidance.contains(&compact_rendered_text(condition.rationale())),
+                        "missing condition for {} at {width} columns",
+                        property.key(),
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn decorative_rules_are_box_drawing_chrome_and_preserve_editor_state() -> Result<(), Box<dyn Error>>
 {
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
@@ -1828,13 +2018,13 @@ fn decorative_rules_are_box_drawing_chrome_and_preserve_editor_state() -> Result
         assert_eq!(buffer[(column, scope.1)].symbol(), "⠒");
         assert_ne!(buffer[(column, scope.1)].symbol(), "—");
     }
-    assert_eq!(buffer[(98, scope.1)].symbol(), "┃");
+    assert_eq!(buffer[(98, scope.1)].symbol(), "█");
     assert_eq!(buffer[(99, scope.1)].symbol(), " ");
     let body = find_ascii(&buffer, 101, 40, "Message Body").ok_or("missing body")?;
     assert_eq!(buffer[(0, body.1 - 1)].symbol(), "│");
     assert_eq!(buffer[(34, body.1 - 1)].symbol(), "├");
     assert!((35..98).all(|column| buffer[(column, body.1 - 1)].symbol() == "─"));
-    assert!(matches!(buffer[(98, body.1 - 1)].symbol(), "│" | "┃"));
+    assert!(matches!(buffer[(98, body.1 - 1)].symbol(), "│" | "█"));
     assert_eq!(buffer[(99, body.1 - 1)].symbol(), " ");
     assert_eq!(buffer[(100, body.1 - 1)].symbol(), "│");
 
@@ -1846,7 +2036,7 @@ fn decorative_rules_are_box_drawing_chrome_and_preserve_editor_state() -> Result
     assert!((35..98).all(|column| footer_buffer[(column, footer.1 - 1)].symbol() == "─"));
     assert!(matches!(
         footer_buffer[(98, footer.1 - 1)].symbol(),
-        "│" | "┃"
+        "│" | "█"
     ));
     assert_eq!(footer_buffer[(99, footer.1 - 1)].symbol(), " ");
     assert_eq!(footer_buffer[(100, footer.1 - 1)].symbol(), "│");
@@ -2099,7 +2289,7 @@ fn fixed_width_soft_wrap_reports_visual_columns_without_changing_authored_lines(
 }
 
 #[test]
-fn editor_scrollbar_tracks_the_fixed_width_viewport_without_mutating_editor_state()
+fn editor_scrollbar_uses_a_full_block_thumb_without_mutating_editor_state()
 -> Result<(), Box<dyn Error>> {
     let mut fitting = AuthoringSession::new(built_in_commit_types(), Some(0));
     let fitting_document = fitting.composer.editor.lines().to_vec();
@@ -2107,7 +2297,15 @@ fn editor_scrollbar_tracks_the_fixed_width_viewport_without_mutating_editor_stat
     let fitting_buffer = rendered_buffer(&mut fitting, 120, 60)?;
     assert_eq!(fitting.composer.editor.lines(), fitting_document);
     assert_eq!(fitting.composer.editor.cursor(), fitting_cursor);
-    assert!((3..56).all(|row| fitting_buffer[(117, row)].symbol() == "┃"));
+    assert!((3..56).all(|row| {
+        fitting_buffer[(117, row)].symbol() == "█" && fitting_buffer[(117, row)].fg == Color::Yellow
+    }));
+    assert!(
+        fitting_buffer
+            .content()
+            .iter()
+            .all(|cell| cell.symbol() != "┃")
+    );
     assert!(
         fitting_buffer
             .content()
@@ -2123,11 +2321,13 @@ fn editor_scrollbar_tracks_the_fixed_width_viewport_without_mutating_editor_stat
     assert_eq!(overflowing.composer.editor.cursor(), top_cursor);
     assert_eq!(
         (14..18)
-            .filter(|row| top[(57, *row)].symbol() == "┃")
+            .filter(|row| top[(57, *row)].symbol() == "█")
             .collect::<Vec<_>>(),
         [14]
     );
+    assert_eq!(top[(57, 14)].fg, Color::Yellow);
     assert_eq!(top[(57, 15)].symbol(), "│");
+    assert_eq!(top[(57, 15)].fg, Color::DarkGray);
 
     let mut middle = top;
     for _ in 0..3 {
@@ -2136,7 +2336,7 @@ fn editor_scrollbar_tracks_the_fixed_width_viewport_without_mutating_editor_stat
     }
     assert_eq!(
         (14..18)
-            .filter(|row| middle[(57, *row)].symbol() == "┃")
+            .filter(|row| middle[(57, *row)].symbol() == "█")
             .collect::<Vec<_>>(),
         [16]
     );
@@ -2149,7 +2349,7 @@ fn editor_scrollbar_tracks_the_fixed_width_viewport_without_mutating_editor_stat
     assert_eq!(overflowing.composer.editor.cursor(), (21, 0));
     assert_eq!(
         (14..18)
-            .filter(|row| bottom[(57, *row)].symbol() == "┃")
+            .filter(|row| bottom[(57, *row)].symbol() == "█")
             .collect::<Vec<_>>(),
         [17]
     );
@@ -2160,7 +2360,8 @@ fn editor_scrollbar_tracks_the_fixed_width_viewport_without_mutating_editor_stat
     }
     let buffer = rendered_buffer(&mut tall_bottom, 120, 32)?;
     assert_eq!(tall_bottom.composer.editor.cursor(), (21, 0));
-    assert_eq!(buffer[(117, 21)].symbol(), "┃");
+    assert_eq!(buffer[(117, 21)].symbol(), "█");
+    assert_eq!(buffer[(117, 21)].fg, Color::Yellow);
     assert_eq!(buffer[(117, 28)].symbol(), "─");
 
     let mut unicode = AuthoringSession::new(built_in_commit_types(), Some(0));
@@ -2175,7 +2376,7 @@ fn editor_scrollbar_tracks_the_fixed_width_viewport_without_mutating_editor_stat
         .map(|row| buffer[(57, row)].symbol())
         .collect::<Vec<_>>();
     assert!(
-        scrollbar_symbols.contains(&"┃"),
+        scrollbar_symbols.contains(&"█"),
         "missing thumb in {scrollbar_symbols:?}"
     );
     modified_press(&mut unicode, KeyCode::Char('u'), KeyModifiers::CONTROL);
