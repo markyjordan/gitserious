@@ -9,19 +9,22 @@ static BUILT_IN_COMMIT_TYPES: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::ne
     vec![
         commit_type(
             "feat",
-            "An intentional addition or expansion of capability.",
+            "An addition or expansion of capability.",
             vec![
-                required("intent", "Why the capability is being introduced."),
-                required("behavior", "What users, callers, or the system can now do."),
-                recommended(
+                required(
+                    "intent",
+                    "Why the product or system needs this capability. The implementation shows how it works, not why it should exist.",
+                ),
+                required(
+                    "decision",
+                    "Why this implementation was selected among reasonable alternatives. The diff records only the winner.",
+                ),
+                conditional(
                     "constraints",
-                    "Design, compatibility, product, or operational boundaries.",
+                    "Non-obvious requirements that bounded the change and cannot be recovered from the implementation with confidence.",
+                    "non-obvious-requirements",
+                    "Required when non-obvious requirements bounded the change.",
                 ),
-                recommended(
-                    "invariants",
-                    "Properties that must remain true despite the addition.",
-                ),
-                recommended("validation", "Evidence that the intended behavior works."),
             ],
         ),
         commit_type(
@@ -29,38 +32,33 @@ static BUILT_IN_COMMIT_TYPES: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::ne
             "A causal correction of an observed failure or incorrect behavior.",
             vec![
                 required(
-                    "symptom",
-                    "The externally observed failure or incorrect behavior.",
+                    "cause",
+                    "The causal model established while debugging. The diff shows the condition that changed, not why it was the cause.",
                 ),
                 required(
-                    "cause",
-                    "The underlying mechanism that produced the failure.",
+                    "decision",
+                    "Why this layer was repaired rather than a superficially equivalent intervention.",
                 ),
-                required("decision", "Why this correction was selected."),
-                recommended(
-                    "effect",
-                    "The behavior or state that the correction restores or changes.",
+                conditional(
+                    "constraints",
+                    "Why the obvious fix was unacceptable, and what behavior the repair must preserve.",
+                    "preserved-behavior",
+                    "Required when the obvious fix was unacceptable or specific behavior must be preserved.",
                 ),
-                recommended("validation", "How recurrence was checked or prevented."),
             ],
         ),
         commit_type(
             "refactor",
             "A structural transformation that preserves intended behavior.",
             vec![
-                required("problem", "The structural deficiency being addressed."),
+                required("motivation", "The structural problem that justified churn."),
                 required(
-                    "transformation",
-                    "The conceptual restructuring that was performed.",
+                    "decision",
+                    "The restructuring that was chosen instead of another equally plausible structure.",
                 ),
-                required("invariant", "The behavior that must not change."),
-                recommended(
-                    "benefit",
-                    "The maintainability, extensibility, clarity, or architectural improvement.",
-                ),
-                recommended(
-                    "validation",
-                    "Evidence that preserved behavior remains intact.",
+                required(
+                    "invariant",
+                    "What intentionally did not change despite the movement of code.",
                 ),
             ],
         ),
@@ -68,21 +66,14 @@ static BUILT_IN_COMMIT_TYPES: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::ne
             "perf",
             "An optimization supported by performance evidence.",
             vec![
-                required(
-                    "bottleneck",
-                    "The measured or observed performance limitation.",
-                ),
-                required("change", "The optimization that was applied."),
+                required("bottleneck", "What was actually expensive."),
+                required("decision", "Why this optimization was selected."),
+                required("result", "The measured change."),
                 conditional(
                     "tradeoff",
-                    "The complexity, memory, precision, latency, or maintainability cost.",
+                    "Complexity, memory, or other cost knowingly accepted.",
                     "optimization-has-known-cost",
                     "Required when the optimization knowingly increases another resource cost or complexity.",
-                ),
-                recommended("result", "The claimed performance improvement."),
-                required(
-                    "measurement",
-                    "The benchmark method, environment, or evidence supporting the claim.",
                 ),
             ],
         ),
@@ -92,49 +83,36 @@ static BUILT_IN_COMMIT_TYPES: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::ne
             vec![
                 required(
                     "risk",
-                    "What could regress or was insufficiently specified.",
+                    "The future regression important enough to permanently encode this test. Often not obvious from the assertion.",
                 ),
-                required("coverage", "The scenarios or boundaries now exercised."),
-                required(
-                    "expected-behavior",
-                    "The behavioral contract asserted by the tests.",
-                ),
-                recommended(
-                    "production-impact",
-                    "Whether fixtures, test hooks, or production seams changed.",
+                conditional(
+                    "rationale",
+                    "Why this fixture, boundary, fuzz case, or regression input matters.",
+                    "scenario-justification",
+                    "Required when the scenario is a strange fixture, boundary, fuzz case, or regression input.",
                 ),
             ],
         ),
         commit_type(
             "docs",
             "A correction or expansion of the repository's knowledge surface.",
-            vec![
-                required(
-                    "knowledge-gap",
-                    "What was missing, ambiguous, or incorrect.",
-                ),
-                required("update", "The conceptual documentation change."),
-                recommended(
-                    "audience",
-                    "The users, contributors, maintainers, operators, or integrators served.",
-                ),
-                recommended("code-impact", "Whether executable behavior changed."),
-            ],
+            vec![conditional(
+                "reason",
+                "Why existing documentation was insufficient, misleading, or stale. A typo correction needs no body.",
+                "insufficient-documentation",
+                "Required when existing documentation was insufficient, misleading, or stale.",
+            )],
         ),
         commit_type(
             "chore",
             "Necessary maintenance that does not fit a more precise change type.",
             vec![
-                required("rationale", "Why the maintenance is needed."),
-                required("change", "The maintenance action that occurred."),
-                recommended(
-                    "operational-impact",
-                    "The effect on contributors, tooling, environments, or processes.",
-                ),
-                required("behavioral-impact", "Whether runtime behavior changes."),
-                recommended(
-                    "validation",
-                    "Evidence that the maintenance did not destabilize the project.",
+                required("reason", "Why this maintenance is necessary."),
+                conditional(
+                    "impact",
+                    "Non-obvious operational or developer consequence.",
+                    "non-obvious-operational-consequence",
+                    "Required when there is a non-obvious operational or developer consequence.",
                 ),
             ],
         ),
@@ -142,19 +120,21 @@ static BUILT_IN_COMMIT_TYPES: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::ne
             "build",
             "A change to how project artifacts are constructed.",
             vec![
-                required("problem", "The build-system limitation or requirement."),
-                required("change", "The conceptual build-system modification."),
-                recommended(
-                    "environment-impact",
-                    "The affected toolchains, platforms, or developer environments.",
-                ),
                 required(
-                    "artifact-impact",
-                    "Changes to produced binaries, packages, metadata, or reproducibility.",
+                    "intent",
+                    "Why the build needed to change. Often a response to the environment rather than a product design.",
                 ),
-                recommended(
-                    "validation",
-                    "The build matrices or artifact checks that were performed.",
+                conditional(
+                    "constraint",
+                    "External or toolchain constraint that forced the change.",
+                    "external-toolchain-constraint",
+                    "Required when an external or toolchain constraint caused the change.",
+                ),
+                conditional(
+                    "impact",
+                    "Non-obvious artifact or release consequence.",
+                    "non-obvious-artifact-consequence",
+                    "Required when the change has a non-obvious artifact or release consequence.",
                 ),
             ],
         ),
@@ -162,65 +142,51 @@ static BUILT_IN_COMMIT_TYPES: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::ne
             "ci",
             "A change to continuous-integration pipeline behavior.",
             vec![
-                required("objective", "The reliability or delivery outcome sought."),
                 required(
-                    "pipeline-change",
-                    "The conceptual workflow or pipeline change.",
-                ),
-                recommended(
-                    "trigger",
-                    "The events or branches on which the pipeline operates.",
+                    "intent",
+                    "The operational property the pipeline should obtain.",
                 ),
                 required(
-                    "failure-semantics",
-                    "What a failure blocks, warns about, retries, or permits.",
-                ),
-                recommended(
-                    "cost",
-                    "The runtime, compute, maintenance, or contributor-latency implications.",
+                    "decision",
+                    "Why this pipeline design was selected. Workflow YAML shows the mechanism, not the policy.",
                 ),
                 conditional(
-                    "permissions",
-                    "The security-relevant workflow permission changes.",
-                    "workflow-permissions-change",
-                    "Required when the pipeline change modifies workflow or action permissions.",
+                    "failure-semantics",
+                    "What failure now means (block, warn, visible-but-non-blocking).",
+                    "failure-meaning-changed",
+                    "Required when what a pipeline failure means has changed.",
                 ),
             ],
         ),
         commit_type(
             "style",
             "A non-behavioral source-presentation change.",
-            vec![
-                required(
-                    "change",
-                    "The formatting or presentation convention applied.",
-                ),
-                required(
-                    "behavioral-impact",
-                    "The explicit claim that runtime behavior is unchanged.",
-                ),
-                optional(
-                    "review-note",
-                    "Anything that makes the diff harder to inspect, such as widespread formatting churn.",
-                ),
-            ],
+            vec![conditional(
+                "reason",
+                "Why a purely non-behavioral rewrite was worth recording. Most style commits should have no body.",
+                "non-behavioral-rewrite-justification",
+                "Required when a purely non-behavioral rewrite is worth recording.",
+            )],
         ),
         commit_type(
             "revert",
             "An intentional restoration of an earlier repository state.",
             vec![
-                required("reverts", "The commit or logical change being reversed."),
                 required(
                     "reason",
-                    "Why rollback is preferable to continuing with the reverted change.",
+                    "Why the prior change must be undone. The disappearing diff does not record that judgment.",
                 ),
-                required(
-                    "restored-state",
-                    "The behavior or state to which the repository returns.",
+                conditional(
+                    "impact",
+                    "Resulting state or consequence of the rollback.",
+                    "rollback-consequence",
+                    "Required when the undo has a non-obvious resulting state or consequence.",
                 ),
-                optional(
+                conditional(
                     "follow-up",
-                    "Whether the original work will be revised, replaced, or abandoned.",
+                    "Whether the rollback is tactical and what comes next.",
+                    "temporary-rollback",
+                    "Required when the rollback is temporary or a follow-up is planned.",
                 ),
             ],
         ),
@@ -253,14 +219,6 @@ fn required(key: &'static str, description: &'static str) -> PropertyDefinition 
     property(key, description, PropertyRequirement::Required)
 }
 
-fn recommended(key: &'static str, description: &'static str) -> PropertyDefinition {
-    property(key, description, PropertyRequirement::Recommended)
-}
-
-fn optional(key: &'static str, description: &'static str) -> PropertyDefinition {
-    property(key, description, PropertyRequirement::Optional)
-}
-
 fn conditional(
     key: &'static str,
     description: &'static str,
@@ -285,8 +243,6 @@ mod tests {
     #[derive(Clone, Copy)]
     enum ExpectedRequirement {
         Required,
-        Recommended,
-        Optional,
         Conditional {
             id: &'static str,
             rationale: &'static str,
@@ -305,37 +261,30 @@ mod tests {
         properties: &'static [ExpectedProperty],
     }
 
-    use ExpectedRequirement::{Conditional, Optional, Recommended, Required};
+    use ExpectedRequirement::{Conditional, Required};
 
     const EXPECTED: &[ExpectedCommitType] = &[
         ExpectedCommitType {
             id: "feat",
-            description: "An intentional addition or expansion of capability.",
+            description: "An addition or expansion of capability.",
             properties: &[
                 ExpectedProperty {
                     key: "intent",
-                    description: "Why the capability is being introduced.",
+                    description: "Why the product or system needs this capability. The implementation shows how it works, not why it should exist.",
                     requirement: Required,
                 },
                 ExpectedProperty {
-                    key: "behavior",
-                    description: "What users, callers, or the system can now do.",
+                    key: "decision",
+                    description: "Why this implementation was selected among reasonable alternatives. The diff records only the winner.",
                     requirement: Required,
                 },
                 ExpectedProperty {
                     key: "constraints",
-                    description: "Design, compatibility, product, or operational boundaries.",
-                    requirement: Recommended,
-                },
-                ExpectedProperty {
-                    key: "invariants",
-                    description: "Properties that must remain true despite the addition.",
-                    requirement: Recommended,
-                },
-                ExpectedProperty {
-                    key: "validation",
-                    description: "Evidence that the intended behavior works.",
-                    requirement: Recommended,
+                    description: "Non-obvious requirements that bounded the change and cannot be recovered from the implementation with confidence.",
+                    requirement: Conditional {
+                        id: "non-obvious-requirements",
+                        rationale: "Required when non-obvious requirements bounded the change.",
+                    },
                 },
             ],
         },
@@ -344,29 +293,22 @@ mod tests {
             description: "A causal correction of an observed failure or incorrect behavior.",
             properties: &[
                 ExpectedProperty {
-                    key: "symptom",
-                    description: "The externally observed failure or incorrect behavior.",
-                    requirement: Required,
-                },
-                ExpectedProperty {
                     key: "cause",
-                    description: "The underlying mechanism that produced the failure.",
+                    description: "The causal model established while debugging. The diff shows the condition that changed, not why it was the cause.",
                     requirement: Required,
                 },
                 ExpectedProperty {
                     key: "decision",
-                    description: "Why this correction was selected.",
+                    description: "Why this layer was repaired rather than a superficially equivalent intervention.",
                     requirement: Required,
                 },
                 ExpectedProperty {
-                    key: "effect",
-                    description: "The behavior or state that the correction restores or changes.",
-                    requirement: Recommended,
-                },
-                ExpectedProperty {
-                    key: "validation",
-                    description: "How recurrence was checked or prevented.",
-                    requirement: Recommended,
+                    key: "constraints",
+                    description: "Why the obvious fix was unacceptable, and what behavior the repair must preserve.",
+                    requirement: Conditional {
+                        id: "preserved-behavior",
+                        rationale: "Required when the obvious fix was unacceptable or specific behavior must be preserved.",
+                    },
                 },
             ],
         },
@@ -375,29 +317,19 @@ mod tests {
             description: "A structural transformation that preserves intended behavior.",
             properties: &[
                 ExpectedProperty {
-                    key: "problem",
-                    description: "The structural deficiency being addressed.",
+                    key: "motivation",
+                    description: "The structural problem that justified churn.",
                     requirement: Required,
                 },
                 ExpectedProperty {
-                    key: "transformation",
-                    description: "The conceptual restructuring that was performed.",
+                    key: "decision",
+                    description: "The restructuring that was chosen instead of another equally plausible structure.",
                     requirement: Required,
                 },
                 ExpectedProperty {
                     key: "invariant",
-                    description: "The behavior that must not change.",
+                    description: "What intentionally did not change despite the movement of code.",
                     requirement: Required,
-                },
-                ExpectedProperty {
-                    key: "benefit",
-                    description: "The maintainability, extensibility, clarity, or architectural improvement.",
-                    requirement: Recommended,
-                },
-                ExpectedProperty {
-                    key: "validation",
-                    description: "Evidence that preserved behavior remains intact.",
-                    requirement: Recommended,
                 },
             ],
         },
@@ -407,31 +339,26 @@ mod tests {
             properties: &[
                 ExpectedProperty {
                     key: "bottleneck",
-                    description: "The measured or observed performance limitation.",
+                    description: "What was actually expensive.",
                     requirement: Required,
                 },
                 ExpectedProperty {
-                    key: "change",
-                    description: "The optimization that was applied.",
+                    key: "decision",
+                    description: "Why this optimization was selected.",
+                    requirement: Required,
+                },
+                ExpectedProperty {
+                    key: "result",
+                    description: "The measured change.",
                     requirement: Required,
                 },
                 ExpectedProperty {
                     key: "tradeoff",
-                    description: "The complexity, memory, precision, latency, or maintainability cost.",
+                    description: "Complexity, memory, or other cost knowingly accepted.",
                     requirement: Conditional {
                         id: "optimization-has-known-cost",
                         rationale: "Required when the optimization knowingly increases another resource cost or complexity.",
                     },
-                },
-                ExpectedProperty {
-                    key: "result",
-                    description: "The claimed performance improvement.",
-                    requirement: Recommended,
-                },
-                ExpectedProperty {
-                    key: "measurement",
-                    description: "The benchmark method, environment, or evidence supporting the claim.",
-                    requirement: Required,
                 },
             ],
         },
@@ -441,80 +368,47 @@ mod tests {
             properties: &[
                 ExpectedProperty {
                     key: "risk",
-                    description: "What could regress or was insufficiently specified.",
+                    description: "The future regression important enough to permanently encode this test. Often not obvious from the assertion.",
                     requirement: Required,
                 },
                 ExpectedProperty {
-                    key: "coverage",
-                    description: "The scenarios or boundaries now exercised.",
-                    requirement: Required,
-                },
-                ExpectedProperty {
-                    key: "expected-behavior",
-                    description: "The behavioral contract asserted by the tests.",
-                    requirement: Required,
-                },
-                ExpectedProperty {
-                    key: "production-impact",
-                    description: "Whether fixtures, test hooks, or production seams changed.",
-                    requirement: Recommended,
+                    key: "rationale",
+                    description: "Why this fixture, boundary, fuzz case, or regression input matters.",
+                    requirement: Conditional {
+                        id: "scenario-justification",
+                        rationale: "Required when the scenario is a strange fixture, boundary, fuzz case, or regression input.",
+                    },
                 },
             ],
         },
         ExpectedCommitType {
             id: "docs",
             description: "A correction or expansion of the repository's knowledge surface.",
-            properties: &[
-                ExpectedProperty {
-                    key: "knowledge-gap",
-                    description: "What was missing, ambiguous, or incorrect.",
-                    requirement: Required,
+            properties: &[ExpectedProperty {
+                key: "reason",
+                description: "Why existing documentation was insufficient, misleading, or stale. A typo correction needs no body.",
+                requirement: Conditional {
+                    id: "insufficient-documentation",
+                    rationale: "Required when existing documentation was insufficient, misleading, or stale.",
                 },
-                ExpectedProperty {
-                    key: "update",
-                    description: "The conceptual documentation change.",
-                    requirement: Required,
-                },
-                ExpectedProperty {
-                    key: "audience",
-                    description: "The users, contributors, maintainers, operators, or integrators served.",
-                    requirement: Recommended,
-                },
-                ExpectedProperty {
-                    key: "code-impact",
-                    description: "Whether executable behavior changed.",
-                    requirement: Recommended,
-                },
-            ],
+            }],
         },
         ExpectedCommitType {
             id: "chore",
             description: "Necessary maintenance that does not fit a more precise change type.",
             properties: &[
                 ExpectedProperty {
-                    key: "rationale",
-                    description: "Why the maintenance is needed.",
+                    key: "reason",
+                    description: "Why this maintenance is necessary.",
                     requirement: Required,
                 },
                 ExpectedProperty {
-                    key: "change",
-                    description: "The maintenance action that occurred.",
-                    requirement: Required,
-                },
-                ExpectedProperty {
-                    key: "operational-impact",
-                    description: "The effect on contributors, tooling, environments, or processes.",
-                    requirement: Recommended,
-                },
-                ExpectedProperty {
-                    key: "behavioral-impact",
-                    description: "Whether runtime behavior changes.",
-                    requirement: Required,
-                },
-                ExpectedProperty {
-                    key: "validation",
-                    description: "Evidence that the maintenance did not destabilize the project.",
-                    requirement: Recommended,
+                    key: "impact",
+                    description: "Non-obvious operational or developer consequence.",
+                    requirement: Conditional {
+                        id: "non-obvious-operational-consequence",
+                        rationale: "Required when there is a non-obvious operational or developer consequence.",
+                    },
                 },
             ],
         },
@@ -523,29 +417,25 @@ mod tests {
             description: "A change to how project artifacts are constructed.",
             properties: &[
                 ExpectedProperty {
-                    key: "problem",
-                    description: "The build-system limitation or requirement.",
+                    key: "intent",
+                    description: "Why the build needed to change. Often a response to the environment rather than a product design.",
                     requirement: Required,
                 },
                 ExpectedProperty {
-                    key: "change",
-                    description: "The conceptual build-system modification.",
-                    requirement: Required,
+                    key: "constraint",
+                    description: "External or toolchain constraint that forced the change.",
+                    requirement: Conditional {
+                        id: "external-toolchain-constraint",
+                        rationale: "Required when an external or toolchain constraint caused the change.",
+                    },
                 },
                 ExpectedProperty {
-                    key: "environment-impact",
-                    description: "The affected toolchains, platforms, or developer environments.",
-                    requirement: Recommended,
-                },
-                ExpectedProperty {
-                    key: "artifact-impact",
-                    description: "Changes to produced binaries, packages, metadata, or reproducibility.",
-                    requirement: Required,
-                },
-                ExpectedProperty {
-                    key: "validation",
-                    description: "The build matrices or artifact checks that were performed.",
-                    requirement: Recommended,
+                    key: "impact",
+                    description: "Non-obvious artifact or release consequence.",
+                    requirement: Conditional {
+                        id: "non-obvious-artifact-consequence",
+                        rationale: "Required when the change has a non-obvious artifact or release consequence.",
+                    },
                 },
             ],
         },
@@ -554,36 +444,21 @@ mod tests {
             description: "A change to continuous-integration pipeline behavior.",
             properties: &[
                 ExpectedProperty {
-                    key: "objective",
-                    description: "The reliability or delivery outcome sought.",
+                    key: "intent",
+                    description: "The operational property the pipeline should obtain.",
                     requirement: Required,
                 },
                 ExpectedProperty {
-                    key: "pipeline-change",
-                    description: "The conceptual workflow or pipeline change.",
+                    key: "decision",
+                    description: "Why this pipeline design was selected. Workflow YAML shows the mechanism, not the policy.",
                     requirement: Required,
-                },
-                ExpectedProperty {
-                    key: "trigger",
-                    description: "The events or branches on which the pipeline operates.",
-                    requirement: Recommended,
                 },
                 ExpectedProperty {
                     key: "failure-semantics",
-                    description: "What a failure blocks, warns about, retries, or permits.",
-                    requirement: Required,
-                },
-                ExpectedProperty {
-                    key: "cost",
-                    description: "The runtime, compute, maintenance, or contributor-latency implications.",
-                    requirement: Recommended,
-                },
-                ExpectedProperty {
-                    key: "permissions",
-                    description: "The security-relevant workflow permission changes.",
+                    description: "What failure now means (block, warn, visible-but-non-blocking).",
                     requirement: Conditional {
-                        id: "workflow-permissions-change",
-                        rationale: "Required when the pipeline change modifies workflow or action permissions.",
+                        id: "failure-meaning-changed",
+                        rationale: "Required when what a pipeline failure means has changed.",
                     },
                 },
             ],
@@ -591,47 +466,39 @@ mod tests {
         ExpectedCommitType {
             id: "style",
             description: "A non-behavioral source-presentation change.",
-            properties: &[
-                ExpectedProperty {
-                    key: "change",
-                    description: "The formatting or presentation convention applied.",
-                    requirement: Required,
+            properties: &[ExpectedProperty {
+                key: "reason",
+                description: "Why a purely non-behavioral rewrite was worth recording. Most style commits should have no body.",
+                requirement: Conditional {
+                    id: "non-behavioral-rewrite-justification",
+                    rationale: "Required when a purely non-behavioral rewrite is worth recording.",
                 },
-                ExpectedProperty {
-                    key: "behavioral-impact",
-                    description: "The explicit claim that runtime behavior is unchanged.",
-                    requirement: Required,
-                },
-                ExpectedProperty {
-                    key: "review-note",
-                    description: "Anything that makes the diff harder to inspect, such as widespread formatting churn.",
-                    requirement: Optional,
-                },
-            ],
+            }],
         },
         ExpectedCommitType {
             id: "revert",
             description: "An intentional restoration of an earlier repository state.",
             properties: &[
                 ExpectedProperty {
-                    key: "reverts",
-                    description: "The commit or logical change being reversed.",
-                    requirement: Required,
-                },
-                ExpectedProperty {
                     key: "reason",
-                    description: "Why rollback is preferable to continuing with the reverted change.",
+                    description: "Why the prior change must be undone. The disappearing diff does not record that judgment.",
                     requirement: Required,
                 },
                 ExpectedProperty {
-                    key: "restored-state",
-                    description: "The behavior or state to which the repository returns.",
-                    requirement: Required,
+                    key: "impact",
+                    description: "Resulting state or consequence of the rollback.",
+                    requirement: Conditional {
+                        id: "rollback-consequence",
+                        rationale: "Required when the undo has a non-obvious resulting state or consequence.",
+                    },
                 },
                 ExpectedProperty {
                     key: "follow-up",
-                    description: "Whether the original work will be revised, replaced, or abandoned.",
-                    requirement: Optional,
+                    description: "Whether the rollback is tactical and what comes next.",
+                    requirement: Conditional {
+                        id: "temporary-rollback",
+                        rationale: "Required when the rollback is temporary or a follow-up is planned.",
+                    },
                 },
             ],
         },
@@ -700,8 +567,6 @@ mod tests {
     fn assert_requirement(actual: &PropertyRequirement, expected: ExpectedRequirement) {
         match expected {
             Required => assert_eq!(actual, &PropertyRequirement::Required),
-            Recommended => assert_eq!(actual, &PropertyRequirement::Recommended),
-            Optional => assert_eq!(actual, &PropertyRequirement::Optional),
             Conditional { id, rationale } => {
                 let PropertyRequirement::Conditional(condition) = actual else {
                     assert!(matches!(actual, PropertyRequirement::Conditional(_)));

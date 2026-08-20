@@ -19,7 +19,7 @@ feat(parser): reject invalid tokens
 intent:
 make parser failures actionable
 
-behavior:
+decision:
 report the invalid token
 preserve its source location
 ```
