@@ -413,6 +413,10 @@ dependencies = [
 [[package]]
 name = "gitserious-core"
 version = "0.1.0"
+dependencies = [
+ "unicode-segmentation",
+ "unicode-width",
+]
 
 [[package]]
 name = "gitserious-fs"

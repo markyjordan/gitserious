@@ -1,4 +1,4 @@
-use gitserious_core::{CommitTypeDefinition, PropertyRequirement};
+use gitserious_core::{COMMIT_MESSAGE_WIDTH, CommitTypeDefinition, PropertyRequirement};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
@@ -19,7 +19,7 @@ const MINIMUM_HEIGHT: u16 = 18;
 const COMPOSER_MINIMUM_HEIGHT: u16 = 22;
 const JET_BLACK: Color = Color::Rgb(0, 0, 0);
 const ZEBRA_BACKGROUND: Color = Color::Rgb(16, 16, 16);
-const MAX_EDITOR_INNER_WIDTH: u16 = 80;
+const MAX_EDITOR_INNER_WIDTH: u16 = COMMIT_MESSAGE_WIDTH;
 const FIELD_COLUMN_SPACING: u16 = 2;
 const FIELD_MARKER_WIDTH: u16 = 1;
 const MINIMUM_EDITOR_HEIGHT: u16 = 3;

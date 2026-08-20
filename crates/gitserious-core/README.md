@@ -27,7 +27,11 @@ preserve its source location
 Each property value begins at column 1. Rendering does not add indentation, so
 any leading whitespace is authored content and is preserved exactly. Blank
 nonrequired properties are omitted, repeatable values retain authored order,
-and every rendered message ends with a newline.
+and every rendered message ends with a newline. Property and breaking-change
+prose wraps at 80 Unicode display columns. Wrapping prefers authored whitespace,
+breaks an overlong token only at grapheme boundaries, and preserves explicit
+authored line breaks. Conventional Commit headers and property labels remain
+structural single lines.
 
 Internal whitespace in a scope is normalized to a single hyphen only when the
 canonical message is rendered. For example, an authored `tui editor` scope is

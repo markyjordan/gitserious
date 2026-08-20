@@ -128,9 +128,13 @@ compiles the form into the exact canonical message shown during review.
 Compilation removes trailing whitespace from every encoded line without
 changing the editor document or intentional leading whitespace. Property
 values are rendered beneath their headings without automatic indentation.
-Canonical rendering converts internal scope whitespace to hyphens. A populated
-`breaking-change` value also adds `!` before the header colon and renders an
-uppercase `BREAKING CHANGE:` footer; a blank value adds neither.
+Canonical rendering wraps property and breaking-change prose at the same
+80-column Unicode display-width boundary used by the editor, without mutating
+the authored document. Step 3 displays those encoded line breaks exactly, even
+when its viewport is wider than 80 columns. Internal scope whitespace converts
+to hyphens. A populated `breaking-change` value also adds `!` before the header
+colon and renders an uppercase `BREAKING CHANGE:` footer; a blank value adds
+neither.
 
 | Context | Controls |
 | --- | --- |
