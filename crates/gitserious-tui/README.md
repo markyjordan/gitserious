@@ -101,18 +101,18 @@ occupies the remaining framed area.
 The `Compose commit message` view always edits an 80-column virtual surface. If
 the framed editor is narrower, it follows the cursor horizontally instead of
 wrapping early, then returns to column 1 when a word or glyph soft-wraps at
-column 80. The rightmost inner editor column is reserved for an always-visible
-scrollbar with a dark-gray `│` track and solid yellow `█` thumb. The thumb fills the
-track when all content fits. When content overflows, deterministic viewport
-geometry maps the first and final meaningful document rows to the exact ends of
-the track; the final reserved scaffold separator does not extend the scroll
-range. The track covers only the editable viewport and excludes pane padding,
-validation errors, and column status. Field rules use `⠒` and stop before the
-reserved column. The single-line rules introducing `Message Body` and
-`Message Footer` also stop before the scrollbar, leaving the trailing inset and
-outer frame border clear. All rules are render-only chrome and never enter the
-authored document or Git message. `Message Subject`, `Message Body`, and
-`Message Footer` remain the only yellow editor headings.
+column 80. An always-visible scrollbar occupies the editor region's right edge,
+immediately inside the outer frame, with a dark-gray `│` track and solid yellow
+`█` thumb. Text and field rules retain their one-column right content inset
+before that edge-fixed scrollbar. The thumb fills the track when all content
+fits. When content overflows, deterministic viewport geometry maps the first
+and final meaningful document rows to the exact ends of the track; the final
+reserved scaffold separator does not extend the scroll range. The track covers
+only the editable viewport and excludes validation errors and column status.
+The single-line rules introducing `Message Body` and `Message Footer` also stop
+before the content inset and scrollbar. All rules are render-only chrome and
+never enter the authored document or Git message. `Message Subject`, `Message
+Body`, and `Message Footer` remain the only yellow editor headings.
 
 Backspace and Delete operate only inside the active semantic field. They may
 join explicit lines within a multiline value, but an edit that would cross a

@@ -291,11 +291,11 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     let scrollbar_area = Rect::new(
         composer_frame
             .editor
-            .content
+            .region
             .right()
             .saturating_sub(SCROLLBAR_WIDTH),
         composer_frame.editor.content.y,
-        SCROLLBAR_WIDTH.min(composer_frame.editor.content.width),
+        SCROLLBAR_WIDTH.min(composer_frame.editor.region.width),
         composer_frame.editor.content.height,
     );
     let cursor_status = render_document_editor(
