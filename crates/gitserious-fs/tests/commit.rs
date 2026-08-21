@@ -55,17 +55,33 @@ fn property(key: &str, text: &str) -> Result<AuthoredProperty, Box<dyn Error>> {
 }
 
 fn feat_message() -> Result<CommitMessage, Box<dyn Error>> {
+    feat_message_with_intent("exercise Git")
+}
+
+fn feat_message_with_intent(intent: &str) -> Result<CommitMessage, Box<dyn Error>> {
     let definition = &built_in_commit_types()[0];
     let draft = CommitDraft::new(
         definition.id().clone(),
         Some(CommitScope::new("fs")?),
         CommitSubject::new("create commit")?,
         vec![
-            property("intent", "exercise Git")?,
+            property("intent", intent)?,
             property("decision", "record the staged index")?,
         ],
     )?;
     Ok(render_commit_message(definition, &draft)?)
+}
+
+fn committed_message(directory: &Path) -> Result<String, Box<dyn Error>> {
+    let object = git(directory, &["cat-file", "commit", "HEAD"])?;
+    if !object.status.success() {
+        return Err(String::from_utf8_lossy(&object.stderr).into_owned().into());
+    }
+    let object = String::from_utf8(object.stdout)?;
+    object
+        .split_once("\n\n")
+        .map(|(_, message)| message.to_owned())
+        .ok_or_else(|| "commit object has no message separator".into())
 }
 
 fn shell_quote(path: &Path) -> String {
@@ -98,18 +114,32 @@ fn writer_commits_exact_message_and_only_the_staged_index() -> Result<(), Box<dy
 
     let output = GitCommitWriter.commit(&root(repository.path())?, &message)?;
     assert!(String::from_utf8_lossy(output.stdout()).contains("root-commit"));
-    let object = git(repository.path(), &["cat-file", "commit", "HEAD"])?;
-    assert!(object.status.success());
-    let object = String::from_utf8(object.stdout)?;
-    let actual_message = object
-        .split_once("\n\n")
-        .map(|(_, message)| message)
-        .ok_or("commit object has no message separator")?;
-    assert_eq!(actual_message, message.as_str());
+    assert_eq!(committed_message(repository.path())?, message.as_str());
 
     let tree = git(repository.path(), &["ls-tree", "--name-only", "HEAD"])?;
     assert_eq!(String::from_utf8(tree.stdout)?, "staged.txt\n");
     assert!(repository.path().join("untracked.txt").exists());
+    Ok(())
+}
+
+#[test]
+fn writer_preserves_the_exact_wrapped_canonical_message() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    fs::write(repository.path().join("staged.txt"), "staged\n")?;
+    git_ok(repository.path(), &["add", "staged.txt"])?;
+    let intent = format!("{} durable", "x".repeat(75));
+    let message = feat_message_with_intent(&intent)?;
+
+    GitCommitWriter.commit(&root(repository.path())?, &message)?;
+
+    assert_eq!(
+        message.as_str(),
+        format!(
+            "feat(fs): create commit\n\nintent:\n{}\ndurable\n\ndecision:\nrecord the staged index\n",
+            "x".repeat(75),
+        )
+    );
+    assert_eq!(committed_message(repository.path())?, message.as_str());
     Ok(())
 }
 

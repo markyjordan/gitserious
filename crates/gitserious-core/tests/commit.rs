@@ -1,12 +1,13 @@
 use std::error::Error;
 
 use gitserious_core::{
-    AuthoredProperty, CommitDraft, CommitDraftError, CommitScope, CommitScopeError, CommitSubject,
-    CommitSubjectError, CommitTypeDefinition, CommitTypeId, CommitValidationError,
-    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyValue,
-    PropertyValues, SchemaVersion, built_in_commit_types, render_commit_message,
-    validate_commit_draft,
+    AuthoredProperty, COMMIT_MESSAGE_WIDTH, CommitDraft, CommitDraftError, CommitScope,
+    CommitScopeError, CommitSubject, CommitSubjectError, CommitTypeDefinition, CommitTypeId,
+    CommitValidationError, PropertyDefinition, PropertyKey, PropertyMultiplicity,
+    PropertyRequirement, PropertyValue, PropertyValues, SchemaVersion, built_in_commit_types,
+    render_commit_message, validate_commit_draft,
 };
+use unicode_width::UnicodeWidthStr;
 
 fn authored(key: &str, values: PropertyValues) -> Result<AuthoredProperty, Box<dyn Error>> {
     Ok(AuthoredProperty::new(PropertyKey::new(key)?, values))
@@ -98,6 +99,103 @@ fn canonical_render_uses_schema_order_and_preserves_multiline_values() -> Result
     assert_eq!(
         message.as_str(),
         "feat(core): render typed drafts\n\nintent:\ncentralize validation\n  preserve authored indentation 🦀\n\ndecision:\nrender one message\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn canonical_prose_wraps_at_80_columns_without_mutating_authored_values()
+-> Result<(), Box<dyn Error>> {
+    assert_eq!(COMMIT_MESSAGE_WIDTH, 80);
+    let intent = format!("{} durable\n  authored indentation", "x".repeat(75));
+    let decision = "y".repeat(80);
+    let draft = feat_draft(vec![
+        authored("intent", PropertyValues::single(value(&intent)?))?,
+        authored("decision", PropertyValues::single(value(&decision)?))?,
+    ])?;
+
+    let message = render_commit_message(&built_in_commit_types()[0], &draft)?;
+    assert_eq!(
+        message.as_str(),
+        format!(
+            "feat(core): render typed drafts\n\nintent:\n{}\ndurable\n  authored indentation\n\ndecision:\n{decision}\n",
+            "x".repeat(75),
+        )
+    );
+    assert_eq!(
+        draft.properties()[0].values().as_slice()[0].as_str(),
+        intent
+    );
+    assert!(
+        message
+            .as_str()
+            .lines()
+            .all(|line| { UnicodeWidthStr::width(line) <= usize::from(COMMIT_MESSAGE_WIDTH) })
+    );
+    Ok(())
+}
+
+#[test]
+fn canonical_wrapping_splits_long_unicode_tokens_only_at_grapheme_boundaries()
+-> Result<(), Box<dyn Error>> {
+    let crabs = "🦀".repeat(41);
+    let combined = "e\u{301}".repeat(81);
+    let draft = feat_draft(vec![
+        authored("intent", PropertyValues::single(value(&crabs)?))?,
+        authored("decision", PropertyValues::single(value(&combined)?))?,
+    ])?;
+
+    let message = render_commit_message(&built_in_commit_types()[0], &draft)?;
+    assert_eq!(
+        message.as_str(),
+        format!(
+            "feat(core): render typed drafts\n\nintent:\n{}\n🦀\n\ndecision:\n{}\ne\u{301}\n",
+            "🦀".repeat(40),
+            "e\u{301}".repeat(80),
+        )
+    );
+    assert!(
+        message
+            .as_str()
+            .lines()
+            .all(|line| { UnicodeWidthStr::width(line) <= usize::from(COMMIT_MESSAGE_WIDTH) })
+    );
+    Ok(())
+}
+
+#[test]
+fn breaking_change_prefix_and_continuations_share_the_80_column_contract()
+-> Result<(), Box<dyn Error>> {
+    let breaking = std::iter::repeat_n("migration", 10)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let draft = feat_draft(vec![
+        authored("intent", PropertyValues::single(value("protect callers")?))?,
+        authored(
+            "decision",
+            PropertyValues::single(value("require upgrade")?),
+        )?,
+    ])?
+    .with_breaking_change(value(&format!("{breaking}\n{}", "z".repeat(81)))?);
+
+    let message = render_commit_message(&built_in_commit_types()[0], &draft)?;
+    let footer = message
+        .as_str()
+        .split_once("BREAKING CHANGE: ")
+        .map(|(_, footer)| footer)
+        .ok_or("missing breaking-change footer")?;
+    assert_eq!(
+        footer.lines().take(2).collect::<Vec<_>>().join(" "),
+        breaking
+    );
+    let eighty_zs = "z".repeat(80);
+    assert_eq!(footer.lines().nth(2), Some(eighty_zs.as_str()));
+    assert_eq!(footer.lines().nth(3), Some("z"));
+    assert!(
+        message
+            .as_str()
+            .lines()
+            .all(|line| { UnicodeWidthStr::width(line) <= usize::from(COMMIT_MESSAGE_WIDTH) })
     );
     Ok(())
 }

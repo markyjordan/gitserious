@@ -1,10 +1,16 @@
 use std::error::Error;
 use std::fmt::{self, Display, Formatter, Write as _};
 
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+
 use crate::{
     CommitDraft, CommitTypeDefinition, CommitTypeId, PropertyKey, PropertyMultiplicity,
     PropertyRequirement,
 };
+
+/// Maximum Unicode display width of canonical commit-message prose.
+pub const COMMIT_MESSAGE_WIDTH: u16 = 80;
 
 /// A canonical, schema-validated commit message.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -62,7 +68,7 @@ pub fn render_commit_message(
         for value in authored.values() {
             let _ = write!(message, "\n{}:\n", authored.key());
             for line in value.as_str().lines() {
-                let _ = writeln!(message, "{line}");
+                write_wrapped_line(&mut message, line);
             }
         }
     }
@@ -70,14 +76,61 @@ pub fn render_commit_message(
     if let Some(breaking_change) = draft.breaking_change() {
         let mut lines = breaking_change.as_str().lines();
         if let Some(first) = lines.next() {
-            let _ = writeln!(message, "\nBREAKING CHANGE: {first}");
+            message.push('\n');
+            write_wrapped_line(&mut message, &format!("BREAKING CHANGE: {first}"));
         }
         for line in lines {
-            let _ = writeln!(message, "{line}");
+            write_wrapped_line(&mut message, line);
         }
     }
 
     Ok(CommitMessage(message.into_boxed_str()))
+}
+
+fn write_wrapped_line(message: &mut String, line: &str) {
+    for wrapped in wrapped_line_segments(line) {
+        let _ = writeln!(message, "{wrapped}");
+    }
+}
+
+fn wrapped_line_segments(mut line: &str) -> Vec<&str> {
+    let width = usize::from(COMMIT_MESSAGE_WIDTH);
+    let mut wrapped = Vec::new();
+    while UnicodeWidthStr::width(line) > width {
+        let mut used = 0_usize;
+        let mut fitting_end = 0_usize;
+        let mut word_boundary = None;
+        for (index, grapheme) in line.grapheme_indices(true) {
+            let grapheme_width = UnicodeWidthStr::width(grapheme);
+            if used.saturating_add(grapheme_width) > width {
+                break;
+            }
+            used = used.saturating_add(grapheme_width);
+            fitting_end = index.saturating_add(grapheme.len());
+            if grapheme.chars().all(char::is_whitespace)
+                && line[..index]
+                    .chars()
+                    .any(|character| !character.is_whitespace())
+            {
+                word_boundary = Some(index);
+            }
+        }
+
+        if let Some(boundary) = word_boundary {
+            wrapped.push(&line[..boundary]);
+            line = line[boundary..].trim_start_matches(char::is_whitespace);
+        } else if fitting_end > 0 {
+            wrapped.push(&line[..fitting_end]);
+            line = &line[fitting_end..];
+        } else if let Some((_, grapheme)) = line.grapheme_indices(true).next() {
+            wrapped.push(&line[..grapheme.len()]);
+            line = &line[grapheme.len()..];
+        } else {
+            break;
+        }
+    }
+    wrapped.push(line);
+    wrapped
 }
 
 fn normalized_scope(scope: &str) -> String {
