@@ -3,6 +3,8 @@
 mod commit_draft_author;
 mod commit_type_catalog;
 mod commit_writer;
+mod configuration_catalog;
+mod configuration_crud;
 mod create_commit;
 mod directory_creator;
 mod ensure_storage_directory;
@@ -19,10 +21,19 @@ mod project_state_store;
 mod repository_locator;
 mod resolve_global_paths;
 mod storage_directory;
+mod user_configuration;
+mod user_configuration_store;
 
 pub use commit_draft_author::{CommitDraftAuthor, CommitDraftAuthorOutcome};
 pub use commit_type_catalog::CommitTypeCatalog;
 pub use commit_writer::{CommitOutput, CommitWriter};
+pub use configuration_catalog::{ConfigurationCatalog, ConfigurationCatalogError};
+pub use configuration_crud::{
+    ConfigurationEdit, ConfigurationEntity, ConfigurationMutationError, apply_configuration_edits,
+    create_taxonomy, create_template, create_typeset, delete_taxonomy, delete_template,
+    delete_typeset, find_taxonomy, find_template, find_typeset, list_taxonomies, list_templates,
+    list_typesets, update_taxonomy, update_template, update_typeset,
+};
 pub use create_commit::{
     CommitOutcome, CommitPolicyError, CreateCommitError, CreateCommitResult, create_commit,
 };
@@ -39,10 +50,14 @@ pub use project_lock::{
     PROJECT_LOCK_VERSION, ProjectLock, ProjectLockError, ResolveProjectPolicyError,
     ResolvedCommitType, ResolvedTemplate, ResolvedTemplateError,
     fingerprint_commit_message_template, fingerprint_commit_type_definition,
-    fingerprint_project_config, resolve_project_lock,
+    fingerprint_project_config, fingerprint_resolved_taxonomy, resolve_project_lock,
 };
 pub use project_state::ProjectState;
 pub use project_state_store::ProjectStateStore;
 pub use repository_locator::{RepositoryLocator, RepositoryRoot, RepositoryRootError};
 pub use resolve_global_paths::resolve_global_paths;
 pub use storage_directory::StorageDirectory;
+pub use user_configuration::{
+    USER_CONFIGURATION_VERSION, UserConfiguration, UserConfigurationError,
+};
+pub use user_configuration_store::UserConfigurationStore;
