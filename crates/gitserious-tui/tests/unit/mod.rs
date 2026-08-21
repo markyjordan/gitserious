@@ -2,9 +2,9 @@ use std::error::Error;
 
 use gitserious_app::{CommitDraftAuthor, CommitDraftAuthorOutcome};
 use gitserious_core::{
-    CommitTypeDefinition, CommitTypeId, ConditionId, PropertyCondition, PropertyDefinition,
-    PropertyKey, PropertyMultiplicity, PropertyRequirement, SchemaVersion, built_in_commit_types,
-    render_commit_message,
+    COMMIT_MESSAGE_WIDTH, CommitTypeDefinition, CommitTypeId, ConditionId, PropertyCondition,
+    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, SchemaVersion,
+    built_in_commit_types, render_commit_message,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -2314,6 +2314,74 @@ fn fixed_width_soft_wrap_reports_visual_columns_without_changing_authored_lines(
     assert_eq!(unicode.composer.editor.lines()[2], value);
     assert!(buffer.content().iter().any(|cell| cell.symbol() == "🦀"));
     assert!(find_ascii(&buffer, 72, 24, "col 43/80").is_some());
+    Ok(())
+}
+
+#[test]
+fn compose_review_and_final_encoding_share_the_80_column_boundary() -> Result<(), Box<dyn Error>> {
+    let width = usize::from(COMMIT_MESSAGE_WIDTH);
+    let intent = "x".repeat(width.saturating_add(1));
+    let document = valid_feat_document().replace("explain intent 🦀", &intent);
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    set_document(&mut session, &document, 7);
+    session.composer.editor.set_wrap_mode(WrapMode::WordOrGlyph);
+
+    let compose = rendered_buffer(&mut session, 120, 32)?;
+    let intent_heading = (0..32)
+        .find_map(|row| {
+            find_ascii_on_row_from_right(&compose, 120, row, "intent")
+                .filter(|column| *column >= 36)
+                .map(|column| (column, row))
+        })
+        .ok_or("missing editor intent heading")?;
+    assert_eq!(intent_heading.0, 36);
+    assert_eq!(
+        find_ascii_on_row_from_right(&compose, 120, intent_heading.1 + 2, "x"),
+        Some(36),
+        "intent heading {intent_heading:?}; rows: {:?}",
+        (intent_heading.1..intent_heading.1 + 4)
+            .map(|row| row_text(&compose, 120, row))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(session.composer.editor.lines()[7], intent);
+
+    modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    let expected = format!(
+        "feat: compose durable message\n\nintent:\n{}\nx\n\ndecision:\nfirst line\nsecond line\n",
+        "x".repeat(width),
+    );
+    assert_eq!(
+        session
+            .review
+            .as_ref()
+            .ok_or("missing review")?
+            .message
+            .as_str(),
+        expected
+    );
+
+    let review = rendered_buffer(&mut session, 120, 32)?;
+    let intent_label = find_ascii(&review, 120, 32, "intent:").ok_or("missing intent label")?;
+    assert_eq!(intent_label.0, 2);
+    assert_eq!(
+        find_ascii_on_row_from_right(&review, 120, intent_label.1 + 2, "x"),
+        Some(2)
+    );
+
+    let outcome = session
+        .handle_event(key(KeyCode::Enter))
+        .ok_or("review confirmation did not finish")?;
+    let CommitDraftAuthorOutcome::Authored(draft) = outcome else {
+        return Err("review unexpectedly cancelled".into());
+    };
+    assert_eq!(
+        draft.properties()[0].values().as_slice()[0].as_str(),
+        intent
+    );
+    assert_eq!(
+        render_commit_message(&built_in_commit_types()[0], &draft)?.as_str(),
+        expected
+    );
     Ok(())
 }
 
