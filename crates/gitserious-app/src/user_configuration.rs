@@ -6,6 +6,9 @@ use gitserious_core::{
     TaxonomyDefinition, TaxonomyId, TemplateDefinition, TemplateId, TypesetDefinition, TypesetId,
 };
 
+/// The only global user-configuration format understood by this release.
+pub const USER_CONFIGURATION_VERSION: u16 = 1;
+
 /// The global user-owned configuration snapshot persisted as one aggregate.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct UserConfiguration {

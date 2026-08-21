@@ -57,5 +57,7 @@ pub use project_state_store::ProjectStateStore;
 pub use repository_locator::{RepositoryLocator, RepositoryRoot, RepositoryRootError};
 pub use resolve_global_paths::resolve_global_paths;
 pub use storage_directory::StorageDirectory;
-pub use user_configuration::{UserConfiguration, UserConfigurationError};
+pub use user_configuration::{
+    USER_CONFIGURATION_VERSION, UserConfiguration, UserConfigurationError,
+};
 pub use user_configuration_store::UserConfigurationStore;

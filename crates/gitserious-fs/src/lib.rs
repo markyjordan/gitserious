@@ -4,6 +4,7 @@ mod directory;
 mod git;
 mod git_commit;
 mod global;
+mod global_configuration;
 mod platform;
 mod project;
 
@@ -11,6 +12,9 @@ pub use directory::LocalDirectoryCreator;
 pub use git::{GitRepositoryError, GitRepositoryLocator};
 pub use git_commit::{GitCommitError, GitCommitWriter};
 pub use global::{GlobalPathError, SystemGlobalPathResolver};
+pub use global_configuration::{
+    GlobalConfigurationError, GlobalConfigurationFormatError, TomlUserConfigurationStore,
+};
 pub use project::{ProjectArtifact, ProjectStateError, TomlProjectStateStore};
 
 #[cfg(test)]
