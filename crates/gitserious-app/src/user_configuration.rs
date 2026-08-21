@@ -60,11 +60,13 @@ impl UserConfiguration {
             }
         }
 
-        Ok(Self {
+        let mut configuration = Self {
             taxonomies,
             typesets,
             templates,
-        })
+        };
+        configuration.sort();
+        Ok(configuration)
     }
 
     /// Returns user-defined taxonomies in snapshot order.
