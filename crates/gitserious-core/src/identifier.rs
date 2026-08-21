@@ -189,8 +189,18 @@ macro_rules! define_identifier {
 }
 
 define_identifier!(
-    CommitTypeId,
-    "An open, validated identifier for a commit type."
+    ChangeTypeId,
+    "An open, validated identifier for a software change type."
+);
+/// Backward-compatible name for a software change-type identifier.
+pub type CommitTypeId = ChangeTypeId;
+define_identifier!(
+    TaxonomyId,
+    "An open, validated identifier for a software change taxonomy."
+);
+define_identifier!(
+    TypesetId,
+    "An open, validated identifier for a durable-property typeset."
 );
 define_identifier!(
     TemplateId,
