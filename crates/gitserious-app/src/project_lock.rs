@@ -4,7 +4,7 @@ use std::fmt::{self, Display, Formatter};
 
 use gitserious_core::{
     CommitMessageTemplateDefinition, CommitTypeDefinition, CommitTypeId, PropertyMultiplicity,
-    PropertyRequirement, SchemaVersion, TemplateId, TemplateVersion,
+    PropertyRequirement, ResolvedTaxonomy, SchemaVersion, TemplateId, TemplateVersion,
     default_commit_message_template,
 };
 use sha2::{Digest, Sha256};
@@ -351,6 +351,46 @@ pub fn fingerprint_commit_message_template(
         })
         .collect::<Vec<_>>();
     fingerprint_template(template, &commit_types)
+}
+
+/// Fingerprints every semantic field in a fully joined resolved taxonomy.
+#[must_use]
+pub fn fingerprint_resolved_taxonomy(resolved: &ResolvedTaxonomy) -> Fingerprint {
+    let mut canonical = CanonicalHasher::new(b"gitserious.resolved-taxonomy.v1");
+    canonical.text(resolved.template_id().as_str());
+    canonical.u16(resolved.template_version().get());
+    canonical.text(resolved.template_description().as_str());
+    canonical.text(resolved.taxonomy_id().as_str());
+    canonical.u16(resolved.taxonomy_version().get());
+    canonical.text(resolved.taxonomy_description().as_str());
+    canonical.text(resolved.typeset_id().as_str());
+    canonical.u16(resolved.typeset_version().get());
+    canonical.text(resolved.typeset_description().as_str());
+    canonical.usize(resolved.change_types().len());
+    for change_type in resolved.change_types() {
+        canonical.text(change_type.id().as_str());
+        canonical.text(change_type.description().as_str());
+        canonical.usize(change_type.properties().len());
+        for property in change_type.properties() {
+            canonical.text(property.key().as_str());
+            canonical.text(property.description());
+            canonical.text(match property.multiplicity() {
+                PropertyMultiplicity::Single => "single",
+                PropertyMultiplicity::Multiple => "multiple",
+            });
+            match property.requirement() {
+                PropertyRequirement::Required => canonical.text("required"),
+                PropertyRequirement::Recommended => canonical.text("recommended"),
+                PropertyRequirement::Optional => canonical.text("optional"),
+                PropertyRequirement::Conditional(condition) => {
+                    canonical.text("conditional");
+                    canonical.text(condition.id().as_str());
+                    canonical.text(condition.rationale());
+                }
+            }
+        }
+    }
+    canonical.finish()
 }
 
 fn fingerprint_template(
