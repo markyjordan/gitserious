@@ -86,7 +86,7 @@ fn project_policy_is_resolved_before_terminal_authoring() -> Result<(), Box<dyn 
     initialize(repository.path())?;
     let lock = repository.path().join("gitserious.lock");
     let stale = fs::read_to_string(&lock)?.replace(
-        "config-fingerprint = \"sha256:b",
+        "config-fingerprint = \"sha256:e",
         "config-fingerprint = \"sha256:a",
     );
     fs::write(lock, stale)?;
