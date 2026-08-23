@@ -10,8 +10,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
-    EffectiveDefinitions, InitOutcome, InitStatus, ProjectStateStore, RepositoryLocator,
-    RepositoryRoot, create_commit, initialize_project,
+    InitOutcome, InitStatus, ProjectStateStore, RepositoryLocator, RepositoryRoot,
+    UserConfigurationStore, create_commit, initialize_project, load_effective_catalog,
 };
 use gitserious_core::{CommitMessage, CommitTypeDefinition, CommitTypeId, TemplateId};
 
@@ -37,26 +37,25 @@ enum Command {
         commit_type: Option<CommitTypeId>,
     },
     /// Initialize repository-local gitserious policy.
-    Init,
+    Init {
+        /// Select an installed template when creating fresh policy.
+        #[arg(long, value_name = "TEMPLATE")]
+        template: Option<TemplateId>,
+    },
 }
 
 /// Concrete adapters required only by the interactive commit workflow.
 #[derive(Clone, Copy)]
-pub struct CommitAdapters<'a, C: ?Sized, A: ?Sized, W: ?Sized> {
-    catalog: &'a C,
+pub struct CommitAdapters<'a, A: ?Sized, W: ?Sized> {
     author: &'a A,
     writer: &'a W,
 }
 
-impl<'a, C: ?Sized, A: ?Sized, W: ?Sized> CommitAdapters<'a, C, A, W> {
+impl<'a, A: ?Sized, W: ?Sized> CommitAdapters<'a, A, W> {
     /// Bundles the independent commit-workflow adapters for command dispatch.
     #[must_use]
-    pub const fn new(catalog: &'a C, author: &'a A, writer: &'a W) -> Self {
-        Self {
-            catalog,
-            author,
-            writer,
-        }
+    pub const fn new(author: &'a A, writer: &'a W) -> Self {
+        Self { author, writer }
     }
 }
 
@@ -65,10 +64,11 @@ impl<'a, C: ?Sized, A: ?Sized, W: ?Sized> CommitAdapters<'a, C, A, W> {
 /// This compatibility entry point supports initialization. The installable
 /// binary uses [`run_with_commit`] to supply concrete commit adapters.
 #[must_use]
-pub fn run<I, T, L, S, Out, Err>(
+pub fn run<I, T, L, S, U, Out, Err>(
     arguments: I,
     locator: &L,
     store: &S,
+    configuration: &U,
     stdout: &mut Out,
     stderr: &mut Err,
 ) -> ExitCode
@@ -79,22 +79,25 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
+    U: UserConfigurationStore + ?Sized,
+    U::Error: Display,
     Out: Write + ?Sized,
     Err: Write + ?Sized,
 {
     let unavailable = UnsupportedCommitAdapter;
-    let commit = CommitAdapters::new(&unavailable, &unavailable, &unavailable);
-    run_with_commit(arguments, locator, store, &commit, stdout, stderr)
+    let commit = CommitAdapters::new(&unavailable, &unavailable);
+    run_with_commit(arguments, locator, store, configuration, &commit, stdout, stderr)
 }
 
 /// Runs the CLI with concrete interactive commit adapters.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
-pub fn run_with_commit<I, T, L, S, C, A, W, Out, Err>(
+pub fn run_with_commit<I, T, L, S, U, A, W, Out, Err>(
     arguments: I,
     locator: &L,
     store: &S,
-    commit: &CommitAdapters<'_, C, A, W>,
+    configuration: &U,
+    commit: &CommitAdapters<'_, A, W>,
     stdout: &mut Out,
     stderr: &mut Err,
 ) -> ExitCode
@@ -105,8 +108,8 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    C: EffectiveDefinitions + ?Sized,
-    C::Error: Display,
+    U: UserConfigurationStore + ?Sized,
+    U::Error: Display,
     A: CommitDraftAuthor + ?Sized,
     A::Error: Display,
     W: CommitWriter + ?Sized,
@@ -122,7 +125,9 @@ where
         Ok(start) => start,
         Err(error) => return write_operational_error(stderr, error),
     };
-    execute(&cli, &start, locator, store, commit, stdout, stderr)
+    execute(
+        &cli, &start, locator, store, configuration, commit, stdout, stderr,
+    )
 }
 
 /// Runs the CLI from an explicit invocation directory.
@@ -130,11 +135,12 @@ where
 /// This compatibility entry point supports initialization. Use
 /// [`run_from_with_commit`] to exercise commit behavior with explicit adapters.
 #[must_use]
-pub fn run_from<I, T, L, S, Out, Err>(
+pub fn run_from<I, T, L, S, U, Out, Err>(
     arguments: I,
     start: &Path,
     locator: &L,
     store: &S,
+    configuration: &U,
     stdout: &mut Out,
     stderr: &mut Err,
 ) -> ExitCode
@@ -145,23 +151,28 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
+    U: UserConfigurationStore + ?Sized,
+    U::Error: Display,
     Out: Write + ?Sized,
     Err: Write + ?Sized,
 {
     let unavailable = UnsupportedCommitAdapter;
-    let commit = CommitAdapters::new(&unavailable, &unavailable, &unavailable);
-    run_from_with_commit(arguments, start, locator, store, &commit, stdout, stderr)
+    let commit = CommitAdapters::new(&unavailable, &unavailable);
+    run_from_with_commit(
+        arguments, start, locator, store, configuration, &commit, stdout, stderr,
+    )
 }
 
 /// Runs the CLI from an explicit directory with concrete commit adapters.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
-pub fn run_from_with_commit<I, T, L, S, C, A, W, Out, Err>(
+pub fn run_from_with_commit<I, T, L, S, U, A, W, Out, Err>(
     arguments: I,
     start: &Path,
     locator: &L,
     store: &S,
-    commit: &CommitAdapters<'_, C, A, W>,
+    configuration: &U,
+    commit: &CommitAdapters<'_, A, W>,
     stdout: &mut Out,
     stderr: &mut Err,
 ) -> ExitCode
@@ -172,8 +183,8 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    C: EffectiveDefinitions + ?Sized,
-    C::Error: Display,
+    U: UserConfigurationStore + ?Sized,
+    U::Error: Display,
     A: CommitDraftAuthor + ?Sized,
     A::Error: Display,
     W: CommitWriter + ?Sized,
@@ -185,7 +196,9 @@ where
         Ok(cli) => cli,
         Err(exit) => return exit,
     };
-    execute(&cli, start, locator, store, commit, stdout, stderr)
+    execute(
+        &cli, start, locator, store, configuration, commit, stdout, stderr,
+    )
 }
 
 fn parse<I, T, Out, Err>(arguments: I, stdout: &mut Out, stderr: &mut Err) -> Result<Cli, ExitCode>
@@ -211,12 +224,13 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn execute<L, S, C, A, W, Out, Err>(
+fn execute<L, S, U, A, W, Out, Err>(
     cli: &Cli,
     start: &Path,
     locator: &L,
     store: &S,
-    commit: &CommitAdapters<'_, C, A, W>,
+    configuration: &U,
+    commit: &CommitAdapters<'_, A, W>,
     stdout: &mut Out,
     stderr: &mut Err,
 ) -> ExitCode
@@ -225,8 +239,8 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    C: EffectiveDefinitions + ?Sized,
-    C::Error: Display,
+    U: UserConfigurationStore + ?Sized,
+    U::Error: Display,
     A: CommitDraftAuthor + ?Sized,
     A::Error: Display,
     W: CommitWriter + ?Sized,
@@ -234,11 +248,15 @@ where
     Out: Write + ?Sized,
     Err: Write + ?Sized,
 {
+    let catalog = match load_effective_catalog(configuration) {
+        Ok(catalog) => catalog,
+        Err(error) => return write_operational_error(stderr, error),
+    };
     match &cli.command {
         Command::Commit { commit_type } => match create_commit(
             locator,
             store,
-            commit.catalog,
+            &catalog,
             commit.author,
             commit.writer,
             start,
@@ -247,10 +265,12 @@ where
             Ok(outcome) => write_commit_outcome(stdout, stderr, &outcome),
             Err(error) => write_operational_error(stderr, error),
         },
-        Command::Init => match initialize_project(locator, store, start) {
-            Ok(outcome) => write_init_outcome(stdout, &outcome),
-            Err(error) => write_operational_error(stderr, error),
-        },
+        Command::Init { template } => {
+            match initialize_project(locator, store, &catalog, template.as_ref(), start) {
+                Ok(outcome) => write_init_outcome(stdout, &outcome),
+                Err(error) => write_operational_error(stderr, error),
+            }
+        }
     }
 }
 
@@ -330,17 +350,6 @@ fn exit_code(code: i32) -> ExitCode {
 
 #[derive(Clone, Copy, Debug)]
 struct UnsupportedCommitAdapter;
-
-impl EffectiveDefinitions for UnsupportedCommitAdapter {
-    type Error = UnsupportedCommitError;
-
-    fn for_template(
-        &self,
-        _template: &TemplateId,
-    ) -> Result<Vec<CommitTypeDefinition>, Self::Error> {
-        Err(UnsupportedCommitError)
-    }
-}
 
 impl CommitDraftAuthor for UnsupportedCommitAdapter {
     type Error = UnsupportedCommitError;

@@ -7,7 +7,7 @@ mod configuration_catalog;
 mod configuration_crud;
 mod create_commit;
 mod directory_creator;
-mod effective_definitions;
+mod effective_catalog;
 mod ensure_storage_directory;
 mod find_commit_type;
 mod fingerprint;
@@ -28,7 +28,9 @@ mod user_configuration_store;
 pub use commit_draft_author::{CommitDraftAuthor, CommitDraftAuthorOutcome};
 pub use commit_type_catalog::CommitTypeCatalog;
 pub use commit_writer::{CommitOutput, CommitWriter};
-pub use configuration_catalog::{ConfigurationCatalog, ConfigurationCatalogError};
+pub use configuration_catalog::{
+    ConfigurationCatalog, ConfigurationCatalogError, built_in_effective_catalog,
+};
 pub use configuration_crud::{
     ConfigurationEdit, ConfigurationEntity, ConfigurationMutationError, apply_configuration_edits,
     create_taxonomy, create_template, create_typeset, delete_taxonomy, delete_template,
@@ -39,7 +41,7 @@ pub use create_commit::{
     CommitOutcome, CommitPolicyError, CreateCommitError, CreateCommitResult, create_commit,
 };
 pub use directory_creator::DirectoryCreator;
-pub use effective_definitions::EffectiveDefinitions;
+pub use effective_catalog::{EffectiveCatalogError, load_effective_catalog};
 pub use ensure_storage_directory::ensure_storage_directory;
 pub use find_commit_type::find_commit_type;
 pub use fingerprint::{Fingerprint, FingerprintError};

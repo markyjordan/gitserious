@@ -6,13 +6,16 @@ use std::rc::Rc;
 
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitPolicyError,
-    CommitWriter, CreateCommitError, EffectiveDefinitions, ProjectConfig, ProjectLock,
-    ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot, create_commit,
-    resolve_project_lock,
+    CommitWriter, ConfigurationCatalog, CreateCommitError, ProjectConfig, ProjectLock, ProjectState,
+    ProjectStateStore, RepositoryLocator, ResolvedCommitType, ResolvedTemplate, RepositoryRoot,
+    UserConfiguration, built_in_effective_catalog, create_commit, resolve_project_lock,
 };
 use gitserious_core::{
-    AuthoredProperty, CommitDraft, CommitMessage, CommitSubject, CommitTypeDefinition,
-    CommitTypeId, PropertyRequirement, PropertyValue, PropertyValues, SchemaVersion, TemplateId,
+    AuthoredProperty, ChangeTypeDefinition, ChangeTypeId, ChangeTypeSchema, CommitDraft,
+    CommitMessage, CommitSubject, CommitTypeDefinition, CommitTypeId, Description,
+    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyValue,
+    PropertyValues, TaxonomyDefinition, TaxonomyId, TaxonomyVersion, TemplateDefinition,
+    TemplateId, TemplateVersion, TypesetDefinition, TypesetId, TypesetVersion,
     built_in_commit_types,
 };
 
@@ -87,28 +90,6 @@ impl ProjectStateStore for FakeStore {
     }
 }
 
-struct FakeCatalog {
-    definitions: Vec<CommitTypeDefinition>,
-    fail: bool,
-    trace: Trace,
-}
-
-impl EffectiveDefinitions for FakeCatalog {
-    type Error = FakeError;
-
-    fn for_template(
-        &self,
-        _template: &TemplateId,
-    ) -> Result<Vec<CommitTypeDefinition>, Self::Error> {
-        self.trace.borrow_mut().push("catalog");
-        if self.fail {
-            Err(FakeError("catalog failed"))
-        } else {
-            Ok(self.definitions.clone())
-        }
-    }
-}
-
 struct FakeAuthor {
     result: RefCell<FakeAuthorResult>,
     seen: RefCell<Vec<(Vec<CommitTypeId>, Option<CommitTypeId>)>>,
@@ -180,7 +161,7 @@ fn repository_path() -> PathBuf {
 
 fn initialized_state() -> Result<ProjectState, Box<dyn Error>> {
     let config = ProjectConfig::default_channel()?;
-    let lock = resolve_project_lock(&config)?;
+    let lock = resolve_project_lock(&config, &built_in_effective_catalog()?)?;
     Ok(ProjectState::Initialized { config, lock })
 }
 
@@ -208,15 +189,15 @@ struct Harness {
     trace: Trace,
     locator: FakeLocator,
     store: FakeStore,
-    catalog: FakeCatalog,
+    catalog: ConfigurationCatalog,
     author: FakeAuthor,
     writer: FakeWriter,
 }
 
 impl Harness {
-    fn new(state: ProjectState) -> Self {
+    fn new(state: ProjectState) -> Result<Self, Box<dyn Error>> {
         let trace = Trace::default();
-        Self {
+        Ok(Self {
             locator: FakeLocator {
                 fail: false,
                 trace: Rc::clone(&trace),
@@ -225,11 +206,7 @@ impl Harness {
                 state: RefCell::new(Ok(state)),
                 trace: Rc::clone(&trace),
             },
-            catalog: FakeCatalog {
-                definitions: built_in_commit_types().to_vec(),
-                fail: false,
-                trace: Rc::clone(&trace),
-            },
+            catalog: built_in_effective_catalog()?,
             author: FakeAuthor {
                 result: RefCell::new(FakeAuthorResult::Valid(0)),
                 seen: RefCell::default(),
@@ -241,16 +218,13 @@ impl Harness {
                 trace: Rc::clone(&trace),
             },
             trace,
-        }
+        })
     }
 
     fn run(
         &self,
         requested: Option<&CommitTypeId>,
-    ) -> Result<
-        CommitOutcome,
-        CreateCommitError<FakeError, FakeError, FakeError, FakeError, FakeError>,
-    > {
+    ) -> Result<CommitOutcome, CreateCommitError<FakeError, FakeError, FakeError, FakeError>> {
         create_commit(
             &self.locator,
             &self.store,
@@ -266,7 +240,7 @@ impl Harness {
 #[test]
 fn requested_type_is_resolved_before_authoring_and_commits_once_in_port_order()
 -> Result<(), Box<dyn Error>> {
-    let harness = Harness::new(initialized_state()?);
+    let harness = Harness::new(initialized_state()?)?;
     let requested = CommitTypeId::new("feat")?;
     let outcome = harness.run(Some(&requested))?;
     assert_eq!(
@@ -278,7 +252,7 @@ fn requested_type_is_resolved_before_authoring_and_commits_once_in_port_order()
     );
     assert_eq!(
         harness.trace.borrow().as_slice(),
-        ["locate", "inspect", "catalog", "author", "write"]
+        ["locate", "inspect", "author", "write"]
     );
     let seen = harness.author.seen.borrow();
     assert_eq!(seen.len(), 1);
@@ -291,7 +265,7 @@ fn requested_type_is_resolved_before_authoring_and_commits_once_in_port_order()
 
 #[test]
 fn omitted_type_delegates_selection_with_locked_policy_order() -> Result<(), Box<dyn Error>> {
-    let harness = Harness::new(initialized_state()?);
+    let harness = Harness::new(initialized_state()?)?;
     assert!(matches!(harness.run(None)?, CommitOutcome::Created(_)));
     let seen = harness.author.seen.borrow();
     assert_eq!(seen[0].1, None);
@@ -307,7 +281,7 @@ fn omitted_type_delegates_selection_with_locked_policy_order() -> Result<(), Box
 
 #[test]
 fn author_cancellation_never_invokes_the_writer() -> Result<(), Box<dyn Error>> {
-    let harness = Harness::new(initialized_state()?);
+    let harness = Harness::new(initialized_state()?)?;
     harness.author.result.replace(FakeAuthorResult::Outcome(
         CommitDraftAuthorOutcome::Cancelled,
     ));
@@ -315,7 +289,7 @@ fn author_cancellation_never_invokes_the_writer() -> Result<(), Box<dyn Error>> 
     assert!(harness.writer.messages.borrow().is_empty());
     assert_eq!(
         harness.trace.borrow().as_slice(),
-        ["locate", "inspect", "catalog", "author"]
+        ["locate", "inspect", "author"]
     );
     Ok(())
 }
@@ -323,7 +297,7 @@ fn author_cancellation_never_invokes_the_writer() -> Result<(), Box<dyn Error>> 
 #[test]
 fn every_incomplete_project_state_is_rejected_before_authoring() -> Result<(), Box<dyn Error>> {
     let config = ProjectConfig::default_channel()?;
-    let lock = resolve_project_lock(&config)?;
+    let lock = resolve_project_lock(&config, &built_in_effective_catalog()?)?;
     for (state, expected) in [
         (ProjectState::Absent, CommitPolicyError::NotInitialized),
         (
@@ -332,7 +306,7 @@ fn every_incomplete_project_state_is_rejected_before_authoring() -> Result<(), B
         ),
         (ProjectState::LockOnly, CommitPolicyError::OrphanLock),
     ] {
-        let harness = Harness::new(state);
+        let harness = Harness::new(state)?;
         assert!(matches!(
             harness.run(None),
             Err(CreateCommitError::Policy(actual)) if actual == expected
@@ -349,8 +323,9 @@ fn every_incomplete_project_state_is_rejected_before_authoring() -> Result<(), B
             lock.resolved_template().clone(),
         )?,
     };
+    let stale_harness = Harness::new(stale)?;
     assert!(matches!(
-        Harness::new(stale).run(None),
+        stale_harness.run(None),
         Err(CreateCommitError::Policy(CommitPolicyError::StaleLock))
     ));
     Ok(())
@@ -359,7 +334,7 @@ fn every_incomplete_project_state_is_rejected_before_authoring() -> Result<(), B
 #[test]
 fn requested_and_authored_types_are_defended_at_the_application_boundary()
 -> Result<(), Box<dyn Error>> {
-    let harness = Harness::new(initialized_state()?);
+    let harness = Harness::new(initialized_state()?)?;
     let unknown = CommitTypeId::new("custom")?;
     assert!(matches!(
         harness.run(Some(&unknown)),
@@ -367,7 +342,7 @@ fn requested_and_authored_types_are_defended_at_the_application_boundary()
     ));
     assert!(harness.author.seen.borrow().is_empty());
 
-    let harness = Harness::new(initialized_state()?);
+    let harness = Harness::new(initialized_state()?)?;
     harness.author.result.replace(FakeAuthorResult::Valid(1));
     let feat = CommitTypeId::new("feat")?;
     assert!(matches!(
@@ -377,7 +352,7 @@ fn requested_and_authored_types_are_defended_at_the_application_boundary()
     ));
     assert!(harness.writer.messages.borrow().is_empty());
 
-    let harness = Harness::new(initialized_state()?);
+    let harness = Harness::new(initialized_state()?)?;
     let custom = CommitDraft::new(
         CommitTypeId::new("custom")?,
         None,
@@ -397,7 +372,7 @@ fn requested_and_authored_types_are_defended_at_the_application_boundary()
 
 #[test]
 fn invalid_authored_draft_is_revalidated_before_writing() -> Result<(), Box<dyn Error>> {
-    let harness = Harness::new(initialized_state()?);
+    let harness = Harness::new(initialized_state()?)?;
     let incomplete = CommitDraft::new(
         CommitTypeId::new("feat")?,
         None,
@@ -416,71 +391,74 @@ fn invalid_authored_draft_is_revalidated_before_writing() -> Result<(), Box<dyn 
 }
 
 #[test]
-fn locked_catalog_requires_every_exact_schema_and_fingerprint() -> Result<(), Box<dyn Error>> {
-    let mut harness = Harness::new(initialized_state()?);
-    harness.catalog.definitions.clear();
-    assert!(matches!(
-        harness.run(None),
-        Err(CreateCommitError::Policy(
-            CommitPolicyError::MissingDefinition(_)
-        ))
-    ));
-
-    let original = &built_in_commit_types()[0];
-    let mut version = Harness::new(initialized_state()?);
-    version.catalog.definitions[0] = CommitTypeDefinition::new(
-        SchemaVersion::new(2)?,
-        original.id().clone(),
-        original.description(),
-        original.properties().to_vec(),
-    )?;
-    assert!(matches!(
-        version.run(None),
-        Err(CreateCommitError::Policy(
-            CommitPolicyError::SchemaVersionMismatch(_)
-        ))
-    ));
-
-    let mut fingerprint = Harness::new(initialized_state()?);
-    fingerprint.catalog.definitions[0] = CommitTypeDefinition::new(
-        original.schema_version(),
-        original.id().clone(),
-        "Changed definition.",
-        original.properties().to_vec(),
-    )?;
-    assert!(matches!(
-        fingerprint.run(None),
-        Err(CreateCommitError::Policy(
-            CommitPolicyError::DefinitionFingerprintMismatch(_)
-        ))
-    ));
+fn tampered_lock_entries_are_detected_before_authoring() -> Result<(), Box<dyn Error>> {
+    for tampered in [
+        CommitTypeId::new("feat")?,
+        CommitTypeId::new("docs")?,
+        CommitTypeId::new("revert")?,
+    ] {
+        let config = ProjectConfig::default_channel()?;
+        let catalog = built_in_effective_catalog()?;
+        let expected = resolve_project_lock(&config, &catalog)?;
+        let entries = expected
+            .resolved_template()
+            .commit_types()
+            .iter()
+            .map(|entry| -> Result<ResolvedCommitType, Box<dyn Error>> {
+                if entry.id() == &tampered {
+                    Ok(ResolvedCommitType::new(
+                        entry.id().clone(),
+                        entry.schema_version(),
+                        "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                            .parse()?,
+                    ))
+                } else {
+                    Ok(entry.clone())
+                }
+            })
+            .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+        let resolved = ResolvedTemplate::new(
+            expected.resolved_template().id().clone(),
+            expected.resolved_template().version(),
+            expected.resolved_template().fingerprint(),
+            entries,
+        )?;
+        let state = ProjectState::Initialized {
+            config: config.clone(),
+            lock: ProjectLock::new(
+                expected.version(),
+                expected.config_fingerprint(),
+                expected.template_reference().clone(),
+                resolved,
+            )?,
+        };
+        let harness = Harness::new(state)?;
+        assert!(matches!(
+            harness.run(None),
+            Err(CreateCommitError::Policy(CommitPolicyError::StaleLock))
+        ));
+        assert!(harness.author.seen.borrow().is_empty());
+    }
     Ok(())
 }
 
 #[test]
 fn every_port_failure_is_preserved_and_stops_downstream_calls() -> Result<(), Box<dyn Error>> {
-    let mut locator = Harness::new(initialized_state()?);
+    let mut locator = Harness::new(initialized_state()?)?;
     locator.locator.fail = true;
     assert!(matches!(
         locator.run(None),
         Err(CreateCommitError::Repository(FakeError("locator failed")))
     ));
 
-    let store = Harness::new(initialized_state()?);
+    let store = Harness::new(initialized_state()?)?;
     let _ = store.store.state.replace(Err(FakeError("store failed")));
     assert!(matches!(
         store.run(None),
         Err(CreateCommitError::Store(FakeError("store failed")))
     ));
 
-    let mut catalog = Harness::new(initialized_state()?);
-    catalog.catalog.fail = true;
-    assert!(matches!(
-        catalog.run(None),
-        Err(CreateCommitError::Catalog(FakeError("catalog failed")))
-    ));
-
-    let author = Harness::new(initialized_state()?);
+    let author = Harness::new(initialized_state()?)?;
     author
         .author
         .result
@@ -491,12 +469,90 @@ fn every_port_failure_is_preserved_and_stops_downstream_calls() -> Result<(), Bo
     ));
     assert!(author.writer.messages.borrow().is_empty());
 
-    let mut writer = Harness::new(initialized_state()?);
+    let mut writer = Harness::new(initialized_state()?)?;
     writer.writer.fail = true;
     assert!(matches!(
         writer.run(None),
         Err(CreateCommitError::Writer(FakeError("writer failed")))
     ));
     assert_eq!(writer.writer.messages.borrow().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn custom_template_commits_with_its_own_schema() -> Result<(), Box<dyn Error>> {
+    let taxonomy = TaxonomyDefinition::new(
+        TaxonomyId::new("ops")?,
+        TaxonomyVersion::V1,
+        Description::new("Operations change classes.")?,
+        vec![ChangeTypeDefinition::new(
+            ChangeTypeId::new("provision")?,
+            Description::new("Infrastructure provisioning.")?,
+        )],
+    )?;
+    let typeset = TypesetDefinition::new(
+        taxonomy.id().clone(),
+        TypesetId::new("baseline")?,
+        TypesetVersion::V1,
+        Description::new("Baseline durable context for operations.")?,
+        vec![ChangeTypeSchema::new(
+            ChangeTypeId::new("provision")?,
+            vec![PropertyDefinition::new(
+                PropertyKey::new("intent")?,
+                "Why the infrastructure must change.",
+                PropertyRequirement::Required,
+                PropertyMultiplicity::Single,
+            )?],
+        )?],
+    )?;
+    let template = TemplateDefinition::new(
+        TemplateId::new("platform")?,
+        TemplateVersion::V1,
+        Description::new("Platform operations policy.")?,
+        taxonomy.id().clone(),
+        typeset.id().clone(),
+    );
+    let configuration =
+        UserConfiguration::new(vec![taxonomy], vec![typeset], vec![template])?;
+    let catalog = ConfigurationCatalog::new(&configuration)?;
+    let config = ProjectConfig::new(gitserious_app::PROJECT_CONFIG_VERSION, TemplateId::new("platform")?)?;
+    let lock = resolve_project_lock(&config, &catalog)?;
+
+    let trace = Trace::default();
+    let locator = FakeLocator {
+        fail: false,
+        trace: Rc::clone(&trace),
+    };
+    let store = FakeStore {
+        state: RefCell::new(Ok(ProjectState::Initialized { config, lock })),
+        trace: Rc::clone(&trace),
+    };
+    let author = FakeAuthor {
+        result: RefCell::new(FakeAuthorResult::Valid(0)),
+        seen: RefCell::default(),
+        trace: Rc::clone(&trace),
+    };
+    let writer = FakeWriter {
+        fail: false,
+        messages: RefCell::default(),
+        trace: Rc::clone(&trace),
+    };
+    let outcome = create_commit(
+        &locator,
+        &store,
+        &catalog,
+        &author,
+        &writer,
+        &repository_path(),
+        None,
+    )?;
+    assert!(matches!(outcome, CommitOutcome::Created(_)));
+    assert_eq!(
+        author.seen.borrow()[0].0,
+        vec![CommitTypeId::new("provision")?]
+    );
+    let message = &writer.messages.borrow()[0];
+    assert!(message.starts_with("provision: create durable commit\n"));
+    assert!(message.contains("intent:\nauthored intent\n"));
     Ok(())
 }

@@ -4,11 +4,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use gitserious_app::{
-    InitStatus, InitializeProjectError, ProjectConfig, ProjectState, ProjectStateStore,
-    RepositoryLocator, initialize_project, resolve_project_lock,
+    ConfigurationCatalog, ConfigurationCatalogError, InitStatus, InitializeProjectError,
+    ProjectConfig, ProjectState, ProjectStateStore, RepositoryLocator, built_in_effective_catalog,
+    initialize_project, resolve_project_lock,
 };
 use gitserious_fs::{GitRepositoryLocator, ProjectStateError, TomlProjectStateStore};
 use tempfile::TempDir;
+
+fn catalog() -> Result<ConfigurationCatalog, ConfigurationCatalogError> {
+    built_in_effective_catalog()
+}
 
 fn repository() -> Result<TempDir, Box<dyn Error>> {
     let directory = tempfile::tempdir()?;
@@ -77,6 +82,8 @@ fn initialization_writes_exact_config_and_ordered_lock() -> Result<(), Box<dyn E
     let outcome = initialize_project(
         &GitRepositoryLocator,
         &TomlProjectStateStore,
+        &catalog()?,
+        None,
         repository.path(),
     )?;
 
@@ -121,6 +128,8 @@ fn matching_state_is_byte_preserving_and_idempotent() -> Result<(), Box<dyn Erro
     initialize_project(
         &GitRepositoryLocator,
         &TomlProjectStateStore,
+        &catalog()?,
+        None,
         repository.path(),
     )?;
     let config_before = fs::read(&paths.config)?;
@@ -132,6 +141,8 @@ fn matching_state_is_byte_preserving_and_idempotent() -> Result<(), Box<dyn Erro
     let outcome = initialize_project(
         &GitRepositoryLocator,
         &TomlProjectStateStore,
+        &catalog()?,
+        None,
         repository.path(),
     )?;
 
@@ -158,6 +169,8 @@ fn existing_local_state_and_custom_ignore_are_preserved() -> Result<(), Box<dyn 
     let outcome = initialize_project(
         &GitRepositoryLocator,
         &TomlProjectStateStore,
+        &catalog()?,
+        None,
         repository.path(),
     )?;
 
@@ -180,6 +193,8 @@ fn existing_valid_config_creates_only_a_missing_lock() -> Result<(), Box<dyn Err
     let outcome = initialize_project(
         &GitRepositoryLocator,
         &TomlProjectStateStore,
+        &catalog()?,
+        None,
         repository.path(),
     )?;
 
@@ -196,6 +211,8 @@ fn recognized_stale_lock_is_replaced_without_rewriting_config() -> Result<(), Bo
     initialize_project(
         &GitRepositoryLocator,
         &TomlProjectStateStore,
+        &catalog()?,
+        None,
         repository.path(),
     )?;
     let authored = fs::read(&paths.config)?;
@@ -210,6 +227,8 @@ fn recognized_stale_lock_is_replaced_without_rewriting_config() -> Result<(), Bo
     let outcome = initialize_project(
         &GitRepositoryLocator,
         &TomlProjectStateStore,
+        &catalog()?,
+        None,
         repository.path(),
     )?;
 
@@ -226,6 +245,8 @@ fn concurrent_lock_change_is_preserved_and_refused() -> Result<(), Box<dyn Error
     initialize_project(
         &GitRepositoryLocator,
         &TomlProjectStateStore,
+        &catalog()?,
+        None,
         repository.path(),
     )?;
     let original = match TomlProjectStateStore.inspect(&root(repository.path())?)? {
@@ -284,6 +305,8 @@ fn malformed_unknown_and_unsupported_lock_are_refused() -> Result<(), Box<dyn Er
         initialize_project(
             &GitRepositoryLocator,
             &TomlProjectStateStore,
+        &catalog()?,
+        None,
             repository.path(),
         )?;
         let contents = match mutation {
@@ -313,6 +336,8 @@ fn orphan_lock_is_refused_without_guessing_config() -> Result<(), Box<dyn Error>
     let error = initialize_project(
         &GitRepositoryLocator,
         &TomlProjectStateStore,
+        &catalog()?,
+        None,
         repository.path(),
     );
 
@@ -329,6 +354,8 @@ fn non_directory_and_non_regular_known_paths_are_refused() -> Result<(), Box<dyn
         initialize_project(
             &GitRepositoryLocator,
             &TomlProjectStateStore,
+        &catalog()?,
+        None,
             non_directory_repository.path()
         ),
         Err(InitializeProjectError::Store(
@@ -402,7 +429,7 @@ fn direct_store_creation_refuses_either_existing_root_artifact() -> Result<(), B
         let collision = repository.path().join(target);
         fs::write(&collision, "preserve")?;
         let config = ProjectConfig::default_channel()?;
-        let lock = resolve_project_lock(&config)?;
+        let lock = resolve_project_lock(&config, &catalog()?)?;
 
         assert!(matches!(
             TomlProjectStateStore.initialize(&root(repository.path())?, &config, &lock),

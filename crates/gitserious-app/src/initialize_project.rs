@@ -5,8 +5,9 @@ use std::path::Path;
 use gitserious_core::{IdentifierError, TemplateId, TemplateVersion};
 
 use crate::{
-    ProjectConfig, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
-    ResolveProjectPolicyError, resolve_project_lock,
+    ConfigurationCatalog, ProjectConfig, ProjectConfigError, ProjectState, ProjectStateStore,
+    RepositoryLocator, RepositoryRoot, ResolveProjectPolicyError, PROJECT_CONFIG_VERSION,
+    resolve_project_lock,
 };
 
 /// The state transition performed by project initialization.
@@ -73,6 +74,8 @@ pub enum InitializeProjectError<LocatorError, StoreError> {
     Store(StoreError),
     /// The built-in default channel identifier violated core rules.
     InvalidDefaultReference(IdentifierError),
+    /// The requested fresh-policy template violated configuration rules.
+    InvalidTemplate(ProjectConfigError),
     /// Authored policy could not be resolved.
     Policy(ResolveProjectPolicyError),
     /// A generated lock exists without authored configuration.
@@ -89,6 +92,7 @@ where
             Self::Repository(error) => Display::fmt(error, formatter),
             Self::Store(error) => Display::fmt(error, formatter),
             Self::InvalidDefaultReference(error) => Display::fmt(error, formatter),
+            Self::InvalidTemplate(error) => Display::fmt(error, formatter),
             Self::Policy(error) => Display::fmt(error, formatter),
             Self::OrphanLock => formatter.write_str(
                 "gitserious.lock exists without gitserious.toml; restore or remove the orphan lock",
@@ -107,6 +111,7 @@ where
             Self::Repository(error) => Some(error),
             Self::Store(error) => Some(error),
             Self::InvalidDefaultReference(error) => Some(error),
+            Self::InvalidTemplate(error) => Some(error),
             Self::Policy(error) => Some(error),
             Self::OrphanLock => None,
         }
@@ -115,6 +120,9 @@ where
 
 /// Initializes or safely reconciles repository-local project policy.
 ///
+/// Fresh policy selects the authored `template` when supplied and the built-in
+/// default channel otherwise; existing authored configuration is preserved.
+///
 /// # Errors
 ///
 /// Returns [`InitializeProjectError`] when repository discovery, state access,
@@ -122,6 +130,8 @@ where
 pub fn initialize_project<L, S>(
     locator: &L,
     store: &S,
+    catalog: &ConfigurationCatalog,
+    template: Option<&TemplateId>,
     start: &Path,
 ) -> Result<InitOutcome, InitializeProjectError<L::Error, S::Error>>
 where
@@ -136,12 +146,15 @@ where
         .map_err(InitializeProjectError::Store)?;
 
     let (status, config, existing_lock) = match state {
-        ProjectState::Absent => (
-            InitStatus::Initialized,
-            ProjectConfig::default_channel()
-                .map_err(InitializeProjectError::InvalidDefaultReference)?,
-            None,
-        ),
+        ProjectState::Absent => {
+            let config = match template {
+                Some(template) => ProjectConfig::new(PROJECT_CONFIG_VERSION, template.clone())
+                    .map_err(InitializeProjectError::InvalidTemplate)?,
+                None => ProjectConfig::default_channel()
+                    .map_err(InitializeProjectError::InvalidDefaultReference)?,
+            };
+            (InitStatus::Initialized, config, None)
+        }
         ProjectState::ConfigOnly(config) => (InitStatus::LockCreated, config, None),
         ProjectState::Initialized { config, lock } => {
             (InitStatus::AlreadyInitialized, config, Some(lock))
@@ -149,7 +162,7 @@ where
         ProjectState::LockOnly => return Err(InitializeProjectError::OrphanLock),
     };
 
-    let expected_lock = resolve_project_lock(&config).map_err(InitializeProjectError::Policy)?;
+    let expected_lock = resolve_project_lock(&config, catalog).map_err(InitializeProjectError::Policy)?;
     store
         .ensure_local_state(&root)
         .map_err(InitializeProjectError::Store)?;
