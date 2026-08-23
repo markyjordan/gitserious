@@ -7,7 +7,8 @@ use gitserious_app::{
     ConfigurationMutationError, UserConfiguration, UserConfigurationError, UserConfigurationStore,
     apply_configuration_edits, create_taxonomy, create_template, create_typeset, delete_taxonomy,
     delete_template, delete_typeset, find_taxonomy, find_template, find_typeset,
-    fingerprint_resolved_taxonomy, list_taxonomies, list_templates, list_typesets, update_taxonomy,
+    fingerprint_resolved_taxonomy, fork_conventional, list_taxonomies, list_templates,
+    list_typesets, update_taxonomy,
 };
 use gitserious_core::{
     ChangeTypeDefinition, ChangeTypeId, ChangeTypeSchema, Description, PropertyDefinition,
@@ -395,5 +396,94 @@ fn resolved_fingerprint_is_stable_and_covers_semantic_identity() -> Result<(), B
         ResolvedTaxonomy::resolve(built_in.template(), built_in.taxonomy(), built_in.typeset())?;
     assert_ne!(first, fingerprint_resolved_taxonomy(&conventional));
     assert!(first.to_string().starts_with("sha256:"));
+    Ok(())
+}
+
+#[test]
+fn fork_copies_the_built_in_chain_under_new_identities() -> Result<(), Box<dyn Error>> {
+    let store = RecordingStore::new(UserConfiguration::default());
+    let forked = fork_conventional(
+        &store,
+        TemplateId::new("platform")?,
+        TaxonomyId::new("ops")?,
+        TypesetId::new("baseline")?,
+    )?;
+    assert_eq!(forked.template().as_str(), "platform");
+    assert_eq!(forked.taxonomy().as_str(), "ops");
+    assert_eq!(forked.typeset().as_str(), "baseline");
+
+    let built_in = built_in_configuration();
+    let taxonomy = find_taxonomy(&store, &TaxonomyId::new("ops")?)?
+        .ok_or("forked taxonomy is present")?;
+    assert_eq!(
+        taxonomy
+            .change_types()
+            .iter()
+            .map(|change_type| change_type.id().clone())
+            .collect::<Vec<_>>(),
+        built_in
+            .taxonomy()
+            .change_types()
+            .iter()
+            .map(|change_type| change_type.id().clone())
+            .collect::<Vec<_>>()
+    );
+    let typeset = find_typeset(
+        &store,
+        &TaxonomyId::new("ops")?,
+        &TypesetId::new("baseline")?,
+    )?
+    .ok_or("forked typeset is present")?;
+    assert_eq!(
+        typeset.schemas().len(),
+        built_in.typeset().schemas().len()
+    );
+    let template = find_template(&store, &TemplateId::new("platform")?)?
+        .ok_or("forked template is present")?;
+    assert_eq!(template.taxonomy(), &TaxonomyId::new("ops")?);
+    assert_eq!(template.typeset(), &TypesetId::new("baseline")?);
+    assert_eq!(template.version(), TemplateVersion::V1);
+
+    let catalog = ConfigurationCatalog::new(&store.snapshot())?;
+    let resolved = catalog.resolve(&TemplateId::new("platform")?)?;
+    assert_eq!(
+        resolved.change_types().len(),
+        built_in.taxonomy().change_types().len()
+    );
+    assert_eq!(store.swaps.get(), 1);
+    Ok(())
+}
+
+#[test]
+fn fork_rejects_reserved_and_existing_identities_atomically() -> Result<(), Box<dyn Error>> {
+    let store = RecordingStore::new(UserConfiguration::default());
+    let before = store.snapshot();
+    assert!(matches!(
+        fork_conventional(
+            &store,
+            TemplateId::new("platform")?,
+            TaxonomyId::new("conventional")?,
+            TypesetId::new("baseline")?,
+        ),
+        Err(ConfigurationMutationError::Reserved(
+            ConfigurationEntity::Taxonomy(taxonomy)
+        )) if taxonomy.as_str() == "conventional"
+    ));
+    assert_eq!(store.snapshot(), before);
+
+    create_taxonomy(&store, taxonomy(1, false)?)?;
+    let before = store.snapshot();
+    assert!(matches!(
+        fork_conventional(
+            &store,
+            TemplateId::new("platform")?,
+            taxonomy(1, false)?.id().clone(),
+            TypesetId::new("baseline")?,
+        ),
+        Err(ConfigurationMutationError::AlreadyExists(
+            ConfigurationEntity::Taxonomy(existing)
+        )) if existing == taxonomy(1, false)?.id().clone()
+    ));
+    assert_eq!(store.snapshot(), before);
     Ok(())
 }

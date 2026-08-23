@@ -96,7 +96,12 @@ impl TaxonomyDefinition {
         &self.change_types
     }
 
-    pub(crate) fn from_trusted(
+    /// Assembles a taxonomy from previously validated definitions.
+    ///
+    /// Copy and adapter operations may reconstruct a taxonomy from an already
+    /// validated aggregate without repeating its structural checks.
+    #[must_use]
+    pub fn from_trusted(
         id: TaxonomyId,
         version: TaxonomyVersion,
         description: Description,
