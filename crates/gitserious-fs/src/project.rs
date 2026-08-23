@@ -143,6 +143,113 @@ impl ProjectStateStore for TomlProjectStateStore {
         }
         Ok(())
     }
+
+    fn compare_and_swap(
+        &self,
+        root: &RepositoryRoot,
+        current_config: &ProjectConfig,
+        current_lock: &ProjectLock,
+        replacement_config: &ProjectConfig,
+        replacement_lock: &ProjectLock,
+    ) -> Result<(), Self::Error> {
+        let paths = ProjectPaths::new(root);
+        ensure_expected_project(&paths, current_config, current_lock)?;
+
+        let config_temporary = write_temporary_artifact(
+            root.as_path(),
+            CONFIG_FILE,
+            render_config(replacement_config)?.as_bytes(),
+        )?;
+        let lock_temporary = match write_temporary_artifact(
+            root.as_path(),
+            LOCK_FILE,
+            render_lock(replacement_lock)?.as_bytes(),
+        ) {
+            Ok(path) => path,
+            Err(error) => return Err(rollback_file(&config_temporary, error)),
+        };
+        let lock_backup = match write_temporary_artifact(
+            root.as_path(),
+            "gitserious.lock.rollback",
+            render_lock(current_lock)?.as_bytes(),
+        ) {
+            Ok(path) => path,
+            Err(error) => {
+                return Err(rollback_file(
+                    &lock_temporary,
+                    rollback_file(&config_temporary, error),
+                ));
+            }
+        };
+
+        if let Err(error) = ensure_expected_project(&paths, current_config, current_lock) {
+            return Err(cleanup_project_temporaries(
+                [&config_temporary, &lock_temporary, &lock_backup],
+                error,
+            ));
+        }
+        if let Err(source) = fs::rename(&lock_temporary, &paths.lock) {
+            return Err(cleanup_project_temporaries(
+                [&config_temporary, &lock_temporary, &lock_backup],
+                ProjectStateError::Io {
+                    operation: "replace",
+                    path: paths.lock,
+                    source,
+                },
+            ));
+        }
+        if let Err(source) = fs::rename(&config_temporary, &paths.config) {
+            let original = ProjectStateError::Io {
+                operation: "replace",
+                path: paths.config,
+                source,
+            };
+            if let Err(restore_source) = fs::rename(&lock_backup, &paths.lock) {
+                return Err(ProjectStateError::Rollback {
+                    original: Box::new(original),
+                    path: lock_backup,
+                    source: restore_source,
+                });
+            }
+            return Err(rollback_file(&config_temporary, original));
+        }
+        match fs::remove_file(&lock_backup) {
+            Ok(()) => Ok(()),
+            Err(source) => Err(ProjectStateError::Io {
+                operation: "remove",
+                path: lock_backup,
+                source,
+            }),
+        }
+    }
+}
+
+fn ensure_expected_project(
+    paths: &ProjectPaths,
+    config: &ProjectConfig,
+    lock: &ProjectLock,
+) -> Result<(), ProjectStateError> {
+    if !regular_file_exists(&paths.config)?
+        || !regular_file_exists(&paths.lock)?
+        || read_config(&paths.config)? != *config
+        || read_lock(&paths.lock)? != *lock
+    {
+        return Err(ProjectStateError::ConcurrentProjectChange {
+            config: paths.config.clone(),
+            lock: paths.lock.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn cleanup_project_temporaries<const N: usize>(
+    paths: [&Path; N],
+    mut original: ProjectStateError,
+) -> ProjectStateError {
+    for path in paths {
+        original = rollback_file(path, original);
+    }
+    original
 }
 
 struct ProjectPaths {
@@ -272,10 +379,18 @@ fn rollback_directory_if_created(
 }
 
 fn write_temporary_lock(directory: &Path, contents: &[u8]) -> Result<PathBuf, ProjectStateError> {
+    write_temporary_artifact(directory, LOCK_FILE, contents)
+}
+
+fn write_temporary_artifact(
+    directory: &Path,
+    artifact: &str,
+    contents: &[u8],
+) -> Result<PathBuf, ProjectStateError> {
     for _ in 0..100 {
         let sequence = TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let path = directory.join(format!(
-            ".{LOCK_FILE}.tmp.{}.{}",
+            ".{artifact}.tmp.{}.{}",
             std::process::id(),
             sequence
         ));
@@ -643,6 +758,13 @@ pub enum ProjectStateError {
     },
     /// The lock changed between inspection and replacement.
     ConcurrentLockChange(PathBuf),
+    /// The project configuration or lock changed before pair replacement.
+    ConcurrentProjectChange {
+        /// Authored configuration path.
+        config: PathBuf,
+        /// Generated lock path.
+        lock: PathBuf,
+    },
     /// No exclusive temporary lock path could be reserved.
     TemporaryFileUnavailable(PathBuf),
     /// Cleanup of an invocation-created artifact failed.
@@ -702,6 +824,12 @@ impl Display for ProjectStateError {
                 "generated lock changed concurrently at {}; retry initialization",
                 path.display()
             ),
+            Self::ConcurrentProjectChange { config, lock } => write!(
+                formatter,
+                "project configuration changed concurrently at {} or {}; retry configuration",
+                config.display(),
+                lock.display()
+            ),
             Self::TemporaryFileUnavailable(path) => write!(
                 formatter,
                 "could not reserve a temporary lock file in {}; retry initialization",
@@ -733,6 +861,7 @@ impl Error for ProjectStateError {
             | Self::ExpectedFile(_)
             | Self::Collision(_)
             | Self::ConcurrentLockChange(_)
+            | Self::ConcurrentProjectChange { .. }
             | Self::TemporaryFileUnavailable(_) => None,
         }
     }

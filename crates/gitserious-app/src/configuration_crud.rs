@@ -429,15 +429,33 @@ fn apply_loaded_edits<S>(
 where
     S: GlobalConfigurationStore + ?Sized,
 {
+    let replacement = apply_custom_configuration_edits(current, edits)?;
+    store
+        .compare_and_swap(current, &replacement)
+        .map_err(ConfigurationMutationError::Store)
+}
+
+/// Applies a complete edit batch to an in-memory custom configuration.
+///
+/// Persistence adapters can reuse this pure mutation contract for global and
+/// project scopes while retaining the same reserved, version, dependency, and
+/// final-catalog validation rules.
+///
+/// # Errors
+///
+/// Returns [`ConfigurationMutationError`] when any edit or the final effective
+/// catalog is invalid. This function never returns the `Store` variant.
+pub fn apply_custom_configuration_edits<StoreError>(
+    current: &CustomConfiguration,
+    edits: impl IntoIterator<Item = ConfigurationEdit>,
+) -> Result<CustomConfiguration, ConfigurationMutationError<StoreError>> {
     let mut replacement = current.clone();
     for edit in edits {
         apply_edit(&mut replacement, edit)?;
     }
     replacement.sort();
     ConfigurationCatalog::new(&replacement).map_err(ConfigurationMutationError::Catalog)?;
-    store
-        .compare_and_swap(current, &replacement)
-        .map_err(ConfigurationMutationError::Store)
+    Ok(replacement)
 }
 
 fn apply_edit<StoreError>(

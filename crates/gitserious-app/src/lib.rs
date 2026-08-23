@@ -19,6 +19,7 @@ mod global_paths;
 mod initialize_project;
 mod list_commit_types;
 mod project_config;
+mod project_configuration;
 mod project_lock;
 mod project_state;
 mod project_state_store;
@@ -35,9 +36,10 @@ pub use configuration_catalog::{
 };
 pub use configuration_crud::{
     ConfigurationEdit, ConfigurationEntity, ConfigurationMutationError, apply_configuration_edits,
-    create_taxonomy, create_template, create_typeset, delete_taxonomy, delete_template,
-    delete_typeset, find_taxonomy, find_template, find_typeset, list_taxonomies, list_templates,
-    list_typesets, update_taxonomy, update_template, update_typeset,
+    apply_custom_configuration_edits, create_taxonomy, create_template, create_typeset,
+    delete_taxonomy, delete_template, delete_typeset, find_taxonomy, find_template, find_typeset,
+    list_taxonomies, list_templates, list_typesets, update_taxonomy, update_template,
+    update_typeset,
 };
 pub use create_commit::{
     CommitOutcome, CommitPolicyError, CreateCommitError, CreateCommitResult, create_commit,
@@ -50,13 +52,18 @@ pub use effective_catalog::{EffectiveCatalogError, load_effective_catalog};
 pub use ensure_storage_directory::ensure_storage_directory;
 pub use find_commit_type::find_commit_type;
 pub use fingerprint::{Fingerprint, FingerprintError};
-pub use fork_configuration::{ForkedConfiguration, fork_conventional};
+pub use fork_configuration::{ForkedConfiguration, fork_conventional, fork_conventional_edits};
 pub use global_configuration_store::GlobalConfigurationStore;
 pub use global_path_resolver::GlobalPathResolver;
 pub use global_paths::GlobalPaths;
 pub use initialize_project::{InitOutcome, InitStatus, InitializeProjectError, initialize_project};
 pub use list_commit_types::list_commit_types;
 pub use project_config::{PROJECT_CONFIG_VERSION, ProjectConfig, ProjectConfigError};
+pub use project_configuration::{
+    ProjectConfigurationEdit, ProjectConfigurationError, ProjectConfigurationOutcome,
+    apply_project_configuration_edits, fork_project_configuration,
+    import_and_select_project_template, import_project_template, select_project_template,
+};
 pub use project_lock::{
     PROJECT_LOCK_VERSION, ProjectLock, ProjectLockError, ResolveProjectPolicyError,
     ResolvedCommitType, ResolvedTemplate, ResolvedTemplateError,

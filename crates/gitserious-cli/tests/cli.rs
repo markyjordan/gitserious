@@ -76,6 +76,17 @@ impl ProjectStateStore for RecordingStore {
     ) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    fn compare_and_swap(
+        &self,
+        _root: &RepositoryRoot,
+        _current_config: &ProjectConfig,
+        _current_lock: &ProjectLock,
+        _replacement_config: &ProjectConfig,
+        _replacement_lock: &ProjectLock,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 struct FakeUserStore {

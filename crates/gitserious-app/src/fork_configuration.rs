@@ -59,6 +59,22 @@ pub fn fork_conventional<S>(
 where
     S: GlobalConfigurationStore + ?Sized,
 {
+    let edits = fork_conventional_edits(&template, &taxonomy, &typeset);
+    apply_configuration_edits(store, edits)?;
+    Ok(ForkedConfiguration {
+        template,
+        taxonomy,
+        typeset,
+    })
+}
+
+/// Builds the atomic edit batch for one editable Conventional fork.
+#[must_use]
+pub fn fork_conventional_edits(
+    template: &TemplateId,
+    taxonomy: &TaxonomyId,
+    typeset: &TypesetId,
+) -> Vec<ConfigurationEdit> {
     let built_in = built_in_configuration();
     let taxonomy_definition = TaxonomyDefinition::from_trusted(
         taxonomy.clone(),
@@ -81,17 +97,9 @@ where
         typeset.clone(),
     );
 
-    apply_configuration_edits(
-        store,
-        [
-            ConfigurationEdit::CreateTaxonomy(taxonomy_definition),
-            ConfigurationEdit::CreateTypeset(typeset_definition),
-            ConfigurationEdit::CreateTemplate(template_definition),
-        ],
-    )?;
-    Ok(ForkedConfiguration {
-        template,
-        taxonomy,
-        typeset,
-    })
+    vec![
+        ConfigurationEdit::CreateTaxonomy(taxonomy_definition),
+        ConfigurationEdit::CreateTypeset(typeset_definition),
+        ConfigurationEdit::CreateTemplate(template_definition),
+    ]
 }

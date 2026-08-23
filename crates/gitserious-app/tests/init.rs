@@ -154,6 +154,17 @@ impl ProjectStateStore for FakeStore {
             .push(StoreCall::ReplaceLock(current.clone(), replacement.clone()));
         self.maybe_fail(FakeError::ReplaceLock)
     }
+
+    fn compare_and_swap(
+        &self,
+        _root: &RepositoryRoot,
+        _current_config: &ProjectConfig,
+        _current_lock: &ProjectLock,
+        _replacement_config: &ProjectConfig,
+        _replacement_lock: &ProjectLock,
+    ) -> Result<(), Self::Error> {
+        Err(FakeError::ReplaceLock)
+    }
 }
 
 fn default_config_and_lock() -> Result<(ProjectConfig, ProjectLock), Box<dyn Error>> {

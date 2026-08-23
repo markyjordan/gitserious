@@ -53,4 +53,19 @@ pub trait ProjectStateStore {
         current: &ProjectLock,
         replacement: &ProjectLock,
     ) -> Result<(), Self::Error>;
+
+    /// Replaces an observed project configuration and lock as one guarded pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter's [`Self::Error`] when either observed artifact has
+    /// changed or the staged replacement cannot be installed safely.
+    fn compare_and_swap(
+        &self,
+        root: &RepositoryRoot,
+        current_config: &ProjectConfig,
+        current_lock: &ProjectLock,
+        replacement_config: &ProjectConfig,
+        replacement_lock: &ProjectLock,
+    ) -> Result<(), Self::Error>;
 }
