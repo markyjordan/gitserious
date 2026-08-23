@@ -11,9 +11,10 @@ use gitserious_app::{
     fingerprint_project_config, initialize_project, resolve_project_lock,
 };
 use gitserious_core::{
-    CommitMessageTemplateDefinition, CommitTypeDefinition, CommitTypeId, ConditionId,
+    CommitMessageTemplateDefinition, CommitTypeDefinition, CommitTypeId, ConditionId, Description,
     PropertyCondition, PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement,
-    SchemaVersion, TemplateId, TemplateVersion, default_commit_message_template,
+    SchemaVersion, TemplateDefinition, TemplateId, TemplateVersion, built_in_configuration,
+    default_commit_message_template,
 };
 
 fn catalog() -> Result<ConfigurationCatalog, ConfigurationCatalogError> {
@@ -550,6 +551,33 @@ fn config_and_template_fingerprints_are_stable_and_order_sensitive() -> Result<(
     assert_ne!(
         fingerprint_commit_message_template(original),
         fingerprint_commit_message_template(&versioned)
+    );
+    Ok(())
+}
+
+#[test]
+fn project_fingerprint_covers_inactive_custom_definitions() -> Result<(), Box<dyn Error>> {
+    let built_in = built_in_configuration();
+    let template = |description: &str| -> Result<TemplateDefinition, Box<dyn Error>> {
+        Ok(TemplateDefinition::new(
+            TemplateId::new("inactive")?,
+            TemplateVersion::V1,
+            Description::new(description)?,
+            built_in.taxonomy().id().clone(),
+            built_in.typeset().id().clone(),
+        ))
+    };
+    let config = |description: &str| -> Result<ProjectConfig, Box<dyn Error>> {
+        Ok(ProjectConfig::new(
+            1,
+            built_in.template().id().clone(),
+            CustomConfiguration::new(vec![], vec![], vec![template(description)?])?,
+        )?)
+    };
+
+    assert_ne!(
+        fingerprint_project_config(&config("First inactive description.")?),
+        fingerprint_project_config(&config("Changed inactive description.")?)
     );
     Ok(())
 }

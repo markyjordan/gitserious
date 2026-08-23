@@ -4,9 +4,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use gitserious_app::{
-    ConfigurationCatalog, ConfigurationCatalogError, InitStatus, InitializeProjectError,
-    ProjectConfig, ProjectState, ProjectStateStore, RepositoryLocator, built_in_effective_catalog,
-    initialize_project, resolve_project_lock,
+    ConfigurationCatalog, ConfigurationCatalogError, CustomConfiguration, InitStatus,
+    InitializeProjectError, ProjectConfig, ProjectState, ProjectStateStore, RepositoryLocator,
+    built_in_effective_catalog, initialize_project, resolve_project_lock,
+};
+use gitserious_core::{
+    ChangeTypeDefinition, ChangeTypeId, ChangeTypeSchema, Description, PropertyDefinition,
+    PropertyKey, PropertyMultiplicity, PropertyRequirement, TaxonomyDefinition, TaxonomyId,
+    TaxonomyVersion, TemplateDefinition, TemplateId, TemplateVersion, TypesetDefinition, TypesetId,
+    TypesetVersion,
 };
 use gitserious_fs::{GitRepositoryLocator, ProjectStateError, TomlProjectStateStore};
 use tempfile::TempDir;
@@ -55,6 +61,55 @@ fn assert_ignored(repository: &Path, path: &str) -> Result<(), Box<dyn Error>> {
         .status()?;
     assert!(status.success(), "expected Git to ignore {path}");
     Ok(())
+}
+
+fn populated_project_config() -> Result<ProjectConfig, Box<dyn Error>> {
+    let taxonomy_id = TaxonomyId::new("delivery")?;
+    let taxonomy = TaxonomyDefinition::new(
+        taxonomy_id.clone(),
+        TaxonomyVersion::new(2)?,
+        Description::new("Delivery changes 🦀.")?,
+        vec![ChangeTypeDefinition::new(
+            ChangeTypeId::new("ship")?,
+            Description::new("Release a durable artifact.")?,
+        )],
+    )?;
+    let typeset = TypesetDefinition::new(
+        taxonomy_id.clone(),
+        TypesetId::new("evidence")?,
+        TypesetVersion::new(3)?,
+        Description::new("Release evidence requirements.")?,
+        vec![ChangeTypeSchema::new(
+            ChangeTypeId::new("ship")?,
+            vec![PropertyDefinition::new(
+                PropertyKey::new("verification")?,
+                "How the artifact was verified.",
+                PropertyRequirement::Required,
+                PropertyMultiplicity::Multiple,
+            )?],
+        )?],
+    )?;
+    let alternate = TemplateDefinition::new(
+        TemplateId::new("alternate")?,
+        TemplateVersion::V1,
+        Description::new("An alternate local selection.")?,
+        taxonomy_id.clone(),
+        typeset.id().clone(),
+    );
+    let selected = TemplateDefinition::new(
+        TemplateId::new("release-team")?,
+        TemplateVersion::new(4)?,
+        Description::new("The selected release policy.")?,
+        taxonomy_id,
+        typeset.id().clone(),
+    );
+    let custom =
+        CustomConfiguration::new(vec![taxonomy], vec![typeset], vec![selected, alternate])?;
+    Ok(ProjectConfig::new(
+        1,
+        TemplateId::new("release-team")?,
+        custom,
+    )?)
 }
 
 #[test]
@@ -119,6 +174,40 @@ fn initialization_writes_exact_config_and_ordered_lock() -> Result<(), Box<dyn E
     assert_eq!(fs::read_to_string(paths.local_ignore)?, "*\n");
     assert_ignored(repository.path(), ".gitserious/.gitignore")?;
     assert_ignored(repository.path(), ".gitserious/notes.txt")?;
+    Ok(())
+}
+
+#[test]
+fn populated_project_configuration_round_trips_canonically() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    let paths = project_paths(repository.path());
+    let config = populated_project_config()?;
+    let lock = resolve_project_lock(&config)?;
+
+    TomlProjectStateStore.initialize(&root(repository.path())?, &config, &lock)?;
+
+    assert_eq!(
+        TomlProjectStateStore.inspect(&root(repository.path())?)?,
+        ProjectState::Initialized {
+            config: config.clone(),
+            lock
+        }
+    );
+    let contents = fs::read_to_string(paths.config)?;
+    assert!(contents.starts_with("config-version = 1\nactive-template = \"release-team\"\n"));
+    assert!(contents.contains("description = \"Delivery changes 🦀.\""));
+    assert!(contents.contains("multiplicity = \"multiple\""));
+    assert!(contents.contains("level = \"required\""));
+    let taxonomy = contents.find("[[taxonomies]]").ok_or("missing taxonomy")?;
+    let typeset = contents.find("[[typesets]]").ok_or("missing typeset")?;
+    let alternate = contents
+        .find("id = \"alternate\"")
+        .ok_or("missing alternate template")?;
+    let selected = contents
+        .find("id = \"release-team\"")
+        .ok_or("missing selected template")?;
+    assert!(taxonomy < typeset && typeset < alternate && alternate < selected);
+    assert!(contents.ends_with('\n'));
     Ok(())
 }
 
@@ -289,6 +378,11 @@ fn malformed_unknown_and_unsupported_config_are_refused() -> Result<(), Box<dyn 
          taxonomies = []\ntypesets = []\ntemplates = []\nunknown = true\n",
         "config-version = 1\nactive-template = \"Custom\"\n\
          taxonomies = []\ntypesets = []\ntemplates = []\n",
+        "config-version = 1\nactive-template = \"custom\"\n\
+         typesets = []\ntemplates = []\n\
+         [[taxonomies]]\nid = \"custom\"\nversion = 1\n\
+         description = \"Custom.\"\nunknown = true\n\
+         change-types = [{ id = \"change\", description = \"Change.\" }]\n",
     ] {
         let repository = repository()?;
         let paths = project_paths(repository.path());
