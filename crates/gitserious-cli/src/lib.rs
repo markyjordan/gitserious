@@ -9,11 +9,11 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use gitserious_app::{
-    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitTypeCatalog,
-    CommitWriter, InitOutcome, InitStatus, ProjectStateStore, RepositoryLocator, RepositoryRoot,
-    create_commit, initialize_project,
+    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
+    EffectiveDefinitions, InitOutcome, InitStatus, ProjectStateStore, RepositoryLocator,
+    RepositoryRoot, create_commit, initialize_project,
 };
-use gitserious_core::{CommitMessage, CommitTypeDefinition, CommitTypeId};
+use gitserious_core::{CommitMessage, CommitTypeDefinition, CommitTypeId, TemplateId};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -105,7 +105,7 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    C: CommitTypeCatalog + ?Sized,
+    C: EffectiveDefinitions + ?Sized,
     C::Error: Display,
     A: CommitDraftAuthor + ?Sized,
     A::Error: Display,
@@ -172,7 +172,7 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    C: CommitTypeCatalog + ?Sized,
+    C: EffectiveDefinitions + ?Sized,
     C::Error: Display,
     A: CommitDraftAuthor + ?Sized,
     A::Error: Display,
@@ -225,7 +225,7 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    C: CommitTypeCatalog + ?Sized,
+    C: EffectiveDefinitions + ?Sized,
     C::Error: Display,
     A: CommitDraftAuthor + ?Sized,
     A::Error: Display,
@@ -331,15 +331,14 @@ fn exit_code(code: i32) -> ExitCode {
 #[derive(Clone, Copy, Debug)]
 struct UnsupportedCommitAdapter;
 
-impl CommitTypeCatalog for UnsupportedCommitAdapter {
+impl EffectiveDefinitions for UnsupportedCommitAdapter {
     type Error = UnsupportedCommitError;
 
-    fn find(&self, _id: &CommitTypeId) -> Result<Option<CommitTypeDefinition>, Self::Error> {
-        Ok(None)
-    }
-
-    fn list(&self) -> Result<Vec<CommitTypeDefinition>, Self::Error> {
-        Ok(Vec::new())
+    fn for_template(
+        &self,
+        _template: &TemplateId,
+    ) -> Result<Vec<CommitTypeDefinition>, Self::Error> {
+        Err(UnsupportedCommitError)
     }
 }
 

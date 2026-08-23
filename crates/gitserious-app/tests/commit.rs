@@ -6,12 +6,13 @@ use std::rc::Rc;
 
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitPolicyError,
-    CommitTypeCatalog, CommitWriter, CreateCommitError, ProjectConfig, ProjectLock, ProjectState,
-    ProjectStateStore, RepositoryLocator, RepositoryRoot, create_commit, resolve_project_lock,
+    CommitWriter, CreateCommitError, EffectiveDefinitions, ProjectConfig, ProjectLock,
+    ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot, create_commit,
+    resolve_project_lock,
 };
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitSubject, CommitTypeDefinition,
-    CommitTypeId, PropertyRequirement, PropertyValue, PropertyValues, SchemaVersion,
+    CommitTypeId, PropertyRequirement, PropertyValue, PropertyValues, SchemaVersion, TemplateId,
     built_in_commit_types,
 };
 
@@ -92,14 +93,13 @@ struct FakeCatalog {
     trace: Trace,
 }
 
-impl CommitTypeCatalog for FakeCatalog {
+impl EffectiveDefinitions for FakeCatalog {
     type Error = FakeError;
 
-    fn find(&self, _id: &CommitTypeId) -> Result<Option<CommitTypeDefinition>, Self::Error> {
-        Err(FakeError("unexpected find"))
-    }
-
-    fn list(&self) -> Result<Vec<CommitTypeDefinition>, Self::Error> {
+    fn for_template(
+        &self,
+        _template: &TemplateId,
+    ) -> Result<Vec<CommitTypeDefinition>, Self::Error> {
         self.trace.borrow_mut().push("catalog");
         if self.fail {
             Err(FakeError("catalog failed"))

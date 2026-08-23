@@ -7,6 +7,7 @@ mod configuration_catalog;
 mod configuration_crud;
 mod create_commit;
 mod directory_creator;
+mod effective_definitions;
 mod ensure_storage_directory;
 mod find_commit_type;
 mod fingerprint;
@@ -38,6 +39,7 @@ pub use create_commit::{
     CommitOutcome, CommitPolicyError, CreateCommitError, CreateCommitResult, create_commit,
 };
 pub use directory_creator::DirectoryCreator;
+pub use effective_definitions::EffectiveDefinitions;
 pub use ensure_storage_directory::ensure_storage_directory;
 pub use find_commit_type::find_commit_type;
 pub use fingerprint::{Fingerprint, FingerprintError};

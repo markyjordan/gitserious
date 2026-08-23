@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use gitserious_app::{
-    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitTypeCatalog, CommitWriter,
+    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitWriter, EffectiveDefinitions,
     ProjectConfig, ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
     resolve_project_lock,
 };
@@ -78,14 +78,13 @@ struct FakeCatalog {
     calls: Cell<usize>,
 }
 
-impl CommitTypeCatalog for FakeCatalog {
+impl EffectiveDefinitions for FakeCatalog {
     type Error = FakeError;
 
-    fn find(&self, _id: &CommitTypeId) -> Result<Option<CommitTypeDefinition>, Self::Error> {
-        Err(FakeError)
-    }
-
-    fn list(&self) -> Result<Vec<CommitTypeDefinition>, Self::Error> {
+    fn for_template(
+        &self,
+        _template: &gitserious_core::TemplateId,
+    ) -> Result<Vec<CommitTypeDefinition>, Self::Error> {
         self.calls.set(self.calls.get() + 1);
         Ok(built_in_commit_types().to_vec())
     }

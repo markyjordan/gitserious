@@ -7,7 +7,7 @@ use gitserious_core::{
 };
 
 use crate::{
-    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitTypeCatalog, CommitWriter,
+    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, EffectiveDefinitions, CommitWriter,
     Fingerprint, ProjectState, ProjectStateStore, RepositoryLocator, ResolveProjectPolicyError,
     fingerprint_commit_type_definition, resolve_project_lock,
 };
@@ -96,7 +96,7 @@ pub enum CreateCommitError<LocatorError, StoreError, CatalogError, AuthorError, 
     Store(StoreError),
     /// Current project policy is absent, stale, or unavailable.
     Policy(CommitPolicyError),
-    /// Effective commit-type catalog access failed.
+    /// The locked template's definitions could not be resolved.
     Catalog(CatalogError),
     /// Structured draft authoring failed.
     Author(AuthorError),
@@ -211,7 +211,7 @@ pub fn create_commit<L, S, C, A, W>(
 where
     L: RepositoryLocator + ?Sized,
     S: ProjectStateStore + ?Sized,
-    C: CommitTypeCatalog + ?Sized,
+    C: EffectiveDefinitions + ?Sized,
     A: CommitDraftAuthor + ?Sized,
     W: CommitWriter + ?Sized,
 {
@@ -239,9 +239,11 @@ where
         return Err(CreateCommitError::Policy(CommitPolicyError::StaleLock));
     }
 
-    let catalog_definitions = catalog.list().map_err(CreateCommitError::Catalog)?;
-    let definitions = resolve_locked_definitions(&lock, &catalog_definitions)
-        .map_err(CreateCommitError::Policy)?;
+    let available = catalog
+        .for_template(lock.template_reference())
+        .map_err(CreateCommitError::Catalog)?;
+    let definitions =
+        resolve_locked_definitions(&lock, &available).map_err(CreateCommitError::Policy)?;
     let preselected = requested_type
         .map(|requested| find_definition(&definitions, requested))
         .transpose()?;
