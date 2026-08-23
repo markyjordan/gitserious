@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use gitserious_app::{
-    ConfigurationCatalog, ProjectConfig, ProjectLock, ProjectState, ProjectStateStore,
-    RepositoryLocator, RepositoryRoot, UserConfiguration, UserConfigurationStore,
+    ConfigurationCatalog, CustomConfiguration, GlobalConfigurationStore, ProjectConfig,
+    ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
     fork_conventional,
 };
 use gitserious_cli::run_from;
@@ -68,31 +68,42 @@ impl ProjectStateStore for RecordingStore {
     ) -> Result<(), Self::Error> {
         Err(FakeError)
     }
+
+    fn compare_and_swap(
+        &self,
+        _root: &RepositoryRoot,
+        _current_config: &ProjectConfig,
+        _current_lock: &ProjectLock,
+        _replacement_config: &ProjectConfig,
+        _replacement_lock: &ProjectLock,
+    ) -> Result<(), Self::Error> {
+        Err(FakeError)
+    }
 }
 
 struct FakeUserStore {
-    configuration: RefCell<UserConfiguration>,
+    configuration: RefCell<CustomConfiguration>,
 }
 
 impl FakeUserStore {
     fn empty() -> Self {
         Self {
-            configuration: RefCell::new(UserConfiguration::default()),
+            configuration: RefCell::new(CustomConfiguration::default()),
         }
     }
 }
 
-impl UserConfigurationStore for FakeUserStore {
+impl GlobalConfigurationStore for FakeUserStore {
     type Error = FakeError;
 
-    fn load(&self) -> Result<UserConfiguration, Self::Error> {
+    fn load(&self) -> Result<CustomConfiguration, Self::Error> {
         Ok(self.configuration.borrow().clone())
     }
 
     fn compare_and_swap(
         &self,
-        expected: &UserConfiguration,
-        replacement: &UserConfiguration,
+        expected: &CustomConfiguration,
+        replacement: &CustomConfiguration,
     ) -> Result<(), Self::Error> {
         if *self.configuration.borrow() != *expected {
             return Err(FakeError);
@@ -225,9 +236,9 @@ fn list_and_show_include_user_forks() -> Result<(), Box<dyn Error>> {
 
     let (exit, stdout, _) = run(&["gitserious", "config", "list"], &configuration);
     assert_eq!(exit, ExitCode::SUCCESS);
-    assert!(stdout.contains("  ops  user v1"));
-    assert!(stdout.contains("  ops/baseline  user v1"));
-    assert!(stdout.contains("  platform  user v1  ops / baseline"));
+    assert!(stdout.contains("  ops  custom v1"));
+    assert!(stdout.contains("  ops/baseline  custom v1"));
+    assert!(stdout.contains("  platform  custom v1  ops / baseline"));
 
     let (_, _, stderr) = run(
         &["gitserious", "config", "show", "taxonomy", "ops"],

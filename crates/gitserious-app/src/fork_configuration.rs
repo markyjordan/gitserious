@@ -4,11 +4,11 @@ use gitserious_core::{
 };
 
 use crate::{
-    ConfigurationEdit, ConfigurationMutationError, UserConfigurationStore,
+    ConfigurationEdit, ConfigurationMutationError, GlobalConfigurationStore,
     apply_configuration_edits,
 };
 
-/// The user-owned identities minted by one built-in-configuration fork.
+/// The custom identities minted by one built-in-configuration fork.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ForkedConfiguration {
     template: TemplateId,
@@ -36,7 +36,7 @@ impl ForkedConfiguration {
     }
 }
 
-/// Copies the complete built-in Conventional chain into user-owned
+/// Copies the complete built-in Conventional chain into custom
 /// definitions under freshly chosen identities.
 ///
 /// The fork records one atomic batch: a taxonomy carrying every built-in
@@ -57,8 +57,24 @@ pub fn fork_conventional<S>(
     typeset: TypesetId,
 ) -> Result<ForkedConfiguration, ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
+    let edits = fork_conventional_edits(&template, &taxonomy, &typeset);
+    apply_configuration_edits(store, edits)?;
+    Ok(ForkedConfiguration {
+        template,
+        taxonomy,
+        typeset,
+    })
+}
+
+/// Builds the atomic edit batch for one editable Conventional fork.
+#[must_use]
+pub fn fork_conventional_edits(
+    template: &TemplateId,
+    taxonomy: &TaxonomyId,
+    typeset: &TypesetId,
+) -> Vec<ConfigurationEdit> {
     let built_in = built_in_configuration();
     let taxonomy_definition = TaxonomyDefinition::from_trusted(
         taxonomy.clone(),
@@ -81,17 +97,9 @@ where
         typeset.clone(),
     );
 
-    apply_configuration_edits(
-        store,
-        [
-            ConfigurationEdit::CreateTaxonomy(taxonomy_definition),
-            ConfigurationEdit::CreateTypeset(typeset_definition),
-            ConfigurationEdit::CreateTemplate(template_definition),
-        ],
-    )?;
-    Ok(ForkedConfiguration {
-        template,
-        taxonomy,
-        typeset,
-    })
+    vec![
+        ConfigurationEdit::CreateTaxonomy(taxonomy_definition),
+        ConfigurationEdit::CreateTypeset(typeset_definition),
+        ConfigurationEdit::CreateTemplate(template_definition),
+    ]
 }

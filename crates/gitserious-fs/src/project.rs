@@ -17,6 +17,11 @@ use gitserious_core::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::global_configuration::{
+    ConfigurationWire, CustomConfigurationFormatError, TaxonomyWire, TemplateWire, TypesetWire,
+    configuration_from_wire, configuration_to_wire,
+};
+
 const LOCAL_STATE_DIRECTORY: &str = ".gitserious";
 const LOCAL_IGNORE_FILE: &str = ".gitignore";
 const LOCAL_IGNORE_CONTENTS: &str = "*\n";
@@ -138,6 +143,113 @@ impl ProjectStateStore for TomlProjectStateStore {
         }
         Ok(())
     }
+
+    fn compare_and_swap(
+        &self,
+        root: &RepositoryRoot,
+        current_config: &ProjectConfig,
+        current_lock: &ProjectLock,
+        replacement_config: &ProjectConfig,
+        replacement_lock: &ProjectLock,
+    ) -> Result<(), Self::Error> {
+        let paths = ProjectPaths::new(root);
+        ensure_expected_project(&paths, current_config, current_lock)?;
+
+        let config_temporary = write_temporary_artifact(
+            root.as_path(),
+            CONFIG_FILE,
+            render_config(replacement_config)?.as_bytes(),
+        )?;
+        let lock_temporary = match write_temporary_artifact(
+            root.as_path(),
+            LOCK_FILE,
+            render_lock(replacement_lock)?.as_bytes(),
+        ) {
+            Ok(path) => path,
+            Err(error) => return Err(rollback_file(&config_temporary, error)),
+        };
+        let lock_backup = match write_temporary_artifact(
+            root.as_path(),
+            "gitserious.lock.rollback",
+            render_lock(current_lock)?.as_bytes(),
+        ) {
+            Ok(path) => path,
+            Err(error) => {
+                return Err(rollback_file(
+                    &lock_temporary,
+                    rollback_file(&config_temporary, error),
+                ));
+            }
+        };
+
+        if let Err(error) = ensure_expected_project(&paths, current_config, current_lock) {
+            return Err(cleanup_project_temporaries(
+                [&config_temporary, &lock_temporary, &lock_backup],
+                error,
+            ));
+        }
+        if let Err(source) = fs::rename(&lock_temporary, &paths.lock) {
+            return Err(cleanup_project_temporaries(
+                [&config_temporary, &lock_temporary, &lock_backup],
+                ProjectStateError::Io {
+                    operation: "replace",
+                    path: paths.lock,
+                    source,
+                },
+            ));
+        }
+        if let Err(source) = fs::rename(&config_temporary, &paths.config) {
+            let original = ProjectStateError::Io {
+                operation: "replace",
+                path: paths.config,
+                source,
+            };
+            if let Err(restore_source) = fs::rename(&lock_backup, &paths.lock) {
+                return Err(ProjectStateError::Rollback {
+                    original: Box::new(original),
+                    path: lock_backup,
+                    source: restore_source,
+                });
+            }
+            return Err(rollback_file(&config_temporary, original));
+        }
+        match fs::remove_file(&lock_backup) {
+            Ok(()) => Ok(()),
+            Err(source) => Err(ProjectStateError::Io {
+                operation: "remove",
+                path: lock_backup,
+                source,
+            }),
+        }
+    }
+}
+
+fn ensure_expected_project(
+    paths: &ProjectPaths,
+    config: &ProjectConfig,
+    lock: &ProjectLock,
+) -> Result<(), ProjectStateError> {
+    if !regular_file_exists(&paths.config)?
+        || !regular_file_exists(&paths.lock)?
+        || read_config(&paths.config)? != *config
+        || read_lock(&paths.lock)? != *lock
+    {
+        return Err(ProjectStateError::ConcurrentProjectChange {
+            config: paths.config.clone(),
+            lock: paths.lock.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn cleanup_project_temporaries<const N: usize>(
+    paths: [&Path; N],
+    mut original: ProjectStateError,
+) -> ProjectStateError {
+    for path in paths {
+        original = rollback_file(path, original);
+    }
+    original
 }
 
 struct ProjectPaths {
@@ -236,7 +348,7 @@ fn write_new_file(path: &Path, contents: &[u8]) -> Result<(), ProjectStateError>
     Ok(())
 }
 
-fn rollback_file(path: &Path, original: ProjectStateError) -> ProjectStateError {
+pub(crate) fn rollback_file(path: &Path, original: ProjectStateError) -> ProjectStateError {
     match fs::remove_file(path) {
         Ok(()) => original,
         Err(source) if source.kind() == io::ErrorKind::NotFound => original,
@@ -267,10 +379,18 @@ fn rollback_directory_if_created(
 }
 
 fn write_temporary_lock(directory: &Path, contents: &[u8]) -> Result<PathBuf, ProjectStateError> {
+    write_temporary_artifact(directory, LOCK_FILE, contents)
+}
+
+fn write_temporary_artifact(
+    directory: &Path,
+    artifact: &str,
+    contents: &[u8],
+) -> Result<PathBuf, ProjectStateError> {
     for _ in 0..100 {
         let sequence = TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let path = directory.join(format!(
-            ".{LOCK_FILE}.tmp.{}.{}",
+            ".{artifact}.tmp.{}.{}",
             std::process::id(),
             sequence
         ));
@@ -287,7 +407,7 @@ fn write_temporary_lock(directory: &Path, contents: &[u8]) -> Result<PathBuf, Pr
 
 fn read_config(path: &Path) -> Result<ProjectConfig, ProjectStateError> {
     let contents = read_utf8(path)?;
-    let wire = toml::from_str::<ConfigWire>(&contents).map_err(|source| {
+    let wire = toml::from_str::<ProjectConfigWire>(&contents).map_err(|source| {
         ProjectStateError::ConfigFormat {
             path: path.to_path_buf(),
             source: Box::new(ConfigFormatError::Toml(source)),
@@ -321,9 +441,13 @@ fn read_utf8(path: &Path) -> Result<String, ProjectStateError> {
 }
 
 fn render_config(config: &ProjectConfig) -> Result<String, ProjectStateError> {
-    let wire = ConfigWire {
-        config_version: config.version(),
+    let custom = configuration_to_wire(config.custom());
+    let wire = ProjectConfigWire {
+        config_version: custom.config_version,
         active_template: config.active_template().to_string(),
+        taxonomies: custom.taxonomies,
+        typesets: custom.typesets,
+        templates: custom.templates,
     };
     render_toml(&wire, ProjectArtifact::Config).map(ensure_line_ending)
 }
@@ -373,10 +497,18 @@ fn ensure_line_ending(mut value: String) -> String {
     value
 }
 
-fn config_from_wire(wire: ConfigWire) -> Result<ProjectConfig, ConfigFormatError> {
+fn config_from_wire(wire: ProjectConfigWire) -> Result<ProjectConfig, ConfigFormatError> {
     let active_template =
         TemplateId::new(wire.active_template).map_err(ConfigFormatError::TemplateId)?;
-    ProjectConfig::new(wire.config_version, active_template).map_err(ConfigFormatError::Config)
+    let version = wire.config_version;
+    let custom = configuration_from_wire(ConfigurationWire {
+        config_version: wire.config_version,
+        taxonomies: wire.taxonomies,
+        typesets: wire.typesets,
+        templates: wire.templates,
+    })
+    .map_err(ConfigFormatError::Custom)?;
+    ProjectConfig::new(version, active_template, custom).map_err(ConfigFormatError::Config)
 }
 
 fn lock_from_wire(wire: LockWire) -> Result<ProjectLock, LockFormatError> {
@@ -418,9 +550,12 @@ fn lock_from_wire(wire: LockWire) -> Result<ProjectLock, LockFormatError> {
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct ConfigWire {
+struct ProjectConfigWire {
     config_version: u16,
     active_template: String,
+    taxonomies: Vec<TaxonomyWire>,
+    typesets: Vec<TypesetWire>,
+    templates: Vec<TemplateWire>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -474,6 +609,8 @@ pub enum ConfigFormatError {
     Toml(toml::de::Error),
     /// The active template reference is not a valid domain identifier.
     TemplateId(IdentifierError),
+    /// One custom definition or aggregate is invalid.
+    Custom(CustomConfigurationFormatError),
     /// The configuration version is unsupported.
     Config(ProjectConfigError),
 }
@@ -483,6 +620,7 @@ impl Display for ConfigFormatError {
         match self {
             Self::Toml(error) => Display::fmt(error, formatter),
             Self::TemplateId(error) => Display::fmt(error, formatter),
+            Self::Custom(error) => Display::fmt(error, formatter),
             Self::Config(error) => Display::fmt(error, formatter),
         }
     }
@@ -493,6 +631,7 @@ impl Error for ConfigFormatError {
         match self {
             Self::Toml(error) => Some(error),
             Self::TemplateId(error) => Some(error),
+            Self::Custom(error) => Some(error),
             Self::Config(error) => Some(error),
         }
     }
@@ -619,6 +758,13 @@ pub enum ProjectStateError {
     },
     /// The lock changed between inspection and replacement.
     ConcurrentLockChange(PathBuf),
+    /// The project configuration or lock changed before pair replacement.
+    ConcurrentProjectChange {
+        /// Authored configuration path.
+        config: PathBuf,
+        /// Generated lock path.
+        lock: PathBuf,
+    },
     /// No exclusive temporary lock path could be reserved.
     TemporaryFileUnavailable(PathBuf),
     /// Cleanup of an invocation-created artifact failed.
@@ -678,6 +824,12 @@ impl Display for ProjectStateError {
                 "generated lock changed concurrently at {}; retry initialization",
                 path.display()
             ),
+            Self::ConcurrentProjectChange { config, lock } => write!(
+                formatter,
+                "project configuration changed concurrently at {} or {}; retry configuration",
+                config.display(),
+                lock.display()
+            ),
             Self::TemporaryFileUnavailable(path) => write!(
                 formatter,
                 "could not reserve a temporary lock file in {}; retry initialization",
@@ -709,6 +861,7 @@ impl Error for ProjectStateError {
             | Self::ExpectedFile(_)
             | Self::Collision(_)
             | Self::ConcurrentLockChange(_)
+            | Self::ConcurrentProjectChange { .. }
             | Self::TemporaryFileUnavailable(_) => None,
         }
     }

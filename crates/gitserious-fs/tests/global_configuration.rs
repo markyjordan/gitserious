@@ -2,24 +2,24 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use gitserious_app::{GlobalPaths, UserConfiguration, UserConfigurationStore};
+use gitserious_app::{CustomConfiguration, GlobalConfigurationStore, GlobalPaths};
 use gitserious_core::{
     ChangeTypeDefinition, ChangeTypeId, ChangeTypeSchema, ConditionId, Description,
     PropertyCondition, PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement,
     TaxonomyDefinition, TaxonomyId, TaxonomyVersion, TemplateDefinition, TemplateId,
     TemplateVersion, TypesetDefinition, TypesetId, TypesetVersion,
 };
-use gitserious_fs::{GlobalConfigurationError, TomlUserConfigurationStore};
+use gitserious_fs::{GlobalConfigurationError, TomlGlobalConfigurationStore};
 use tempfile::TempDir;
 
-fn store(root: &Path) -> TomlUserConfigurationStore {
+fn store(root: &Path) -> TomlGlobalConfigurationStore {
     let paths = GlobalPaths::new(
         root.join("config"),
         root.join("data"),
         root.join("state"),
         root.join("cache"),
     );
-    TomlUserConfigurationStore::new(paths.config().clone())
+    TomlGlobalConfigurationStore::new(paths.config().clone())
 }
 
 fn property(
@@ -35,7 +35,7 @@ fn property(
     )?)
 }
 
-fn sample_configuration() -> Result<UserConfiguration, Box<dyn Error>> {
+fn sample_configuration() -> Result<CustomConfiguration, Box<dyn Error>> {
     let taxonomy_id = TaxonomyId::new("custom")?;
     let taxonomy = TaxonomyDefinition::new(
         taxonomy_id.clone(),
@@ -88,7 +88,7 @@ fn sample_configuration() -> Result<UserConfiguration, Box<dyn Error>> {
         taxonomy_id,
         typeset.id().clone(),
     );
-    Ok(UserConfiguration::new(
+    Ok(CustomConfiguration::new(
         vec![taxonomy],
         vec![typeset],
         vec![template],
@@ -107,7 +107,7 @@ fn write_config(root: &Path, contents: &str) -> Result<PathBuf, Box<dyn Error>> 
 fn missing_configuration_loads_empty_without_creating_storage() -> Result<(), Box<dyn Error>> {
     let temporary = TempDir::new()?;
     let store = store(temporary.path());
-    assert_eq!(store.load()?, UserConfiguration::default());
+    assert_eq!(store.load()?, CustomConfiguration::default());
     assert!(!temporary.path().join("config").exists());
     assert_eq!(store.path(), temporary.path().join("config/config.toml"));
     Ok(())
@@ -118,7 +118,7 @@ fn compare_and_swap_creates_round_trips_and_replaces_complete_configuration()
 -> Result<(), Box<dyn Error>> {
     let temporary = TempDir::new()?;
     let store = store(temporary.path());
-    let expected = UserConfiguration::default();
+    let expected = CustomConfiguration::default();
     let replacement = sample_configuration()?;
     store.compare_and_swap(&expected, &replacement)?;
     assert_eq!(store.load()?, replacement);
@@ -137,8 +137,8 @@ fn compare_and_swap_creates_round_trips_and_replaces_complete_configuration()
             .all(|entry| !entry.file_name().to_string_lossy().contains(".tmp."))
     );
 
-    store.compare_and_swap(&replacement, &UserConfiguration::default())?;
-    assert_eq!(store.load()?, UserConfiguration::default());
+    store.compare_and_swap(&replacement, &CustomConfiguration::default())?;
+    assert_eq!(store.load()?, CustomConfiguration::default());
     Ok(())
 }
 
@@ -147,10 +147,12 @@ fn stale_expected_snapshots_are_rejected_without_overwrite() -> Result<(), Box<d
     let temporary = TempDir::new()?;
     let store = store(temporary.path());
     let replacement = sample_configuration()?;
-    store.compare_and_swap(&UserConfiguration::default(), &replacement)?;
+    store.compare_and_swap(&CustomConfiguration::default(), &replacement)?;
     let before = fs::read(store.path())?;
-    let result =
-        store.compare_and_swap(&UserConfiguration::default(), &UserConfiguration::default());
+    let result = store.compare_and_swap(
+        &CustomConfiguration::default(),
+        &CustomConfiguration::default(),
+    );
     assert!(matches!(
         result,
         Err(GlobalConfigurationError::ConcurrentChange(_))
@@ -169,7 +171,7 @@ fn strict_format_rejects_unknown_fields_unsupported_versions_and_invalid_values(
         ),
         (
             "config-version = 2\ntaxonomies = []\ntypesets = []\ntemplates = []\n",
-            "unsupported global config version 2",
+            "unsupported custom configuration version 2",
         ),
         (
             "config-version = 1\ntypesets = []\ntemplates = []\n[[taxonomies]]\nid = \"Bad\"\nversion = 1\ndescription = \"Bad.\"\nchange-types = [{ id = \"change\", description = \"Change.\" }]\n",
@@ -214,7 +216,7 @@ fn non_directory_configuration_roots_are_rejected_without_replacement() -> Resul
     fs::write(temporary.path().join("config"), "collision")?;
     let store = store(temporary.path());
     assert!(matches!(
-        store.compare_and_swap(&UserConfiguration::default(), &sample_configuration()?),
+        store.compare_and_swap(&CustomConfiguration::default(), &sample_configuration()?),
         Err(GlobalConfigurationError::ExpectedDirectory(_))
     ));
     assert_eq!(
@@ -244,7 +246,7 @@ fn symbolic_configuration_files_are_rejected_without_following_them() -> Result<
         Err(GlobalConfigurationError::Symlink(_))
     ));
     assert!(matches!(
-        store.compare_and_swap(&UserConfiguration::default(), &sample_configuration()?),
+        store.compare_and_swap(&CustomConfiguration::default(), &sample_configuration()?),
         Err(GlobalConfigurationError::Symlink(_))
     ));
     assert!(outside.exists());
@@ -258,7 +260,7 @@ fn new_configuration_directory_requests_private_unix_permissions() -> Result<(),
 
     let temporary = TempDir::new()?;
     let store = store(temporary.path());
-    store.compare_and_swap(&UserConfiguration::default(), &sample_configuration()?)?;
+    store.compare_and_swap(&CustomConfiguration::default(), &sample_configuration()?)?;
     let mode = fs::metadata(temporary.path().join("config"))?
         .permissions()
         .mode()

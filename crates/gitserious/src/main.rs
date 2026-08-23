@@ -2,11 +2,11 @@ use std::fmt::Display;
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-use gitserious_app::{load_effective_catalog, resolve_global_paths};
+use gitserious_app::resolve_global_paths;
 use gitserious_cli::CommitAdapters;
 use gitserious_fs::{
-    GitCommitWriter, GitRepositoryLocator, SystemGlobalPathResolver, TomlProjectStateStore,
-    TomlUserConfigurationStore,
+    GitCommitWriter, GitRepositoryLocator, SystemGlobalPathResolver, TomlGlobalConfigurationStore,
+    TomlProjectStateStore,
 };
 use gitserious_tui::RatatuiCommitDraftAuthor;
 
@@ -16,11 +16,7 @@ fn main() -> ExitCode {
         Ok(paths) => paths,
         Err(error) => return report(&mut stderr, &error),
     };
-    let configuration = TomlUserConfigurationStore::new(paths.config().clone());
-    if let Err(error) = load_effective_catalog(&configuration) {
-        return report(&mut stderr, &error);
-    }
-
+    let configuration = TomlGlobalConfigurationStore::new(paths.config().clone());
     let locator = GitRepositoryLocator;
     let store = TomlProjectStateStore;
     let author = RatatuiCommitDraftAuthor;

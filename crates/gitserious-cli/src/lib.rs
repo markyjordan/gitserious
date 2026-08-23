@@ -12,9 +12,10 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
-    InitOutcome, InitStatus, ProjectStateStore, RepositoryLocator, RepositoryRoot,
-    UserConfigurationStore, create_commit, delete_taxonomy, delete_template, delete_typeset,
-    fork_conventional, initialize_project, load_effective_catalog,
+    ConfigurationOrigin, GlobalConfigurationStore, InitOutcome, InitStatus, ProjectStateStore,
+    RepositoryLocator, RepositoryRoot, built_in_effective_catalog, create_commit, delete_taxonomy,
+    delete_template, delete_typeset, fork_conventional, initialize_project, load_effective_catalog,
+    template_origin,
 };
 use gitserious_core::{CommitMessage, CommitTypeDefinition, CommitTypeId, TemplateId};
 
@@ -68,7 +69,7 @@ enum ConfigAction {
         /// The entity identifier; typesets use TAXONOMY/TYPESET.
         identity: String,
     },
-    /// Copy the built-in Conventional chain under new user-owned identities.
+    /// Copy the built-in Conventional chain under new custom identities.
     Fork {
         /// The new reusable-template identifier.
         #[arg(long, value_name = "TEMPLATE")]
@@ -80,7 +81,7 @@ enum ConfigAction {
         #[arg(long, value_name = "TYPESET")]
         typeset: Option<String>,
     },
-    /// Remove one user-owned definition.
+    /// Remove one custom definition.
     Delete {
         /// The entity kind to remove.
         #[arg(value_enum)]
@@ -142,7 +143,7 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    U: UserConfigurationStore + ?Sized,
+    U: GlobalConfigurationStore + ?Sized,
     U::Error: Display,
     Out: Write + ?Sized,
     Err: Write + ?Sized,
@@ -179,7 +180,7 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    U: UserConfigurationStore + ?Sized,
+    U: GlobalConfigurationStore + ?Sized,
     U::Error: Display,
     A: CommitDraftAuthor + ?Sized,
     A::Error: Display,
@@ -229,7 +230,7 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    U: UserConfigurationStore + ?Sized,
+    U: GlobalConfigurationStore + ?Sized,
     U::Error: Display,
     Out: Write + ?Sized,
     Err: Write + ?Sized,
@@ -268,7 +269,7 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    U: UserConfigurationStore + ?Sized,
+    U: GlobalConfigurationStore + ?Sized,
     U::Error: Display,
     A: CommitDraftAuthor + ?Sized,
     A::Error: Display,
@@ -331,7 +332,7 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    U: UserConfigurationStore + ?Sized,
+    U: GlobalConfigurationStore + ?Sized,
     U::Error: Display,
     A: CommitDraftAuthor + ?Sized,
     A::Error: Display,
@@ -340,15 +341,10 @@ where
     Out: Write + ?Sized,
     Err: Write + ?Sized,
 {
-    let catalog = match load_effective_catalog(configuration) {
-        Ok(catalog) => catalog,
-        Err(error) => return write_operational_error(stderr, error),
-    };
     match &cli.command {
         Command::Commit { commit_type } => match create_commit(
             locator,
             store,
-            &catalog,
             commit.author,
             commit.writer,
             start,
@@ -358,44 +354,64 @@ where
             Err(error) => write_operational_error(stderr, error),
         },
         Command::Init { template } => {
+            let catalog = if template
+                .as_ref()
+                .is_some_and(|id| template_origin(id) == ConfigurationOrigin::Custom)
+            {
+                match load_effective_catalog(configuration) {
+                    Ok(catalog) => catalog,
+                    Err(error) => return write_operational_error(stderr, error),
+                }
+            } else {
+                match built_in_effective_catalog() {
+                    Ok(catalog) => catalog,
+                    Err(error) => return write_operational_error(stderr, error),
+                }
+            };
             match initialize_project(locator, store, &catalog, template.as_ref(), start) {
                 Ok(outcome) => write_init_outcome(stdout, &outcome),
                 Err(error) => write_operational_error(stderr, error),
             }
         }
-        Command::Config { action } => match action {
-            ConfigAction::List { kind } => write_config_list(
-                stdout,
-                &catalog,
-                kind.map(config_view::ConfigurationKind::from),
-            ),
-            ConfigAction::Show { kind, identity } => write_config_show(
-                stdout,
-                stderr,
-                &catalog,
-                config_view::ConfigurationKind::from(*kind),
-                identity,
-            ),
-            ConfigAction::Fork {
-                template,
-                taxonomy,
-                typeset,
-            } => write_config_fork(
-                stdout,
-                stderr,
-                configuration,
-                template.as_str(),
-                taxonomy.as_deref(),
-                typeset.as_deref(),
-            ),
-            ConfigAction::Delete { kind, identity } => write_config_delete(
-                stdout,
-                stderr,
-                configuration,
-                config_view::ConfigurationKind::from(*kind),
-                identity,
-            ),
-        },
+        Command::Config { action } => {
+            let catalog = match load_effective_catalog(configuration) {
+                Ok(catalog) => catalog,
+                Err(error) => return write_operational_error(stderr, error),
+            };
+            match action {
+                ConfigAction::List { kind } => write_config_list(
+                    stdout,
+                    &catalog,
+                    kind.map(config_view::ConfigurationKind::from),
+                ),
+                ConfigAction::Show { kind, identity } => write_config_show(
+                    stdout,
+                    stderr,
+                    &catalog,
+                    config_view::ConfigurationKind::from(*kind),
+                    identity,
+                ),
+                ConfigAction::Fork {
+                    template,
+                    taxonomy,
+                    typeset,
+                } => write_config_fork(
+                    stdout,
+                    stderr,
+                    configuration,
+                    template.as_str(),
+                    taxonomy.as_deref(),
+                    typeset.as_deref(),
+                ),
+                ConfigAction::Delete { kind, identity } => write_config_delete(
+                    stdout,
+                    stderr,
+                    configuration,
+                    config_view::ConfigurationKind::from(*kind),
+                    identity,
+                ),
+            }
+        }
     }
 }
 
@@ -416,7 +432,7 @@ fn write_config_fork<U>(
     typeset_text: Option<&str>,
 ) -> ExitCode
 where
-    U: UserConfigurationStore + ?Sized,
+    U: GlobalConfigurationStore + ?Sized,
     U::Error: Display,
 {
     let template = match parse_identifier(template_text, "template", |text| TemplateId::new(text)) {
@@ -466,7 +482,7 @@ fn write_config_delete<U>(
     identity: &str,
 ) -> ExitCode
 where
-    U: UserConfigurationStore + ?Sized,
+    U: GlobalConfigurationStore + ?Sized,
     U::Error: Display,
 {
     use config_view::ConfigurationKind;

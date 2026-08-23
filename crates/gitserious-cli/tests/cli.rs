@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use gitserious_app::{
-    ProjectConfig, ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
-    UserConfiguration, UserConfigurationStore,
+    CustomConfiguration, GlobalConfigurationStore, ProjectConfig, ProjectLock, ProjectState,
+    ProjectStateStore, RepositoryLocator, RepositoryRoot,
 };
 use gitserious_cli::run_from;
 
@@ -76,27 +76,38 @@ impl ProjectStateStore for RecordingStore {
     ) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    fn compare_and_swap(
+        &self,
+        _root: &RepositoryRoot,
+        _current_config: &ProjectConfig,
+        _current_lock: &ProjectLock,
+        _replacement_config: &ProjectConfig,
+        _replacement_lock: &ProjectLock,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 struct FakeUserStore {
     error: bool,
 }
 
-impl UserConfigurationStore for FakeUserStore {
+impl GlobalConfigurationStore for FakeUserStore {
     type Error = FakeError;
 
-    fn load(&self) -> Result<UserConfiguration, Self::Error> {
+    fn load(&self) -> Result<CustomConfiguration, Self::Error> {
         if self.error {
             Err(FakeError)
         } else {
-            Ok(UserConfiguration::default())
+            Ok(CustomConfiguration::default())
         }
     }
 
     fn compare_and_swap(
         &self,
-        _expected: &UserConfiguration,
-        _replacement: &UserConfiguration,
+        _expected: &CustomConfiguration,
+        _replacement: &CustomConfiguration,
     ) -> Result<(), Self::Error> {
         Err(FakeError)
     }
@@ -154,6 +165,28 @@ fn init_dispatches_and_reports_the_exact_resolution() {
             .map(|(_, lock)| lock.resolved_template().commit_types().len()),
         Some(11)
     );
+}
+
+#[test]
+fn default_init_does_not_load_unavailable_global_configuration() {
+    let store = RecordingStore::default();
+    let configuration = FakeUserStore { error: true };
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit = run_from(
+        ["gitserious", "init"],
+        &repository_path(),
+        &FakeLocator { error: false },
+        &store,
+        &configuration,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(exit, ExitCode::SUCCESS);
+    assert!(String::from_utf8_lossy(&stdout).contains("default -> conventional@1"));
+    assert!(stderr.is_empty());
+    assert!(store.initialized.borrow().is_some());
 }
 
 #[test]

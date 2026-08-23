@@ -5,9 +5,10 @@ use std::path::Path;
 use gitserious_core::{IdentifierError, TemplateId, TemplateVersion};
 
 use crate::{
-    ConfigurationCatalog, PROJECT_CONFIG_VERSION, ProjectConfig, ProjectConfigError, ProjectState,
-    ProjectStateStore, RepositoryLocator, RepositoryRoot, ResolveProjectPolicyError,
-    resolve_project_lock,
+    ConfigurationCatalog, ConfigurationCatalogError, ConfigurationOrigin, CustomConfiguration,
+    CustomConfigurationError, PROJECT_CONFIG_VERSION, ProjectConfig, ProjectConfigError,
+    ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot, ResolveProjectPolicyError,
+    resolve_project_lock, taxonomy_origin, template_origin, typeset_origin,
 };
 
 /// The state transition performed by project initialization.
@@ -76,6 +77,8 @@ pub enum InitializeProjectError<LocatorError, StoreError> {
     InvalidDefaultReference(IdentifierError),
     /// The requested fresh-policy template violated configuration rules.
     InvalidTemplate(ProjectConfigError),
+    /// Selected custom definitions could not form a project snapshot.
+    InvalidCustom(CustomConfigurationError),
     /// Authored policy could not be resolved.
     Policy(ResolveProjectPolicyError),
     /// A generated lock exists without authored configuration.
@@ -93,6 +96,7 @@ where
             Self::Store(error) => Display::fmt(error, formatter),
             Self::InvalidDefaultReference(error) => Display::fmt(error, formatter),
             Self::InvalidTemplate(error) => Display::fmt(error, formatter),
+            Self::InvalidCustom(error) => Display::fmt(error, formatter),
             Self::Policy(error) => Display::fmt(error, formatter),
             Self::OrphanLock => formatter.write_str(
                 "gitserious.lock exists without gitserious.toml; restore or remove the orphan lock",
@@ -112,6 +116,7 @@ where
             Self::Store(error) => Some(error),
             Self::InvalidDefaultReference(error) => Some(error),
             Self::InvalidTemplate(error) => Some(error),
+            Self::InvalidCustom(error) => Some(error),
             Self::Policy(error) => Some(error),
             Self::OrphanLock => None,
         }
@@ -148,8 +153,7 @@ where
     let (status, config, existing_lock) = match state {
         ProjectState::Absent => {
             let config = match template {
-                Some(template) => ProjectConfig::new(PROJECT_CONFIG_VERSION, template.clone())
-                    .map_err(InitializeProjectError::InvalidTemplate)?,
+                Some(template) => project_config_from_catalog(catalog, template)?,
                 None => ProjectConfig::default_channel()
                     .map_err(InitializeProjectError::InvalidDefaultReference)?,
             };
@@ -162,8 +166,7 @@ where
         ProjectState::LockOnly => return Err(InitializeProjectError::OrphanLock),
     };
 
-    let expected_lock =
-        resolve_project_lock(&config, catalog).map_err(InitializeProjectError::Policy)?;
+    let expected_lock = resolve_project_lock(&config).map_err(InitializeProjectError::Policy)?;
     store
         .ensure_local_state(&root)
         .map_err(InitializeProjectError::Store)?;
@@ -200,4 +203,57 @@ where
         resolved_template: resolved.id().clone(),
         resolved_version: resolved.version(),
     })
+}
+
+fn project_config_from_catalog<LocatorError, StoreError>(
+    catalog: &ConfigurationCatalog,
+    selected: &TemplateId,
+) -> Result<ProjectConfig, InitializeProjectError<LocatorError, StoreError>> {
+    catalog.resolve(selected).map_err(|error| {
+        InitializeProjectError::Policy(match error {
+            ConfigurationCatalogError::UnknownTemplate(id) => {
+                ResolveProjectPolicyError::UnknownTemplate(id)
+            }
+            other => ResolveProjectPolicyError::Catalog(other),
+        })
+    })?;
+    let template = catalog.find_template(selected).ok_or_else(|| {
+        InitializeProjectError::Policy(ResolveProjectPolicyError::UnknownTemplate(selected.clone()))
+    })?;
+    let taxonomy = catalog.find_taxonomy(template.taxonomy()).ok_or_else(|| {
+        InitializeProjectError::Policy(ResolveProjectPolicyError::Catalog(
+            ConfigurationCatalogError::UnknownTemplateTaxonomy {
+                template: template.id().clone(),
+                taxonomy: template.taxonomy().clone(),
+            },
+        ))
+    })?;
+    let typeset = catalog
+        .find_typeset(template.taxonomy(), template.typeset())
+        .ok_or_else(|| {
+            InitializeProjectError::Policy(ResolveProjectPolicyError::Catalog(
+                ConfigurationCatalogError::UnknownTemplateTypeset {
+                    template: template.id().clone(),
+                    taxonomy: template.taxonomy().clone(),
+                    typeset: template.typeset().clone(),
+                },
+            ))
+        })?;
+    let custom = CustomConfiguration::new(
+        (taxonomy_origin(taxonomy.id()) == ConfigurationOrigin::Custom)
+            .then(|| taxonomy.clone())
+            .into_iter()
+            .collect(),
+        (typeset_origin(typeset.taxonomy(), typeset.id()) == ConfigurationOrigin::Custom)
+            .then(|| typeset.clone())
+            .into_iter()
+            .collect(),
+        (template_origin(template.id()) == ConfigurationOrigin::Custom)
+            .then(|| template.clone())
+            .into_iter()
+            .collect(),
+    )
+    .map_err(InitializeProjectError::InvalidCustom)?;
+    ProjectConfig::new(PROJECT_CONFIG_VERSION, selected.clone(), custom)
+        .map_err(InitializeProjectError::InvalidTemplate)
 }

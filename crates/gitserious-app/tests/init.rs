@@ -4,16 +4,17 @@ use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
 use gitserious_app::{
-    ConfigurationCatalog, ConfigurationCatalogError, Fingerprint, InitStatus,
+    ConfigurationCatalog, ConfigurationCatalogError, CustomConfiguration, Fingerprint, InitStatus,
     InitializeProjectError, ProjectConfig, ProjectLock, ProjectState, ProjectStateStore,
     RepositoryLocator, RepositoryRoot, built_in_effective_catalog,
     fingerprint_commit_message_template, fingerprint_commit_type_definition,
     fingerprint_project_config, initialize_project, resolve_project_lock,
 };
 use gitserious_core::{
-    CommitMessageTemplateDefinition, CommitTypeDefinition, CommitTypeId, ConditionId,
+    CommitMessageTemplateDefinition, CommitTypeDefinition, CommitTypeId, ConditionId, Description,
     PropertyCondition, PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement,
-    SchemaVersion, TemplateId, TemplateVersion, default_commit_message_template,
+    SchemaVersion, TemplateDefinition, TemplateId, TemplateVersion, built_in_configuration,
+    default_commit_message_template,
 };
 
 fn catalog() -> Result<ConfigurationCatalog, ConfigurationCatalogError> {
@@ -153,11 +154,22 @@ impl ProjectStateStore for FakeStore {
             .push(StoreCall::ReplaceLock(current.clone(), replacement.clone()));
         self.maybe_fail(FakeError::ReplaceLock)
     }
+
+    fn compare_and_swap(
+        &self,
+        _root: &RepositoryRoot,
+        _current_config: &ProjectConfig,
+        _current_lock: &ProjectLock,
+        _replacement_config: &ProjectConfig,
+        _replacement_lock: &ProjectLock,
+    ) -> Result<(), Self::Error> {
+        Err(FakeError::ReplaceLock)
+    }
 }
 
 fn default_config_and_lock() -> Result<(ProjectConfig, ProjectLock), Box<dyn Error>> {
     let config = ProjectConfig::default_channel()?;
-    let lock = resolve_project_lock(&config, &built_in_effective_catalog()?)?;
+    let lock = resolve_project_lock(&config)?;
     Ok((config, lock))
 }
 
@@ -286,7 +298,11 @@ fn orphan_lock_is_refused_without_a_write() -> Result<(), Box<dyn Error>> {
 #[test]
 fn unknown_authored_template_is_refused_without_a_write() -> Result<(), Box<dyn Error>> {
     let locator = FakeLocator::available()?;
-    let config = ProjectConfig::new(1, TemplateId::new("custom")?)?;
+    let config = ProjectConfig::new(
+        1,
+        TemplateId::new("custom")?,
+        CustomConfiguration::default(),
+    )?;
     let store = FakeStore::new(ProjectState::ConfigOnly(config));
 
     let error = initialize_project(&locator, &store, &catalog()?, None, &repository_path()).err();
@@ -498,13 +514,17 @@ fn config_and_template_fingerprints_are_stable_and_order_sensitive() -> Result<(
     let (config, lock) = default_config_and_lock()?;
     assert_eq!(
         fingerprint_project_config(&config).to_string(),
-        "sha256:ba52b4dcc570a13786c68f61063bb45bebd1b08fe7fedc6d3e04bd94e1fddce1"
+        "sha256:e42b105788a902758375a4fa48d875a753a7954c654e8bc8bfc13456d1e95f98"
     );
     assert_eq!(
         fingerprint_commit_message_template(default_commit_message_template()).to_string(),
         lock.resolved_template().fingerprint().to_string()
     );
-    let custom_config = ProjectConfig::new(1, TemplateId::new("custom")?)?;
+    let custom_config = ProjectConfig::new(
+        1,
+        TemplateId::new("custom")?,
+        CustomConfiguration::default(),
+    )?;
     assert_ne!(
         fingerprint_project_config(&config),
         fingerprint_project_config(&custom_config)
@@ -547,9 +567,36 @@ fn config_and_template_fingerprints_are_stable_and_order_sensitive() -> Result<(
 }
 
 #[test]
+fn project_fingerprint_covers_inactive_custom_definitions() -> Result<(), Box<dyn Error>> {
+    let built_in = built_in_configuration();
+    let template = |description: &str| -> Result<TemplateDefinition, Box<dyn Error>> {
+        Ok(TemplateDefinition::new(
+            TemplateId::new("inactive")?,
+            TemplateVersion::V1,
+            Description::new(description)?,
+            built_in.taxonomy().id().clone(),
+            built_in.typeset().id().clone(),
+        ))
+    };
+    let config = |description: &str| -> Result<ProjectConfig, Box<dyn Error>> {
+        Ok(ProjectConfig::new(
+            1,
+            built_in.template().id().clone(),
+            CustomConfiguration::new(vec![], vec![], vec![template(description)?])?,
+        )?)
+    };
+
+    assert_ne!(
+        fingerprint_project_config(&config("First inactive description.")?),
+        fingerprint_project_config(&config("Changed inactive description.")?)
+    );
+    Ok(())
+}
+
+#[test]
 fn resolved_default_lock_is_exact_and_deterministic() -> Result<(), Box<dyn Error>> {
     let (config, first) = default_config_and_lock()?;
-    let second = resolve_project_lock(&config, &built_in_effective_catalog()?)?;
+    let second = resolve_project_lock(&config)?;
 
     assert_eq!(first, second);
     assert_eq!(first.version(), 1);

@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use gitserious_app::{
-    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitWriter, ProjectConfig,
-    ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
-    UserConfiguration, UserConfigurationStore, built_in_effective_catalog, resolve_project_lock,
+    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitWriter, CustomConfiguration,
+    GlobalConfigurationStore, ProjectConfig, ProjectLock, ProjectState, ProjectStateStore,
+    RepositoryLocator, RepositoryRoot, resolve_project_lock,
 };
 use gitserious_cli::{CommitAdapters, run_from_with_commit};
 use gitserious_core::{
@@ -69,6 +69,17 @@ impl ProjectStateStore for FakeStore {
         _root: &RepositoryRoot,
         _current: &ProjectLock,
         _replacement: &ProjectLock,
+    ) -> Result<(), Self::Error> {
+        Err(FakeError)
+    }
+
+    fn compare_and_swap(
+        &self,
+        _root: &RepositoryRoot,
+        _current_config: &ProjectConfig,
+        _current_lock: &ProjectLock,
+        _replacement_config: &ProjectConfig,
+        _replacement_lock: &ProjectLock,
     ) -> Result<(), Self::Error> {
         Err(FakeError)
     }
@@ -136,17 +147,17 @@ impl CommitWriter for FakeWriter {
 
 struct FakeUserStore;
 
-impl UserConfigurationStore for FakeUserStore {
+impl GlobalConfigurationStore for FakeUserStore {
     type Error = FakeError;
 
-    fn load(&self) -> Result<UserConfiguration, Self::Error> {
-        Ok(UserConfiguration::default())
+    fn load(&self) -> Result<CustomConfiguration, Self::Error> {
+        Err(FakeError)
     }
 
     fn compare_and_swap(
         &self,
-        _expected: &UserConfiguration,
-        _replacement: &UserConfiguration,
+        _expected: &CustomConfiguration,
+        _replacement: &CustomConfiguration,
     ) -> Result<(), Self::Error> {
         Err(FakeError)
     }
@@ -158,7 +169,7 @@ fn repository_path() -> PathBuf {
 
 fn initialized_state() -> Result<ProjectState, Box<dyn Error>> {
     let config = ProjectConfig::default_channel()?;
-    let lock = resolve_project_lock(&config, &built_in_effective_catalog()?)?;
+    let lock = resolve_project_lock(&config)?;
     Ok(ProjectState::Initialized { config, lock })
 }
 

@@ -3,6 +3,8 @@ use std::fmt::{self, Display, Formatter};
 
 use gitserious_core::{IdentifierError, TemplateId};
 
+use crate::CustomConfiguration;
+
 /// The only project-configuration format understood by this release.
 pub const PROJECT_CONFIG_VERSION: u16 = 1;
 
@@ -11,6 +13,7 @@ pub const PROJECT_CONFIG_VERSION: u16 = 1;
 pub struct ProjectConfig {
     version: u16,
     active_template: TemplateId,
+    custom: CustomConfiguration,
 }
 
 impl ProjectConfig {
@@ -19,13 +22,18 @@ impl ProjectConfig {
     /// # Errors
     ///
     /// Returns [`ProjectConfigError`] when the format version is unsupported.
-    pub fn new(version: u16, active_template: TemplateId) -> Result<Self, ProjectConfigError> {
+    pub fn new(
+        version: u16,
+        active_template: TemplateId,
+        custom: CustomConfiguration,
+    ) -> Result<Self, ProjectConfigError> {
         if version != PROJECT_CONFIG_VERSION {
             return Err(ProjectConfigError::UnsupportedVersion(version));
         }
         Ok(Self {
             version,
             active_template,
+            custom,
         })
     }
 
@@ -40,6 +48,7 @@ impl ProjectConfig {
         Ok(Self {
             version: PROJECT_CONFIG_VERSION,
             active_template,
+            custom: CustomConfiguration::default(),
         })
     }
 
@@ -53,6 +62,12 @@ impl ProjectConfig {
     #[must_use]
     pub const fn active_template(&self) -> &TemplateId {
         &self.active_template
+    }
+
+    /// Returns the project-owned custom definitions.
+    #[must_use]
+    pub const fn custom(&self) -> &CustomConfiguration {
+        &self.custom
     }
 }
 

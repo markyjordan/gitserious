@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use gitserious_app::{
-    DirectoryCreator, StorageDirectory, USER_CONFIGURATION_VERSION, UserConfiguration,
-    UserConfigurationStore,
+    CUSTOM_CONFIGURATION_VERSION, CustomConfiguration, DirectoryCreator, GlobalConfigurationStore,
+    StorageDirectory,
 };
 use gitserious_core::{
     ChangeTypeDefinition, ChangeTypeId, ChangeTypeSchema, ConditionId, Description,
@@ -24,11 +24,11 @@ static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Strict TOML adapter for global reusable taxonomy configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TomlUserConfigurationStore {
+pub struct TomlGlobalConfigurationStore {
     directory: StorageDirectory,
 }
 
-impl TomlUserConfigurationStore {
+impl TomlGlobalConfigurationStore {
     /// Creates a store beneath a platform-resolved global config directory.
     #[must_use]
     pub const fn new(directory: StorageDirectory) -> Self {
@@ -42,17 +42,17 @@ impl TomlUserConfigurationStore {
     }
 }
 
-impl UserConfigurationStore for TomlUserConfigurationStore {
+impl GlobalConfigurationStore for TomlGlobalConfigurationStore {
     type Error = GlobalConfigurationError;
 
-    fn load(&self) -> Result<UserConfiguration, Self::Error> {
+    fn load(&self) -> Result<CustomConfiguration, Self::Error> {
         read_configuration(&self.path())
     }
 
     fn compare_and_swap(
         &self,
-        expected: &UserConfiguration,
-        replacement: &UserConfiguration,
+        expected: &CustomConfiguration,
+        replacement: &CustomConfiguration,
     ) -> Result<(), Self::Error> {
         ensure_config_directory(&self.directory)?;
         let path = self.path();
@@ -105,7 +105,7 @@ fn ensure_config_directory(directory: &StorageDirectory) -> Result<(), GlobalCon
     }
 }
 
-fn read_configuration(path: &Path) -> Result<UserConfiguration, GlobalConfigurationError> {
+fn read_configuration(path: &Path) -> Result<CustomConfiguration, GlobalConfigurationError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
             return Err(GlobalConfigurationError::Symlink(path.to_path_buf()));
@@ -115,7 +115,7 @@ fn read_configuration(path: &Path) -> Result<UserConfiguration, GlobalConfigurat
         }
         Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(UserConfiguration::default());
+            return Ok(CustomConfiguration::default());
         }
         Err(source) => {
             return Err(GlobalConfigurationError::Io {
@@ -133,7 +133,7 @@ fn read_configuration(path: &Path) -> Result<UserConfiguration, GlobalConfigurat
     let wire = toml::from_str::<ConfigurationWire>(&contents).map_err(|source| {
         GlobalConfigurationError::Format {
             path: path.to_path_buf(),
-            source: Box::new(GlobalConfigurationFormatError::Toml(source)),
+            source: Box::new(CustomConfigurationFormatError::Toml(source)),
         }
     })?;
     configuration_from_wire(wire).map_err(|source| GlobalConfigurationError::Format {
@@ -143,7 +143,7 @@ fn read_configuration(path: &Path) -> Result<UserConfiguration, GlobalConfigurat
 }
 
 fn render_configuration(
-    configuration: &UserConfiguration,
+    configuration: &CustomConfiguration,
 ) -> Result<String, GlobalConfigurationError> {
     let wire = configuration_to_wire(configuration);
     let mut rendered =
@@ -218,16 +218,16 @@ fn rollback_file(path: &Path, original: GlobalConfigurationError) -> GlobalConfi
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct ConfigurationWire {
-    config_version: u16,
-    taxonomies: Vec<TaxonomyWire>,
-    typesets: Vec<TypesetWire>,
-    templates: Vec<TemplateWire>,
+pub(crate) struct ConfigurationWire {
+    pub(crate) config_version: u16,
+    pub(crate) taxonomies: Vec<TaxonomyWire>,
+    pub(crate) typesets: Vec<TypesetWire>,
+    pub(crate) templates: Vec<TemplateWire>,
 }
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct TaxonomyWire {
+pub(crate) struct TaxonomyWire {
     id: String,
     version: u16,
     description: String,
@@ -243,7 +243,7 @@ struct ChangeTypeWire {
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct TypesetWire {
+pub(crate) struct TypesetWire {
     taxonomy: String,
     id: String,
     version: u16,
@@ -288,7 +288,7 @@ enum RequirementWire {
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct TemplateWire {
+pub(crate) struct TemplateWire {
     id: String,
     version: u16,
     description: String,
@@ -296,11 +296,11 @@ struct TemplateWire {
     typeset: String,
 }
 
-fn configuration_from_wire(
+pub(crate) fn configuration_from_wire(
     wire: ConfigurationWire,
-) -> Result<UserConfiguration, GlobalConfigurationFormatError> {
-    if wire.config_version != USER_CONFIGURATION_VERSION {
-        return Err(GlobalConfigurationFormatError::UnsupportedVersion(
+) -> Result<CustomConfiguration, CustomConfigurationFormatError> {
+    if wire.config_version != CUSTOM_CONFIGURATION_VERSION {
+        return Err(CustomConfigurationFormatError::UnsupportedVersion(
             wire.config_version,
         ));
     }
@@ -322,14 +322,14 @@ fn configuration_from_wire(
         .enumerate()
         .map(|(index, template)| template_from_wire(index, template))
         .collect::<Result<Vec<_>, _>>()?;
-    UserConfiguration::new(taxonomies, typesets, templates)
+    CustomConfiguration::new(taxonomies, typesets, templates)
         .map_err(|error| value_error("configuration", error))
 }
 
 fn taxonomy_from_wire(
     index: usize,
     wire: TaxonomyWire,
-) -> Result<TaxonomyDefinition, GlobalConfigurationFormatError> {
+) -> Result<TaxonomyDefinition, CustomConfigurationFormatError> {
     let location = format!("taxonomies[{index}]");
     let id =
         TaxonomyId::new(wire.id).map_err(|error| value_error(format!("{location}.id"), error))?;
@@ -349,7 +349,7 @@ fn taxonomy_from_wire(
                 .map_err(|error| value_error(format!("{change_location}.description"), error))?;
             Ok(ChangeTypeDefinition::new(id, description))
         })
-        .collect::<Result<Vec<_>, GlobalConfigurationFormatError>>()?;
+        .collect::<Result<Vec<_>, CustomConfigurationFormatError>>()?;
     TaxonomyDefinition::new(id, version, description, change_types)
         .map_err(|error| value_error(location, error))
 }
@@ -357,7 +357,7 @@ fn taxonomy_from_wire(
 fn typeset_from_wire(
     index: usize,
     wire: TypesetWire,
-) -> Result<TypesetDefinition, GlobalConfigurationFormatError> {
+) -> Result<TypesetDefinition, CustomConfigurationFormatError> {
     let location = format!("typesets[{index}]");
     let taxonomy = TaxonomyId::new(wire.taxonomy)
         .map_err(|error| value_error(format!("{location}.taxonomy"), error))?;
@@ -382,7 +382,7 @@ fn typeset_from_wire(
 fn schema_from_wire(
     location: String,
     wire: ChangeTypeSchemaWire,
-) -> Result<ChangeTypeSchema, GlobalConfigurationFormatError> {
+) -> Result<ChangeTypeSchema, CustomConfigurationFormatError> {
     let change_type = ChangeTypeId::new(wire.change_type)
         .map_err(|error| value_error(format!("{location}.change-type"), error))?;
     let properties = wire
@@ -399,7 +399,7 @@ fn schema_from_wire(
 fn property_from_wire(
     location: String,
     wire: PropertyWire,
-) -> Result<PropertyDefinition, GlobalConfigurationFormatError> {
+) -> Result<PropertyDefinition, CustomConfigurationFormatError> {
     let key = PropertyKey::new(wire.key)
         .map_err(|error| value_error(format!("{location}.key"), error))?;
     let requirement = requirement_from_wire(&location, wire.requirement)?;
@@ -414,7 +414,7 @@ fn property_from_wire(
 fn requirement_from_wire(
     location: &str,
     wire: RequirementWire,
-) -> Result<PropertyRequirement, GlobalConfigurationFormatError> {
+) -> Result<PropertyRequirement, CustomConfigurationFormatError> {
     Ok(match wire {
         RequirementWire::Required => PropertyRequirement::Required,
         RequirementWire::Recommended => PropertyRequirement::Recommended,
@@ -435,7 +435,7 @@ fn requirement_from_wire(
 fn template_from_wire(
     index: usize,
     wire: TemplateWire,
-) -> Result<TemplateDefinition, GlobalConfigurationFormatError> {
+) -> Result<TemplateDefinition, CustomConfigurationFormatError> {
     let location = format!("templates[{index}]");
     let id =
         TemplateId::new(wire.id).map_err(|error| value_error(format!("{location}.id"), error))?;
@@ -456,9 +456,9 @@ fn template_from_wire(
     ))
 }
 
-fn configuration_to_wire(configuration: &UserConfiguration) -> ConfigurationWire {
+pub(crate) fn configuration_to_wire(configuration: &CustomConfiguration) -> ConfigurationWire {
     ConfigurationWire {
-        config_version: USER_CONFIGURATION_VERSION,
+        config_version: CUSTOM_CONFIGURATION_VERSION,
         taxonomies: configuration
             .taxonomies()
             .iter()
@@ -544,8 +544,8 @@ fn template_to_wire(template: &TemplateDefinition) -> TemplateWire {
 fn value_error(
     location: impl Into<String>,
     source: impl Error + Send + Sync + 'static,
-) -> GlobalConfigurationFormatError {
-    GlobalConfigurationFormatError::Value {
+) -> CustomConfigurationFormatError {
+    CustomConfigurationFormatError::Value {
         location: location.into(),
         source: Box::new(source),
     }
@@ -553,7 +553,7 @@ fn value_error(
 
 /// Failure to decode the strict global configuration format.
 #[derive(Debug)]
-pub enum GlobalConfigurationFormatError {
+pub enum CustomConfigurationFormatError {
     /// TOML syntax or shape is invalid.
     Toml(toml::de::Error),
     /// The file declares an unsupported format version.
@@ -567,19 +567,22 @@ pub enum GlobalConfigurationFormatError {
     },
 }
 
-impl Display for GlobalConfigurationFormatError {
+impl Display for CustomConfigurationFormatError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Toml(error) => Display::fmt(error, formatter),
             Self::UnsupportedVersion(version) => {
-                write!(formatter, "unsupported global config version {version}")
+                write!(
+                    formatter,
+                    "unsupported custom configuration version {version}"
+                )
             }
             Self::Value { location, source } => write!(formatter, "invalid {location}: {source}"),
         }
     }
 }
 
-impl Error for GlobalConfigurationFormatError {
+impl Error for CustomConfigurationFormatError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Toml(error) => Some(error),
@@ -589,7 +592,7 @@ impl Error for GlobalConfigurationFormatError {
     }
 }
 
-/// Failure to read or atomically replace global user configuration.
+/// Failure to read or atomically replace global custom configuration.
 #[derive(Debug)]
 pub enum GlobalConfigurationError {
     /// An operating-system filesystem operation failed.
@@ -614,7 +617,7 @@ pub enum GlobalConfigurationError {
         /// Invalid configuration path.
         path: PathBuf,
         /// Exact format failure.
-        source: Box<GlobalConfigurationFormatError>,
+        source: Box<CustomConfigurationFormatError>,
     },
     /// Valid domain state could not be serialized.
     Serialization {
