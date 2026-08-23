@@ -1,7 +1,7 @@
-use crate::UserConfiguration;
+use crate::CustomConfiguration;
 
-/// Persists one global user-configuration snapshot atomically.
-pub trait UserConfigurationStore {
+/// Persists one global custom-configuration snapshot atomically.
+pub trait GlobalConfigurationStore {
     /// Adapter-specific persistence failure.
     type Error;
 
@@ -11,7 +11,7 @@ pub trait UserConfigurationStore {
     ///
     /// Returns the adapter's [`Self::Error`] when storage cannot be read or
     /// decoded safely.
-    fn load(&self) -> Result<UserConfiguration, Self::Error>;
+    fn load(&self) -> Result<CustomConfiguration, Self::Error>;
 
     /// Atomically replaces `expected` with `replacement`.
     ///
@@ -21,7 +21,7 @@ pub trait UserConfigurationStore {
     /// loading or replacement cannot be completed safely.
     fn compare_and_swap(
         &self,
-        expected: &UserConfiguration,
-        replacement: &UserConfiguration,
+        expected: &CustomConfiguration,
+        replacement: &CustomConfiguration,
     ) -> Result<(), Self::Error>;
 }

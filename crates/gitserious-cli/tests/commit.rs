@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use gitserious_app::{
-    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitWriter, ProjectConfig,
-    ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
-    UserConfiguration, UserConfigurationStore, built_in_effective_catalog, resolve_project_lock,
+    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitWriter, CustomConfiguration,
+    GlobalConfigurationStore, ProjectConfig, ProjectLock, ProjectState, ProjectStateStore,
+    RepositoryLocator, RepositoryRoot, built_in_effective_catalog, resolve_project_lock,
 };
 use gitserious_cli::{CommitAdapters, run_from_with_commit};
 use gitserious_core::{
@@ -136,17 +136,17 @@ impl CommitWriter for FakeWriter {
 
 struct FakeUserStore;
 
-impl UserConfigurationStore for FakeUserStore {
+impl GlobalConfigurationStore for FakeUserStore {
     type Error = FakeError;
 
-    fn load(&self) -> Result<UserConfiguration, Self::Error> {
-        Ok(UserConfiguration::default())
+    fn load(&self) -> Result<CustomConfiguration, Self::Error> {
+        Ok(CustomConfiguration::default())
     }
 
     fn compare_and_swap(
         &self,
-        _expected: &UserConfiguration,
-        _replacement: &UserConfiguration,
+        _expected: &CustomConfiguration,
+        _replacement: &CustomConfiguration,
     ) -> Result<(), Self::Error> {
         Err(FakeError)
     }

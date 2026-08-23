@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use gitserious_app::{
-    ProjectConfig, ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
-    UserConfiguration, UserConfigurationStore,
+    CustomConfiguration, GlobalConfigurationStore, ProjectConfig, ProjectLock, ProjectState,
+    ProjectStateStore, RepositoryLocator, RepositoryRoot,
 };
 use gitserious_cli::run_from;
 
@@ -82,21 +82,21 @@ struct FakeUserStore {
     error: bool,
 }
 
-impl UserConfigurationStore for FakeUserStore {
+impl GlobalConfigurationStore for FakeUserStore {
     type Error = FakeError;
 
-    fn load(&self) -> Result<UserConfiguration, Self::Error> {
+    fn load(&self) -> Result<CustomConfiguration, Self::Error> {
         if self.error {
             Err(FakeError)
         } else {
-            Ok(UserConfiguration::default())
+            Ok(CustomConfiguration::default())
         }
     }
 
     fn compare_and_swap(
         &self,
-        _expected: &UserConfiguration,
-        _replacement: &UserConfiguration,
+        _expected: &CustomConfiguration,
+        _replacement: &CustomConfiguration,
     ) -> Result<(), Self::Error> {
         Err(FakeError)
     }

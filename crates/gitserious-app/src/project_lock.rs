@@ -258,7 +258,7 @@ impl Error for ResolveProjectPolicyError {
 /// Resolves authored configuration into an exact, reproducible project lock.
 ///
 /// The authored template reference is resolved through one effective catalog,
-/// so built-in and user-installed templates follow the identical path. The
+/// so built-in and custom templates follow the identical path. The
 /// recorded fingerprints cover every semantic field of the joined policy.
 ///
 /// The built-in moving channel keeps its historical lock identity: selecting

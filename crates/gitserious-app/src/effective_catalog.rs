@@ -1,9 +1,9 @@
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
-use crate::{ConfigurationCatalog, ConfigurationCatalogError, UserConfigurationStore};
+use crate::{ConfigurationCatalog, ConfigurationCatalogError, GlobalConfigurationStore};
 
-/// Loads and validates the effective catalog from one user-configuration
+/// Loads and validates the effective catalog from one global configuration
 /// store.
 ///
 /// # Errors
@@ -14,7 +14,7 @@ pub fn load_effective_catalog<S>(
     store: &S,
 ) -> Result<ConfigurationCatalog, EffectiveCatalogError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     let configuration = store.load().map_err(EffectiveCatalogError::Store)?;
     ConfigurationCatalog::new(&configuration).map_err(EffectiveCatalogError::Catalog)
@@ -23,7 +23,7 @@ where
 /// Failure to obtain an effective configuration catalog.
 #[derive(Debug)]
 pub enum EffectiveCatalogError<StoreError> {
-    /// The user-configuration store could not be read.
+    /// The global configuration store could not be read.
     Store(StoreError),
     /// The loaded aggregate is not a valid effective catalog.
     Catalog(ConfigurationCatalogError),

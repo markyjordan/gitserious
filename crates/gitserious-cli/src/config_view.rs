@@ -2,10 +2,9 @@
 
 use std::fmt::Write;
 
-use gitserious_app::ConfigurationCatalog;
+use gitserious_app::{ConfigurationCatalog, taxonomy_origin, template_origin, typeset_origin};
 use gitserious_core::{
     PropertyRequirement, TaxonomyDefinition, TemplateDefinition, TypesetDefinition,
-    built_in_configuration,
 };
 
 /// The entity kinds exposed by configuration commands.
@@ -60,7 +59,7 @@ pub fn render_list_kind(catalog: &ConfigurationCatalog, kind: ConfigurationKind)
                     "  {}",
                     summary(
                         taxonomy.id().as_str(),
-                        origin_taxonomy(taxonomy.id().as_str()),
+                        taxonomy_origin(taxonomy.id()).as_str(),
                         taxonomy.version().get(),
                         taxonomy.description().as_str()
                     )
@@ -74,7 +73,7 @@ pub fn render_list_kind(catalog: &ConfigurationCatalog, kind: ConfigurationKind)
                     "  {}",
                     summary(
                         &format!("{}/{}", typeset.taxonomy(), typeset.id()),
-                        origin_typeset(typeset),
+                        typeset_origin(typeset.taxonomy(), typeset.id()).as_str(),
                         typeset.version().get(),
                         typeset.description().as_str()
                     )
@@ -88,7 +87,7 @@ pub fn render_list_kind(catalog: &ConfigurationCatalog, kind: ConfigurationKind)
                     "  {}",
                     summary(
                         template.id().as_str(),
-                        origin_template(template.id().as_str()),
+                        template_origin(template.id()).as_str(),
                         template.version().get(),
                         &format!("{} / {}", template.taxonomy(), template.typeset())
                     )
@@ -107,7 +106,7 @@ pub fn render_taxonomy(taxonomy: &TaxonomyDefinition) -> String {
         output,
         "taxonomy {} ({})",
         taxonomy.id(),
-        origin_taxonomy(taxonomy.id().as_str())
+        taxonomy_origin(taxonomy.id()).as_str()
     );
     let _ = writeln!(output, "version: {}", taxonomy.version().get());
     let _ = writeln!(output, "{}", taxonomy.description());
@@ -132,7 +131,7 @@ pub fn render_typeset(typeset: &TypesetDefinition) -> String {
         "typeset {}/{} ({})",
         typeset.taxonomy(),
         typeset.id(),
-        origin_typeset(typeset)
+        typeset_origin(typeset.taxonomy(), typeset.id()).as_str()
     );
     let _ = writeln!(output, "version: {}", typeset.version().get());
     let _ = writeln!(output, "{}", typeset.description());
@@ -166,7 +165,7 @@ pub fn render_template(template: &TemplateDefinition, catalog: &ConfigurationCat
         output,
         "template {} ({})",
         template.id(),
-        origin_template(template.id().as_str())
+        template_origin(template.id()).as_str()
     );
     let _ = writeln!(output, "version: {}", template.version().get());
     let _ = writeln!(output, "{}", template.description());
@@ -182,33 +181,6 @@ pub fn render_template(template: &TemplateDefinition, catalog: &ConfigurationCat
 
 fn summary(identity: &str, origin: &str, version: u16, detail: &str) -> String {
     format!("{identity}  {origin} v{version}  {detail}")
-}
-
-fn origin_taxonomy(id: &str) -> &'static str {
-    if id == built_in_configuration().taxonomy().id().as_str() {
-        "built-in"
-    } else {
-        "user"
-    }
-}
-
-fn origin_typeset(typeset: &TypesetDefinition) -> &'static str {
-    let built_in = built_in_configuration();
-    if typeset.taxonomy() == built_in.typeset().taxonomy()
-        && typeset.id() == built_in.typeset().id()
-    {
-        "built-in"
-    } else {
-        "user"
-    }
-}
-
-fn origin_template(id: &str) -> &'static str {
-    if id == built_in_configuration().template().id().as_str() {
-        "built-in"
-    } else {
-        "user"
-    }
 }
 
 fn requirement(requirement: &PropertyRequirement) -> String {

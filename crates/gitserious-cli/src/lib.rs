@@ -12,8 +12,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
-    InitOutcome, InitStatus, ProjectStateStore, RepositoryLocator, RepositoryRoot,
-    UserConfigurationStore, create_commit, delete_taxonomy, delete_template, delete_typeset,
+    GlobalConfigurationStore, InitOutcome, InitStatus, ProjectStateStore, RepositoryLocator,
+    RepositoryRoot, create_commit, delete_taxonomy, delete_template, delete_typeset,
     fork_conventional, initialize_project, load_effective_catalog,
 };
 use gitserious_core::{CommitMessage, CommitTypeDefinition, CommitTypeId, TemplateId};
@@ -68,7 +68,7 @@ enum ConfigAction {
         /// The entity identifier; typesets use TAXONOMY/TYPESET.
         identity: String,
     },
-    /// Copy the built-in Conventional chain under new user-owned identities.
+    /// Copy the built-in Conventional chain under new custom identities.
     Fork {
         /// The new reusable-template identifier.
         #[arg(long, value_name = "TEMPLATE")]
@@ -80,7 +80,7 @@ enum ConfigAction {
         #[arg(long, value_name = "TYPESET")]
         typeset: Option<String>,
     },
-    /// Remove one user-owned definition.
+    /// Remove one custom definition.
     Delete {
         /// The entity kind to remove.
         #[arg(value_enum)]
@@ -142,7 +142,7 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    U: UserConfigurationStore + ?Sized,
+    U: GlobalConfigurationStore + ?Sized,
     U::Error: Display,
     Out: Write + ?Sized,
     Err: Write + ?Sized,
@@ -179,7 +179,7 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    U: UserConfigurationStore + ?Sized,
+    U: GlobalConfigurationStore + ?Sized,
     U::Error: Display,
     A: CommitDraftAuthor + ?Sized,
     A::Error: Display,
@@ -229,7 +229,7 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    U: UserConfigurationStore + ?Sized,
+    U: GlobalConfigurationStore + ?Sized,
     U::Error: Display,
     Out: Write + ?Sized,
     Err: Write + ?Sized,
@@ -268,7 +268,7 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    U: UserConfigurationStore + ?Sized,
+    U: GlobalConfigurationStore + ?Sized,
     U::Error: Display,
     A: CommitDraftAuthor + ?Sized,
     A::Error: Display,
@@ -331,7 +331,7 @@ where
     L::Error: Display,
     S: ProjectStateStore + ?Sized,
     S::Error: Display,
-    U: UserConfigurationStore + ?Sized,
+    U: GlobalConfigurationStore + ?Sized,
     U::Error: Display,
     A: CommitDraftAuthor + ?Sized,
     A::Error: Display,
@@ -416,7 +416,7 @@ fn write_config_fork<U>(
     typeset_text: Option<&str>,
 ) -> ExitCode
 where
-    U: UserConfigurationStore + ?Sized,
+    U: GlobalConfigurationStore + ?Sized,
     U::Error: Display,
 {
     let template = match parse_identifier(template_text, "template", |text| TemplateId::new(text)) {
@@ -466,7 +466,7 @@ fn write_config_delete<U>(
     identity: &str,
 ) -> ExitCode
 where
-    U: UserConfigurationStore + ?Sized,
+    U: GlobalConfigurationStore + ?Sized,
     U::Error: Display,
 {
     use config_view::ConfigurationKind;

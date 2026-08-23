@@ -4,11 +4,11 @@ use std::fmt::{self, Display, Formatter};
 
 use gitserious_app::{
     ConfigurationCatalog, ConfigurationCatalogError, ConfigurationEdit, ConfigurationEntity,
-    ConfigurationMutationError, UserConfiguration, UserConfigurationError, UserConfigurationStore,
-    apply_configuration_edits, create_taxonomy, create_template, create_typeset, delete_taxonomy,
-    delete_template, delete_typeset, find_taxonomy, find_template, find_typeset,
-    fingerprint_resolved_taxonomy, fork_conventional, list_taxonomies, list_templates,
-    list_typesets, update_taxonomy,
+    ConfigurationMutationError, CustomConfiguration, CustomConfigurationError,
+    GlobalConfigurationStore, apply_configuration_edits, create_taxonomy, create_template,
+    create_typeset, delete_taxonomy, delete_template, delete_typeset, find_taxonomy, find_template,
+    find_typeset, fingerprint_resolved_taxonomy, fork_conventional, list_taxonomies,
+    list_templates, list_typesets, update_taxonomy,
 };
 use gitserious_core::{
     ChangeTypeDefinition, ChangeTypeId, ChangeTypeSchema, Description, PropertyDefinition,
@@ -35,7 +35,7 @@ impl Display for FakeError {
 impl Error for FakeError {}
 
 struct RecordingStore {
-    current: RefCell<UserConfiguration>,
+    current: RefCell<CustomConfiguration>,
     load_error: Cell<Option<FakeError>>,
     swap_error: Cell<Option<FakeError>>,
     loads: Cell<usize>,
@@ -43,7 +43,7 @@ struct RecordingStore {
 }
 
 impl RecordingStore {
-    fn new(current: UserConfiguration) -> Self {
+    fn new(current: CustomConfiguration) -> Self {
         Self {
             current: RefCell::new(current),
             load_error: Cell::new(None),
@@ -53,15 +53,15 @@ impl RecordingStore {
         }
     }
 
-    fn snapshot(&self) -> UserConfiguration {
+    fn snapshot(&self) -> CustomConfiguration {
         self.current.borrow().clone()
     }
 }
 
-impl UserConfigurationStore for RecordingStore {
+impl GlobalConfigurationStore for RecordingStore {
     type Error = FakeError;
 
-    fn load(&self) -> Result<UserConfiguration, Self::Error> {
+    fn load(&self) -> Result<CustomConfiguration, Self::Error> {
         self.loads.set(self.loads.get() + 1);
         match self.load_error.get() {
             Some(error) => Err(error),
@@ -71,8 +71,8 @@ impl UserConfigurationStore for RecordingStore {
 
     fn compare_and_swap(
         &self,
-        expected: &UserConfiguration,
-        replacement: &UserConfiguration,
+        expected: &CustomConfiguration,
+        replacement: &CustomConfiguration,
     ) -> Result<(), Self::Error> {
         self.swaps.set(self.swaps.get() + 1);
         if let Some(error) = self.swap_error.get() {
@@ -149,8 +149,8 @@ fn template(version: u16) -> Result<TemplateDefinition, Box<dyn Error>> {
     ))
 }
 
-fn full_configuration() -> Result<UserConfiguration, Box<dyn Error>> {
-    Ok(UserConfiguration::new(
+fn full_configuration() -> Result<CustomConfiguration, Box<dyn Error>> {
+    Ok(CustomConfiguration::new(
         vec![taxonomy(1, false)?],
         vec![typeset(1, false)?],
         vec![template(1)?],
@@ -159,7 +159,7 @@ fn full_configuration() -> Result<UserConfiguration, Box<dyn Error>> {
 
 #[test]
 fn empty_user_catalog_resolves_the_built_in_template_generically() -> Result<(), Box<dyn Error>> {
-    let catalog = ConfigurationCatalog::new(&UserConfiguration::default())?;
+    let catalog = ConfigurationCatalog::new(&CustomConfiguration::default())?;
     let resolved = catalog.resolve(&TemplateId::new("default")?)?;
     assert_eq!(resolved.template_id().as_str(), "default");
     assert_eq!(resolved.taxonomy_id().as_str(), "conventional");
@@ -190,19 +190,19 @@ fn custom_template_resolves_the_joined_taxonomy_and_typeset() -> Result<(), Box<
 fn effective_catalog_rejects_every_built_in_shadowing_form() -> Result<(), Box<dyn Error>> {
     let built_in = built_in_configuration();
     let taxonomy_collision =
-        UserConfiguration::new(vec![built_in.taxonomy().clone()], Vec::new(), Vec::new())?;
+        CustomConfiguration::new(vec![built_in.taxonomy().clone()], Vec::new(), Vec::new())?;
     assert!(matches!(
         ConfigurationCatalog::new(&taxonomy_collision),
         Err(ConfigurationCatalogError::ReservedTaxonomy(_))
     ));
     let typeset_collision =
-        UserConfiguration::new(Vec::new(), vec![built_in.typeset().clone()], Vec::new())?;
+        CustomConfiguration::new(Vec::new(), vec![built_in.typeset().clone()], Vec::new())?;
     assert!(matches!(
         ConfigurationCatalog::new(&typeset_collision),
         Err(ConfigurationCatalogError::ReservedTypeset { .. })
     ));
     let template_collision =
-        UserConfiguration::new(Vec::new(), Vec::new(), vec![built_in.template().clone()])?;
+        CustomConfiguration::new(Vec::new(), Vec::new(), vec![built_in.template().clone()])?;
     assert!(matches!(
         ConfigurationCatalog::new(&template_collision),
         Err(ConfigurationCatalogError::ReservedTemplate(_))
@@ -213,13 +213,13 @@ fn effective_catalog_rejects_every_built_in_shadowing_form() -> Result<(), Box<d
 #[test]
 fn catalog_rejects_dangling_and_incomplete_definitions() -> Result<(), Box<dyn Error>> {
     let dangling_typeset =
-        UserConfiguration::new(Vec::new(), vec![typeset(1, false)?], Vec::new())?;
+        CustomConfiguration::new(Vec::new(), vec![typeset(1, false)?], Vec::new())?;
     assert!(matches!(
         ConfigurationCatalog::new(&dangling_typeset),
         Err(ConfigurationCatalogError::UnknownTypesetTaxonomy { .. })
     ));
 
-    let incomplete = UserConfiguration::new(
+    let incomplete = CustomConfiguration::new(
         vec![taxonomy(1, true)?],
         vec![typeset(1, false)?],
         Vec::new(),
@@ -230,7 +230,7 @@ fn catalog_rejects_dangling_and_incomplete_definitions() -> Result<(), Box<dyn E
     ));
 
     let dangling_template =
-        UserConfiguration::new(vec![taxonomy(1, false)?], Vec::new(), vec![template(1)?])?;
+        CustomConfiguration::new(vec![taxonomy(1, false)?], Vec::new(), vec![template(1)?])?;
     assert!(matches!(
         ConfigurationCatalog::new(&dangling_template),
         Err(ConfigurationCatalogError::UnknownTemplateTypeset { .. })
@@ -242,10 +242,10 @@ fn catalog_rejects_dangling_and_incomplete_definitions() -> Result<(), Box<dyn E
 fn snapshots_reject_duplicates_and_canonicalize_top_level_order() -> Result<(), Box<dyn Error>> {
     let duplicate = taxonomy(1, false)?;
     assert_eq!(
-        UserConfiguration::new(vec![duplicate.clone(), duplicate], Vec::new(), Vec::new(),),
-        Err(UserConfigurationError::DuplicateTaxonomy(TaxonomyId::new(
-            "custom"
-        )?))
+        CustomConfiguration::new(vec![duplicate.clone(), duplicate], Vec::new(), Vec::new(),),
+        Err(CustomConfigurationError::DuplicateTaxonomy(
+            TaxonomyId::new("custom")?
+        ))
     );
 
     let second = TaxonomyDefinition::new(
@@ -255,7 +255,7 @@ fn snapshots_reject_duplicates_and_canonicalize_top_level_order() -> Result<(), 
         vec![change_type("alpha")?],
     )?;
     let configuration =
-        UserConfiguration::new(vec![taxonomy(1, false)?, second], Vec::new(), Vec::new())?;
+        CustomConfiguration::new(vec![taxonomy(1, false)?, second], Vec::new(), Vec::new())?;
     assert_eq!(configuration.taxonomies()[0].id().as_str(), "aaa");
     assert_eq!(configuration.taxonomies()[1].id().as_str(), "custom");
     Ok(())
@@ -263,7 +263,7 @@ fn snapshots_reject_duplicates_and_canonicalize_top_level_order() -> Result<(), 
 
 #[test]
 fn item_crud_builds_and_queries_a_reusable_configuration() -> Result<(), Box<dyn Error>> {
-    let store = RecordingStore::new(UserConfiguration::default());
+    let store = RecordingStore::new(CustomConfiguration::default());
     create_taxonomy(&store, taxonomy(1, false)?)?;
     create_typeset(&store, typeset(1, false)?)?;
     create_template(&store, template(1)?)?;
@@ -355,13 +355,13 @@ fn deletes_protect_dependents_then_succeed_in_dependency_order() -> Result<(), B
         &TypesetId::new("strict")?,
     )?;
     delete_taxonomy(&store, &TaxonomyId::new("custom")?)?;
-    assert_eq!(store.snapshot(), UserConfiguration::default());
+    assert_eq!(store.snapshot(), CustomConfiguration::default());
     Ok(())
 }
 
 #[test]
 fn reserved_mutations_and_store_failures_remain_precise() -> Result<(), Box<dyn Error>> {
-    let store = RecordingStore::new(UserConfiguration::default());
+    let store = RecordingStore::new(CustomConfiguration::default());
     let reserved = create_template(&store, built_in_configuration().template().clone());
     assert!(matches!(
         reserved,
@@ -401,7 +401,7 @@ fn resolved_fingerprint_is_stable_and_covers_semantic_identity() -> Result<(), B
 
 #[test]
 fn fork_copies_the_built_in_chain_under_new_identities() -> Result<(), Box<dyn Error>> {
-    let store = RecordingStore::new(UserConfiguration::default());
+    let store = RecordingStore::new(CustomConfiguration::default());
     let forked = fork_conventional(
         &store,
         TemplateId::new("platform")?,
@@ -453,7 +453,7 @@ fn fork_copies_the_built_in_chain_under_new_identities() -> Result<(), Box<dyn E
 
 #[test]
 fn fork_rejects_reserved_and_existing_identities_atomically() -> Result<(), Box<dyn Error>> {
-    let store = RecordingStore::new(UserConfiguration::default());
+    let store = RecordingStore::new(CustomConfiguration::default());
     let before = store.snapshot();
     assert!(matches!(
         fork_conventional(

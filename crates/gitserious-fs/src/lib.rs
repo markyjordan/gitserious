@@ -13,7 +13,7 @@ pub use git::{GitRepositoryError, GitRepositoryLocator};
 pub use git_commit::{GitCommitError, GitCommitWriter};
 pub use global::{GlobalPathError, SystemGlobalPathResolver};
 pub use global_configuration::{
-    GlobalConfigurationError, GlobalConfigurationFormatError, TomlUserConfigurationStore,
+    CustomConfigurationFormatError, GlobalConfigurationError, TomlGlobalConfigurationStore,
 };
 pub use project::{ProjectArtifact, ProjectStateError, TomlProjectStateStore};
 

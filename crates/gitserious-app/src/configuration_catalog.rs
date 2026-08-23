@@ -6,9 +6,9 @@ use gitserious_core::{
     TemplateId, TypesetDefinition, TypesetId, built_in_configuration,
 };
 
-use crate::UserConfiguration;
+use crate::CustomConfiguration;
 
-/// Built-in and user definitions validated as one effective catalog.
+/// Built-in and custom definitions validated as one effective catalog.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfigurationCatalog {
     taxonomies: Vec<TaxonomyDefinition>,
@@ -17,15 +17,15 @@ pub struct ConfigurationCatalog {
 }
 
 impl ConfigurationCatalog {
-    /// Merges built-in and user definitions without permitting shadowing.
+    /// Merges built-in and custom definitions without permitting shadowing.
     ///
     /// # Errors
     ///
     /// Returns [`ConfigurationCatalogError`] for reserved identities, dangling
     /// references, incompatible typesets, or incomplete type coverage.
-    pub fn new(user: &UserConfiguration) -> Result<Self, ConfigurationCatalogError> {
+    pub fn new(custom: &CustomConfiguration) -> Result<Self, ConfigurationCatalogError> {
         let built_in = built_in_configuration();
-        if user
+        if custom
             .taxonomies()
             .iter()
             .any(|taxonomy| taxonomy.id() == built_in.taxonomy().id())
@@ -34,7 +34,7 @@ impl ConfigurationCatalog {
                 built_in.taxonomy().id().clone(),
             ));
         }
-        if user.typesets().iter().any(|typeset| {
+        if custom.typesets().iter().any(|typeset| {
             typeset.taxonomy() == built_in.typeset().taxonomy()
                 && typeset.id() == built_in.typeset().id()
         }) {
@@ -43,7 +43,7 @@ impl ConfigurationCatalog {
                 typeset: built_in.typeset().id().clone(),
             });
         }
-        if user
+        if custom
             .templates()
             .iter()
             .any(|template| template.id() == built_in.template().id())
@@ -55,13 +55,13 @@ impl ConfigurationCatalog {
 
         let mut catalog = Self {
             taxonomies: std::iter::once(built_in.taxonomy().clone())
-                .chain(user.taxonomies().iter().cloned())
+                .chain(custom.taxonomies().iter().cloned())
                 .collect(),
             typesets: std::iter::once(built_in.typeset().clone())
-                .chain(user.typesets().iter().cloned())
+                .chain(custom.typesets().iter().cloned())
                 .collect(),
             templates: std::iter::once(built_in.template().clone())
-                .chain(user.templates().iter().cloned())
+                .chain(custom.templates().iter().cloned())
                 .collect(),
         };
         catalog
@@ -131,7 +131,7 @@ impl ConfigurationCatalog {
         self.templates.iter().find(|template| template.id() == id)
     }
 
-    /// Resolves a template through the same path for built-in and user data.
+    /// Resolves a template through the same path for built-in and custom data.
     ///
     /// # Errors
     ///
@@ -159,6 +159,57 @@ impl ConfigurationCatalog {
     }
 }
 
+/// The only product-level ownership distinction for configuration definitions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConfigurationOrigin {
+    /// Immutable definitions compiled into gitserious.
+    BuiltIn,
+    /// Editable definitions stored in global or project configuration.
+    Custom,
+}
+
+impl ConfigurationOrigin {
+    /// Returns the stable presentation label for this origin.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::BuiltIn => "built-in",
+            Self::Custom => "custom",
+        }
+    }
+}
+
+/// Classifies one taxonomy identifier as built-in or custom.
+#[must_use]
+pub fn taxonomy_origin(id: &TaxonomyId) -> ConfigurationOrigin {
+    if id == built_in_configuration().taxonomy().id() {
+        ConfigurationOrigin::BuiltIn
+    } else {
+        ConfigurationOrigin::Custom
+    }
+}
+
+/// Classifies one taxonomy-scoped typeset identifier as built-in or custom.
+#[must_use]
+pub fn typeset_origin(taxonomy: &TaxonomyId, typeset: &TypesetId) -> ConfigurationOrigin {
+    let built_in = built_in_configuration().typeset();
+    if taxonomy == built_in.taxonomy() && typeset == built_in.id() {
+        ConfigurationOrigin::BuiltIn
+    } else {
+        ConfigurationOrigin::Custom
+    }
+}
+
+/// Classifies one template identifier as built-in or custom.
+#[must_use]
+pub fn template_origin(id: &TemplateId) -> ConfigurationOrigin {
+    if id == built_in_configuration().template().id() {
+        ConfigurationOrigin::BuiltIn
+    } else {
+        ConfigurationOrigin::Custom
+    }
+}
+
 /// Returns the effective catalog containing only built-in definitions.
 ///
 /// # Errors
@@ -166,7 +217,7 @@ impl ConfigurationCatalog {
 /// Returns [`ConfigurationCatalogError`] when the compiled-in built-in
 /// definitions violate catalog invariants, which indicates a release defect.
 pub fn built_in_effective_catalog() -> Result<ConfigurationCatalog, ConfigurationCatalogError> {
-    ConfigurationCatalog::new(&UserConfiguration::default())
+    ConfigurationCatalog::new(&CustomConfiguration::default())
 }
 
 fn validate_typeset(
@@ -201,16 +252,16 @@ fn validate_typeset(
 /// An invalid effective configuration catalog.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConfigurationCatalogError {
-    /// A user taxonomy shadows a built-in identity.
+    /// A custom taxonomy shadows a built-in identity.
     ReservedTaxonomy(TaxonomyId),
-    /// A user typeset shadows a built-in taxonomy-scoped identity.
+    /// A custom typeset shadows a built-in taxonomy-scoped identity.
     ReservedTypeset {
         /// Containing taxonomy.
         taxonomy: TaxonomyId,
         /// Reserved typeset.
         typeset: TypesetId,
     },
-    /// A user template shadows a built-in identity.
+    /// A custom template shadows a built-in identity.
     ReservedTemplate(TemplateId),
     /// A typeset references an unavailable taxonomy.
     UnknownTypesetTaxonomy {

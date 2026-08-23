@@ -4,11 +4,11 @@ use gitserious_core::{
 };
 
 use crate::{
-    ConfigurationEdit, ConfigurationMutationError, UserConfigurationStore,
+    ConfigurationEdit, ConfigurationMutationError, GlobalConfigurationStore,
     apply_configuration_edits,
 };
 
-/// The user-owned identities minted by one built-in-configuration fork.
+/// The custom identities minted by one built-in-configuration fork.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ForkedConfiguration {
     template: TemplateId,
@@ -36,7 +36,7 @@ impl ForkedConfiguration {
     }
 }
 
-/// Copies the complete built-in Conventional chain into user-owned
+/// Copies the complete built-in Conventional chain into custom
 /// definitions under freshly chosen identities.
 ///
 /// The fork records one atomic batch: a taxonomy carrying every built-in
@@ -57,7 +57,7 @@ pub fn fork_conventional<S>(
     typeset: TypesetId,
 ) -> Result<ForkedConfiguration, ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     let built_in = built_in_configuration();
     let taxonomy_definition = TaxonomyDefinition::from_trusted(

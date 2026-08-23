@@ -6,35 +6,35 @@ use gitserious_core::{
     TaxonomyDefinition, TaxonomyId, TemplateDefinition, TemplateId, TypesetDefinition, TypesetId,
 };
 
-/// The only global user-configuration format understood by this release.
-pub const USER_CONFIGURATION_VERSION: u16 = 1;
+/// The only custom-configuration format understood by this release.
+pub const CUSTOM_CONFIGURATION_VERSION: u16 = 1;
 
-/// The global user-owned configuration snapshot persisted as one aggregate.
+/// Editable taxonomy, typeset, and template definitions for one scope.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct UserConfiguration {
+pub struct CustomConfiguration {
     taxonomies: Vec<TaxonomyDefinition>,
     typesets: Vec<TypesetDefinition>,
     templates: Vec<TemplateDefinition>,
 }
 
-impl UserConfiguration {
-    /// Creates a structurally unique user configuration snapshot.
+impl CustomConfiguration {
+    /// Creates a structurally unique custom configuration snapshot.
     ///
     /// Cross-definition references are checked by the effective catalog.
     ///
     /// # Errors
     ///
-    /// Returns [`UserConfigurationError`] when a top-level identity is
+    /// Returns [`CustomConfigurationError`] when a top-level identity is
     /// repeated.
     pub fn new(
         taxonomies: Vec<TaxonomyDefinition>,
         typesets: Vec<TypesetDefinition>,
         templates: Vec<TemplateDefinition>,
-    ) -> Result<Self, UserConfigurationError> {
+    ) -> Result<Self, CustomConfigurationError> {
         let mut taxonomy_ids = BTreeSet::new();
         for taxonomy in &taxonomies {
             if !taxonomy_ids.insert(taxonomy.id()) {
-                return Err(UserConfigurationError::DuplicateTaxonomy(
+                return Err(CustomConfigurationError::DuplicateTaxonomy(
                     taxonomy.id().clone(),
                 ));
             }
@@ -44,7 +44,7 @@ impl UserConfiguration {
         for typeset in &typesets {
             let key = (typeset.taxonomy(), typeset.id());
             if !typeset_ids.insert(key) {
-                return Err(UserConfigurationError::DuplicateTypeset {
+                return Err(CustomConfigurationError::DuplicateTypeset {
                     taxonomy: typeset.taxonomy().clone(),
                     typeset: typeset.id().clone(),
                 });
@@ -54,7 +54,7 @@ impl UserConfiguration {
         let mut template_ids = BTreeSet::new();
         for template in &templates {
             if !template_ids.insert(template.id()) {
-                return Err(UserConfigurationError::DuplicateTemplate(
+                return Err(CustomConfigurationError::DuplicateTemplate(
                     template.id().clone(),
                 ));
             }
@@ -69,19 +69,19 @@ impl UserConfiguration {
         Ok(configuration)
     }
 
-    /// Returns user-defined taxonomies in snapshot order.
+    /// Returns custom taxonomies in snapshot order.
     #[must_use]
     pub fn taxonomies(&self) -> &[TaxonomyDefinition] {
         &self.taxonomies
     }
 
-    /// Returns user-defined typesets in snapshot order.
+    /// Returns custom typesets in snapshot order.
     #[must_use]
     pub fn typesets(&self) -> &[TypesetDefinition] {
         &self.typesets
     }
 
-    /// Returns user-defined templates in snapshot order.
+    /// Returns custom templates in snapshot order.
     #[must_use]
     pub fn templates(&self) -> &[TemplateDefinition] {
         &self.templates
@@ -110,9 +110,9 @@ impl UserConfiguration {
     }
 }
 
-/// A duplicate top-level definition in user configuration.
+/// A duplicate top-level definition in custom configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum UserConfigurationError {
+pub enum CustomConfigurationError {
     /// A taxonomy identity is repeated.
     DuplicateTaxonomy(TaxonomyId),
     /// A taxonomy-scoped typeset identity is repeated.
@@ -126,21 +126,21 @@ pub enum UserConfigurationError {
     DuplicateTemplate(TemplateId),
 }
 
-impl Display for UserConfigurationError {
+impl Display for CustomConfigurationError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::DuplicateTaxonomy(id) => {
-                write!(formatter, "user configuration repeats taxonomy {id:?}")
+                write!(formatter, "custom configuration repeats taxonomy {id:?}")
             }
             Self::DuplicateTypeset { taxonomy, typeset } => write!(
                 formatter,
-                "user configuration repeats typeset {taxonomy:?}/{typeset:?}"
+                "custom configuration repeats typeset {taxonomy:?}/{typeset:?}"
             ),
             Self::DuplicateTemplate(id) => {
-                write!(formatter, "user configuration repeats template {id:?}")
+                write!(formatter, "custom configuration repeats template {id:?}")
             }
         }
     }
 }
 
-impl Error for UserConfigurationError {}
+impl Error for CustomConfigurationError {}

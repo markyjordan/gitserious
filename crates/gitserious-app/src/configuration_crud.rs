@@ -7,7 +7,7 @@ use gitserious_core::{
 };
 
 use crate::{
-    ConfigurationCatalog, ConfigurationCatalogError, UserConfiguration, UserConfigurationStore,
+    ConfigurationCatalog, ConfigurationCatalogError, CustomConfiguration, GlobalConfigurationStore,
 };
 
 /// A typed identity used in configuration mutation diagnostics.
@@ -38,20 +38,20 @@ impl Display for ConfigurationEntity {
     }
 }
 
-/// One atomic edit to the user-owned configuration aggregate.
+/// One atomic edit to the custom configuration aggregate.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConfigurationEdit {
     /// Creates a taxonomy that must not already exist.
     CreateTaxonomy(TaxonomyDefinition),
-    /// Replaces a user taxonomy with the same identity and a newer version.
+    /// Replaces a custom taxonomy with the same identity and a newer version.
     UpdateTaxonomy(TaxonomyDefinition),
-    /// Deletes one user taxonomy.
+    /// Deletes one custom taxonomy.
     DeleteTaxonomy(TaxonomyId),
     /// Creates a taxonomy-scoped typeset.
     CreateTypeset(TypesetDefinition),
-    /// Replaces a user typeset with the same identity and a newer version.
+    /// Replaces a custom typeset with the same identity and a newer version.
     UpdateTypeset(TypesetDefinition),
-    /// Deletes one user typeset.
+    /// Deletes one custom typeset.
     DeleteTypeset {
         /// Containing taxonomy.
         taxonomy: TaxonomyId,
@@ -60,9 +60,9 @@ pub enum ConfigurationEdit {
     },
     /// Creates a reusable template.
     CreateTemplate(TemplateDefinition),
-    /// Replaces a user template with the same identity and a newer version.
+    /// Replaces a custom template with the same identity and a newer version.
     UpdateTemplate(TemplateDefinition),
-    /// Deletes one user template.
+    /// Deletes one custom template.
     DeleteTemplate(TemplateId),
 }
 
@@ -157,7 +157,7 @@ pub fn list_taxonomies<S>(
     store: &S,
 ) -> Result<Vec<TaxonomyDefinition>, ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     Ok(load_catalog(store)?.taxonomies().to_vec())
 }
@@ -173,7 +173,7 @@ pub fn find_taxonomy<S>(
     id: &TaxonomyId,
 ) -> Result<Option<TaxonomyDefinition>, ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     Ok(load_catalog(store)?.find_taxonomy(id).cloned())
 }
@@ -188,7 +188,7 @@ pub fn list_typesets<S>(
     store: &S,
 ) -> Result<Vec<TypesetDefinition>, ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     Ok(load_catalog(store)?.typesets().to_vec())
 }
@@ -205,7 +205,7 @@ pub fn find_typeset<S>(
     typeset: &TypesetId,
 ) -> Result<Option<TypesetDefinition>, ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     Ok(load_catalog(store)?
         .find_typeset(taxonomy, typeset)
@@ -222,7 +222,7 @@ pub fn list_templates<S>(
     store: &S,
 ) -> Result<Vec<TemplateDefinition>, ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     Ok(load_catalog(store)?.templates().to_vec())
 }
@@ -238,12 +238,12 @@ pub fn find_template<S>(
     id: &TemplateId,
 ) -> Result<Option<TemplateDefinition>, ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     Ok(load_catalog(store)?.find_template(id).cloned())
 }
 
-/// Creates one user taxonomy.
+/// Creates one custom taxonomy.
 ///
 /// # Errors
 ///
@@ -254,12 +254,12 @@ pub fn create_taxonomy<S>(
     taxonomy: TaxonomyDefinition,
 ) -> Result<(), ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     apply_configuration_edits(store, [ConfigurationEdit::CreateTaxonomy(taxonomy)])
 }
 
-/// Updates one user taxonomy without changing identity.
+/// Updates one custom taxonomy without changing identity.
 ///
 /// # Errors
 ///
@@ -270,12 +270,12 @@ pub fn update_taxonomy<S>(
     taxonomy: TaxonomyDefinition,
 ) -> Result<(), ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     apply_configuration_edits(store, [ConfigurationEdit::UpdateTaxonomy(taxonomy)])
 }
 
-/// Deletes one unreferenced user taxonomy.
+/// Deletes one unreferenced custom taxonomy.
 ///
 /// # Errors
 ///
@@ -286,7 +286,7 @@ pub fn delete_taxonomy<S>(
     id: &TaxonomyId,
 ) -> Result<(), ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     let current = store.load().map_err(ConfigurationMutationError::Store)?;
     reject_taxonomy_dependents(&current, id)?;
@@ -297,7 +297,7 @@ where
     )
 }
 
-/// Creates one user typeset.
+/// Creates one custom typeset.
 ///
 /// # Errors
 ///
@@ -308,12 +308,12 @@ pub fn create_typeset<S>(
     typeset: TypesetDefinition,
 ) -> Result<(), ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     apply_configuration_edits(store, [ConfigurationEdit::CreateTypeset(typeset)])
 }
 
-/// Updates one user typeset without changing qualified identity.
+/// Updates one custom typeset without changing qualified identity.
 ///
 /// # Errors
 ///
@@ -324,12 +324,12 @@ pub fn update_typeset<S>(
     typeset: TypesetDefinition,
 ) -> Result<(), ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     apply_configuration_edits(store, [ConfigurationEdit::UpdateTypeset(typeset)])
 }
 
-/// Deletes one unreferenced user typeset.
+/// Deletes one unreferenced custom typeset.
 ///
 /// # Errors
 ///
@@ -341,7 +341,7 @@ pub fn delete_typeset<S>(
     typeset: &TypesetId,
 ) -> Result<(), ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     let current = store.load().map_err(ConfigurationMutationError::Store)?;
     reject_typeset_dependents(&current, taxonomy, typeset)?;
@@ -355,7 +355,7 @@ where
     )
 }
 
-/// Creates one user template.
+/// Creates one custom template.
 ///
 /// # Errors
 ///
@@ -366,12 +366,12 @@ pub fn create_template<S>(
     template: TemplateDefinition,
 ) -> Result<(), ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     apply_configuration_edits(store, [ConfigurationEdit::CreateTemplate(template)])
 }
 
-/// Updates one user template without changing identity.
+/// Updates one custom template without changing identity.
 ///
 /// # Errors
 ///
@@ -382,12 +382,12 @@ pub fn update_template<S>(
     template: TemplateDefinition,
 ) -> Result<(), ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     apply_configuration_edits(store, [ConfigurationEdit::UpdateTemplate(template)])
 }
 
-/// Deletes one user template.
+/// Deletes one custom template.
 ///
 /// # Errors
 ///
@@ -398,7 +398,7 @@ pub fn delete_template<S>(
     id: &TemplateId,
 ) -> Result<(), ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     apply_configuration_edits(store, [ConfigurationEdit::DeleteTemplate(id.clone())])
 }
@@ -415,7 +415,7 @@ pub fn apply_configuration_edits<S>(
     edits: impl IntoIterator<Item = ConfigurationEdit>,
 ) -> Result<(), ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     let current = store.load().map_err(ConfigurationMutationError::Store)?;
     apply_loaded_edits(store, &current, edits)
@@ -423,11 +423,11 @@ where
 
 fn apply_loaded_edits<S>(
     store: &S,
-    current: &UserConfiguration,
+    current: &CustomConfiguration,
     edits: impl IntoIterator<Item = ConfigurationEdit>,
 ) -> Result<(), ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     let mut replacement = current.clone();
     for edit in edits {
@@ -441,7 +441,7 @@ where
 }
 
 fn apply_edit<StoreError>(
-    configuration: &mut UserConfiguration,
+    configuration: &mut CustomConfiguration,
     edit: ConfigurationEdit,
 ) -> Result<(), ConfigurationMutationError<StoreError>> {
     match edit {
@@ -461,7 +461,7 @@ fn apply_edit<StoreError>(
 }
 
 fn apply_create_taxonomy<StoreError>(
-    configuration: &mut UserConfiguration,
+    configuration: &mut CustomConfiguration,
     value: TaxonomyDefinition,
 ) -> Result<(), ConfigurationMutationError<StoreError>> {
     let entity = taxonomy_entity(&value);
@@ -478,7 +478,7 @@ fn apply_create_taxonomy<StoreError>(
 }
 
 fn apply_update_taxonomy<StoreError>(
-    configuration: &mut UserConfiguration,
+    configuration: &mut CustomConfiguration,
     value: TaxonomyDefinition,
 ) -> Result<(), ConfigurationMutationError<StoreError>> {
     let entity = taxonomy_entity(&value);
@@ -496,7 +496,7 @@ fn apply_update_taxonomy<StoreError>(
 }
 
 fn apply_delete_taxonomy<StoreError>(
-    configuration: &mut UserConfiguration,
+    configuration: &mut CustomConfiguration,
     id: &TaxonomyId,
 ) -> Result<(), ConfigurationMutationError<StoreError>> {
     let entity = ConfigurationEntity::Taxonomy(id.clone());
@@ -509,7 +509,7 @@ fn apply_delete_taxonomy<StoreError>(
 }
 
 fn apply_create_typeset<StoreError>(
-    configuration: &mut UserConfiguration,
+    configuration: &mut CustomConfiguration,
     value: TypesetDefinition,
 ) -> Result<(), ConfigurationMutationError<StoreError>> {
     let entity = typeset_entity(&value);
@@ -526,7 +526,7 @@ fn apply_create_typeset<StoreError>(
 }
 
 fn apply_update_typeset<StoreError>(
-    configuration: &mut UserConfiguration,
+    configuration: &mut CustomConfiguration,
     value: TypesetDefinition,
 ) -> Result<(), ConfigurationMutationError<StoreError>> {
     let entity = typeset_entity(&value);
@@ -544,7 +544,7 @@ fn apply_update_typeset<StoreError>(
 }
 
 fn apply_delete_typeset<StoreError>(
-    configuration: &mut UserConfiguration,
+    configuration: &mut CustomConfiguration,
     taxonomy: &TaxonomyId,
     typeset: &TypesetId,
 ) -> Result<(), ConfigurationMutationError<StoreError>> {
@@ -561,7 +561,7 @@ fn apply_delete_typeset<StoreError>(
 }
 
 fn apply_create_template<StoreError>(
-    configuration: &mut UserConfiguration,
+    configuration: &mut CustomConfiguration,
     value: TemplateDefinition,
 ) -> Result<(), ConfigurationMutationError<StoreError>> {
     let entity = template_entity(&value);
@@ -578,7 +578,7 @@ fn apply_create_template<StoreError>(
 }
 
 fn apply_update_template<StoreError>(
-    configuration: &mut UserConfiguration,
+    configuration: &mut CustomConfiguration,
     value: TemplateDefinition,
 ) -> Result<(), ConfigurationMutationError<StoreError>> {
     let entity = template_entity(&value);
@@ -596,7 +596,7 @@ fn apply_update_template<StoreError>(
 }
 
 fn apply_delete_template<StoreError>(
-    configuration: &mut UserConfiguration,
+    configuration: &mut CustomConfiguration,
     id: &TemplateId,
 ) -> Result<(), ConfigurationMutationError<StoreError>> {
     let entity = ConfigurationEntity::Template(id.clone());
@@ -610,7 +610,7 @@ fn apply_delete_template<StoreError>(
 
 fn load_catalog<S>(store: &S) -> Result<ConfigurationCatalog, ConfigurationMutationError<S::Error>>
 where
-    S: UserConfigurationStore + ?Sized,
+    S: GlobalConfigurationStore + ?Sized,
 {
     let configuration = store.load().map_err(ConfigurationMutationError::Store)?;
     ConfigurationCatalog::new(&configuration).map_err(ConfigurationMutationError::Catalog)
@@ -678,7 +678,7 @@ fn remove_matching<T, StoreError>(
 }
 
 fn reject_taxonomy_dependents<StoreError>(
-    configuration: &UserConfiguration,
+    configuration: &CustomConfiguration,
     id: &TaxonomyId,
 ) -> Result<(), ConfigurationMutationError<StoreError>> {
     let dependents = configuration
@@ -705,7 +705,7 @@ fn reject_taxonomy_dependents<StoreError>(
 }
 
 fn reject_typeset_dependents<StoreError>(
-    configuration: &UserConfiguration,
+    configuration: &CustomConfiguration,
     taxonomy: &TaxonomyId,
     typeset: &TypesetId,
 ) -> Result<(), ConfigurationMutationError<StoreError>> {
