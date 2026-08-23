@@ -3,8 +3,9 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
 use crate::{
-    ChangeTypeId, Description, PropertyDefinition, TaxonomyDefinition, TaxonomyId, TaxonomyVersion,
-    TemplateDefinition, TemplateId, TemplateVersion, TypesetDefinition, TypesetId, TypesetVersion,
+    ChangeTypeId, CommitTypeDefinition, Description, PropertyDefinition, TaxonomyDefinition,
+    TaxonomyId, TaxonomyVersion, TemplateDefinition, TemplateId, TemplateVersion,
+    TypesetDefinition, TypesetId, TypesetVersion,
 };
 
 /// One fully joined change type ready for authoring and validation.
@@ -20,6 +21,19 @@ impl ResolvedChangeType {
     #[must_use]
     pub const fn id(&self) -> &ChangeTypeId {
         &self.id
+    }
+
+    /// Returns this joined change type as an open commit-type definition.
+    ///
+    /// Resolution already validated every semantic field, so the definition is
+    /// constructed without revalidation and carries the first schema version.
+    #[must_use]
+    pub fn commit_type_definition(&self) -> CommitTypeDefinition {
+        CommitTypeDefinition::from_resolved(
+            self.id.clone(),
+            self.description.as_str().to_owned(),
+            self.properties.clone(),
+        )
     }
 
     /// Returns the taxonomy-owned semantic description.

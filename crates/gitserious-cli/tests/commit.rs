@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use gitserious_app::{
-    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitTypeCatalog, CommitWriter,
-    ProjectConfig, ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
-    resolve_project_lock,
+    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitWriter, ProjectConfig,
+    ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
+    UserConfiguration, UserConfigurationStore, built_in_effective_catalog, resolve_project_lock,
 };
 use gitserious_cli::{CommitAdapters, run_from_with_commit};
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
-    CommitTypeId, PropertyRequirement, PropertyValue, PropertyValues, built_in_commit_types,
+    CommitTypeId, PropertyRequirement, PropertyValue, PropertyValues,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -71,23 +71,6 @@ impl ProjectStateStore for FakeStore {
         _replacement: &ProjectLock,
     ) -> Result<(), Self::Error> {
         Err(FakeError)
-    }
-}
-
-struct FakeCatalog {
-    calls: Cell<usize>,
-}
-
-impl CommitTypeCatalog for FakeCatalog {
-    type Error = FakeError;
-
-    fn find(&self, _id: &CommitTypeId) -> Result<Option<CommitTypeDefinition>, Self::Error> {
-        Err(FakeError)
-    }
-
-    fn list(&self) -> Result<Vec<CommitTypeDefinition>, Self::Error> {
-        self.calls.set(self.calls.get() + 1);
-        Ok(built_in_commit_types().to_vec())
     }
 }
 
@@ -151,13 +134,31 @@ impl CommitWriter for FakeWriter {
     }
 }
 
+struct FakeUserStore;
+
+impl UserConfigurationStore for FakeUserStore {
+    type Error = FakeError;
+
+    fn load(&self) -> Result<UserConfiguration, Self::Error> {
+        Ok(UserConfiguration::default())
+    }
+
+    fn compare_and_swap(
+        &self,
+        _expected: &UserConfiguration,
+        _replacement: &UserConfiguration,
+    ) -> Result<(), Self::Error> {
+        Err(FakeError)
+    }
+}
+
 fn repository_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fake-repository")
 }
 
 fn initialized_state() -> Result<ProjectState, Box<dyn Error>> {
     let config = ProjectConfig::default_channel()?;
-    let lock = resolve_project_lock(&config)?;
+    let lock = resolve_project_lock(&config, &built_in_effective_catalog()?)?;
     Ok(ProjectState::Initialized { config, lock })
 }
 
@@ -184,7 +185,6 @@ fn valid_draft(definition: &CommitTypeDefinition) -> Result<CommitDraft, Box<dyn
 
 struct Harness {
     store: FakeStore,
-    catalog: FakeCatalog,
     author: FakeAuthor,
     writer: FakeWriter,
 }
@@ -193,9 +193,6 @@ impl Harness {
     fn new(state: ProjectState) -> Self {
         Self {
             store: FakeStore { state },
-            catalog: FakeCatalog {
-                calls: Cell::new(0),
-            },
             author: FakeAuthor {
                 outcome: RefCell::new(AuthorOutcome::Valid),
                 calls: Cell::new(0),
@@ -209,7 +206,8 @@ impl Harness {
     }
 
     fn run(&self, arguments: &[&str]) -> (ExitCode, String, String) {
-        let commit = CommitAdapters::new(&self.catalog, &self.author, &self.writer);
+        let commit = CommitAdapters::new(&self.author, &self.writer);
+        let configuration = FakeUserStore;
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let exit = run_from_with_commit(
@@ -217,6 +215,7 @@ impl Harness {
             &repository_path(),
             &FakeLocator,
             &self.store,
+            &configuration,
             &commit,
             &mut stdout,
             &mut stderr,
@@ -256,7 +255,7 @@ fn bare_commit_delegates_type_selection_to_the_author() -> Result<(), Box<dyn Er
     assert_eq!(exit, ExitCode::SUCCESS);
     let seen = harness.author.seen.borrow();
     assert_eq!(seen[0].1, None);
-    assert_eq!(seen[0].0.len(), built_in_commit_types().len());
+    assert_eq!(seen[0].0.len(), 11);
     assert_eq!(harness.writer.calls.get(), 1);
     Ok(())
 }

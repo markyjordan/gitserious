@@ -9,7 +9,7 @@ use gitserious_core::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::{Fingerprint, ProjectConfig};
+use crate::{ConfigurationCatalog, ConfigurationCatalogError, Fingerprint, ProjectConfig};
 
 /// The only generated project-lock format understood by this release.
 pub const PROJECT_LOCK_VERSION: u16 = 1;
@@ -227,18 +227,20 @@ impl Error for ProjectLockError {}
 pub enum ResolveProjectPolicyError {
     /// No installed template matches the authored reference.
     UnknownTemplate(TemplateId),
-    /// The built-in template violated resolved-policy invariants.
+    /// The installed template violated resolved-policy invariants.
     InvalidResolvedTemplate(ResolvedTemplateError),
+    /// The effective catalog containing the authored template is invalid.
+    Catalog(ConfigurationCatalogError),
 }
 
 impl Display for ResolveProjectPolicyError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnknownTemplate(id) => write!(
-                formatter,
-                "template {id:?} is not available; this release supports only the default channel"
-            ),
+            Self::UnknownTemplate(id) => {
+                write!(formatter, "template {id:?} is not installed")
+            }
             Self::InvalidResolvedTemplate(error) => Display::fmt(error, formatter),
+            Self::Catalog(error) => Display::fmt(error, formatter),
         }
     }
 }
@@ -246,43 +248,67 @@ impl Display for ResolveProjectPolicyError {
 impl Error for ResolveProjectPolicyError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::UnknownTemplate(_) => None,
             Self::InvalidResolvedTemplate(error) => Some(error),
+            Self::Catalog(error) => Some(error),
+            Self::UnknownTemplate(_) => None,
         }
     }
 }
 
 /// Resolves authored configuration into an exact, reproducible project lock.
 ///
+/// The authored template reference is resolved through one effective catalog,
+/// so built-in and user-installed templates follow the identical path. The
+/// recorded fingerprints cover every semantic field of the joined policy.
+///
+/// The built-in moving channel keeps its historical lock identity: selecting
+/// it records the compiled-in commit-message template rather than the channel
+/// placeholder, preserving previously generated locks byte for byte.
+///
 /// # Errors
 ///
 /// Returns [`ResolveProjectPolicyError`] when the requested template is not
-/// installed or resolved template invariants fail.
+/// installed, the catalog is invalid, or resolved template invariants fail.
 pub fn resolve_project_lock(
     config: &ProjectConfig,
+    catalog: &ConfigurationCatalog,
 ) -> Result<ProjectLock, ResolveProjectPolicyError> {
-    if config.active_template().as_str() != "default" {
-        return Err(ResolveProjectPolicyError::UnknownTemplate(
-            config.active_template().clone(),
+    let reference = config.active_template();
+    let resolved = catalog.resolve(reference).map_err(|error| match error {
+        ConfigurationCatalogError::UnknownTemplate(id) => {
+            ResolveProjectPolicyError::UnknownTemplate(id)
+        }
+        other => ResolveProjectPolicyError::Catalog(other),
+    })?;
+    let Some(template) = catalog.find_template(reference) else {
+        return Err(ResolveProjectPolicyError::Catalog(
+            ConfigurationCatalogError::UnknownTemplate(reference.clone()),
         ));
-    }
-
-    let template = default_commit_message_template();
-    let commit_types = template
-        .commit_types()
+    };
+    let commit_types = resolved
+        .change_types()
         .iter()
-        .map(|definition| {
+        .map(|change_type| {
+            let definition = change_type.commit_type_definition();
             ResolvedCommitType::new(
                 definition.id().clone(),
                 definition.schema_version(),
-                fingerprint_commit_type_definition(definition),
+                fingerprint_commit_type_definition(&definition),
             )
         })
         .collect::<Vec<_>>();
-    let template_fingerprint = fingerprint_template(template, &commit_types);
+    let built_in = gitserious_core::built_in_configuration();
+    let (identity_id, identity_version) = if built_in.template().id() == reference {
+        let message_template = default_commit_message_template();
+        (message_template.id().clone(), message_template.version())
+    } else {
+        (template.id().clone(), template.version())
+    };
+    let template_fingerprint =
+        fingerprint_resolved_template(&identity_id, identity_version, &commit_types);
     let resolved_template = ResolvedTemplate::new(
-        template.id().clone(),
-        template.version(),
+        identity_id,
+        identity_version,
         template_fingerprint,
         commit_types,
     )
@@ -291,7 +317,7 @@ pub fn resolve_project_lock(
     Ok(ProjectLock {
         version: PROJECT_LOCK_VERSION,
         config_fingerprint: fingerprint_project_config(config),
-        template_reference: config.active_template().clone(),
+        template_reference: reference.clone(),
         resolved_template,
     })
 }
@@ -400,6 +426,22 @@ fn fingerprint_template(
     let mut canonical = CanonicalHasher::new(b"gitserious.commit-message-template.v1");
     canonical.text(template.id().as_str());
     canonical.u16(template.version().get());
+    canonical.usize(commit_types.len());
+    for commit_type in commit_types {
+        canonical.text(commit_type.id().as_str());
+        canonical.bytes(commit_type.definition_fingerprint().as_bytes());
+    }
+    canonical.finish()
+}
+
+fn fingerprint_resolved_template(
+    identity_id: &TemplateId,
+    identity_version: TemplateVersion,
+    commit_types: &[ResolvedCommitType],
+) -> Fingerprint {
+    let mut canonical = CanonicalHasher::new(b"gitserious.commit-message-template.v1");
+    canonical.text(identity_id.as_str());
+    canonical.u16(identity_version.get());
     canonical.usize(commit_types.len());
     for commit_type in commit_types {
         canonical.text(commit_type.id().as_str());

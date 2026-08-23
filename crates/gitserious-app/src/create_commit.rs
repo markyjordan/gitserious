@@ -3,11 +3,12 @@ use std::fmt::{self, Display, Formatter};
 use std::path::Path;
 
 use gitserious_core::{
-    CommitTypeDefinition, CommitTypeId, CommitValidationErrors, render_commit_message,
+    CommitTypeDefinition, CommitTypeId, CommitValidationErrors, ResolvedChangeType,
+    render_commit_message,
 };
 
 use crate::{
-    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitTypeCatalog, CommitWriter,
+    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitWriter, ConfigurationCatalog,
     Fingerprint, ProjectState, ProjectStateStore, RepositoryLocator, ResolveProjectPolicyError,
     fingerprint_commit_type_definition, resolve_project_lock,
 };
@@ -89,15 +90,13 @@ impl Error for CommitPolicyError {
 
 /// Failure to author or create an interactive commit.
 #[derive(Debug)]
-pub enum CreateCommitError<LocatorError, StoreError, CatalogError, AuthorError, WriterError> {
+pub enum CreateCommitError<LocatorError, StoreError, AuthorError, WriterError> {
     /// Repository discovery failed.
     Repository(LocatorError),
     /// Repository-local project state could not be read.
     Store(StoreError),
     /// Current project policy is absent, stale, or unavailable.
     Policy(CommitPolicyError),
-    /// Effective commit-type catalog access failed.
-    Catalog(CatalogError),
     /// Structured draft authoring failed.
     Author(AuthorError),
     /// The requested or selected commit type is outside current policy.
@@ -120,19 +119,15 @@ pub enum CreateCommitError<LocatorError, StoreError, CatalogError, AuthorError, 
     Writer(WriterError),
 }
 
-/// Result type for the five independently failing commit-workflow ports.
-pub type CreateCommitResult<LocatorError, StoreError, CatalogError, AuthorError, WriterError> =
-    Result<
-        CommitOutcome,
-        CreateCommitError<LocatorError, StoreError, CatalogError, AuthorError, WriterError>,
-    >;
+/// Result type for the four independently failing commit-workflow ports.
+pub type CreateCommitResult<LocatorError, StoreError, AuthorError, WriterError> =
+    Result<CommitOutcome, CreateCommitError<LocatorError, StoreError, AuthorError, WriterError>>;
 
-impl<LocatorError, StoreError, CatalogError, AuthorError, WriterError> Display
-    for CreateCommitError<LocatorError, StoreError, CatalogError, AuthorError, WriterError>
+impl<LocatorError, StoreError, AuthorError, WriterError> Display
+    for CreateCommitError<LocatorError, StoreError, AuthorError, WriterError>
 where
     LocatorError: Display,
     StoreError: Display,
-    CatalogError: Display,
     AuthorError: Display,
     WriterError: Display,
 {
@@ -141,7 +136,6 @@ where
             Self::Repository(error) => Display::fmt(error, formatter),
             Self::Store(error) => Display::fmt(error, formatter),
             Self::Policy(error) => Display::fmt(error, formatter),
-            Self::Catalog(error) => Display::fmt(error, formatter),
             Self::Author(error) => Display::fmt(error, formatter),
             Self::UnknownCommitType {
                 requested,
@@ -169,12 +163,11 @@ where
     }
 }
 
-impl<LocatorError, StoreError, CatalogError, AuthorError, WriterError> Error
-    for CreateCommitError<LocatorError, StoreError, CatalogError, AuthorError, WriterError>
+impl<LocatorError, StoreError, AuthorError, WriterError> Error
+    for CreateCommitError<LocatorError, StoreError, AuthorError, WriterError>
 where
     LocatorError: Error + 'static,
     StoreError: Error + 'static,
-    CatalogError: Error + 'static,
     AuthorError: Error + 'static,
     WriterError: Error + 'static,
 {
@@ -183,7 +176,6 @@ where
             Self::Repository(error) => Some(error),
             Self::Store(error) => Some(error),
             Self::Policy(error) => Some(error),
-            Self::Catalog(error) => Some(error),
             Self::Author(error) => Some(error),
             Self::InvalidDraft(error) => Some(error),
             Self::Writer(error) => Some(error),
@@ -196,22 +188,20 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`CreateCommitError`] when repository or policy discovery, catalog
-/// resolution, authoring, validation, or Git commit creation fails.
-#[allow(clippy::type_complexity)]
-pub fn create_commit<L, S, C, A, W>(
+/// Returns [`CreateCommitError`] when repository or policy discovery,
+/// authoring, validation, or Git commit creation fails.
+pub fn create_commit<L, S, A, W>(
     locator: &L,
     store: &S,
-    catalog: &C,
+    catalog: &ConfigurationCatalog,
     author: &A,
     writer: &W,
     start: &Path,
     requested_type: Option<&CommitTypeId>,
-) -> CreateCommitResult<L::Error, S::Error, C::Error, A::Error, W::Error>
+) -> CreateCommitResult<L::Error, S::Error, A::Error, W::Error>
 where
     L: RepositoryLocator + ?Sized,
     S: ProjectStateStore + ?Sized,
-    C: CommitTypeCatalog + ?Sized,
     A: CommitDraftAuthor + ?Sized,
     W: CommitWriter + ?Sized,
 {
@@ -232,21 +222,19 @@ where
         ProjectState::Initialized { config, lock } => (config, lock),
     };
 
-    let expected_lock = resolve_project_lock(&config)
+    let expected_lock = resolve_project_lock(&config, catalog)
         .map_err(CommitPolicyError::Resolution)
         .map_err(CreateCommitError::Policy)?;
     if lock != expected_lock {
         return Err(CreateCommitError::Policy(CommitPolicyError::StaleLock));
     }
 
-    let catalog_definitions = catalog.list().map_err(CreateCommitError::Catalog)?;
-    let definitions = resolve_locked_definitions(&lock, &catalog_definitions)
-        .map_err(CreateCommitError::Policy)?;
+    let available = locked_definitions(&lock, catalog).map_err(CreateCommitError::Policy)?;
     let preselected = requested_type
-        .map(|requested| find_definition(&definitions, requested))
+        .map(|requested| find_definition(&available, requested))
         .transpose()?;
     let draft = match author
-        .author(&definitions, preselected)
+        .author(&available, preselected)
         .map_err(CreateCommitError::Author)?
     {
         CommitDraftAuthorOutcome::Authored(draft) => draft,
@@ -260,7 +248,7 @@ where
             actual: draft.commit_type().clone(),
         });
     }
-    let definition = find_definition(&definitions, draft.commit_type())?;
+    let definition = find_definition(&available, draft.commit_type())?;
     let message =
         render_commit_message(definition, &draft).map_err(CreateCommitError::InvalidDraft)?;
     let output = writer
@@ -269,12 +257,12 @@ where
     Ok(CommitOutcome::Created(output))
 }
 
-fn find_definition<'a, LocatorError, StoreError, CatalogError, AuthorError, WriterError>(
+fn find_definition<'a, LocatorError, StoreError, AuthorError, WriterError>(
     definitions: &'a [CommitTypeDefinition],
     requested: &CommitTypeId,
 ) -> Result<
     &'a CommitTypeDefinition,
-    CreateCommitError<LocatorError, StoreError, CatalogError, AuthorError, WriterError>,
+    CreateCommitError<LocatorError, StoreError, AuthorError, WriterError>,
 > {
     definitions
         .iter()
@@ -288,15 +276,31 @@ fn find_definition<'a, LocatorError, StoreError, CatalogError, AuthorError, Writ
         })
 }
 
+fn locked_definitions(
+    lock: &crate::ProjectLock,
+    catalog: &ConfigurationCatalog,
+) -> Result<Vec<CommitTypeDefinition>, CommitPolicyError> {
+    let reference = lock.template_reference();
+    let resolved = catalog.resolve(reference).map_err(|error| {
+        CommitPolicyError::Resolution(ResolveProjectPolicyError::Catalog(error))
+    })?;
+    let available = resolved
+        .change_types()
+        .iter()
+        .map(ResolvedChangeType::commit_type_definition)
+        .collect::<Vec<_>>();
+    resolve_locked_definitions(lock, &available)
+}
+
 fn resolve_locked_definitions(
     lock: &crate::ProjectLock,
-    catalog: &[CommitTypeDefinition],
+    definitions: &[CommitTypeDefinition],
 ) -> Result<Vec<CommitTypeDefinition>, CommitPolicyError> {
     lock.resolved_template()
         .commit_types()
         .iter()
         .map(|locked| {
-            let Some(definition) = catalog
+            let Some(definition) = definitions
                 .iter()
                 .find(|definition| definition.id() == locked.id())
             else {

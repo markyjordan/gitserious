@@ -6,6 +6,7 @@ use std::process::ExitCode;
 
 use gitserious_app::{
     ProjectConfig, ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
+    UserConfiguration, UserConfigurationStore,
 };
 use gitserious_cli::run_from;
 
@@ -77,12 +78,37 @@ impl ProjectStateStore for RecordingStore {
     }
 }
 
+struct FakeUserStore {
+    error: bool,
+}
+
+impl UserConfigurationStore for FakeUserStore {
+    type Error = FakeError;
+
+    fn load(&self) -> Result<UserConfiguration, Self::Error> {
+        if self.error {
+            Err(FakeError)
+        } else {
+            Ok(UserConfiguration::default())
+        }
+    }
+
+    fn compare_and_swap(
+        &self,
+        _expected: &UserConfiguration,
+        _replacement: &UserConfiguration,
+    ) -> Result<(), Self::Error> {
+        Err(FakeError)
+    }
+}
+
 fn repository_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fake-repository")
 }
 
 fn run(arguments: &[&str], locator: &FakeLocator) -> (ExitCode, String, String, RecordingStore) {
     let store = RecordingStore::default();
+    let configuration = FakeUserStore { error: false };
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let exit = run_from(
@@ -90,6 +116,7 @@ fn run(arguments: &[&str], locator: &FakeLocator) -> (ExitCode, String, String, 
         &repository_path().join("subdir"),
         locator,
         &store,
+        &configuration,
         &mut stdout,
         &mut stderr,
     );
@@ -137,6 +164,50 @@ fn operational_failures_use_stderr_and_exit_one() {
     assert!(stdout.is_empty());
     assert_eq!(stderr, "error: repository unavailable\n");
     assert!(store.initialized.borrow().is_none());
+}
+
+#[test]
+fn init_selects_an_explicit_installed_template() {
+    let store = RecordingStore::default();
+    let configuration = FakeUserStore { error: false };
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit = run_from(
+        ["gitserious", "init", "--template", "default"]
+            .into_iter()
+            .map(std::borrow::ToOwned::to_owned),
+        &repository_path().join("subdir"),
+        &FakeLocator { error: false },
+        &store,
+        &configuration,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(exit, ExitCode::SUCCESS);
+    assert!(String::from_utf8_lossy(&stdout).contains("(default -> conventional@1)."));
+    let initialized = store.initialized.borrow();
+    assert_eq!(
+        initialized
+            .as_ref()
+            .map(|(config, _)| config.active_template().as_str()),
+        Some("default")
+    );
+}
+
+#[test]
+fn init_rejects_an_uninstalled_template() {
+    let (exit, stdout, stderr, _) = run(
+        &["gitserious", "init", "--template", "missing"],
+        &FakeLocator { error: false },
+    );
+
+    assert_eq!(exit, ExitCode::FAILURE);
+    assert!(stdout.is_empty());
+    assert_eq!(
+        stderr,
+        "error: template TemplateId(\"missing\") is not installed\n"
+    );
 }
 
 #[test]

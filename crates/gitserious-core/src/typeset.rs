@@ -157,7 +157,12 @@ impl TypesetDefinition {
         &self.schemas
     }
 
-    pub(crate) fn from_trusted(
+    /// Assembles a typeset from previously validated definitions.
+    ///
+    /// Copy and adapter operations may reconstruct a typeset from an already
+    /// validated aggregate without repeating its structural checks.
+    #[must_use]
+    pub fn from_trusted(
         taxonomy: TaxonomyId,
         id: TypesetId,
         version: TypesetVersion,

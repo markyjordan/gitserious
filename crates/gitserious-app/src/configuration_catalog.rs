@@ -159,6 +159,16 @@ impl ConfigurationCatalog {
     }
 }
 
+/// Returns the effective catalog containing only built-in definitions.
+///
+/// # Errors
+///
+/// Returns [`ConfigurationCatalogError`] when the compiled-in built-in
+/// definitions violate catalog invariants, which indicates a release defect.
+pub fn built_in_effective_catalog() -> Result<ConfigurationCatalog, ConfigurationCatalogError> {
+    ConfigurationCatalog::new(&UserConfiguration::default())
+}
+
 fn validate_typeset(
     taxonomy: &TaxonomyDefinition,
     typeset: &TypesetDefinition,
