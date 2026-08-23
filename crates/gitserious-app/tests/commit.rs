@@ -6,9 +6,10 @@ use std::rc::Rc;
 
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitPolicyError,
-    CommitWriter, ConfigurationCatalog, CreateCommitError, ProjectConfig, ProjectLock, ProjectState,
-    ProjectStateStore, RepositoryLocator, ResolvedCommitType, ResolvedTemplate, RepositoryRoot,
-    UserConfiguration, built_in_effective_catalog, create_commit, resolve_project_lock,
+    CommitWriter, ConfigurationCatalog, CreateCommitError, ProjectConfig, ProjectLock,
+    ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot, ResolvedCommitType,
+    ResolvedTemplate, UserConfiguration, built_in_effective_catalog, create_commit,
+    resolve_project_lock,
 };
 use gitserious_core::{
     AuthoredProperty, ChangeTypeDefinition, ChangeTypeId, ChangeTypeSchema, CommitDraft,
@@ -512,10 +513,12 @@ fn custom_template_commits_with_its_own_schema() -> Result<(), Box<dyn Error>> {
         taxonomy.id().clone(),
         typeset.id().clone(),
     );
-    let configuration =
-        UserConfiguration::new(vec![taxonomy], vec![typeset], vec![template])?;
+    let configuration = UserConfiguration::new(vec![taxonomy], vec![typeset], vec![template])?;
     let catalog = ConfigurationCatalog::new(&configuration)?;
-    let config = ProjectConfig::new(gitserious_app::PROJECT_CONFIG_VERSION, TemplateId::new("platform")?)?;
+    let config = ProjectConfig::new(
+        gitserious_app::PROJECT_CONFIG_VERSION,
+        TemplateId::new("platform")?,
+    )?;
     let lock = resolve_project_lock(&config, &catalog)?;
 
     let trace = Trace::default();

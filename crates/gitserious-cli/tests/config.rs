@@ -106,10 +106,7 @@ fn repository_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fake-repository")
 }
 
-fn run(
-    arguments: &[&str],
-    configuration: &FakeUserStore,
-) -> (ExitCode, String, String) {
+fn run(arguments: &[&str], configuration: &FakeUserStore) -> (ExitCode, String, String) {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let exit = run_from(
@@ -147,8 +144,10 @@ fn list_reports_built_in_definitions_across_every_kind() {
 #[test]
 fn list_kind_filter_renders_only_one_section() {
     let configuration = FakeUserStore::empty();
-    let (exit, stdout, _) =
-        run(&["gitserious", "config", "list", "template"], &configuration);
+    let (exit, stdout, _) = run(
+        &["gitserious", "config", "list", "template"],
+        &configuration,
+    );
 
     assert_eq!(exit, ExitCode::SUCCESS);
     assert!(stdout.contains("TEMPLATES"));
@@ -160,20 +159,32 @@ fn list_kind_filter_renders_only_one_section() {
 fn show_renders_each_entity_kind_in_detail() {
     let configuration = FakeUserStore::empty();
 
-    let (_, stdout, stderr) = run(&["gitserious", "config", "show", "template", "default"], &configuration);
+    let (_, stdout, stderr) = run(
+        &["gitserious", "config", "show", "template", "default"],
+        &configuration,
+    );
     assert_eq!(stderr, "");
     assert!(stdout.starts_with("template default (built-in)\nversion: 1\n"));
     assert!(stdout.contains("selects taxonomy conventional with typeset default"));
     assert!(stdout.contains("resolves to 11 change types"));
 
     let (_, stdout, _) = run(
-        &["gitserious", "config", "show", "typeset", "conventional/default"],
+        &[
+            "gitserious",
+            "config",
+            "show",
+            "typeset",
+            "conventional/default",
+        ],
         &configuration,
     );
     assert!(stdout.starts_with("typeset conventional/default (built-in)\n"));
     assert!(stdout.contains("  feat\n    intent  required  single"));
 
-    let (_, stdout, _) = run(&["gitserious", "config", "show", "taxonomy", "conventional"], &configuration);
+    let (_, stdout, _) = run(
+        &["gitserious", "config", "show", "taxonomy", "conventional"],
+        &configuration,
+    );
     assert!(stdout.starts_with("taxonomy conventional (built-in)\n"));
     assert!(stdout.contains("change types:\n  feat"));
 }
@@ -182,8 +193,10 @@ fn show_renders_each_entity_kind_in_detail() {
 fn show_missing_entities_fail_on_stderr() {
     let configuration = FakeUserStore::empty();
 
-    let (exit, stdout, stderr) =
-        run(&["gitserious", "config", "show", "template", "missing"], &configuration);
+    let (exit, stdout, stderr) = run(
+        &["gitserious", "config", "show", "template", "missing"],
+        &configuration,
+    );
     assert_eq!(exit, ExitCode::FAILURE);
     assert!(stdout.is_empty());
     assert_eq!(stderr, "error: template missing was not found\n");
@@ -216,7 +229,10 @@ fn list_and_show_include_user_forks() -> Result<(), Box<dyn Error>> {
     assert!(stdout.contains("  ops/baseline  user v1"));
     assert!(stdout.contains("  platform  user v1  ops / baseline"));
 
-    let (_, _, stderr) = run(&["gitserious", "config", "show", "taxonomy", "ops"], &configuration);
+    let (_, _, stderr) = run(
+        &["gitserious", "config", "show", "taxonomy", "ops"],
+        &configuration,
+    );
     assert_eq!(stderr, "");
     Ok(())
 }

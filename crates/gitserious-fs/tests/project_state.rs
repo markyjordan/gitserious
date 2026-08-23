@@ -305,8 +305,8 @@ fn malformed_unknown_and_unsupported_lock_are_refused() -> Result<(), Box<dyn Er
         initialize_project(
             &GitRepositoryLocator,
             &TomlProjectStateStore,
-        &catalog()?,
-        None,
+            &catalog()?,
+            None,
             repository.path(),
         )?;
         let contents = match mutation {
@@ -354,8 +354,8 @@ fn non_directory_and_non_regular_known_paths_are_refused() -> Result<(), Box<dyn
         initialize_project(
             &GitRepositoryLocator,
             &TomlProjectStateStore,
-        &catalog()?,
-        None,
+            &catalog()?,
+            None,
             non_directory_repository.path()
         ),
         Err(InitializeProjectError::Store(

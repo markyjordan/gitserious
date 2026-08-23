@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use gitserious_app::{
-    ProjectConfig, ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator,
-    RepositoryRoot, UserConfiguration, UserConfigurationStore,
+    ProjectConfig, ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
+    UserConfiguration, UserConfigurationStore,
 };
 use gitserious_cli::run_from;
 
@@ -204,7 +204,10 @@ fn init_rejects_an_uninstalled_template() {
 
     assert_eq!(exit, ExitCode::FAILURE);
     assert!(stdout.is_empty());
-    assert_eq!(stderr, "error: template TemplateId(\"missing\") is not installed\n");
+    assert_eq!(
+        stderr,
+        "error: template TemplateId(\"missing\") is not installed\n"
+    );
 }
 
 #[test]

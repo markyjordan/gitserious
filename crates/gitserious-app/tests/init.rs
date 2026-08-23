@@ -190,7 +190,13 @@ fn absent_state_creates_config_and_lock_once() -> Result<(), Box<dyn Error>> {
     let store = FakeStore::new(ProjectState::Absent);
     let (expected_config, expected_lock) = default_config_and_lock()?;
 
-    let outcome = initialize_project(&locator, &store, &catalog()?, None, &repository_path().join("subdir"))?;
+    let outcome = initialize_project(
+        &locator,
+        &store,
+        &catalog()?,
+        None,
+        &repository_path().join("subdir"),
+    )?;
 
     assert_resolution(InitStatus::Initialized, &outcome);
     assert_eq!(locator.calls.get(), 1);
@@ -293,7 +299,13 @@ fn unknown_authored_template_is_refused_without_a_write() -> Result<(), Box<dyn 
 #[test]
 fn locator_and_each_store_failure_remain_distinguishable() -> Result<(), Box<dyn Error>> {
     let store = FakeStore::new(ProjectState::Absent);
-    let locator_error = initialize_project(&FakeLocator::failing(), &store, &catalog()?, None, &repository_path());
+    let locator_error = initialize_project(
+        &FakeLocator::failing(),
+        &store,
+        &catalog()?,
+        None,
+        &repository_path(),
+    );
     assert!(matches!(
         locator_error,
         Err(InitializeProjectError::Repository(FakeError::Locate))

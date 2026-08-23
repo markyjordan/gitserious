@@ -413,8 +413,8 @@ fn fork_copies_the_built_in_chain_under_new_identities() -> Result<(), Box<dyn E
     assert_eq!(forked.typeset().as_str(), "baseline");
 
     let built_in = built_in_configuration();
-    let taxonomy = find_taxonomy(&store, &TaxonomyId::new("ops")?)?
-        .ok_or("forked taxonomy is present")?;
+    let taxonomy =
+        find_taxonomy(&store, &TaxonomyId::new("ops")?)?.ok_or("forked taxonomy is present")?;
     assert_eq!(
         taxonomy
             .change_types()
@@ -434,10 +434,7 @@ fn fork_copies_the_built_in_chain_under_new_identities() -> Result<(), Box<dyn E
         &TypesetId::new("baseline")?,
     )?
     .ok_or("forked typeset is present")?;
-    assert_eq!(
-        typeset.schemas().len(),
-        built_in.typeset().schemas().len()
-    );
+    assert_eq!(typeset.schemas().len(), built_in.typeset().schemas().len());
     let template = find_template(&store, &TemplateId::new("platform")?)?
         .ok_or("forked template is present")?;
     assert_eq!(template.taxonomy(), &TaxonomyId::new("ops")?);

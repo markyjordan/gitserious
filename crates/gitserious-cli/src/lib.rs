@@ -128,7 +128,15 @@ where
 {
     let unavailable = UnsupportedCommitAdapter;
     let commit = CommitAdapters::new(&unavailable, &unavailable);
-    run_with_commit(arguments, locator, store, configuration, &commit, stdout, stderr)
+    run_with_commit(
+        arguments,
+        locator,
+        store,
+        configuration,
+        &commit,
+        stdout,
+        stderr,
+    )
 }
 
 /// Runs the CLI with concrete interactive commit adapters.
@@ -168,7 +176,14 @@ where
         Err(error) => return write_operational_error(stderr, error),
     };
     execute(
-        &cli, &start, locator, store, configuration, commit, stdout, stderr,
+        &cli,
+        &start,
+        locator,
+        store,
+        configuration,
+        commit,
+        stdout,
+        stderr,
     )
 }
 
@@ -201,7 +216,14 @@ where
     let unavailable = UnsupportedCommitAdapter;
     let commit = CommitAdapters::new(&unavailable, &unavailable);
     run_from_with_commit(
-        arguments, start, locator, store, configuration, &commit, stdout, stderr,
+        arguments,
+        start,
+        locator,
+        store,
+        configuration,
+        &commit,
+        stdout,
+        stderr,
     )
 }
 
@@ -239,7 +261,14 @@ where
         Err(exit) => return exit,
     };
     execute(
-        &cli, start, locator, store, configuration, commit, stdout, stderr,
+        &cli,
+        start,
+        locator,
+        store,
+        configuration,
+        commit,
+        stdout,
+        stderr,
     )
 }
 

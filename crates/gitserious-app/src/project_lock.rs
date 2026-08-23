@@ -275,7 +275,9 @@ pub fn resolve_project_lock(
 ) -> Result<ProjectLock, ResolveProjectPolicyError> {
     let reference = config.active_template();
     let resolved = catalog.resolve(reference).map_err(|error| match error {
-        ConfigurationCatalogError::UnknownTemplate(id) => ResolveProjectPolicyError::UnknownTemplate(id),
+        ConfigurationCatalogError::UnknownTemplate(id) => {
+            ResolveProjectPolicyError::UnknownTemplate(id)
+        }
         other => ResolveProjectPolicyError::Catalog(other),
     })?;
     let Some(template) = catalog.find_template(reference) else {

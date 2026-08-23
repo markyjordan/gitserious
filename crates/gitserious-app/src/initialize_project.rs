@@ -5,8 +5,8 @@ use std::path::Path;
 use gitserious_core::{IdentifierError, TemplateId, TemplateVersion};
 
 use crate::{
-    ConfigurationCatalog, ProjectConfig, ProjectConfigError, ProjectState, ProjectStateStore,
-    RepositoryLocator, RepositoryRoot, ResolveProjectPolicyError, PROJECT_CONFIG_VERSION,
+    ConfigurationCatalog, PROJECT_CONFIG_VERSION, ProjectConfig, ProjectConfigError, ProjectState,
+    ProjectStateStore, RepositoryLocator, RepositoryRoot, ResolveProjectPolicyError,
     resolve_project_lock,
 };
 
@@ -162,7 +162,8 @@ where
         ProjectState::LockOnly => return Err(InitializeProjectError::OrphanLock),
     };
 
-    let expected_lock = resolve_project_lock(&config, catalog).map_err(InitializeProjectError::Policy)?;
+    let expected_lock =
+        resolve_project_lock(&config, catalog).map_err(InitializeProjectError::Policy)?;
     store
         .ensure_local_state(&root)
         .map_err(InitializeProjectError::Store)?;

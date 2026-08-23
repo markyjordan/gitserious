@@ -11,8 +11,8 @@ use gitserious_app::{
 };
 use gitserious_cli::{CommitAdapters, run_from_with_commit};
 use gitserious_core::{
-    AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject,
-    CommitTypeDefinition, CommitTypeId, PropertyRequirement, PropertyValue, PropertyValues,
+    AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
+    CommitTypeId, PropertyRequirement, PropertyValue, PropertyValues,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

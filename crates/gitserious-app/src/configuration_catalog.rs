@@ -137,7 +137,8 @@ impl ConfigurationCatalog {
     ///
     /// Returns [`ConfigurationCatalogError`] when the template or one of its
     /// selected definitions is unavailable or incompatible.
-    pub fn resolve(&self, id: &TemplateId) -> Result<ResolvedTaxonomy, ConfigurationCatalogError> {        let template = self
+    pub fn resolve(&self, id: &TemplateId) -> Result<ResolvedTaxonomy, ConfigurationCatalogError> {
+        let template = self
             .find_template(id)
             .ok_or_else(|| ConfigurationCatalogError::UnknownTemplate(id.clone()))?;
         let taxonomy = self.find_taxonomy(template.taxonomy()).ok_or_else(|| {
@@ -164,8 +165,7 @@ impl ConfigurationCatalog {
 ///
 /// Returns [`ConfigurationCatalogError`] when the compiled-in built-in
 /// definitions violate catalog invariants, which indicates a release defect.
-pub fn built_in_effective_catalog(
-) -> Result<ConfigurationCatalog, ConfigurationCatalogError> {
+pub fn built_in_effective_catalog() -> Result<ConfigurationCatalog, ConfigurationCatalogError> {
     ConfigurationCatalog::new(&UserConfiguration::default())
 }
 

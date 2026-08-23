@@ -120,10 +120,8 @@ pub enum CreateCommitError<LocatorError, StoreError, AuthorError, WriterError> {
 }
 
 /// Result type for the four independently failing commit-workflow ports.
-pub type CreateCommitResult<LocatorError, StoreError, AuthorError, WriterError> = Result<
-    CommitOutcome,
-    CreateCommitError<LocatorError, StoreError, AuthorError, WriterError>,
->;
+pub type CreateCommitResult<LocatorError, StoreError, AuthorError, WriterError> =
+    Result<CommitOutcome, CreateCommitError<LocatorError, StoreError, AuthorError, WriterError>>;
 
 impl<LocatorError, StoreError, AuthorError, WriterError> Display
     for CreateCommitError<LocatorError, StoreError, AuthorError, WriterError>
