@@ -1,5 +1,7 @@
 //! Command-line delivery and presentation for gitserious.
 
+mod config_view;
+
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt::{self, Display, Formatter};
@@ -42,6 +44,46 @@ enum Command {
         #[arg(long, value_name = "TEMPLATE")]
         template: Option<TemplateId>,
     },
+    /// Inspect the installed configuration catalog.
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigAction {
+    /// List every effective taxonomy, typeset, and template.
+    List {
+        /// Restrict the listing to one entity kind.
+        #[arg(value_enum)]
+        kind: Option<ConfigKindArg>,
+    },
+    /// Show one definition in full detail.
+    Show {
+        /// The entity kind to inspect.
+        #[arg(value_enum)]
+        kind: ConfigKindArg,
+        /// The entity identifier; typesets use TAXONOMY/TYPESET.
+        identity: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+enum ConfigKindArg {
+    Taxonomy,
+    Typeset,
+    Template,
+}
+
+impl From<ConfigKindArg> for config_view::ConfigurationKind {
+    fn from(kind: ConfigKindArg) -> Self {
+        match kind {
+            ConfigKindArg::Taxonomy => Self::Taxonomy,
+            ConfigKindArg::Typeset => Self::Typeset,
+            ConfigKindArg::Template => Self::Template,
+        }
+    }
 }
 
 /// Concrete adapters required only by the interactive commit workflow.
@@ -270,6 +312,97 @@ where
                 Ok(outcome) => write_init_outcome(stdout, &outcome),
                 Err(error) => write_operational_error(stderr, error),
             }
+        }
+        Command::Config { action } => match action {
+            ConfigAction::List { kind } => write_config_list(
+                stdout,
+                &catalog,
+                kind.map(config_view::ConfigurationKind::from),
+            ),
+            ConfigAction::Show { kind, identity } => write_config_show(
+                stdout,
+                stderr,
+                &catalog,
+                config_view::ConfigurationKind::from(*kind),
+                identity,
+            ),
+        },
+    }
+}
+
+fn write_config_list(
+    stdout: &mut (impl Write + ?Sized),
+    catalog: &gitserious_app::ConfigurationCatalog,
+    kind: Option<config_view::ConfigurationKind>,
+) -> ExitCode {
+    let rendered = match kind {
+        Some(kind) => config_view::render_list_kind(catalog, kind),
+        None => config_view::render_list(catalog),
+    };
+    if stdout.write_all(rendered.as_bytes()).is_err() {
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
+fn write_config_show<Err>(
+    stdout: &mut (impl Write + ?Sized),
+    stderr: &mut Err,
+    catalog: &gitserious_app::ConfigurationCatalog,
+    kind: config_view::ConfigurationKind,
+    identity: &str,
+) -> ExitCode
+where
+    Err: Write + ?Sized,
+{
+    let rendered = match resolve_show_target(catalog, kind, identity) {
+        Ok(rendered) => rendered,
+        Err(error) => return write_operational_error(stderr, error),
+    };
+    if stdout.write_all(rendered.as_bytes()).is_err() {
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
+fn resolve_show_target(
+    catalog: &gitserious_app::ConfigurationCatalog,
+    kind: config_view::ConfigurationKind,
+    identity: &str,
+) -> Result<String, String> {
+    use config_view::ConfigurationKind;
+    match kind {
+        ConfigurationKind::Taxonomy => {
+            let id = gitserious_core::TaxonomyId::new(identity)
+                .map_err(|error| format!("invalid taxonomy identifier {identity:?}: {error}"))?;
+            let taxonomy = catalog
+                .find_taxonomy(&id)
+                .ok_or_else(|| format!("taxonomy {id} was not found"))?;
+            Ok(config_view::render_taxonomy(taxonomy))
+        }
+        ConfigurationKind::Typeset => {
+            let Some((taxonomy_text, typeset_text)) = identity.split_once('/') else {
+                return Err(format!(
+                    "typeset identity must be TAXONOMY/TYPESET, found {identity:?}"
+                ));
+            };
+            let taxonomy = gitserious_core::TaxonomyId::new(taxonomy_text).map_err(|error| {
+                format!("invalid taxonomy identifier {taxonomy_text:?}: {error}")
+            })?;
+            let id = gitserious_core::TypesetId::new(typeset_text)
+                .map_err(|error| format!("invalid typeset identifier {typeset_text:?}: {error}"))?;
+            let typeset = catalog
+                .find_typeset(&taxonomy, &id)
+                .ok_or_else(|| format!("typeset {taxonomy}/{id} was not found"))?;
+            Ok(config_view::render_typeset(typeset))
+        }
+        ConfigurationKind::Template => {
+            let id = gitserious_core::TemplateId::new(identity)
+                .map_err(|error| format!("invalid template identifier {identity:?}: {error}"))?;
+            let template = catalog
+                .find_template(&id)
+                .ok_or_else(|| format!("template {id} was not found"))?;
+            Ok(config_view::render_template(template, catalog))
         }
     }
 }
