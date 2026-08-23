@@ -151,7 +151,7 @@ impl GlobalConfigurationStore for FakeUserStore {
     type Error = FakeError;
 
     fn load(&self) -> Result<CustomConfiguration, Self::Error> {
-        Ok(CustomConfiguration::default())
+        Err(FakeError)
     }
 
     fn compare_and_swap(

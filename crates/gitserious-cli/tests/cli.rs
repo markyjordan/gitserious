@@ -168,6 +168,28 @@ fn init_dispatches_and_reports_the_exact_resolution() {
 }
 
 #[test]
+fn default_init_does_not_load_unavailable_global_configuration() {
+    let store = RecordingStore::default();
+    let configuration = FakeUserStore { error: true };
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit = run_from(
+        ["gitserious", "init"],
+        &repository_path(),
+        &FakeLocator { error: false },
+        &store,
+        &configuration,
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(exit, ExitCode::SUCCESS);
+    assert!(String::from_utf8_lossy(&stdout).contains("default -> conventional@1"));
+    assert!(stderr.is_empty());
+    assert!(store.initialized.borrow().is_some());
+}
+
+#[test]
 fn operational_failures_use_stderr_and_exit_one() {
     let (exit, stdout, stderr, store) = run(&["gitserious", "init"], &FakeLocator { error: true });
 

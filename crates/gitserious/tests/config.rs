@@ -11,7 +11,7 @@ fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_gitserious")
 }
 
-fn repository() -> Result<TempDir, Box<dyn Error>> {
+fn new_repository() -> Result<TempDir, Box<dyn Error>> {
     let directory = tempfile::tempdir()?;
     let status = Command::new("git")
         .args(["init", "-q"])
@@ -67,7 +67,7 @@ const FEAT_ENTRY_MARKER: &str =
 
 #[test]
 fn fork_init_and_policy_verification_end_to_end() -> Result<(), Box<dyn Error>> {
-    let repository = repository()?;
+    let repository = new_repository()?;
     let isolation = Isolation::new()?;
 
     let fork = run(
@@ -110,6 +110,9 @@ fn fork_init_and_policy_verification_end_to_end() -> Result<(), Box<dyn Error>> 
     assert!(stdout(&init).contains("(platform -> platform@1)."));
     let authored = fs::read_to_string(repository.path().join("gitserious.toml"))?;
     assert!(authored.contains("active-template = \"platform\""));
+    assert!(authored.contains("[[taxonomies]]"));
+    assert!(authored.contains("[[typesets]]"));
+    assert!(authored.contains("[[templates]]"));
     let lock = fs::read_to_string(repository.path().join("gitserious.lock"))?;
     assert!(lock.contains("id = \"platform\""));
     assert_eq!(
@@ -120,6 +123,30 @@ fn fork_init_and_policy_verification_end_to_end() -> Result<(), Box<dyn Error>> 
     let repeated = run(repository.path(), &isolation, &["init"])?;
     assert!(repeated.status.success(), "{}", stderr(&repeated));
     assert!(stdout(&repeated).contains("(platform -> platform@1)."));
+
+    for arguments in [
+        &["config", "delete", "template", "platform"][..],
+        &[
+            "config",
+            "delete",
+            "typeset",
+            "platform-taxonomy/platform-typeset",
+        ][..],
+        &["config", "delete", "taxonomy", "platform-taxonomy"][..],
+    ] {
+        let deleted = run(repository.path(), &isolation, arguments)?;
+        assert!(deleted.status.success(), "{}", stderr(&deleted));
+    }
+
+    fs::write(isolation.configuration_path(), "not toml")?;
+    let independent = run(repository.path(), &isolation, &["init"])?;
+    assert!(independent.status.success(), "{}", stderr(&independent));
+    assert!(stdout(&independent).contains("(platform -> platform@1)."));
+
+    let fresh_repository = new_repository()?;
+    let default_init = run(fresh_repository.path(), &isolation, &["init"])?;
+    assert!(default_init.status.success(), "{}", stderr(&default_init));
+    assert!(stdout(&default_init).contains("(default -> conventional@1)."));
 
     let unknown = run(
         repository.path(),
@@ -146,7 +173,7 @@ fn fork_init_and_policy_verification_end_to_end() -> Result<(), Box<dyn Error>> 
 
 #[test]
 fn tampered_locks_are_rejected_before_authoring() -> Result<(), Box<dyn Error>> {
-    let repository = repository()?;
+    let repository = new_repository()?;
     let isolation = Isolation::new()?;
 
     let forked = run(
