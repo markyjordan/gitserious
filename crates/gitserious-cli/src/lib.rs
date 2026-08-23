@@ -13,7 +13,8 @@ use clap::{Parser, Subcommand};
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
     InitOutcome, InitStatus, ProjectStateStore, RepositoryLocator, RepositoryRoot,
-    UserConfigurationStore, create_commit, initialize_project, load_effective_catalog,
+    UserConfigurationStore, create_commit, delete_taxonomy, delete_template, delete_typeset,
+    fork_conventional, initialize_project, load_effective_catalog,
 };
 use gitserious_core::{CommitMessage, CommitTypeDefinition, CommitTypeId, TemplateId};
 
@@ -62,6 +63,26 @@ enum ConfigAction {
     /// Show one definition in full detail.
     Show {
         /// The entity kind to inspect.
+        #[arg(value_enum)]
+        kind: ConfigKindArg,
+        /// The entity identifier; typesets use TAXONOMY/TYPESET.
+        identity: String,
+    },
+    /// Copy the built-in Conventional chain under new user-owned identities.
+    Fork {
+        /// The new reusable-template identifier.
+        #[arg(long, value_name = "TEMPLATE")]
+        template: String,
+        /// The new taxonomy identifier; defaults to <template>-taxonomy.
+        #[arg(long, value_name = "TAXONOMY")]
+        taxonomy: Option<String>,
+        /// The new typeset identifier; defaults to <template>-typeset.
+        #[arg(long, value_name = "TYPESET")]
+        typeset: Option<String>,
+    },
+    /// Remove one user-owned definition.
+    Delete {
+        /// The entity kind to remove.
         #[arg(value_enum)]
         kind: ConfigKindArg,
         /// The entity identifier; typesets use TAXONOMY/TYPESET.
@@ -355,7 +376,139 @@ where
                 config_view::ConfigurationKind::from(*kind),
                 identity,
             ),
+            ConfigAction::Fork {
+                template,
+                taxonomy,
+                typeset,
+            } => write_config_fork(
+                stdout,
+                stderr,
+                configuration,
+                template.as_str(),
+                taxonomy.as_deref(),
+                typeset.as_deref(),
+            ),
+            ConfigAction::Delete { kind, identity } => write_config_delete(
+                stdout,
+                stderr,
+                configuration,
+                config_view::ConfigurationKind::from(*kind),
+                identity,
+            ),
         },
+    }
+}
+
+fn parse_identifier<Id>(
+    text: &str,
+    kind: &str,
+    construct: impl for<'a> Fn(&'a str) -> Result<Id, gitserious_core::IdentifierError>,
+) -> Result<Id, String> {
+    construct(text).map_err(|error| format!("invalid {kind} identifier {text:?}: {error}"))
+}
+
+fn write_config_fork<U>(
+    stdout: &mut (impl Write + ?Sized),
+    stderr: &mut (impl Write + ?Sized),
+    configuration: &U,
+    template_text: &str,
+    taxonomy_text: Option<&str>,
+    typeset_text: Option<&str>,
+) -> ExitCode
+where
+    U: UserConfigurationStore + ?Sized,
+    U::Error: Display,
+{
+    let template = match parse_identifier(template_text, "template", |text| TemplateId::new(text)) {
+        Ok(id) => id,
+        Err(error) => return write_operational_error(stderr, error),
+    };
+    let taxonomy_text =
+        taxonomy_text.map_or_else(|| format!("{template_text}-taxonomy"), str::to_owned);
+    let typeset_text =
+        typeset_text.map_or_else(|| format!("{template_text}-typeset"), str::to_owned);
+    let taxonomy = match parse_identifier(&taxonomy_text, "taxonomy", |text| {
+        gitserious_core::TaxonomyId::new(text)
+    }) {
+        Ok(id) => id,
+        Err(error) => return write_operational_error(stderr, error),
+    };
+    let typeset = match parse_identifier(&typeset_text, "typeset", |text| {
+        gitserious_core::TypesetId::new(text)
+    }) {
+        Ok(id) => id,
+        Err(error) => return write_operational_error(stderr, error),
+    };
+    match fork_conventional(configuration, template, taxonomy, typeset) {
+        Ok(forked) => {
+            if writeln!(
+                stdout,
+                "Forked conventional into template {} (taxonomy {}, typeset {}).",
+                forked.template(),
+                forked.taxonomy(),
+                forked.typeset()
+            )
+            .is_err()
+            {
+                return ExitCode::FAILURE;
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => write_operational_error(stderr, error),
+    }
+}
+
+fn write_config_delete<U>(
+    stdout: &mut (impl Write + ?Sized),
+    stderr: &mut (impl Write + ?Sized),
+    configuration: &U,
+    kind: config_view::ConfigurationKind,
+    identity: &str,
+) -> ExitCode
+where
+    U: UserConfigurationStore + ?Sized,
+    U::Error: Display,
+{
+    use config_view::ConfigurationKind;
+    let outcome = match kind {
+        ConfigurationKind::Taxonomy => parse_identifier(identity, "taxonomy", |text| {
+            gitserious_core::TaxonomyId::new(text)
+        })
+        .and_then(|id| delete_taxonomy(configuration, &id).map_err(|e| e.to_string()))
+        .map(|()| format!("Deleted taxonomy {identity}.")),
+        ConfigurationKind::Typeset => {
+            let Some((taxonomy_text, typeset_text)) = identity.split_once('/') else {
+                return write_operational_error(
+                    stderr,
+                    format!("typeset identity must be TAXONOMY/TYPESET, found {identity:?}"),
+                );
+            };
+            parse_identifier(taxonomy_text, "taxonomy", |text| {
+                gitserious_core::TaxonomyId::new(text)
+            })
+            .and_then(|taxonomy| {
+                let typeset = parse_identifier(typeset_text, "typeset", |text| {
+                    gitserious_core::TypesetId::new(text)
+                })?;
+                delete_typeset(configuration, &taxonomy, &typeset)
+                    .map_err(|error| error.to_string())
+                    .map(|()| format!("Deleted typeset {taxonomy}/{typeset}."))
+            })
+        }
+        ConfigurationKind::Template => {
+            parse_identifier(identity, "template", |text| TemplateId::new(text))
+                .and_then(|id| delete_template(configuration, &id).map_err(|e| e.to_string()))
+                .map(|()| format!("Deleted template {identity}."))
+        }
+    };
+    match outcome {
+        Ok(line) => {
+            if writeln!(stdout, "{line}").is_err() {
+                return ExitCode::FAILURE;
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => write_operational_error(stderr, error),
     }
 }
 

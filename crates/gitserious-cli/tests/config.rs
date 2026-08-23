@@ -236,3 +236,106 @@ fn list_and_show_include_user_forks() -> Result<(), Box<dyn Error>> {
     assert_eq!(stderr, "");
     Ok(())
 }
+
+#[test]
+fn fork_derives_sibling_identities_and_persists_definitions() -> Result<(), Box<dyn Error>> {
+    let configuration = FakeUserStore::empty();
+    let (exit, stdout, stderr) = run(
+        &["gitserious", "config", "fork", "--template", "platform"],
+        &configuration,
+    );
+
+    assert_eq!(exit, ExitCode::SUCCESS);
+    assert_eq!(stderr, "");
+    assert_eq!(
+        stdout,
+        "Forked conventional into template platform \
+         (taxonomy platform-taxonomy, typeset platform-typeset).\n"
+    );
+    assert_eq!(catalog(&configuration)?.templates().len(), 2);
+    let (_, _, stderr) = run(
+        &[
+            "gitserious",
+            "config",
+            "show",
+            "typeset",
+            "platform-taxonomy/platform-typeset",
+        ],
+        &configuration,
+    );
+    assert_eq!(stderr, "");
+    Ok(())
+}
+
+#[test]
+fn fork_rejects_duplicate_identity_with_a_failure_exit() {
+    let configuration = FakeUserStore::empty();
+    let _ = run(
+        &["gitserious", "config", "fork", "--template", "platform"],
+        &configuration,
+    );
+
+    let (exit, stdout, stderr) = run(
+        &["gitserious", "config", "fork", "--template", "platform"],
+        &configuration,
+    );
+    assert_eq!(exit, ExitCode::FAILURE);
+    assert!(stdout.is_empty());
+    assert_eq!(
+        stderr,
+        "error: taxonomy TaxonomyId(\"platform-taxonomy\") already exists\n"
+    );
+}
+
+#[test]
+fn delete_removes_user_definitions_and_enforces_references() -> Result<(), Box<dyn Error>> {
+    let configuration = FakeUserStore::empty();
+    let _ = run(
+        &["gitserious", "config", "fork", "--template", "platform"],
+        &configuration,
+    );
+
+    let (exit, _, stderr) = run(
+        &[
+            "gitserious",
+            "config",
+            "delete",
+            "taxonomy",
+            "platform-taxonomy",
+        ],
+        &configuration,
+    );
+    assert_eq!(exit, ExitCode::FAILURE);
+    assert!(stderr.contains("referenced by typeset"));
+
+    for arguments in [
+        &["gitserious", "config", "delete", "template", "platform"][..],
+        &[
+            "gitserious",
+            "config",
+            "delete",
+            "typeset",
+            "platform-taxonomy/platform-typeset",
+        ],
+        &[
+            "gitserious",
+            "config",
+            "delete",
+            "taxonomy",
+            "platform-taxonomy",
+        ],
+    ] {
+        let (exit, stdout, stderr) = run(arguments, &configuration);
+        assert_eq!(exit, ExitCode::SUCCESS, "deletion failed: {stderr}");
+        assert!(!stdout.is_empty());
+    }
+    assert_eq!(catalog(&configuration)?.templates().len(), 1);
+
+    let (exit, _, stderr) = run(
+        &["gitserious", "config", "delete", "template", "default"],
+        &configuration,
+    );
+    assert_eq!(exit, ExitCode::FAILURE);
+    assert!(stderr.contains("is reserved by gitserious"));
+    Ok(())
+}
