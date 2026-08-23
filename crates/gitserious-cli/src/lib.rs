@@ -348,7 +348,6 @@ where
         Command::Commit { commit_type } => match create_commit(
             locator,
             store,
-            &catalog,
             commit.author,
             commit.writer,
             start,

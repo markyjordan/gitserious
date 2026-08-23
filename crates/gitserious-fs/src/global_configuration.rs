@@ -218,16 +218,16 @@ fn rollback_file(path: &Path, original: GlobalConfigurationError) -> GlobalConfi
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct ConfigurationWire {
-    config_version: u16,
-    taxonomies: Vec<TaxonomyWire>,
-    typesets: Vec<TypesetWire>,
-    templates: Vec<TemplateWire>,
+pub(crate) struct ConfigurationWire {
+    pub(crate) config_version: u16,
+    pub(crate) taxonomies: Vec<TaxonomyWire>,
+    pub(crate) typesets: Vec<TypesetWire>,
+    pub(crate) templates: Vec<TemplateWire>,
 }
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct TaxonomyWire {
+pub(crate) struct TaxonomyWire {
     id: String,
     version: u16,
     description: String,
@@ -243,7 +243,7 @@ struct ChangeTypeWire {
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct TypesetWire {
+pub(crate) struct TypesetWire {
     taxonomy: String,
     id: String,
     version: u16,
@@ -288,7 +288,7 @@ enum RequirementWire {
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct TemplateWire {
+pub(crate) struct TemplateWire {
     id: String,
     version: u16,
     description: String,
@@ -296,7 +296,7 @@ struct TemplateWire {
     typeset: String,
 }
 
-fn configuration_from_wire(
+pub(crate) fn configuration_from_wire(
     wire: ConfigurationWire,
 ) -> Result<CustomConfiguration, CustomConfigurationFormatError> {
     if wire.config_version != CUSTOM_CONFIGURATION_VERSION {
@@ -456,7 +456,7 @@ fn template_from_wire(
     ))
 }
 
-fn configuration_to_wire(configuration: &CustomConfiguration) -> ConfigurationWire {
+pub(crate) fn configuration_to_wire(configuration: &CustomConfiguration) -> ConfigurationWire {
     ConfigurationWire {
         config_version: CUSTOM_CONFIGURATION_VERSION,
         taxonomies: configuration
@@ -572,7 +572,10 @@ impl Display for CustomConfigurationFormatError {
         match self {
             Self::Toml(error) => Display::fmt(error, formatter),
             Self::UnsupportedVersion(version) => {
-                write!(formatter, "unsupported global config version {version}")
+                write!(
+                    formatter,
+                    "unsupported custom configuration version {version}"
+                )
             }
             Self::Value { location, source } => write!(formatter, "invalid {location}: {source}"),
         }

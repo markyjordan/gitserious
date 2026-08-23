@@ -9,7 +9,10 @@ use gitserious_core::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::{ConfigurationCatalog, ConfigurationCatalogError, Fingerprint, ProjectConfig};
+use crate::{
+    ConfigurationCatalog, ConfigurationCatalogError, CustomConfiguration, Fingerprint,
+    ProjectConfig,
+};
 
 /// The only generated project-lock format understood by this release.
 pub const PROJECT_LOCK_VERSION: u16 = 1;
@@ -271,8 +274,9 @@ impl Error for ResolveProjectPolicyError {
 /// installed, the catalog is invalid, or resolved template invariants fail.
 pub fn resolve_project_lock(
     config: &ProjectConfig,
-    catalog: &ConfigurationCatalog,
 ) -> Result<ProjectLock, ResolveProjectPolicyError> {
+    let catalog =
+        ConfigurationCatalog::new(config.custom()).map_err(ResolveProjectPolicyError::Catalog)?;
     let reference = config.active_template();
     let resolved = catalog.resolve(reference).map_err(|error| match error {
         ConfigurationCatalogError::UnknownTemplate(id) => {
@@ -328,7 +332,69 @@ pub fn fingerprint_project_config(config: &ProjectConfig) -> Fingerprint {
     let mut canonical = CanonicalHasher::new(b"gitserious.project-config.v1");
     canonical.u16(config.version());
     canonical.text(config.active_template().as_str());
+    fingerprint_custom_configuration(&mut canonical, config.custom());
     canonical.finish()
+}
+
+fn fingerprint_custom_configuration(canonical: &mut CanonicalHasher, custom: &CustomConfiguration) {
+    canonical.usize(custom.taxonomies().len());
+    for taxonomy in custom.taxonomies() {
+        canonical.text(taxonomy.id().as_str());
+        canonical.u16(taxonomy.version().get());
+        canonical.text(taxonomy.description().as_str());
+        canonical.usize(taxonomy.change_types().len());
+        for change_type in taxonomy.change_types() {
+            canonical.text(change_type.id().as_str());
+            canonical.text(change_type.description().as_str());
+        }
+    }
+
+    canonical.usize(custom.typesets().len());
+    for typeset in custom.typesets() {
+        canonical.text(typeset.taxonomy().as_str());
+        canonical.text(typeset.id().as_str());
+        canonical.u16(typeset.version().get());
+        canonical.text(typeset.description().as_str());
+        canonical.usize(typeset.schemas().len());
+        for schema in typeset.schemas() {
+            canonical.text(schema.change_type().as_str());
+            canonical.usize(schema.properties().len());
+            for property in schema.properties() {
+                fingerprint_property(canonical, property);
+            }
+        }
+    }
+
+    canonical.usize(custom.templates().len());
+    for template in custom.templates() {
+        canonical.text(template.id().as_str());
+        canonical.u16(template.version().get());
+        canonical.text(template.description().as_str());
+        canonical.text(template.taxonomy().as_str());
+        canonical.text(template.typeset().as_str());
+    }
+}
+
+fn fingerprint_property(
+    canonical: &mut CanonicalHasher,
+    property: &gitserious_core::PropertyDefinition,
+) {
+    canonical.text(property.key().as_str());
+    canonical.text(property.description());
+    canonical.text(match property.multiplicity() {
+        PropertyMultiplicity::Single => "single",
+        PropertyMultiplicity::Multiple => "multiple",
+    });
+    match property.requirement() {
+        PropertyRequirement::Required => canonical.text("required"),
+        PropertyRequirement::Recommended => canonical.text("recommended"),
+        PropertyRequirement::Optional => canonical.text("optional"),
+        PropertyRequirement::Conditional(condition) => {
+            canonical.text("conditional");
+            canonical.text(condition.id().as_str());
+            canonical.text(condition.rationale());
+        }
+    }
 }
 
 /// Fingerprints every semantic field in one ordered commit-type definition.
@@ -340,22 +406,7 @@ pub fn fingerprint_commit_type_definition(definition: &CommitTypeDefinition) -> 
     canonical.text(definition.description());
     canonical.usize(definition.properties().len());
     for property in definition.properties() {
-        canonical.text(property.key().as_str());
-        canonical.text(property.description());
-        canonical.text(match property.multiplicity() {
-            PropertyMultiplicity::Single => "single",
-            PropertyMultiplicity::Multiple => "multiple",
-        });
-        match property.requirement() {
-            PropertyRequirement::Required => canonical.text("required"),
-            PropertyRequirement::Recommended => canonical.text("recommended"),
-            PropertyRequirement::Optional => canonical.text("optional"),
-            PropertyRequirement::Conditional(condition) => {
-                canonical.text("conditional");
-                canonical.text(condition.id().as_str());
-                canonical.text(condition.rationale());
-            }
-        }
+        fingerprint_property(&mut canonical, property);
     }
     canonical.finish()
 }

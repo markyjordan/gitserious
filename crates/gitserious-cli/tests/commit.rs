@@ -7,7 +7,7 @@ use std::process::ExitCode;
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitWriter, CustomConfiguration,
     GlobalConfigurationStore, ProjectConfig, ProjectLock, ProjectState, ProjectStateStore,
-    RepositoryLocator, RepositoryRoot, built_in_effective_catalog, resolve_project_lock,
+    RepositoryLocator, RepositoryRoot, resolve_project_lock,
 };
 use gitserious_cli::{CommitAdapters, run_from_with_commit};
 use gitserious_core::{
@@ -158,7 +158,7 @@ fn repository_path() -> PathBuf {
 
 fn initialized_state() -> Result<ProjectState, Box<dyn Error>> {
     let config = ProjectConfig::default_channel()?;
-    let lock = resolve_project_lock(&config, &built_in_effective_catalog()?)?;
+    let lock = resolve_project_lock(&config)?;
     Ok(ProjectState::Initialized { config, lock })
 }
 

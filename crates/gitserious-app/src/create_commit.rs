@@ -193,7 +193,6 @@ where
 pub fn create_commit<L, S, A, W>(
     locator: &L,
     store: &S,
-    catalog: &ConfigurationCatalog,
     author: &A,
     writer: &W,
     start: &Path,
@@ -222,14 +221,18 @@ where
         ProjectState::Initialized { config, lock } => (config, lock),
     };
 
-    let expected_lock = resolve_project_lock(&config, catalog)
+    let catalog = ConfigurationCatalog::new(config.custom())
+        .map_err(ResolveProjectPolicyError::Catalog)
+        .map_err(CommitPolicyError::Resolution)
+        .map_err(CreateCommitError::Policy)?;
+    let expected_lock = resolve_project_lock(&config)
         .map_err(CommitPolicyError::Resolution)
         .map_err(CreateCommitError::Policy)?;
     if lock != expected_lock {
         return Err(CreateCommitError::Policy(CommitPolicyError::StaleLock));
     }
 
-    let available = locked_definitions(&lock, catalog).map_err(CreateCommitError::Policy)?;
+    let available = locked_definitions(&lock, &catalog).map_err(CreateCommitError::Policy)?;
     let preselected = requested_type
         .map(|requested| find_definition(&available, requested))
         .transpose()?;

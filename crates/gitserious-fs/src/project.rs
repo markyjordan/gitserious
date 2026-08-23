@@ -17,6 +17,11 @@ use gitserious_core::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::global_configuration::{
+    ConfigurationWire, CustomConfigurationFormatError, TaxonomyWire, TemplateWire, TypesetWire,
+    configuration_from_wire, configuration_to_wire,
+};
+
 const LOCAL_STATE_DIRECTORY: &str = ".gitserious";
 const LOCAL_IGNORE_FILE: &str = ".gitignore";
 const LOCAL_IGNORE_CONTENTS: &str = "*\n";
@@ -287,7 +292,7 @@ fn write_temporary_lock(directory: &Path, contents: &[u8]) -> Result<PathBuf, Pr
 
 fn read_config(path: &Path) -> Result<ProjectConfig, ProjectStateError> {
     let contents = read_utf8(path)?;
-    let wire = toml::from_str::<ConfigWire>(&contents).map_err(|source| {
+    let wire = toml::from_str::<ProjectConfigWire>(&contents).map_err(|source| {
         ProjectStateError::ConfigFormat {
             path: path.to_path_buf(),
             source: Box::new(ConfigFormatError::Toml(source)),
@@ -321,9 +326,13 @@ fn read_utf8(path: &Path) -> Result<String, ProjectStateError> {
 }
 
 fn render_config(config: &ProjectConfig) -> Result<String, ProjectStateError> {
-    let wire = ConfigWire {
-        config_version: config.version(),
+    let custom = configuration_to_wire(config.custom());
+    let wire = ProjectConfigWire {
+        config_version: custom.config_version,
         active_template: config.active_template().to_string(),
+        taxonomies: custom.taxonomies,
+        typesets: custom.typesets,
+        templates: custom.templates,
     };
     render_toml(&wire, ProjectArtifact::Config).map(ensure_line_ending)
 }
@@ -373,10 +382,18 @@ fn ensure_line_ending(mut value: String) -> String {
     value
 }
 
-fn config_from_wire(wire: ConfigWire) -> Result<ProjectConfig, ConfigFormatError> {
+fn config_from_wire(wire: ProjectConfigWire) -> Result<ProjectConfig, ConfigFormatError> {
     let active_template =
         TemplateId::new(wire.active_template).map_err(ConfigFormatError::TemplateId)?;
-    ProjectConfig::new(wire.config_version, active_template).map_err(ConfigFormatError::Config)
+    let version = wire.config_version;
+    let custom = configuration_from_wire(ConfigurationWire {
+        config_version: wire.config_version,
+        taxonomies: wire.taxonomies,
+        typesets: wire.typesets,
+        templates: wire.templates,
+    })
+    .map_err(ConfigFormatError::Custom)?;
+    ProjectConfig::new(version, active_template, custom).map_err(ConfigFormatError::Config)
 }
 
 fn lock_from_wire(wire: LockWire) -> Result<ProjectLock, LockFormatError> {
@@ -418,9 +435,12 @@ fn lock_from_wire(wire: LockWire) -> Result<ProjectLock, LockFormatError> {
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct ConfigWire {
+struct ProjectConfigWire {
     config_version: u16,
     active_template: String,
+    taxonomies: Vec<TaxonomyWire>,
+    typesets: Vec<TypesetWire>,
+    templates: Vec<TemplateWire>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -474,6 +494,8 @@ pub enum ConfigFormatError {
     Toml(toml::de::Error),
     /// The active template reference is not a valid domain identifier.
     TemplateId(IdentifierError),
+    /// One custom definition or aggregate is invalid.
+    Custom(CustomConfigurationFormatError),
     /// The configuration version is unsupported.
     Config(ProjectConfigError),
 }
@@ -483,6 +505,7 @@ impl Display for ConfigFormatError {
         match self {
             Self::Toml(error) => Display::fmt(error, formatter),
             Self::TemplateId(error) => Display::fmt(error, formatter),
+            Self::Custom(error) => Display::fmt(error, formatter),
             Self::Config(error) => Display::fmt(error, formatter),
         }
     }
@@ -493,6 +516,7 @@ impl Error for ConfigFormatError {
         match self {
             Self::Toml(error) => Some(error),
             Self::TemplateId(error) => Some(error),
+            Self::Custom(error) => Some(error),
             Self::Config(error) => Some(error),
         }
     }

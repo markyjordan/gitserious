@@ -171,7 +171,7 @@ fn strict_format_rejects_unknown_fields_unsupported_versions_and_invalid_values(
         ),
         (
             "config-version = 2\ntaxonomies = []\ntypesets = []\ntemplates = []\n",
-            "unsupported global config version 2",
+            "unsupported custom configuration version 2",
         ),
         (
             "config-version = 1\ntypesets = []\ntemplates = []\n[[taxonomies]]\nid = \"Bad\"\nversion = 1\ndescription = \"Bad.\"\nchange-types = [{ id = \"change\", description = \"Change.\" }]\n",
