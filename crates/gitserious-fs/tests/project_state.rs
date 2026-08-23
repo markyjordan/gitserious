@@ -369,6 +369,106 @@ fn concurrent_lock_change_is_preserved_and_refused() -> Result<(), Box<dyn Error
 }
 
 #[test]
+fn project_pair_compare_and_swap_replaces_config_and_lock_together() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    let paths = project_paths(repository.path());
+    initialize_project(
+        &GitRepositoryLocator,
+        &TomlProjectStateStore,
+        &catalog()?,
+        None,
+        repository.path(),
+    )?;
+    let (current_config, current_lock) =
+        match TomlProjectStateStore.inspect(&root(repository.path())?)? {
+            ProjectState::Initialized { config, lock } => (config, lock),
+            state => return Err(format!("unexpected state: {state:?}").into()),
+        };
+    let replacement_config = populated_project_config()?;
+    let replacement_lock = resolve_project_lock(&replacement_config)?;
+
+    TomlProjectStateStore.compare_and_swap(
+        &root(repository.path())?,
+        &current_config,
+        &current_lock,
+        &replacement_config,
+        &replacement_lock,
+    )?;
+
+    assert_eq!(
+        TomlProjectStateStore.inspect(&root(repository.path())?)?,
+        ProjectState::Initialized {
+            config: replacement_config,
+            lock: replacement_lock
+        }
+    );
+    assert!(fs::read_dir(repository.path())?.all(|entry| {
+        entry.is_ok_and(|entry| !entry.file_name().to_string_lossy().contains(".tmp."))
+    }));
+    assert!(paths.config.is_file() && paths.lock.is_file());
+    Ok(())
+}
+
+#[test]
+fn project_pair_compare_and_swap_rejects_concurrent_change_to_either_artifact()
+-> Result<(), Box<dyn Error>> {
+    for changed_artifact in ["config", "lock"] {
+        let repository = repository()?;
+        let paths = project_paths(repository.path());
+        initialize_project(
+            &GitRepositoryLocator,
+            &TomlProjectStateStore,
+            &catalog()?,
+            None,
+            repository.path(),
+        )?;
+        let (current_config, current_lock) =
+            match TomlProjectStateStore.inspect(&root(repository.path())?)? {
+                ProjectState::Initialized { config, lock } => (config, lock),
+                state => return Err(format!("unexpected state: {state:?}").into()),
+            };
+        match changed_artifact {
+            "config" => {
+                let changed = fs::read_to_string(&paths.config)?.replace(
+                    "active-template = \"default\"",
+                    "active-template = \"changed\"",
+                );
+                fs::write(&paths.config, changed)?;
+            }
+            "lock" => {
+                let changed = fs::read_to_string(&paths.lock)?.replace(
+                    "config-fingerprint = \"sha256:e",
+                    "config-fingerprint = \"sha256:a",
+                );
+                fs::write(&paths.lock, changed)?;
+            }
+            _ => return Err("unexpected artifact".into()),
+        }
+        let before_config = fs::read(&paths.config)?;
+        let before_lock = fs::read(&paths.lock)?;
+        let replacement_config = populated_project_config()?;
+        let replacement_lock = resolve_project_lock(&replacement_config)?;
+
+        assert!(matches!(
+            TomlProjectStateStore.compare_and_swap(
+                &root(repository.path())?,
+                &current_config,
+                &current_lock,
+                &replacement_config,
+                &replacement_lock,
+            ),
+            Err(ProjectStateError::ConcurrentProjectChange { .. })
+        ));
+        assert_eq!(fs::read(&paths.config)?, before_config);
+        assert_eq!(fs::read(&paths.lock)?, before_lock);
+        assert!(fs::read_dir(repository.path())?.all(|entry| {
+            entry.is_ok_and(|entry| !entry.file_name().to_string_lossy().contains(".tmp."))
+        }));
+    }
+    Ok(())
+}
+
+#[test]
 fn malformed_unknown_and_unsupported_config_are_refused() -> Result<(), Box<dyn Error>> {
     for contents in [
         "not toml",

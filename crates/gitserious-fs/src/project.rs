@@ -348,7 +348,7 @@ fn write_new_file(path: &Path, contents: &[u8]) -> Result<(), ProjectStateError>
     Ok(())
 }
 
-fn rollback_file(path: &Path, original: ProjectStateError) -> ProjectStateError {
+pub(crate) fn rollback_file(path: &Path, original: ProjectStateError) -> ProjectStateError {
     match fs::remove_file(path) {
         Ok(()) => original,
         Err(source) if source.kind() == io::ErrorKind::NotFound => original,
