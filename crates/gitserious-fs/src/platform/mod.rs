@@ -1,6 +1,6 @@
 #[cfg(any(test, windows))]
 pub(crate) mod windows;
-#[cfg(any(test, unix))]
+#[cfg(unix)]
 pub(crate) mod xdg;
 
 use gitserious_app::GlobalPaths;
