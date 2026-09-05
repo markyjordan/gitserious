@@ -35,6 +35,25 @@ adds or removes a type, opening its typeset proposes corresponding schema covera
 for review. Changing taxonomy in a new form retains each taxonomy's unsaved
 property draft so switching back is lossless.
 
+In Templates, `n` and `e` open a template form with taxonomy and typeset choices.
+Typeset choices follow the selected taxonomy. Existing template ids are fixed;
+editing their content advances the version. `d` stages deletion. In Project,
+`s` stages the selected template as the project default; an active custom
+template cannot be deleted unless another default is selected before saving.
+
+`f` forks a complete template bundle into three new custom identities. From a
+taxonomy or typeset row, it starts with a template that references that definition;
+the source template can be changed in the form. Blank target taxonomy/typeset ids
+derive from the new template id. Source definitions remain immutable.
+
+In Project, `i` imports a template from the global catalog. The form offers import
+alone or import-and-select. The complete dependency chain is copied with original
+identities; exact matches are reused and conflicting project definitions are
+preserved with an error. Global files are not changed by project imports.
+
+All these actions stage changes for the shared before/after review. Failed saves
+retain the draft, and changing destination requires discarding pending edits.
+
 This crate is an internal component of `gitserious`.
 
 The Rust API exposed here is unstable and may have breaking changes in any

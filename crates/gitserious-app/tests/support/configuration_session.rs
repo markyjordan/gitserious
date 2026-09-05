@@ -52,6 +52,139 @@ fn related_schema_edits_can_be_staged_before_complete_validation() -> Result<(),
 struct GlobalStore(RefCell<CustomConfiguration>);
 
 #[test]
+fn imports_are_atomic_idempotent_and_independent_of_global_changes() -> Result<(), Box<dyn Error>> {
+    let config = ProjectConfig::default_channel()?;
+    let mut project = ConfigurationSession::project(
+        repository_root()?,
+        config.clone(),
+        resolve_project_lock(&config)?,
+    )?;
+    let mut global = ConfigurationSession::global(source_configuration()?)?;
+    let source = ConfigurationCatalog::new(global.custom())?;
+    let platform = TemplateId::new("platform")?;
+    project.import_template(&source, &platform, false)?;
+    project.validate()?;
+    assert_eq!(
+        project.active_template().map(TemplateId::as_str),
+        Some("default")
+    );
+    let before = project.custom().clone();
+    project.import_template(&source, &platform, true)?;
+    assert_eq!(project.custom(), &before);
+    assert_eq!(project.active_template(), Some(&platform));
+    assert_eq!(
+        project.original_active_template().map(TemplateId::as_str),
+        Some("default")
+    );
+    assert!(global.import_template(&source, &platform, false).is_err());
+    assert!(global.select_template(platform.clone()).is_err());
+    global.stage([ConfigurationEdit::DeleteTemplate(platform.clone())])?;
+    assert_eq!(project.custom(), &before);
+    project.stage([ConfigurationEdit::DeleteTemplate(platform)])?;
+    assert!(
+        project
+            .validate()
+            .err()
+            .ok_or("deleted active template was accepted")?
+            .contains("select another")
+    );
+    project.select_template(TemplateId::new("default")?)?;
+    project.validate()?;
+    Ok(())
+}
+
+#[test]
+fn conflicting_import_preserves_definitions_and_selection() -> Result<(), Box<dyn Error>> {
+    let source = source_catalog()?;
+    let custom = source_configuration()?;
+    let old = custom.taxonomies()[0].clone();
+    let changed = apply_custom_configuration_edits::<FakeError>(
+        &custom,
+        [ConfigurationEdit::UpdateTaxonomy(TaxonomyDefinition::new(
+            old.id().clone(),
+            TaxonomyVersion::new(2)?,
+            Description::new("Local meaning must survive.")?,
+            old.change_types().to_vec(),
+        )?)],
+    )?;
+    let config = ProjectConfig::new(1, TemplateId::new("default")?, changed.clone())?;
+    let mut session = ConfigurationSession::project(
+        repository_root()?,
+        config.clone(),
+        resolve_project_lock(&config)?,
+    )?;
+    assert!(
+        session
+            .import_template(&source, &TemplateId::new("platform")?, true)
+            .is_err()
+    );
+    assert_eq!(session.custom(), &changed);
+    assert_eq!(
+        session.active_template().map(TemplateId::as_str),
+        Some("default")
+    );
+    assert!(!session.is_dirty());
+    Ok(())
+}
+
+#[test]
+fn draft_forks_keep_sources_immutable_and_reject_target_collisions() -> Result<(), Box<dyn Error>> {
+    let mut session = ConfigurationSession::global(CustomConfiguration::default())?;
+    session.fork_template(
+        &TemplateId::new("ml-research")?,
+        &TemplateId::new("research-copy")?,
+        &gitserious_core::TaxonomyId::new("research-copy")?,
+        &TypesetId::new("context")?,
+    )?;
+    session.validate()?;
+    let before = session.custom().clone();
+    let catalog = ConfigurationCatalog::new(&before)?;
+    assert_eq!(
+        catalog
+            .resolve(&TemplateId::new("ml-research")?)?
+            .change_types(),
+        catalog
+            .resolve(&TemplateId::new("research-copy")?)?
+            .change_types()
+    );
+    assert!(
+        session
+            .fork_template(
+                &TemplateId::new("infra-ops")?,
+                &TemplateId::new("research-copy")?,
+                &gitserious_core::TaxonomyId::new("other")?,
+                &TypesetId::new("context")?
+            )
+            .is_err()
+    );
+    assert_eq!(session.custom(), &before);
+    Ok(())
+}
+
+#[test]
+fn custom_template_identity_can_match_the_conventional_taxonomy_name() -> Result<(), Box<dyn Error>>
+{
+    let config = ProjectConfig::default_channel()?;
+    let mut session = ConfigurationSession::project(
+        repository_root()?,
+        config.clone(),
+        resolve_project_lock(&config)?,
+    )?;
+    let template = gitserious_core::TemplateDefinition::new(
+        TemplateId::new("conventional")?,
+        gitserious_core::TemplateVersion::V1,
+        Description::new("A custom template with a valid independent identity.")?,
+        gitserious_core::TaxonomyId::new("ml-research")?,
+        TypesetId::new("default")?,
+    );
+    session.stage([ConfigurationEdit::CreateTemplate(template)])?;
+    session.validate()?;
+    session.select_template(TemplateId::new("conventional")?)?;
+    session.validate()?;
+    Ok(())
+}
+
+#[test]
 fn recreating_an_original_identity_cannot_reset_its_version() -> Result<(), Box<dyn Error>> {
     let mut session = ConfigurationSession::global(source_configuration()?)?;
     let original = session.original().clone();

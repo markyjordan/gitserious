@@ -11,7 +11,8 @@ use super::*;
 pub(super) struct Workspace {
     pub(super) saves: Cell<usize>,
     fail: Cell<bool>,
-    saved: RefCell<CustomConfiguration>,
+    pub(super) saved: RefCell<CustomConfiguration>,
+    pub(super) project: RefCell<Option<ConfigurationSession>>,
 }
 
 impl ConfigurationWorkspace for Workspace {
@@ -20,16 +21,42 @@ impl ConfigurationWorkspace for Workspace {
             ConfigurationDestination::Global => {
                 ConfigurationSession::global(self.saved.borrow().clone())
             }
-            ConfigurationDestination::Project => Err("run gitserious init".into()),
+            ConfigurationDestination::Project => self
+                .project
+                .borrow()
+                .clone()
+                .ok_or_else(|| "run gitserious init".into()),
         }
     }
     fn save(&self, session: &ConfigurationSession) -> Result<ConfigurationSession, String> {
+        session.validate()?;
         if self.fail.get() {
             return Err("concurrent change".into());
         }
         self.saves.set(self.saves.get() + 1);
-        *self.saved.borrow_mut() = session.custom().clone();
-        ConfigurationSession::global(session.custom().clone())
+        match session.destination() {
+            ConfigurationDestination::Global => {
+                *self.saved.borrow_mut() = session.custom().clone();
+                ConfigurationSession::global(session.custom().clone())
+            }
+            ConfigurationDestination::Project => {
+                let config = gitserious_app::ProjectConfig::new(
+                    1,
+                    session.active_template().ok_or("missing default")?.clone(),
+                    session.custom().clone(),
+                )
+                .map_err(|error| error.to_string())?;
+                let lock = gitserious_app::resolve_project_lock(&config)
+                    .map_err(|error| error.to_string())?;
+                let clean = ConfigurationSession::project(
+                    session.root().ok_or("missing root")?.clone(),
+                    config,
+                    lock,
+                )?;
+                *self.project.borrow_mut() = Some(clean.clone());
+                Ok(clean)
+            }
+        }
     }
 }
 

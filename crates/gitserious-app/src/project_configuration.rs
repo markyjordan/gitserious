@@ -391,7 +391,7 @@ where
     apply_inspected_project_edits(root, store, &current, &lock, project_edits)
 }
 
-fn import_edits<LocatorError, StoreError>(
+pub(crate) fn import_edits<LocatorError, StoreError>(
     source: &ConfigurationCatalog,
     destination: &CustomConfiguration,
     selected: &TemplateId,

@@ -2,6 +2,7 @@ mod editor;
 mod form;
 mod presentation;
 mod taxonomy_form;
+mod template_form;
 mod typeset_form;
 
 use std::io::{self, IsTerminal};
@@ -233,9 +234,12 @@ impl State {
         workspace: &dyn ConfigurationWorkspace,
     ) -> bool {
         match key {
-            KeyCode::Char('n') => self.open_definition(true),
-            KeyCode::Char('e') => self.open_definition(false),
-            KeyCode::Char('d') => self.delete_definition(),
+            KeyCode::Char('n') if modifiers.is_empty() => self.open_definition(true),
+            KeyCode::Char('e') if modifiers.is_empty() => self.open_definition(false),
+            KeyCode::Char('d') if modifiers.is_empty() => self.delete_definition(),
+            KeyCode::Char('f') if modifiers.is_empty() => self.open_fork(),
+            KeyCode::Char('i') if modifiers.is_empty() => self.open_import(workspace),
+            KeyCode::Char('s') if modifiers.is_empty() => self.select_template(),
             KeyCode::Char('q') | KeyCode::Esc => return self.leave(Leave::Quit, workspace),
             KeyCode::Tab => {
                 let destination = match self.destination {
@@ -313,7 +317,7 @@ impl State {
             Constraint::Length(3),
             Constraint::Min(1),
             Constraint::Length(2),
-            Constraint::Length(2),
+            Constraint::Length(3),
         ])
         .areas(area);
         self.render_header(frame, header);
@@ -322,7 +326,9 @@ impl State {
                 if let Some(editor) = &mut self.editor {
                     editor.form_mut().render(frame, body);
                 }
-                "tab/shift+tab: fields | ctrl+n/d: add/remove | alt+↑/↓: order\nctrl+s: stage | esc: back"
+                self.editor
+                    .as_ref()
+                    .map_or("esc: back", editor::Editor::hint)
             }
             Screen::Browse => {
                 let [list_area, detail_area] =
@@ -361,7 +367,7 @@ impl State {
                         .block(Block::bordered().title("Definition — enter to inspect")),
                     detail_area,
                 );
-                "tab: destination | 1/2/3: kinds | enter: inspect | n/e/d: definitions\nctrl+s: review changes | q: quit"
+                "tab: scope | 1/2/3: kinds | enter: inspect\nn: new | e: edit | d: delete | f: fork\ni: import | s: default | ctrl+s: review | q: quit"
             }
             Screen::Details(text) => {
                 self.render_text(frame, body, text.clone(), "Definition");
@@ -425,9 +431,16 @@ impl State {
         } else {
             ""
         };
+        let active = self
+            .session
+            .as_ref()
+            .and_then(ConfigurationSession::active_template)
+            .map_or_else(String::new, |id| format!("\nDefault template: {id}"));
         frame.render_widget(
-            Paragraph::new(format!("Configure gitserious | {scope}{dirty}\n{location}"))
-                .style(Style::default().fg(Color::Yellow)),
+            Paragraph::new(format!(
+                "Configure gitserious | {scope}{dirty}\n{location}{active}"
+            ))
+            .style(Style::default().fg(Color::Yellow)),
             area,
         );
     }
@@ -465,7 +478,28 @@ impl State {
                     .collect();
                 typeset_form::TypesetForm::new(taxonomies, original).map(editor::Editor::Typeset)
             }
-            Kind::Template => Err("Select Taxonomies or Typesets to author definitions.".into()),
+            Kind::Template => {
+                let original = match original {
+                    Some(Definition::Template(value)) => Some(value),
+                    _ => None,
+                };
+                let taxonomies: Vec<_> = entries(session.custom(), Kind::Taxonomy)
+                    .into_iter()
+                    .filter_map(|value| match value {
+                        Definition::Taxonomy(value) => Some(value),
+                        _ => None,
+                    })
+                    .collect();
+                let typesets = entries(session.custom(), Kind::Typeset)
+                    .into_iter()
+                    .filter_map(|value| match value {
+                        Definition::Typeset(value) => Some(value),
+                        _ => None,
+                    })
+                    .collect();
+                template_form::TemplateForm::new(&taxonomies, typesets, original)
+                    .map(editor::Editor::Template)
+            }
         };
         match result {
             Ok(editor) => {
@@ -486,6 +520,9 @@ impl State {
                 taxonomy: value.taxonomy().clone(),
                 typeset: value.id().clone(),
             },
+            Some(Definition::Template(value)) => {
+                gitserious_app::ConfigurationEdit::DeleteTemplate(value.id().clone())
+            }
             _ => return,
         };
         if let Some(session) = &mut self.session {
@@ -509,17 +546,28 @@ impl State {
                 self.status.clear();
             }
             Ok(form::FormAction::Submit) => {
-                let result = editor.submit().and_then(|edits| {
-                    self.session
-                        .as_mut()
-                        .ok_or("missing editing session")?
-                        .stage(edits)
-                });
+                let target = editor.target_identity();
+                let result = self
+                    .session
+                    .as_mut()
+                    .ok_or_else(|| "missing editing session".to_owned())
+                    .and_then(|session| editor.stage(session));
                 match result {
-                    Ok(()) => {
+                    Ok(changed) => {
+                        if let Some(session) = &self.session {
+                            self.selected = entries(session.custom(), self.kind)
+                                .iter()
+                                .position(|value| value.identity() == target)
+                                .unwrap_or(0);
+                        }
                         self.editor = None;
                         self.screen = Screen::Browse;
-                        self.status = "Change staged. ctrl+s reviews changes before saving.".into();
+                        self.status = if changed {
+                            "Change staged. ctrl+s reviews changes before saving."
+                        } else {
+                            "No changes to stage."
+                        }
+                        .into();
                     }
                     Err(error) => self.status = error,
                 }
@@ -527,6 +575,78 @@ impl State {
             Ok(form::FormAction::Continue) => {}
             Err(error) => self.status = error,
         }
+    }
+
+    fn select_template(&mut self) {
+        let Some(Definition::Template(value)) = self.selected() else {
+            self.status = "Select a template before choosing a project default.".into();
+            return;
+        };
+        if let Some(session) = &mut self.session {
+            match session.select_template(value.id().clone()) {
+                Ok(()) => {
+                    self.status =
+                        "Default selection staged. ctrl+s reviews changes before saving.".into();
+                }
+                Err(error) => self.status = error,
+            }
+        }
+    }
+
+    fn open_import(&mut self, workspace: &dyn ConfigurationWorkspace) {
+        if self.destination != ConfigurationDestination::Project {
+            self.status = "Switch to the Project destination to import a global template.".into();
+            return;
+        }
+        let result = workspace
+            .load(ConfigurationDestination::Global)
+            .and_then(|source| {
+                gitserious_app::ConfigurationCatalog::new(source.custom())
+                    .map_err(|error| error.to_string())
+            })
+            .and_then(template_form::ImportForm::new);
+        match result {
+            Ok(editor) => {
+                self.kind = Kind::Template;
+                self.editor = Some(editor::Editor::Import(editor));
+                self.screen = Screen::Edit;
+                self.status.clear();
+            }
+            Err(error) => self.status = error,
+        }
+    }
+
+    fn open_fork(&mut self) {
+        let Some(session) = &self.session else {
+            return;
+        };
+        let catalog = match gitserious_app::ConfigurationCatalog::new(session.custom()) {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                self.status = error.to_string();
+                return;
+            }
+        };
+        let selected = self.selected();
+        let source = catalog.templates().iter().find(|template| match &selected {
+            Some(Definition::Template(value)) => template.id() == value.id(),
+            Some(Definition::Taxonomy(value)) => template.taxonomy() == value.id(),
+            Some(Definition::Typeset(value)) => {
+                template.taxonomy() == value.taxonomy() && template.typeset() == value.id()
+            }
+            None => false,
+        });
+        let Some(source) = source else {
+            self.status = "Create a template for this definition before forking its bundle.".into();
+            return;
+        };
+        self.kind = Kind::Template;
+        self.editor = Some(editor::Editor::Fork(template_form::ForkForm::new(
+            source.id().as_str(),
+            &catalog,
+        )));
+        self.screen = Screen::Edit;
+        self.status.clear();
     }
 }
 
@@ -537,3 +657,7 @@ mod tests;
 #[cfg(test)]
 #[path = "../../tests/unit/config_forms.rs"]
 mod form_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/config_templates.rs"]
+mod template_tests;

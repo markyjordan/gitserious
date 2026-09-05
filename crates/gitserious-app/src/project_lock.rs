@@ -203,9 +203,9 @@ impl ProjectLock {
             return Err(ProjectLockError::UnsupportedVersion(version));
         }
         if resolved_templates.is_empty()
-            || !resolved_templates
-                .iter()
-                .any(|candidate| candidate.id() == resolved_template.id())
+            || !resolved_templates.iter().any(|candidate| {
+                candidate.id() == &template_reference || candidate.id() == resolved_template.id()
+            })
         {
             return Err(ProjectLockError::MissingResolvedTemplate);
         }
@@ -250,7 +250,7 @@ impl ProjectLock {
         &self.resolved_template
     }
 
-    /// Returns every resolved template available to the project.
+    /// Returns selectable templates keyed by their actual template identities.
     #[must_use]
     pub fn resolved_templates(&self) -> &[ResolvedTemplate] {
         &self.resolved_templates
@@ -329,9 +329,9 @@ impl Error for ResolveProjectPolicyError {
 /// so built-in and custom templates follow the identical path. The
 /// recorded fingerprints cover every semantic field of the joined policy.
 ///
-/// The built-in moving channel keeps its historical lock identity: selecting
-/// it records the compiled-in commit-message template rather than the channel
-/// placeholder, preserving previously generated locks byte for byte.
+/// The active default retains its historical Conventional identity and
+/// fingerprint. The selectable collection uses actual template identities so
+/// a custom template named `conventional` cannot collide with `default`.
 ///
 /// # Errors
 ///
@@ -348,17 +348,24 @@ pub fn resolve_project_lock(
         .iter()
         .map(|template| resolved_template_for(&catalog, template.id()))
         .collect::<Result<Vec<_>, _>>()?;
-    let resolved_template = resolved_templates
+    let mut resolved_template = resolved_templates
         .iter()
-        .find(|template| {
-            if reference == gitserious_core::built_in_configuration().template().id() {
-                template.id() == &default_commit_message_template().id().clone()
-            } else {
-                template.id() == reference
-            }
-        })
+        .find(|template| template.id() == reference)
         .cloned()
         .ok_or_else(|| ResolveProjectPolicyError::UnknownTemplate(reference.clone()))?;
+    if reference == gitserious_core::built_in_configuration().template().id() {
+        let compatibility = default_commit_message_template();
+        let types = resolved_template.commit_types().to_vec();
+        let fingerprint =
+            fingerprint_resolved_template(compatibility.id(), compatibility.version(), &types);
+        resolved_template = ResolvedTemplate::new(
+            compatibility.id().clone(),
+            compatibility.version(),
+            fingerprint,
+            types,
+        )
+        .map_err(ResolveProjectPolicyError::InvalidResolvedTemplate)?;
+    }
     ProjectLock::with_resolved_templates(
         PROJECT_LOCK_VERSION,
         fingerprint_project_config(config),
@@ -394,13 +401,7 @@ fn resolved_template_for(
             )
         })
         .collect::<Vec<_>>();
-    let (identity_id, identity_version) =
-        if reference == gitserious_core::built_in_configuration().template().id() {
-            let message_template = default_commit_message_template();
-            (message_template.id().clone(), message_template.version())
-        } else {
-            (template.id().clone(), template.version())
-        };
+    let (identity_id, identity_version) = (template.id().clone(), template.version());
     let template_fingerprint =
         fingerprint_resolved_template(&identity_id, identity_version, &commit_types);
     ResolvedTemplate::new(

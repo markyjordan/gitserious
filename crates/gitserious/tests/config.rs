@@ -259,7 +259,7 @@ fn assert_domain_initialization(domain: &str, representative: &str) -> Result<()
         10
     );
     assert!(lock.contains(&format!("id = \"{representative}\"")));
-    assert!(lock.contains("[[resolved-templates]]\nid = \"conventional\""));
+    assert!(lock.contains("[[resolved-templates]]\nid = \"default\""));
     let unavailable = run(repository.path(), &isolation, &["commit", "--type", "feat"])?;
     assert!(!unavailable.status.success());
     assert!(

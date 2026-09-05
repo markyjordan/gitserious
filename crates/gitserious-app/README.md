@@ -14,6 +14,19 @@ inside that interaction so the draft can be repaired or retained. Cancelling a
 session has no persistence effect. A successful save returns a clean session
 without rereading mutable global or project state.
 
+Sessions can stage a complete bundle fork, import a global template chain into a
+project, and choose a project default. Imports reuse exact matching definitions
+and reject conflicting identities before changing either the draft or selection.
+Deleting an active custom template requires staging another default before save.
+Deleting and recreating an original identity within one session is rejected so
+its version history cannot be reset.
+
+Selectable lock entries use actual template identities (`default` for the
+built-in Conventional template). The active compatibility summary retains its
+historical `conventional` identity. This lets a custom template independently use
+the valid name `conventional`. Earlier lock collections using the old alias remain
+readable and refresh through `gitserious init` without rewriting authored config.
+
 This internal crate owns application workflows, configuration snapshots,
 persistence ports, and semantic fingerprint computation. The supported public
 interface is the `gitserious` CLI; the internal Rust API remains unstable.

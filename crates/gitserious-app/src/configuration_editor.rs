@@ -1,7 +1,7 @@
 use std::fmt::Display;
 use std::path::Path;
 
-use gitserious_core::TemplateId;
+use gitserious_core::{TaxonomyId, TemplateId, TypesetId};
 
 use crate::{
     ConfigurationCatalog, ConfigurationEdit, CustomConfiguration, GlobalConfigurationStore,
@@ -42,6 +42,75 @@ pub struct ConfigurationSession {
 }
 
 impl ConfigurationSession {
+    /// Stages a project default without changing reusable global configuration.
+    ///
+    /// # Errors
+    /// Returns an error outside project scope or for an unavailable template.
+    pub fn select_template(&mut self, id: TemplateId) -> Result<(), String> {
+        if self.destination() != ConfigurationDestination::Project {
+            return Err("Only project configuration has an active template.".into());
+        }
+        if gitserious_core::built_in_configuration()
+            .find_template(&id)
+            .is_none()
+            && !self
+                .working
+                .templates()
+                .iter()
+                .any(|value| value.id() == &id)
+        {
+            return Err(format!("Template {id} is not available in this project."));
+        }
+        self.active = Some(id);
+        Ok(())
+    }
+
+    /// Stages a complete editable fork from the current draft catalog.
+    ///
+    /// # Errors
+    /// Returns source-resolution, target-identity, or staged-version errors.
+    pub fn fork_template(
+        &mut self,
+        source: &TemplateId,
+        template: &TemplateId,
+        taxonomy: &TaxonomyId,
+        typeset: &TypesetId,
+    ) -> Result<(), String> {
+        let catalog =
+            ConfigurationCatalog::new(&self.working).map_err(|error| error.to_string())?;
+        let edits = crate::fork_configuration_edits(&catalog, source, template, taxonomy, typeset)
+            .map_err(|error| error.to_string())?;
+        self.stage(edits)
+    }
+
+    /// Stages a complete global dependency chain, optionally selecting it.
+    ///
+    /// # Errors
+    /// Returns an error outside project scope, for an unavailable source, or
+    /// when an imported identity conflicts with a different local definition.
+    pub fn import_template(
+        &mut self,
+        source: &ConfigurationCatalog,
+        template: &TemplateId,
+        select: bool,
+    ) -> Result<(), String> {
+        if self.destination() != ConfigurationDestination::Project {
+            return Err("Import global templates from the Project destination.".into());
+        }
+        let edits = crate::project_configuration::import_edits::<String, String>(
+            source,
+            &self.working,
+            template,
+        )
+        .map_err(|error| error.to_string())?;
+        let mut candidate = self.clone();
+        candidate.stage(edits)?;
+        if select {
+            candidate.select_template(template.clone())?;
+        }
+        *self = candidate;
+        Ok(())
+    }
     /// Opens a global draft without performing I/O.
     ///
     /// # Errors
@@ -201,6 +270,15 @@ impl ConfigurationSession {
         let custom = apply_custom_configuration_edits::<String>(&self.original, self.edits.clone())
             .map_err(|error| error.to_string())?;
         if let Some(active) = &self.active {
+            if ConfigurationCatalog::new(&custom)
+                .map_err(|error| error.to_string())?
+                .find_template(active)
+                .is_none()
+            {
+                return Err(format!(
+                    "Active template {active} is staged for deletion; select another project default before saving."
+                ));
+            }
             let config =
                 ProjectConfig::new(1, active.clone(), custom).map_err(|error| error.to_string())?;
             resolve_project_lock(&config).map_err(|error| error.to_string())?;

@@ -105,6 +105,9 @@ impl Form {
     }
 
     pub(super) fn paste(&mut self, text: &str) -> Result<(), String> {
+        if self.discard {
+            return Ok(());
+        }
         let field = &mut self.fields[self.focus];
         if field.readonly || !field.options.is_empty() {
             return Ok(());
@@ -160,12 +163,13 @@ impl Form {
         let index = field
             .options
             .iter()
-            .position(|value| *value == field.value())
-            .unwrap_or(0);
+            .position(|value| *value == field.value());
         let index = match key.code {
-            KeyCode::Left | KeyCode::Up => (index + field.options.len() - 1) % field.options.len(),
+            KeyCode::Left | KeyCode::Up => index.map_or(field.options.len() - 1, |index| {
+                (index + field.options.len() - 1) % field.options.len()
+            }),
             KeyCode::Right | KeyCode::Down | KeyCode::Char(' ') => {
-                (index + 1) % field.options.len()
+                index.map_or(0, |index| (index + 1) % field.options.len())
             }
             _ => return,
         };
