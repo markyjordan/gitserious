@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter, Write as _};
 
@@ -6,7 +7,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     CommitDraft, CommitTypeDefinition, CommitTypeId, PropertyKey, PropertyMultiplicity,
-    PropertyRequirement,
+    PropertyResponse, PropertyValidationIssue, PropertyValidationIssueKind, ValidationSeverity,
 };
 
 /// Maximum Unicode display width of canonical commit-message prose.
@@ -146,57 +147,117 @@ pub fn validate_commit_draft(
     definition: &CommitTypeDefinition,
     draft: &CommitDraft,
 ) -> Result<(), CommitValidationErrors> {
-    let mut errors = Vec::new();
+    let report = validate_commit_draft_report(definition, draft);
+    if report.has_errors() {
+        Err(CommitValidationErrors::new(report.errors))
+    } else {
+        Ok(())
+    }
+}
+
+/// Errors and nonblocking recommendations for one authored draft.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CommitValidationReport {
+    errors: Vec<CommitValidationError>,
+    warnings: Vec<PropertyValidationIssue>,
+}
+
+impl CommitValidationReport {
+    /// Returns blocking errors, with any header mismatch before property errors.
+    #[must_use]
+    pub fn errors(&self) -> &[CommitValidationError] {
+        &self.errors
+    }
+
+    /// Returns nonblocking recommendations in schema order.
+    #[must_use]
+    pub fn warnings(&self) -> &[PropertyValidationIssue] {
+        &self.warnings
+    }
+
+    /// Returns whether the draft must be repaired before rendering.
+    #[must_use]
+    pub fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
+    }
+}
+
+/// Validates a draft and retains nonblocking recommended-property warnings.
+///
+/// Drafts created with [`CommitDraft::from_responses`] require explicit
+/// applicability. Legacy drafts still permit omitted conditional properties;
+/// adapters opt into the stricter contract when they can capture decisions.
+#[must_use]
+pub fn validate_commit_draft_report(
+    definition: &CommitTypeDefinition,
+    draft: &CommitDraft,
+) -> CommitValidationReport {
+    let mut report = CommitValidationReport::default();
     if definition.id() != draft.commit_type() {
-        errors.push(CommitValidationError::TypeMismatch {
+        report.errors.push(CommitValidationError::TypeMismatch {
             expected: definition.id().clone(),
             actual: draft.commit_type().clone(),
         });
     }
-
-    for property in draft.properties() {
-        let Some(expected) = definition
-            .properties()
-            .iter()
-            .find(|candidate| candidate.key() == property.key())
-        else {
-            errors.push(CommitValidationError::UnknownProperty(
-                property.key().clone(),
-            ));
-            continue;
-        };
-        if expected.multiplicity() != property.values().multiplicity() {
-            errors.push(CommitValidationError::Multiplicity {
-                key: property.key().clone(),
-                expected: expected.multiplicity(),
-                actual: property.values().multiplicity(),
-            });
-        }
-    }
-
-    for property in definition.properties() {
-        if matches!(property.requirement(), PropertyRequirement::Required)
-            && !draft
+    let responses: Cow<'_, [PropertyResponse]> = match draft.responses() {
+        Some(responses) => Cow::Borrowed(responses),
+        None => Cow::Owned(
+            draft
                 .properties()
                 .iter()
-                .any(|authored| authored.key() == property.key())
+                .map(|property| {
+                    PropertyResponse::new(
+                        property.key().clone(),
+                        Some(property.values().clone()),
+                        None,
+                    )
+                })
+                .collect(),
+        ),
+    };
+    let properties = crate::property_validation::validate_property_definitions(
+        definition.properties(),
+        &responses,
+    );
+    for issue in properties.issues() {
+        if draft.responses().is_none()
+            && matches!(
+                issue.kind(),
+                PropertyValidationIssueKind::MissingConditionalDecision(_)
+            )
         {
-            errors.push(CommitValidationError::MissingRequired(
-                property.key().clone(),
-            ));
+            continue;
+        }
+        match issue.severity() {
+            ValidationSeverity::Warning => report.warnings.push(issue.clone()),
+            ValidationSeverity::Error => report.errors.push(match issue.kind() {
+                PropertyValidationIssueKind::UnknownProperty(key) => {
+                    CommitValidationError::UnknownProperty(key.clone())
+                }
+                PropertyValidationIssueKind::MissingRequired(key) => {
+                    CommitValidationError::MissingRequired(key.clone())
+                }
+                PropertyValidationIssueKind::Multiplicity {
+                    key,
+                    expected,
+                    actual,
+                } => CommitValidationError::Multiplicity {
+                    key: key.clone(),
+                    expected: *expected,
+                    actual: *actual,
+                },
+                kind => CommitValidationError::PropertyResponse(kind.clone()),
+            }),
         }
     }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(CommitValidationErrors::new(errors))
-    }
+    report
 }
 
 /// One violation between an authored draft and its selected schema.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CommitValidationError {
+    /// An explicit response violates applicability or response structure.
+    PropertyResponse(PropertyValidationIssueKind),
     /// The draft identifies a different type than the selected schema.
     TypeMismatch {
         /// Selected schema type.
@@ -222,6 +283,7 @@ pub enum CommitValidationError {
 impl Display for CommitValidationError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::PropertyResponse(kind) => Display::fmt(kind, formatter),
             Self::TypeMismatch { expected, actual } => write!(
                 formatter,
                 "selected type {expected:?} cannot use header type {actual:?}"

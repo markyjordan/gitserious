@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
-use crate::{CommitTypeId, PropertyKey, PropertyValue, PropertyValues};
+use crate::{CommitTypeId, PropertyKey, PropertyResponse, PropertyValue, PropertyValues};
 
 /// An optional semantic area affected by a commit.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -188,6 +188,7 @@ pub struct CommitDraft {
     subject: CommitSubject,
     properties: Vec<AuthoredProperty>,
     breaking_change: Option<PropertyValue>,
+    responses: Option<Vec<PropertyResponse>>,
 }
 
 impl CommitDraft {
@@ -215,7 +216,51 @@ impl CommitDraft {
             subject,
             properties,
             breaking_change: None,
+            responses: None,
         })
+    }
+
+    /// Creates a draft carrying explicit property applicability decisions.
+    ///
+    /// Responses without values remain in the draft for schema validation but
+    /// do not become rendered properties. Use this constructor in adapters that
+    /// support explicit applicability; [`Self::new`] retains legacy behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommitDraftError`] when response keys repeat, even if neither
+    /// response contains a value. Schema requirements are checked at validation.
+    pub fn from_responses(
+        commit_type: CommitTypeId,
+        scope: Option<CommitScope>,
+        subject: CommitSubject,
+        responses: Vec<PropertyResponse>,
+    ) -> Result<Self, CommitDraftError> {
+        let mut keys = BTreeSet::new();
+        for response in &responses {
+            if !keys.insert(response.key()) {
+                return Err(CommitDraftError::DuplicateProperty(response.key().clone()));
+            }
+        }
+        let properties = responses
+            .iter()
+            .filter_map(|response| {
+                response
+                    .values()
+                    .map(|values| AuthoredProperty::new(response.key().clone(), values.clone()))
+            })
+            .collect();
+        let mut draft = Self::new(commit_type, scope, subject, properties)?;
+        draft.responses = Some(responses);
+        Ok(draft)
+    }
+
+    /// Returns explicit responses, or `None` for a legacy authored draft.
+    ///
+    /// `Some(&[])` still opts into explicit applicability validation.
+    #[must_use]
+    pub fn responses(&self) -> Option<&[PropertyResponse]> {
+        self.responses.as_deref()
     }
 
     /// Adds an optional Conventional Commits breaking-change footer.

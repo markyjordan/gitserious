@@ -59,3 +59,20 @@ remains unindented, and blank breaking-change fields are omitted entirely.
 the taxonomy identity. The singular `taxonomy()`, `typeset()`, and `template()`
 accessors continue to identify the original Conventional/default bundle;
 catalog consumers must use the collections to discover all built-ins.
+
+## Explicit property responses
+
+`CommitDraft::from_responses` preserves `PropertyResponse` values and explicit
+conditional applicability, including responses that have no rendered value.
+`validate_commit_draft_report` returns blocking errors and nonblocking
+recommended-property warnings from the shared property validator. Canonical
+rendering revalidates the draft and refuses invalid applicability, unknown
+properties, missing required values, or incorrect multiplicity. Repeatable
+values remain in authored order within schema-ordered properties.
+
+An applicable conditional property requires a value; a not-applicable property
+rejects a value. An omitted conditional decision blocks response-based drafts,
+even if all other responses are complete. `CommitDraft::new` remains the legacy
+constructor for existing adapters and does not require conditional decisions.
+An empty explicit response list still opts into the stricter contract. Adapter
+migration to explicit responses belongs to the subsequent commit/TUI work.
