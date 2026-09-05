@@ -51,3 +51,11 @@ remove calls to the legacy parser
 
 The first line follows the uppercase footer token, multiline continuation text
 remains unindented, and blank breaking-change fields are omitted entirely.
+
+## Built-in catalog
+
+`built_in_configuration()` exposes ordered `taxonomies()`, `typesets()`, and
+`templates()` collections and identity-based lookups. Typeset lookup includes
+the taxonomy identity. The singular `taxonomy()`, `typeset()`, and `template()`
+accessors continue to identify the original Conventional/default bundle;
+catalog consumers must use the collections to discover all built-ins.

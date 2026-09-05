@@ -654,11 +654,11 @@ fn reject_reserved<StoreError>(
 ) -> Result<(), ConfigurationMutationError<StoreError>> {
     let built_in = built_in_configuration();
     let reserved = match entity {
-        ConfigurationEntity::Taxonomy(id) => id == built_in.taxonomy().id(),
+        ConfigurationEntity::Taxonomy(id) => built_in.find_taxonomy(id).is_some(),
         ConfigurationEntity::Typeset { taxonomy, typeset } => {
-            taxonomy == built_in.typeset().taxonomy() && typeset == built_in.typeset().id()
+            built_in.find_typeset(taxonomy, typeset).is_some()
         }
-        ConfigurationEntity::Template(id) => id == built_in.template().id(),
+        ConfigurationEntity::Template(id) => built_in.find_template(id).is_some(),
     };
     if reserved {
         Err(ConfigurationMutationError::Reserved(entity.clone()))
