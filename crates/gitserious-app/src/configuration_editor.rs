@@ -148,6 +148,42 @@ impl ConfigurationSession {
         let edits: Vec<_> = edits.into_iter().collect();
         let mut candidate = self.working.clone();
         for edit in &edits {
+            let recreates_original = match edit {
+                ConfigurationEdit::CreateTaxonomy(value) => {
+                    self.original
+                        .taxonomies()
+                        .iter()
+                        .any(|old| old.id() == value.id())
+                        && !candidate
+                            .taxonomies()
+                            .iter()
+                            .any(|old| old.id() == value.id())
+                }
+                ConfigurationEdit::CreateTypeset(value) => {
+                    self.original
+                        .typesets()
+                        .iter()
+                        .any(|old| old.taxonomy() == value.taxonomy() && old.id() == value.id())
+                        && !candidate
+                            .typesets()
+                            .iter()
+                            .any(|old| old.taxonomy() == value.taxonomy() && old.id() == value.id())
+                }
+                ConfigurationEdit::CreateTemplate(value) => {
+                    self.original
+                        .templates()
+                        .iter()
+                        .any(|old| old.id() == value.id())
+                        && !candidate
+                            .templates()
+                            .iter()
+                            .any(|old| old.id() == value.id())
+                }
+                _ => false,
+            };
+            if recreates_original {
+                return Err("An existing identity cannot be deleted and recreated in one session. Discard the deletion and edit the definition to preserve its version history.".into());
+            }
             crate::configuration_crud::apply_edit::<String>(&mut candidate, edit.clone())
                 .map_err(|error| error.to_string())?;
         }

@@ -1,4 +1,6 @@
+mod form;
 mod presentation;
+mod taxonomy_form;
 
 use std::io::{self, IsTerminal};
 
@@ -25,6 +27,7 @@ impl ConfigurationEditor for RatatuiConfigurationEditor {
             return Err("configuration editing requires an interactive terminal".into());
         }
         ratatui::run(|terminal| {
+            let _paste = PasteGuard::enable()?;
             let mut state = State::new(workspace);
             loop {
                 terminal.draw(|frame| state.render(frame))?;
@@ -37,8 +40,22 @@ impl ConfigurationEditor for RatatuiConfigurationEditor {
     }
 }
 
+struct PasteGuard;
+impl PasteGuard {
+    fn enable() -> io::Result<Self> {
+        ratatui::crossterm::execute!(io::stdout(), event::EnableBracketedPaste)?;
+        Ok(Self)
+    }
+}
+impl Drop for PasteGuard {
+    fn drop(&mut self) {
+        let _ = ratatui::crossterm::execute!(io::stdout(), event::DisableBracketedPaste);
+    }
+}
+
 enum Screen {
     Browse,
+    Edit,
     Details(String),
     Review(String),
     Confirm(Leave),
@@ -60,6 +77,7 @@ struct State {
     max_scroll: u16,
     status: String,
     too_small: bool,
+    editor: Option<taxonomy_form::TaxonomyForm>,
 }
 
 impl State {
@@ -75,6 +93,7 @@ impl State {
             max_scroll: 0,
             status: String::new(),
             too_small: false,
+            editor: None,
         };
         state.load(workspace, ConfigurationDestination::Global);
         state
@@ -129,6 +148,16 @@ impl State {
     }
 
     fn event(&mut self, event: &Event, workspace: &dyn ConfigurationWorkspace) -> bool {
+        if let Event::Paste(text) = event {
+            if !self.too_small
+                && matches!(self.screen, Screen::Edit)
+                && let Some(editor) = &mut self.editor
+                && let Err(error) = editor.form.paste(text)
+            {
+                self.status = error;
+            }
+            return false;
+        }
         let Event::Key(key) = event else {
             return false;
         };
@@ -143,10 +172,18 @@ impl State {
                         KeyCode::Char('y' | 'n') | KeyCode::Esc | KeyCode::Enter
                     ) => {}
                 Screen::Browse if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) => {}
+                Screen::Edit if key.code == KeyCode::Esc => {}
+                Screen::Edit
+                    if self
+                        .editor
+                        .as_ref()
+                        .is_some_and(|editor| editor.form.confirming_discard())
+                        && matches!(key.code, KeyCode::Char('y' | 'n') | KeyCode::Enter) => {}
                 _ => return false,
             }
         }
         match &self.screen {
+            Screen::Edit => self.edit_key(*key),
             Screen::Confirm(action) => {
                 let action = *action;
                 match key.code {
@@ -194,6 +231,9 @@ impl State {
         workspace: &dyn ConfigurationWorkspace,
     ) -> bool {
         match key {
+            KeyCode::Char('n') => self.open_taxonomy(true),
+            KeyCode::Char('e') => self.open_taxonomy(false),
+            KeyCode::Char('d') => self.delete_taxonomy(),
             KeyCode::Char('q') | KeyCode::Esc => return self.leave(Leave::Quit, workspace),
             KeyCode::Tab => {
                 let destination = match self.destination {
@@ -254,7 +294,12 @@ impl State {
         );
         self.too_small = area.width < 60 || area.height < 16;
         if self.too_small {
-            let message = if matches!(self.screen, Screen::Confirm(_)) {
+            let message = if matches!(self.screen, Screen::Confirm(_))
+                || self
+                    .editor
+                    .as_ref()
+                    .is_some_and(|editor| editor.form.confirming_discard())
+            {
                 "Discard unsaved changes? y: discard | n/esc: keep editing"
             } else {
                 "Configuration needs at least 60 columns and 16 rows. Resize to continue."
@@ -271,6 +316,12 @@ impl State {
         .areas(area);
         self.render_header(frame, header);
         let hint = match &self.screen {
+            Screen::Edit => {
+                if let Some(editor) = &mut self.editor {
+                    editor.form.render(frame, body);
+                }
+                "tab/shift+tab: fields | ctrl+n/d: add/remove type | alt+↑/↓: order\nctrl+s: stage | esc: back"
+            }
             Screen::Browse => {
                 let [list_area, detail_area] =
                     Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
@@ -308,7 +359,7 @@ impl State {
                         .block(Block::bordered().title("Definition — enter to inspect")),
                     detail_area,
                 );
-                "tab: destination | 1/2/3: kinds | ↑/↓: select | enter: inspect\nctrl+s: review changes | q: quit"
+                "tab: destination | 1/2/3: kinds | enter: inspect | n/e/d: taxonomy\nctrl+s: review changes | q: quit"
             }
             Screen::Details(text) => {
                 self.render_text(frame, body, text.clone(), "Definition");
@@ -378,8 +429,88 @@ impl State {
             area,
         );
     }
+
+    fn open_taxonomy(&mut self, create: bool) {
+        if self.session.is_none() {
+            return;
+        }
+        if self.kind != Kind::Taxonomy {
+            self.status = "Select Taxonomies to create or edit a taxonomy.".into();
+            return;
+        }
+        let original = if create {
+            None
+        } else {
+            match self.selected() {
+                Some(Definition::Taxonomy(value)) => {
+                    if gitserious_app::taxonomy_origin(value.id())
+                        == gitserious_app::ConfigurationOrigin::BuiltIn
+                    {
+                        self.status = "Built-in definitions are read-only.".into();
+                        return;
+                    }
+                    Some(value)
+                }
+                _ => return,
+            }
+        };
+        self.editor = Some(taxonomy_form::TaxonomyForm::new(original));
+        self.screen = Screen::Edit;
+        self.status.clear();
+    }
+
+    fn delete_taxonomy(&mut self) {
+        let Some(Definition::Taxonomy(value)) = self.selected() else {
+            return;
+        };
+        if let Some(session) = &mut self.session {
+            match session.stage([gitserious_app::ConfigurationEdit::DeleteTaxonomy(
+                value.id().clone(),
+            )]) {
+                Ok(()) => {
+                    self.status = "Deletion staged. ctrl+s reviews changes before saving.".into();
+                }
+                Err(error) => self.status = error,
+            }
+        }
+    }
+
+    fn edit_key(&mut self, key: event::KeyEvent) {
+        let Some(editor) = &mut self.editor else {
+            return;
+        };
+        match editor.key(key) {
+            Ok(form::FormAction::Cancel) => {
+                self.editor = None;
+                self.screen = Screen::Browse;
+                self.status.clear();
+            }
+            Ok(form::FormAction::Submit) => {
+                let result = editor.submit().and_then(|edits| {
+                    self.session
+                        .as_mut()
+                        .ok_or("missing editing session")?
+                        .stage(edits)
+                });
+                match result {
+                    Ok(()) => {
+                        self.editor = None;
+                        self.screen = Screen::Browse;
+                        self.status = "Change staged. ctrl+s reviews changes before saving.".into();
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+            Ok(form::FormAction::Continue) => {}
+            Err(error) => self.status = error,
+        }
+    }
 }
 
 #[cfg(test)]
 #[path = "../../tests/unit/config_browser.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/config_forms.rs"]
+mod form_tests;

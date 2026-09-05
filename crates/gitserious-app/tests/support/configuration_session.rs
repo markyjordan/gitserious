@@ -50,6 +50,24 @@ fn related_schema_edits_can_be_staged_before_complete_validation() -> Result<(),
 }
 
 struct GlobalStore(RefCell<CustomConfiguration>);
+
+#[test]
+fn recreating_an_original_identity_cannot_reset_its_version() -> Result<(), Box<dyn Error>> {
+    let mut session = ConfigurationSession::global(source_configuration()?)?;
+    let original = session.original().clone();
+    let taxonomy = original.taxonomies()[0].clone();
+    assert!(
+        session
+            .stage([
+                ConfigurationEdit::DeleteTaxonomy(taxonomy.id().clone()),
+                ConfigurationEdit::CreateTaxonomy(taxonomy),
+            ])
+            .is_err()
+    );
+    assert_eq!(session.custom(), &original);
+    assert!(!session.is_dirty());
+    Ok(())
+}
 impl GlobalConfigurationStore for GlobalStore {
     type Error = FakeError;
     fn load(&self) -> Result<CustomConfiguration, Self::Error> {

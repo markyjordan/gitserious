@@ -15,6 +15,14 @@ confirmation. Configuration needs at least 60 columns and 16 rows; undersized
 views prevent hidden editing or save actions. Explicit configuration CLI
 subcommands remain available without entering this browser.
 
+In the Taxonomies list, `n` creates a taxonomy, `e` edits a custom taxonomy,
+and `d` stages deletion. The form uses `tab` / `shift+tab` for fields; ids are
+single-line and descriptions accept multiline Unicode text. `ctrl+n` adds a
+change type, `ctrl+d` removes the selected type, and `alt+up/down` reorders it.
+`ctrl+s` validates and stages the form, then returns to the browser. Existing
+taxonomy ids are fixed and accepted semantic edits advance the version. Built-in
+definitions remain read-only. `esc` confirms discard when a form has changes.
+
 This crate is an internal component of `gitserious`.
 
 The Rust API exposed here is unstable and may have breaking changes in any

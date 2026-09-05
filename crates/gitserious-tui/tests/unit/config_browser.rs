@@ -8,8 +8,8 @@ use ratatui::{Terminal, backend::TestBackend};
 use super::*;
 
 #[derive(Default)]
-struct Workspace {
-    saves: Cell<usize>,
+pub(super) struct Workspace {
+    pub(super) saves: Cell<usize>,
     fail: Cell<bool>,
     saved: RefCell<CustomConfiguration>,
 }
@@ -33,7 +33,7 @@ impl ConfigurationWorkspace for Workspace {
     }
 }
 
-fn key(code: KeyCode) -> Event {
+pub(super) fn key(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
 }
 fn review_key() -> Event {
