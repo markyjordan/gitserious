@@ -472,12 +472,35 @@ fn render_lock(lock: &ProjectLock) -> Result<String, ProjectStateError> {
                 })
                 .collect(),
         },
+        resolved_templates: Some(
+            lock.resolved_templates()
+                .iter()
+                .map(render_resolved_template)
+                .collect(),
+        ),
     };
     let rendered = render_toml(&wire, ProjectArtifact::Lock)?;
     Ok(format!(
         "{GENERATED_LOCK_HEADER}{}",
         ensure_line_ending(rendered)
     ))
+}
+
+fn render_resolved_template(resolved: &ResolvedTemplate) -> ResolvedTemplateWire {
+    ResolvedTemplateWire {
+        id: resolved.id().to_string(),
+        version: resolved.version().get(),
+        fingerprint: resolved.fingerprint().to_string(),
+        commit_types: resolved
+            .commit_types()
+            .iter()
+            .map(|commit_type| ResolvedCommitTypeWire {
+                id: commit_type.id().to_string(),
+                schema_version: commit_type.schema_version().get(),
+                definition_fingerprint: commit_type.definition_fingerprint().to_string(),
+            })
+            .collect(),
+    }
 }
 
 fn render_toml<T>(value: &T, artifact: ProjectArtifact) -> Result<String, ProjectStateError>
@@ -516,14 +539,34 @@ fn lock_from_wire(wire: LockWire) -> Result<ProjectLock, LockFormatError> {
         .map_err(LockFormatError::ConfigFingerprint)?;
     let template_reference =
         TemplateId::new(wire.template_reference).map_err(LockFormatError::TemplateReference)?;
-    let id = TemplateId::new(wire.resolved_template.id).map_err(LockFormatError::TemplateId)?;
-    let version = TemplateVersion::new(wire.resolved_template.version)
-        .map_err(LockFormatError::TemplateVersion)?;
-    let fingerprint = Fingerprint::from_str(&wire.resolved_template.fingerprint)
-        .map_err(LockFormatError::TemplateFingerprint)?;
+    let resolved_template = parse_resolved_template(wire.resolved_template)?;
+    let resolved_templates = match wire.resolved_templates {
+        Some(templates) => templates
+            .into_iter()
+            .map(parse_resolved_template)
+            .collect::<Result<Vec<_>, _>>()?,
+        None => vec![resolved_template.clone()],
+    };
+    ProjectLock::with_resolved_templates(
+        wire.lock_version,
+        config_fingerprint,
+        template_reference,
+        resolved_template,
+        resolved_templates,
+    )
+    .map_err(LockFormatError::Lock)
+}
 
-    let mut commit_types = Vec::with_capacity(wire.resolved_template.commit_types.len());
-    for (index, commit_type) in wire.resolved_template.commit_types.into_iter().enumerate() {
+fn parse_resolved_template(
+    wire: ResolvedTemplateWire,
+) -> Result<ResolvedTemplate, LockFormatError> {
+    let id = TemplateId::new(wire.id).map_err(LockFormatError::TemplateId)?;
+    let version = TemplateVersion::new(wire.version).map_err(LockFormatError::TemplateVersion)?;
+    let fingerprint =
+        Fingerprint::from_str(&wire.fingerprint).map_err(LockFormatError::TemplateFingerprint)?;
+
+    let mut commit_types = Vec::with_capacity(wire.commit_types.len());
+    for (index, commit_type) in wire.commit_types.into_iter().enumerate() {
         let id = CommitTypeId::new(commit_type.id)
             .map_err(|source| LockFormatError::CommitTypeId { index, source })?;
         let schema_version = SchemaVersion::new(commit_type.schema_version)
@@ -537,15 +580,8 @@ fn lock_from_wire(wire: LockWire) -> Result<ProjectLock, LockFormatError> {
         ));
     }
 
-    let resolved_template = ResolvedTemplate::new(id, version, fingerprint, commit_types)
-        .map_err(LockFormatError::ResolvedTemplate)?;
-    ProjectLock::new(
-        wire.lock_version,
-        config_fingerprint,
-        template_reference,
-        resolved_template,
-    )
-    .map_err(LockFormatError::Lock)
+    ResolvedTemplate::new(id, version, fingerprint, commit_types)
+        .map_err(LockFormatError::ResolvedTemplate)
 }
 
 #[derive(Deserialize, Serialize)]
@@ -565,6 +601,8 @@ struct LockWire {
     config_fingerprint: String,
     template_reference: String,
     resolved_template: ResolvedTemplateWire,
+    #[serde(default)]
+    resolved_templates: Option<Vec<ResolvedTemplateWire>>,
 }
 
 #[derive(Deserialize, Serialize)]
