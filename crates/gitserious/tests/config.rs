@@ -229,3 +229,60 @@ fn tampered_locks_are_rejected_before_authoring() -> Result<(), Box<dyn Error>> 
     );
     Ok(())
 }
+
+#[test]
+fn ml_research_initializes_without_global_configuration_and_uses_its_types()
+-> Result<(), Box<dyn Error>> {
+    let repository = new_repository()?;
+    let isolation = Isolation::new()?;
+    // Built-ins must remain usable even when unrelated global TOML is invalid.
+    fs::create_dir_all(
+        isolation
+            .configuration_path()
+            .parent()
+            .ok_or("missing parent")?,
+    )?;
+    fs::write(isolation.configuration_path(), "not valid TOML [")?;
+    let initialized = run(
+        repository.path(),
+        &isolation,
+        &["init", "--template", "ml-research"],
+    )?;
+    assert!(initialized.status.success(), "{}", stderr(&initialized));
+    assert!(stdout(&initialized).contains("(ml-research -> ml-research@1)."));
+    let config_path = repository.path().join("gitserious.toml");
+    let lock_path = repository.path().join("gitserious.lock");
+    let config = fs::read_to_string(&config_path)?;
+    let lock = fs::read_to_string(&lock_path)?;
+    assert!(config.contains("active-template = \"ml-research\""));
+    assert!(!config.contains("[[taxonomies]]"));
+    assert_eq!(
+        lock.matches("[[resolved-template.commit-types]]").count(),
+        10
+    );
+    assert!(lock.contains("id = \"hypothesis\""));
+    assert!(!lock.contains("id = \"feat\""));
+    let unavailable = run(repository.path(), &isolation, &["commit", "--type", "feat"])?;
+    assert!(!unavailable.status.success());
+    assert!(
+        stderr(&unavailable).contains("not available"),
+        "{}",
+        stderr(&unavailable)
+    );
+    let selected = run(
+        repository.path(),
+        &isolation,
+        &["commit", "--type", "hypothesis"],
+    )?;
+    assert!(!selected.status.success());
+    assert!(
+        stderr(&selected).contains("interactive"),
+        "{}",
+        stderr(&selected)
+    );
+    let repeated = run(repository.path(), &isolation, &["init"])?;
+    assert!(repeated.status.success(), "{}", stderr(&repeated));
+    assert_eq!(fs::read_to_string(config_path)?, config);
+    assert_eq!(fs::read_to_string(lock_path)?, lock);
+    Ok(())
+}

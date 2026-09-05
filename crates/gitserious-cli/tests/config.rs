@@ -10,7 +10,7 @@ use gitserious_app::{
     fork_conventional,
 };
 use gitserious_cli::run_from;
-use gitserious_core::{TaxonomyId, TemplateId};
+use gitserious_core::{TaxonomyId, TemplateId, built_in_configuration};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FakeError;
@@ -232,7 +232,10 @@ fn list_and_show_include_user_forks() -> Result<(), Box<dyn Error>> {
         TaxonomyId::new("ops")?,
         gitserious_core::TypesetId::new("baseline")?,
     )?;
-    assert_eq!(catalog(&configuration)?.templates().len(), 2);
+    assert_eq!(
+        catalog(&configuration)?.templates().len(),
+        built_in_configuration().templates().len() + 1
+    );
 
     let (exit, stdout, _) = run(&["gitserious", "config", "list"], &configuration);
     assert_eq!(exit, ExitCode::SUCCESS);
@@ -263,7 +266,10 @@ fn fork_derives_sibling_identities_and_persists_definitions() -> Result<(), Box<
         "Forked conventional into template platform \
          (taxonomy platform-taxonomy, typeset platform-typeset).\n"
     );
-    assert_eq!(catalog(&configuration)?.templates().len(), 2);
+    assert_eq!(
+        catalog(&configuration)?.templates().len(),
+        built_in_configuration().templates().len() + 1
+    );
     let (_, _, stderr) = run(
         &[
             "gitserious",
@@ -340,7 +346,10 @@ fn delete_removes_user_definitions_and_enforces_references() -> Result<(), Box<d
         assert_eq!(exit, ExitCode::SUCCESS, "deletion failed: {stderr}");
         assert!(!stdout.is_empty());
     }
-    assert_eq!(catalog(&configuration)?.templates().len(), 1);
+    assert_eq!(
+        catalog(&configuration)?.templates().len(),
+        built_in_configuration().templates().len()
+    );
 
     let (exit, _, stderr) = run(
         &["gitserious", "config", "delete", "template", "default"],
@@ -348,5 +357,39 @@ fn delete_removes_user_definitions_and_enforces_references() -> Result<(), Box<d
     );
     assert_eq!(exit, ExitCode::FAILURE);
     assert!(stderr.contains("is reserved by gitserious"));
+    Ok(())
+}
+
+#[test]
+fn domain_bundles_are_inspectable_and_cannot_be_deleted() -> Result<(), Box<dyn Error>> {
+    let configuration = FakeUserStore::empty();
+    for domain in ["ml-research"] {
+        for (kind, identity) in [
+            ("taxonomy", domain.to_owned()),
+            ("typeset", format!("{domain}/default")),
+            ("template", domain.to_owned()),
+        ] {
+            let (exit, listing, stderr) =
+                run(&["gitserious", "config", "list", kind], &configuration);
+            assert_eq!(exit, ExitCode::SUCCESS);
+            assert!(stderr.is_empty());
+            assert!(listing.contains(&format!("  {identity}  built-in v1")));
+            let (exit, shown, stderr) = run(
+                &["gitserious", "config", "show", kind, &identity],
+                &configuration,
+            );
+            assert_eq!(exit, ExitCode::SUCCESS);
+            assert!(stderr.is_empty());
+            assert!(shown.starts_with(&format!("{kind} {identity} (built-in)\n")));
+            let (exit, stdout, stderr) = run(
+                &["gitserious", "config", "delete", kind, &identity],
+                &configuration,
+            );
+            assert_eq!(exit, ExitCode::FAILURE);
+            assert!(stdout.is_empty());
+            assert!(stderr.contains("reserved by gitserious"));
+        }
+    }
+    assert_eq!(configuration.load()?, CustomConfiguration::default());
     Ok(())
 }

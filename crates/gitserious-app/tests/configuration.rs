@@ -165,9 +165,18 @@ fn empty_user_catalog_resolves_the_built_in_template_generically() -> Result<(),
     assert_eq!(resolved.taxonomy_id().as_str(), "conventional");
     assert_eq!(resolved.typeset_id().as_str(), "default");
     assert_eq!(resolved.change_types().len(), 11);
-    assert_eq!(catalog.taxonomies().len(), 1);
-    assert_eq!(catalog.typesets().len(), 1);
-    assert_eq!(catalog.templates().len(), 1);
+    assert_eq!(
+        catalog.taxonomies().len(),
+        built_in_configuration().taxonomies().len()
+    );
+    assert_eq!(
+        catalog.typesets().len(),
+        built_in_configuration().typesets().len()
+    );
+    assert_eq!(
+        catalog.templates().len(),
+        built_in_configuration().templates().len()
+    );
     Ok(())
 }
 
@@ -189,24 +198,24 @@ fn custom_template_resolves_the_joined_taxonomy_and_typeset() -> Result<(), Box<
 #[test]
 fn effective_catalog_rejects_every_built_in_shadowing_form() -> Result<(), Box<dyn Error>> {
     let built_in = built_in_configuration();
-    let taxonomy_collision =
-        CustomConfiguration::new(vec![built_in.taxonomy().clone()], Vec::new(), Vec::new())?;
-    assert!(matches!(
-        ConfigurationCatalog::new(&taxonomy_collision),
-        Err(ConfigurationCatalogError::ReservedTaxonomy(_))
-    ));
-    let typeset_collision =
-        CustomConfiguration::new(Vec::new(), vec![built_in.typeset().clone()], Vec::new())?;
-    assert!(matches!(
-        ConfigurationCatalog::new(&typeset_collision),
-        Err(ConfigurationCatalogError::ReservedTypeset { .. })
-    ));
-    let template_collision =
-        CustomConfiguration::new(Vec::new(), Vec::new(), vec![built_in.template().clone()])?;
-    assert!(matches!(
-        ConfigurationCatalog::new(&template_collision),
-        Err(ConfigurationCatalogError::ReservedTemplate(_))
-    ));
+    for taxonomy in built_in.taxonomies() {
+        let collision = CustomConfiguration::new(vec![taxonomy.clone()], Vec::new(), Vec::new())?;
+        assert!(
+            matches!(ConfigurationCatalog::new(&collision), Err(ConfigurationCatalogError::ReservedTaxonomy(id)) if &id == taxonomy.id())
+        );
+    }
+    for typeset in built_in.typesets() {
+        let collision = CustomConfiguration::new(Vec::new(), vec![typeset.clone()], Vec::new())?;
+        assert!(
+            matches!(ConfigurationCatalog::new(&collision), Err(ConfigurationCatalogError::ReservedTypeset { taxonomy, typeset: id }) if &taxonomy == typeset.taxonomy() && &id == typeset.id())
+        );
+    }
+    for template in built_in.templates() {
+        let collision = CustomConfiguration::new(Vec::new(), Vec::new(), vec![template.clone()])?;
+        assert!(
+            matches!(ConfigurationCatalog::new(&collision), Err(ConfigurationCatalogError::ReservedTemplate(id)) if &id == template.id())
+        );
+    }
     Ok(())
 }
 
@@ -278,9 +287,18 @@ fn item_crud_builds_and_queries_a_reusable_configuration() -> Result<(), Box<dyn
         .is_some()
     );
     assert!(find_template(&store, &TemplateId::new("custom-template")?)?.is_some());
-    assert_eq!(list_taxonomies(&store)?.len(), 2);
-    assert_eq!(list_typesets(&store)?.len(), 2);
-    assert_eq!(list_templates(&store)?.len(), 2);
+    assert_eq!(
+        list_taxonomies(&store)?.len(),
+        built_in_configuration().taxonomies().len() + 1
+    );
+    assert_eq!(
+        list_typesets(&store)?.len(),
+        built_in_configuration().typesets().len() + 1
+    );
+    assert_eq!(
+        list_templates(&store)?.len(),
+        built_in_configuration().templates().len() + 1
+    );
     assert_eq!(store.swaps.get(), 3);
     Ok(())
 }

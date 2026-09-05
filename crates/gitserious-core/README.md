@@ -105,3 +105,16 @@ than validating the truth of the author's statements.
 
 The existing renderer remains available and does not add provenance implicitly.
 Runtime use of the new renderer belongs to the subsequent COMMIT checkpoint.
+
+## Domain defaults
+
+The catalog includes `ml-research` alongside the unchanged Conventional/default
+bundle. The `ml-research` template selects the same-named taxonomy and its
+`default` typeset, all at version 1. It covers hypotheses, data, models,
+experiments, evaluation, analysis, reproduction, research fixes, infrastructure,
+and documentation. Properties are ordered, single-valued multiline text with
+required or recommended levels; reproduction results remain required.
+
+Existing `config list`/`config show` commands expose the bundle, and
+`gitserious init --template ml-research` selects it for a fresh project.
+Per-commit template switching and general bundle forking remain later work.

@@ -122,11 +122,12 @@ static BUILT_IN_CONFIGURATION: LazyLock<BuiltInConfiguration> = LazyLock::new(||
         taxonomy_id,
         typeset_id,
     );
+    let (ml_taxonomy, ml_typeset, ml_template) = crate::built_in_ml_research::ml_research();
     // The compatibility accessors intentionally refer to the first bundle.
     BuiltInConfiguration {
-        taxonomies: vec![taxonomy],
-        typesets: vec![typeset],
-        templates: vec![template],
+        taxonomies: vec![taxonomy, ml_taxonomy],
+        typesets: vec![typeset, ml_typeset],
+        templates: vec![template, ml_template],
     }
 });
 
@@ -171,17 +172,17 @@ mod tests {
         assert_eq!(catalog.taxonomy(), original.taxonomy());
         assert_eq!(catalog.typeset(), original.typeset());
         assert_eq!(catalog.template(), original.template());
-        assert_eq!(catalog.taxonomies().len(), 2);
-        assert_eq!(catalog.typesets().len(), 2);
-        assert_eq!(catalog.templates().len(), 2);
+        assert_eq!(catalog.taxonomies().len(), original.taxonomies().len() + 1);
+        assert_eq!(catalog.typesets().len(), original.typesets().len() + 1);
+        assert_eq!(catalog.templates().len(), original.templates().len() + 1);
         assert_eq!(
             catalog.find_taxonomy(&taxonomy),
-            catalog.taxonomies().get(1)
+            catalog.taxonomies().last()
         );
-        assert_eq!(catalog.find_template(&template), catalog.templates().get(1));
+        assert_eq!(catalog.find_template(&template), catalog.templates().last());
         assert_eq!(
             catalog.find_typeset(&taxonomy, &typeset),
-            catalog.typesets().get(1)
+            catalog.typesets().last()
         );
         assert_eq!(
             catalog.find_typeset(original.taxonomy().id(), &typeset),
