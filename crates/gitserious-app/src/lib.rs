@@ -50,7 +50,10 @@ pub use directory_creator::DirectoryCreator;
 pub use effective_catalog::{EffectiveCatalogError, load_effective_catalog};
 pub use ensure_storage_directory::ensure_storage_directory;
 pub use find_commit_type::find_commit_type;
-pub use fork_configuration::{ForkedConfiguration, fork_conventional, fork_conventional_edits};
+pub use fork_configuration::{
+    ForkedConfiguration, fork_configuration, fork_configuration_edits, fork_conventional,
+    fork_conventional_edits,
+};
 pub use gitserious_core::{Fingerprint, FingerprintError};
 pub use global_configuration_store::GlobalConfigurationStore;
 pub use global_path_resolver::GlobalPathResolver;
@@ -60,7 +63,7 @@ pub use list_commit_types::list_commit_types;
 pub use project_config::{PROJECT_CONFIG_VERSION, ProjectConfig, ProjectConfigError};
 pub use project_configuration::{
     ProjectConfigurationEdit, ProjectConfigurationError, ProjectConfigurationOutcome,
-    apply_project_configuration_edits, fork_project_configuration,
+    apply_project_configuration_edits, fork_project_configuration, fork_project_template,
     import_and_select_project_template, import_project_template, select_project_template,
 };
 pub use project_lock::{

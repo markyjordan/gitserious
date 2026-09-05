@@ -178,6 +178,42 @@ fn initialization_writes_exact_config_and_ordered_lock() -> Result<(), Box<dyn E
 }
 
 #[test]
+fn initialization_refreshes_a_legacy_single_template_lock() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    let paths = project_paths(repository.path());
+    initialize_project(
+        &GitRepositoryLocator,
+        &TomlProjectStateStore,
+        &catalog()?,
+        None,
+        repository.path(),
+    )?;
+    let current = fs::read_to_string(&paths.lock)?;
+    let legacy = current
+        .split("\n[[resolved-templates]]")
+        .next()
+        .ok_or("generated lock did not contain selectable templates")?
+        .to_owned()
+        + "\n";
+    fs::write(&paths.lock, &legacy)?;
+    let state = TomlProjectStateStore.inspect(&root(repository.path())?)?;
+    assert!(matches!(state, ProjectState::Initialized { .. }));
+    let outcome = initialize_project(
+        &GitRepositoryLocator,
+        &TomlProjectStateStore,
+        &catalog()?,
+        None,
+        repository.path(),
+    )?;
+    assert_eq!(outcome.status(), InitStatus::LockRefreshed);
+    let refreshed = fs::read_to_string(&paths.lock)?;
+    assert!(refreshed.contains("[[resolved-templates]]"));
+    assert!(refreshed.contains("id = \"ml-research\""));
+    assert!(refreshed.contains("id = \"infra-ops\""));
+    Ok(())
+}
+
+#[test]
 fn populated_project_configuration_round_trips_canonically() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     let paths = project_paths(repository.path());

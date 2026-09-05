@@ -502,3 +502,95 @@ fn fork_rejects_reserved_and_existing_identities_atomically() -> Result<(), Box<
     assert_eq!(store.snapshot(), before);
     Ok(())
 }
+
+#[test]
+fn arbitrary_forks_preserve_source_content_and_reset_new_identity_versions()
+-> Result<(), Box<dyn Error>> {
+    let initial = CustomConfiguration::new(
+        vec![taxonomy(2, true)?],
+        vec![typeset(3, true)?],
+        vec![template(4)?],
+    )?;
+    for selected in ["default", "ml-research", "infra-ops", "custom-template"] {
+        let store = RecordingStore::new(initial.clone());
+        let before = ConfigurationCatalog::new(&initial)?;
+        let source = before.resolve(&TemplateId::new(selected)?)?;
+        let forked = gitserious_app::fork_configuration(
+            &store,
+            &TemplateId::new(selected)?,
+            TemplateId::new("copy")?,
+            TaxonomyId::new("copy-taxonomy")?,
+            TypesetId::new("copy-typeset")?,
+        )?;
+        assert_eq!(store.loads.get(), 1);
+        assert_eq!(store.swaps.get(), 1);
+        let after = ConfigurationCatalog::new(&store.snapshot())?;
+        let resolved = after.resolve(forked.template())?;
+        assert_eq!(resolved.taxonomy_id(), forked.taxonomy());
+        assert_eq!(resolved.typeset_id(), forked.typeset());
+        assert_eq!(resolved.template_version(), TemplateVersion::V1);
+        assert_eq!(resolved.taxonomy_version(), TaxonomyVersion::V1);
+        assert_eq!(resolved.typeset_version(), TypesetVersion::V1);
+        assert_eq!(
+            resolved.template_description(),
+            source.template_description()
+        );
+        assert_eq!(
+            resolved.taxonomy_description(),
+            source.taxonomy_description()
+        );
+        assert_eq!(resolved.typeset_description(), source.typeset_description());
+        assert_eq!(resolved.change_types(), source.change_types());
+        assert_eq!(after.resolve(&TemplateId::new(selected)?)?, source);
+        let old_typeset = before
+            .find_typeset(source.taxonomy_id(), source.typeset_id())
+            .ok_or("missing source")?;
+        let new_typeset = after
+            .find_typeset(forked.taxonomy(), forked.typeset())
+            .ok_or("missing fork")?;
+        assert_eq!(new_typeset.schemas(), old_typeset.schemas());
+    }
+    Ok(())
+}
+
+#[test]
+fn arbitrary_forks_reject_unavailable_sources_collisions_and_failed_saves()
+-> Result<(), Box<dyn Error>> {
+    for (source, template, taxonomy, typeset) in [
+        ("missing", "copy", "copy-taxonomy", "copy-typeset"),
+        ("ml-research", "default", "copy-taxonomy", "copy-typeset"),
+        ("ml-research", "copy", "conventional", "copy-typeset"),
+        (
+            "ml-research",
+            "custom-template",
+            "copy-taxonomy",
+            "copy-typeset",
+        ),
+        ("ml-research", "copy", "custom", "strict"),
+    ] {
+        let initial = full_configuration()?;
+        let store = RecordingStore::new(initial.clone());
+        assert!(
+            gitserious_app::fork_configuration(
+                &store,
+                &TemplateId::new(source)?,
+                TemplateId::new(template)?,
+                TaxonomyId::new(taxonomy)?,
+                TypesetId::new(typeset)?
+            )
+            .is_err()
+        );
+        assert_eq!(store.snapshot(), initial);
+        assert_eq!(store.swaps.get(), 0);
+    }
+    for error in [FakeError::Unavailable, FakeError::Concurrent] {
+        let initial = full_configuration()?;
+        let store = RecordingStore::new(initial.clone());
+        store.swap_error.set(Some(error));
+        assert!(
+            matches!(gitserious_app::fork_configuration(&store, &TemplateId::new("ml-research")?, TemplateId::new("copy")?, TaxonomyId::new("copy-taxonomy")?, TypesetId::new("copy-typeset")?), Err(ConfigurationMutationError::Store(actual)) if actual == error)
+        );
+        assert_eq!(store.snapshot(), initial);
+    }
+    Ok(())
+}

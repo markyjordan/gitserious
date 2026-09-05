@@ -9,8 +9,8 @@ use crate::{
     ConfigurationMutationError, ConfigurationOrigin, CustomConfiguration, PROJECT_CONFIG_VERSION,
     ProjectConfig, ProjectConfigError, ProjectLock, ProjectState, ProjectStateStore,
     RepositoryLocator, RepositoryRoot, ResolveProjectPolicyError, apply_custom_configuration_edits,
-    fork_conventional_edits, resolve_project_lock, taxonomy_origin, template_origin,
-    typeset_origin,
+    fork_configuration_edits, fork_conventional_edits, resolve_project_lock, taxonomy_origin,
+    template_origin, typeset_origin,
 };
 
 /// One atomic edit to repository-owned configuration.
@@ -166,8 +166,21 @@ where
         .inspect(&root)
         .map_err(ProjectConfigurationError::Store)?;
     let (current_config, current_lock) = initialized_state(state)?;
-    if resolve_project_lock(&current_config).map_err(ProjectConfigurationError::Policy)?
-        != current_lock
+    apply_inspected_project_edits(root, store, &current_config, &current_lock, edits)
+}
+
+fn apply_inspected_project_edits<LocatorError, S>(
+    root: RepositoryRoot,
+    store: &S,
+    current_config: &ProjectConfig,
+    current_lock: &ProjectLock,
+    edits: impl IntoIterator<Item = ProjectConfigurationEdit>,
+) -> Result<ProjectConfigurationOutcome, ProjectConfigurationError<LocatorError, S::Error>>
+where
+    S: ProjectStateStore + ?Sized,
+{
+    if resolve_project_lock(current_config).map_err(ProjectConfigurationError::Policy)?
+        != *current_lock
     {
         return Err(ProjectConfigurationError::StaleLock);
     }
@@ -201,12 +214,12 @@ where
     }
     let replacement_lock =
         resolve_project_lock(&replacement_config).map_err(ProjectConfigurationError::Policy)?;
-    if replacement_config != current_config || replacement_lock != current_lock {
+    if replacement_config != *current_config || replacement_lock != *current_lock {
         store
             .compare_and_swap(
                 &root,
-                &current_config,
-                &current_lock,
+                current_config,
+                current_lock,
                 &replacement_config,
                 &replacement_lock,
             )
@@ -265,6 +278,44 @@ where
         .into_iter()
         .map(ProjectConfigurationEdit::Custom);
     apply_project_configuration_edits(locator, store, start, edits)
+}
+
+/// Forks a built-in or project custom template into new project identities.
+///
+/// Global definitions must be imported first. The active template is unchanged,
+/// and source inspection and destination persistence use the same snapshot.
+///
+/// # Errors
+///
+/// Returns [`ProjectConfigurationError`] when project policy or the source is
+/// unavailable, target identities conflict, or guarded persistence fails.
+pub fn fork_project_template<L, S>(
+    locator: &L,
+    store: &S,
+    start: &Path,
+    source: &TemplateId,
+    template: &TemplateId,
+    taxonomy: &TaxonomyId,
+    typeset: &TypesetId,
+) -> Result<ProjectConfigurationOutcome, ProjectConfigurationError<L::Error, S::Error>>
+where
+    L: RepositoryLocator + ?Sized,
+    S: ProjectStateStore + ?Sized,
+{
+    let root = locator
+        .locate(start)
+        .map_err(ProjectConfigurationError::Repository)?;
+    let state = store
+        .inspect(&root)
+        .map_err(ProjectConfigurationError::Store)?;
+    let (config, lock) = initialized_state(state)?;
+    let catalog =
+        ConfigurationCatalog::new(config.custom()).map_err(ProjectConfigurationError::Source)?;
+    let edits = fork_configuration_edits(&catalog, source, template, taxonomy, typeset)
+        .map_err(ProjectConfigurationError::Source)?
+        .into_iter()
+        .map(ProjectConfigurationEdit::Custom);
+    apply_inspected_project_edits(root, store, &config, &lock, edits)
 }
 
 /// Copies one global custom template chain into project custom configuration.
@@ -328,7 +379,7 @@ where
     let state = store
         .inspect(&root)
         .map_err(ProjectConfigurationError::Store)?;
-    let (current, _) = initialized_state(state)?;
+    let (current, lock) = initialized_state(state)?;
     let edits = import_edits(source, current.custom(), selected)?;
     let mut project_edits = edits
         .into_iter()
@@ -337,7 +388,7 @@ where
     if select {
         project_edits.push(ProjectConfigurationEdit::SelectTemplate(selected.clone()));
     }
-    apply_project_configuration_edits(locator, store, start, project_edits)
+    apply_inspected_project_edits(root, store, &current, &lock, project_edits)
 }
 
 fn import_edits<LocatorError, StoreError>(

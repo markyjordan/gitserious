@@ -605,6 +605,22 @@ fn resolved_default_lock_is_exact_and_deterministic() -> Result<(), Box<dyn Erro
     assert_eq!(first.resolved_template().version(), TemplateVersion::V1);
     assert_eq!(first.resolved_template().commit_types().len(), 11);
     assert_eq!(
+        first.resolved_templates().len(),
+        built_in_configuration().templates().len()
+    );
+    assert!(
+        first
+            .resolved_templates()
+            .iter()
+            .any(|template| template.id().as_str() == "ml-research")
+    );
+    assert!(
+        first
+            .resolved_templates()
+            .iter()
+            .any(|template| template.id().as_str() == "infra-ops")
+    );
+    assert_eq!(
         first
             .resolved_template()
             .commit_types()
@@ -615,6 +631,33 @@ fn resolved_default_lock_is_exact_and_deterministic() -> Result<(), Box<dyn Erro
             "feat", "fix", "refactor", "perf", "test", "docs", "chore", "build", "ci", "style",
             "revert",
         ]
+    );
+    Ok(())
+}
+
+#[test]
+fn custom_project_templates_are_all_recorded_in_the_lock() -> Result<(), Box<dyn Error>> {
+    let custom = CustomConfiguration::new(
+        Vec::new(),
+        Vec::new(),
+        vec![TemplateDefinition::new(
+            TemplateId::new("inactive")?,
+            TemplateVersion::V1,
+            Description::new("An inactive template.")?,
+            built_in_configuration().taxonomy().id().clone(),
+            built_in_configuration().typeset().id().clone(),
+        )],
+    )?;
+    let config = ProjectConfig::new(1, TemplateId::new("default")?, custom)?;
+    let lock = resolve_project_lock(&config)?;
+    assert_eq!(
+        lock.resolved_templates().len(),
+        built_in_configuration().templates().len() + 1
+    );
+    assert!(
+        lock.resolved_templates()
+            .iter()
+            .any(|template| template.id().as_str() == "inactive")
     );
     Ok(())
 }

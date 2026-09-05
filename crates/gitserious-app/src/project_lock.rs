@@ -156,6 +156,7 @@ pub struct ProjectLock {
     config_fingerprint: Fingerprint,
     template_reference: TemplateId,
     resolved_template: ResolvedTemplate,
+    resolved_templates: Vec<ResolvedTemplate>,
 }
 
 impl ProjectLock {
@@ -177,7 +178,51 @@ impl ProjectLock {
             version,
             config_fingerprint,
             template_reference,
+            resolved_templates: vec![resolved_template.clone()],
             resolved_template,
+        })
+    }
+
+    /// Rehydrates a lock containing every selectable project template.
+    ///
+    /// The active template remains the compatibility `resolved_template`; the
+    /// collection is ordered by effective catalog template identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectLockError`] when the version is unsupported, the
+    /// collection is empty, or a resolved identity is repeated.
+    pub fn with_resolved_templates(
+        version: u16,
+        config_fingerprint: Fingerprint,
+        template_reference: TemplateId,
+        resolved_template: ResolvedTemplate,
+        resolved_templates: Vec<ResolvedTemplate>,
+    ) -> Result<Self, ProjectLockError> {
+        if version != PROJECT_LOCK_VERSION {
+            return Err(ProjectLockError::UnsupportedVersion(version));
+        }
+        if resolved_templates.is_empty()
+            || !resolved_templates
+                .iter()
+                .any(|candidate| candidate.id() == resolved_template.id())
+        {
+            return Err(ProjectLockError::MissingResolvedTemplate);
+        }
+        let mut identities = BTreeSet::new();
+        for candidate in &resolved_templates {
+            if !identities.insert(candidate.id()) {
+                return Err(ProjectLockError::DuplicateResolvedTemplate(
+                    candidate.id().clone(),
+                ));
+            }
+        }
+        Ok(Self {
+            version,
+            config_fingerprint,
+            template_reference,
+            resolved_template,
+            resolved_templates,
         })
     }
 
@@ -204,13 +249,23 @@ impl ProjectLock {
     pub const fn resolved_template(&self) -> &ResolvedTemplate {
         &self.resolved_template
     }
+
+    /// Returns every resolved template available to the project.
+    #[must_use]
+    pub fn resolved_templates(&self) -> &[ResolvedTemplate] {
+        &self.resolved_templates
+    }
 }
 
 /// An unsupported generated project-lock format.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectLockError {
     /// The file declares a version this binary cannot interpret.
     UnsupportedVersion(u16),
+    /// The lock does not contain its active resolved template.
+    MissingResolvedTemplate,
+    /// Two selectable templates share one resolved identity.
+    DuplicateResolvedTemplate(TemplateId),
 }
 
 impl Display for ProjectLockError {
@@ -218,6 +273,12 @@ impl Display for ProjectLockError {
         match self {
             Self::UnsupportedVersion(version) => {
                 write!(formatter, "unsupported project lock version {version}")
+            }
+            Self::MissingResolvedTemplate => {
+                formatter.write_str("project lock does not contain its active resolved template")
+            }
+            Self::DuplicateResolvedTemplate(id) => {
+                write!(formatter, "project lock repeats resolved template {id:?}")
             }
         }
     }
@@ -234,6 +295,8 @@ pub enum ResolveProjectPolicyError {
     InvalidResolvedTemplate(ResolvedTemplateError),
     /// The effective catalog containing the authored template is invalid.
     Catalog(ConfigurationCatalogError),
+    /// The generated lock could not represent the resolved template set.
+    Lock(ProjectLockError),
 }
 
 impl Display for ResolveProjectPolicyError {
@@ -244,6 +307,7 @@ impl Display for ResolveProjectPolicyError {
             }
             Self::InvalidResolvedTemplate(error) => Display::fmt(error, formatter),
             Self::Catalog(error) => Display::fmt(error, formatter),
+            Self::Lock(error) => Display::fmt(error, formatter),
         }
     }
 }
@@ -253,6 +317,7 @@ impl Error for ResolveProjectPolicyError {
         match self {
             Self::InvalidResolvedTemplate(error) => Some(error),
             Self::Catalog(error) => Some(error),
+            Self::Lock(error) => Some(error),
             Self::UnknownTemplate(_) => None,
         }
     }
@@ -278,17 +343,45 @@ pub fn resolve_project_lock(
     let catalog =
         ConfigurationCatalog::new(config.custom()).map_err(ResolveProjectPolicyError::Catalog)?;
     let reference = config.active_template();
+    let resolved_templates = catalog
+        .templates()
+        .iter()
+        .map(|template| resolved_template_for(&catalog, template.id()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let resolved_template = resolved_templates
+        .iter()
+        .find(|template| {
+            if reference == gitserious_core::built_in_configuration().template().id() {
+                template.id() == &default_commit_message_template().id().clone()
+            } else {
+                template.id() == reference
+            }
+        })
+        .cloned()
+        .ok_or_else(|| ResolveProjectPolicyError::UnknownTemplate(reference.clone()))?;
+    ProjectLock::with_resolved_templates(
+        PROJECT_LOCK_VERSION,
+        fingerprint_project_config(config),
+        reference.clone(),
+        resolved_template,
+        resolved_templates,
+    )
+    .map_err(ResolveProjectPolicyError::Lock)
+}
+
+fn resolved_template_for(
+    catalog: &ConfigurationCatalog,
+    reference: &TemplateId,
+) -> Result<ResolvedTemplate, ResolveProjectPolicyError> {
     let resolved = catalog.resolve(reference).map_err(|error| match error {
         ConfigurationCatalogError::UnknownTemplate(id) => {
             ResolveProjectPolicyError::UnknownTemplate(id)
         }
         other => ResolveProjectPolicyError::Catalog(other),
     })?;
-    let Some(template) = catalog.find_template(reference) else {
-        return Err(ResolveProjectPolicyError::Catalog(
-            ConfigurationCatalogError::UnknownTemplate(reference.clone()),
-        ));
-    };
+    let template = catalog
+        .find_template(reference)
+        .ok_or_else(|| ResolveProjectPolicyError::UnknownTemplate(reference.clone()))?;
     let commit_types = resolved
         .change_types()
         .iter()
@@ -301,29 +394,22 @@ pub fn resolve_project_lock(
             )
         })
         .collect::<Vec<_>>();
-    let built_in = gitserious_core::built_in_configuration();
-    let (identity_id, identity_version) = if built_in.template().id() == reference {
-        let message_template = default_commit_message_template();
-        (message_template.id().clone(), message_template.version())
-    } else {
-        (template.id().clone(), template.version())
-    };
+    let (identity_id, identity_version) =
+        if reference == gitserious_core::built_in_configuration().template().id() {
+            let message_template = default_commit_message_template();
+            (message_template.id().clone(), message_template.version())
+        } else {
+            (template.id().clone(), template.version())
+        };
     let template_fingerprint =
         fingerprint_resolved_template(&identity_id, identity_version, &commit_types);
-    let resolved_template = ResolvedTemplate::new(
+    ResolvedTemplate::new(
         identity_id,
         identity_version,
         template_fingerprint,
         commit_types,
     )
-    .map_err(ResolveProjectPolicyError::InvalidResolvedTemplate)?;
-
-    Ok(ProjectLock {
-        version: PROJECT_LOCK_VERSION,
-        config_fingerprint: fingerprint_project_config(config),
-        template_reference: reference.clone(),
-        resolved_template,
-    })
+    .map_err(ResolveProjectPolicyError::InvalidResolvedTemplate)
 }
 
 /// Fingerprints normalized authored configuration independently of TOML layout.
