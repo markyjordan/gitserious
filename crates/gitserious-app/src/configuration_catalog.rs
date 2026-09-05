@@ -25,43 +25,53 @@ impl ConfigurationCatalog {
     /// references, incompatible typesets, or incomplete type coverage.
     pub fn new(custom: &CustomConfiguration) -> Result<Self, ConfigurationCatalogError> {
         let built_in = built_in_configuration();
-        if custom
+        if let Some(taxonomy) = custom
             .taxonomies()
             .iter()
-            .any(|taxonomy| taxonomy.id() == built_in.taxonomy().id())
+            .find(|value| built_in.find_taxonomy(value.id()).is_some())
         {
             return Err(ConfigurationCatalogError::ReservedTaxonomy(
-                built_in.taxonomy().id().clone(),
+                taxonomy.id().clone(),
             ));
         }
-        if custom.typesets().iter().any(|typeset| {
-            typeset.taxonomy() == built_in.typeset().taxonomy()
-                && typeset.id() == built_in.typeset().id()
+        if let Some(typeset) = custom.typesets().iter().find(|value| {
+            built_in
+                .find_typeset(value.taxonomy(), value.id())
+                .is_some()
         }) {
             return Err(ConfigurationCatalogError::ReservedTypeset {
-                taxonomy: built_in.typeset().taxonomy().clone(),
-                typeset: built_in.typeset().id().clone(),
+                taxonomy: typeset.taxonomy().clone(),
+                typeset: typeset.id().clone(),
             });
         }
-        if custom
+        if let Some(template) = custom
             .templates()
             .iter()
-            .any(|template| template.id() == built_in.template().id())
+            .find(|value| built_in.find_template(value.id()).is_some())
         {
             return Err(ConfigurationCatalogError::ReservedTemplate(
-                built_in.template().id().clone(),
+                template.id().clone(),
             ));
         }
 
         let mut catalog = Self {
-            taxonomies: std::iter::once(built_in.taxonomy().clone())
-                .chain(custom.taxonomies().iter().cloned())
+            taxonomies: built_in
+                .taxonomies()
+                .iter()
+                .chain(custom.taxonomies())
+                .cloned()
                 .collect(),
-            typesets: std::iter::once(built_in.typeset().clone())
-                .chain(custom.typesets().iter().cloned())
+            typesets: built_in
+                .typesets()
+                .iter()
+                .chain(custom.typesets())
+                .cloned()
                 .collect(),
-            templates: std::iter::once(built_in.template().clone())
-                .chain(custom.templates().iter().cloned())
+            templates: built_in
+                .templates()
+                .iter()
+                .chain(custom.templates())
+                .cloned()
                 .collect(),
         };
         catalog
@@ -182,7 +192,7 @@ impl ConfigurationOrigin {
 /// Classifies one taxonomy identifier as built-in or custom.
 #[must_use]
 pub fn taxonomy_origin(id: &TaxonomyId) -> ConfigurationOrigin {
-    if id == built_in_configuration().taxonomy().id() {
+    if built_in_configuration().find_taxonomy(id).is_some() {
         ConfigurationOrigin::BuiltIn
     } else {
         ConfigurationOrigin::Custom
@@ -192,8 +202,10 @@ pub fn taxonomy_origin(id: &TaxonomyId) -> ConfigurationOrigin {
 /// Classifies one taxonomy-scoped typeset identifier as built-in or custom.
 #[must_use]
 pub fn typeset_origin(taxonomy: &TaxonomyId, typeset: &TypesetId) -> ConfigurationOrigin {
-    let built_in = built_in_configuration().typeset();
-    if taxonomy == built_in.taxonomy() && typeset == built_in.id() {
+    if built_in_configuration()
+        .find_typeset(taxonomy, typeset)
+        .is_some()
+    {
         ConfigurationOrigin::BuiltIn
     } else {
         ConfigurationOrigin::Custom
@@ -203,7 +215,7 @@ pub fn typeset_origin(taxonomy: &TaxonomyId, typeset: &TypesetId) -> Configurati
 /// Classifies one template identifier as built-in or custom.
 #[must_use]
 pub fn template_origin(id: &TemplateId) -> ConfigurationOrigin {
-    if id == built_in_configuration().template().id() {
+    if built_in_configuration().find_template(id).is_some() {
         ConfigurationOrigin::BuiltIn
     } else {
         ConfigurationOrigin::Custom

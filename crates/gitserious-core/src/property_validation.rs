@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
+use std::fmt::{self, Display, Formatter};
 
 use crate::{
-    PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyValues, ResolvedChangeType,
+    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyValues,
+    ResolvedChangeType,
 };
 
 /// An author's applicability decision for a conditional property.
@@ -143,6 +145,13 @@ pub fn validate_property_responses(
     definition: &ResolvedChangeType,
     responses: &[PropertyResponse],
 ) -> PropertyValidationReport {
+    validate_property_definitions(definition.properties(), responses)
+}
+
+pub(crate) fn validate_property_definitions(
+    properties: &[PropertyDefinition],
+    responses: &[PropertyResponse],
+) -> PropertyValidationReport {
     let mut issues = Vec::new();
     let mut seen = BTreeSet::new();
     for response in responses {
@@ -153,8 +162,7 @@ pub fn validate_property_responses(
             );
             continue;
         }
-        let Some(property) = definition
-            .properties()
+        let Some(property) = properties
             .iter()
             .find(|property| property.key() == response.key())
         else {
@@ -186,7 +194,7 @@ pub fn validate_property_responses(
         }
     }
 
-    for property in definition.properties() {
+    for property in properties {
         let response = responses
             .iter()
             .find(|response| response.key() == property.key());
@@ -240,4 +248,45 @@ fn error(issues: &mut Vec<PropertyValidationIssue>, kind: PropertyValidationIssu
         severity: ValidationSeverity::Error,
         kind,
     });
+}
+
+impl Display for PropertyValidationIssueKind {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownProperty(key) => write!(
+                formatter,
+                "property {key:?} is not defined for the selected type"
+            ),
+            Self::DuplicateProperty(key) => {
+                write!(formatter, "property {key:?} has more than one response")
+            }
+            Self::MissingRequired(key) => write!(formatter, "complete required property {key:?}"),
+            Self::MissingRecommended(key) => write!(
+                formatter,
+                "consider completing recommended property {key:?}"
+            ),
+            Self::MissingConditionalDecision(key) => write!(
+                formatter,
+                "choose whether conditional property {key:?} applies"
+            ),
+            Self::MissingApplicableValue(key) => {
+                write!(formatter, "complete applicable property {key:?}")
+            }
+            Self::ValueForNonApplicableProperty(key) => write!(
+                formatter,
+                "remove the value for non-applicable property {key:?}"
+            ),
+            Self::UnexpectedConditionalDecision(key) => {
+                write!(formatter, "property {key:?} is not conditional")
+            }
+            Self::Multiplicity {
+                key,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "property {key:?} requires {expected:?} values, not {actual:?} values"
+            ),
+        }
+    }
 }
