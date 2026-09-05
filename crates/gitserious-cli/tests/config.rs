@@ -363,7 +363,7 @@ fn delete_removes_user_definitions_and_enforces_references() -> Result<(), Box<d
 #[test]
 fn domain_bundles_are_inspectable_and_cannot_be_deleted() -> Result<(), Box<dyn Error>> {
     let configuration = FakeUserStore::empty();
-    for domain in ["ml-research"] {
+    for domain in ["ml-research", "infra-ops"] {
         for (kind, identity) in [
             ("taxonomy", domain.to_owned()),
             ("typeset", format!("{domain}/default")),

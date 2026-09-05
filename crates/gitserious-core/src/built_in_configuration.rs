@@ -123,11 +123,12 @@ static BUILT_IN_CONFIGURATION: LazyLock<BuiltInConfiguration> = LazyLock::new(||
         typeset_id,
     );
     let (ml_taxonomy, ml_typeset, ml_template) = crate::built_in_ml_research::ml_research();
+    let (ops_taxonomy, ops_typeset, ops_template) = crate::built_in_infra_ops::infra_ops();
     // The compatibility accessors intentionally refer to the first bundle.
     BuiltInConfiguration {
-        taxonomies: vec![taxonomy, ml_taxonomy],
-        typesets: vec![typeset, ml_typeset],
-        templates: vec![template, ml_template],
+        taxonomies: vec![taxonomy, ml_taxonomy, ops_taxonomy],
+        typesets: vec![typeset, ml_typeset, ops_typeset],
+        templates: vec![template, ml_template, ops_template],
     }
 });
 

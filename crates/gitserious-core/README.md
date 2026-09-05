@@ -108,13 +108,26 @@ Runtime use of the new renderer belongs to the subsequent COMMIT checkpoint.
 
 ## Domain defaults
 
-The catalog includes `ml-research` alongside the unchanged Conventional/default
-bundle. The `ml-research` template selects the same-named taxonomy and its
-`default` typeset, all at version 1. It covers hypotheses, data, models,
-experiments, evaluation, analysis, reproduction, research fixes, infrastructure,
-and documentation. Properties are ordered, single-valued multiline text with
-required or recommended levels; reproduction results remain required.
+The built-in catalog contains these version-1 bundles in this order:
 
-Existing `config list`/`config show` commands expose the bundle, and
-`gitserious init --template ml-research` selects it for a fresh project.
-Per-commit template switching and general bundle forking remain later work.
+| Template | Taxonomy | Typeset |
+| --- | --- | --- |
+| `default` | `conventional` | `default` |
+| `ml-research` | `ml-research` | `default` |
+| `infra-ops` | `infra-ops` | `default` |
+
+Conventional definitions remain unchanged. ML Research covers hypotheses, data,
+models, experiments, evaluation, analysis, reproduction, research fixes,
+infrastructure, and documentation. Infra Ops covers provisioning, configuration,
+deployment, migration, scaling, observation, incidents, recovery, security, and
+decommissioning.
+
+Both new typesets use ordered, single-valued multiline properties with required
+or recommended levels. Reproduction results remain required. Operational guidance
+asks for observed outcomes and unresolved risks without treating supplied prose
+as proof of success or protection.
+
+Existing `config list`/`config show` commands expose each bundle. Select a domain
+for a fresh project with `gitserious init --template ml-research` or
+`gitserious init --template infra-ops`. Per-commit template switching and general
+bundle forking remain later work.

@@ -178,7 +178,7 @@ fn domain_defaults_do_not_change_conventional_compatibility_or_order() -> TestRe
             .iter()
             .map(|t| t.id().as_str())
             .collect::<Vec<_>>(),
-        ["conventional", "ml-research"]
+        ["conventional", "ml-research", "infra-ops"]
     );
     assert_eq!(
         catalog
@@ -186,7 +186,7 @@ fn domain_defaults_do_not_change_conventional_compatibility_or_order() -> TestRe
             .iter()
             .map(|t| t.id().as_str())
             .collect::<Vec<_>>(),
-        ["default", "ml-research"]
+        ["default", "ml-research", "infra-ops"]
     );
     let conventional = resolve("default")?;
     assert_eq!(catalog.taxonomy().id(), conventional.taxonomy_id());
@@ -216,4 +216,53 @@ fn domain_defaults_do_not_change_conventional_compatibility_or_order() -> TestRe
         .ok_or("Conventional fix missing")?;
     assert_ne!(ml_fix.properties(), conventional_fix.properties());
     Ok(())
+}
+
+#[test]
+fn infra_ops_preserves_the_agreed_schema_and_requirement_contract() -> TestResult {
+    verify_bundle(
+        "infra-ops",
+        &[
+            (
+                "provision",
+                "purpose! topology! capacity-assumption? failure-domain? dependencies? rollback?",
+            ),
+            (
+                "configure",
+                "objective! change! rationale! assumptions? rollback? validation?",
+            ),
+            (
+                "deploy",
+                "objective! artifact! environment! strategy! risk? rollback? validation?",
+            ),
+            (
+                "migrate",
+                "from-state! to-state! reason! compatibility? invariants? rollback? validation?",
+            ),
+            (
+                "scale",
+                "constraint! signal! change! capacity-assumption? tradeoff? validation?",
+            ),
+            (
+                "observe",
+                "blind-spot! signal! interpretation! threshold? response? cost?",
+            ),
+            (
+                "incident",
+                "symptom! impact! trigger? cause? mitigation! follow-up?",
+            ),
+            (
+                "recover",
+                "failure-state! target-state! action! data-loss? residual-risk? validation?",
+            ),
+            (
+                "secure",
+                "threat! exposure! control! assumptions? residual-risk? validation?",
+            ),
+            (
+                "decommission",
+                "target! reason! dependencies? migration? residual-state? validation?",
+            ),
+        ],
+    )
 }
