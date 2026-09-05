@@ -296,3 +296,17 @@ fn infra_ops_initializes_without_global_configuration_and_uses_its_types()
 -> Result<(), Box<dyn Error>> {
     assert_domain_initialization("infra-ops", "provision")
 }
+
+#[test]
+fn bare_config_requires_a_terminal_without_loading_or_creating_policy() -> Result<(), Box<dyn Error>>
+{
+    let repository = new_repository()?;
+    let isolation = Isolation::new()?;
+    let result = run(repository.path(), &isolation, &["config"])?;
+    assert!(!result.status.success());
+    assert!(stderr(&result).contains("configuration editing requires an interactive terminal"));
+    assert!(!isolation.configuration_path().exists());
+    assert!(!repository.path().join("gitserious.toml").exists());
+    assert!(!repository.path().join("gitserious.lock").exists());
+    Ok(())
+}

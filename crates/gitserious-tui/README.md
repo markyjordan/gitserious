@@ -1,5 +1,20 @@
 # gitserious-tui
 
+## Configuration browser
+
+Bare `gitserious config` opens the configuration browser in the Global
+destination. `tab` changes between Global and Project; Project requires an
+initialized repository with current policy. `1`, `2`, and `3` select taxonomies,
+typesets, and templates. Arrow keys select a definition; `enter` opens its full
+details, with arrows or page up/down for scrolling and `esc` to return.
+
+`ctrl+s` validates staged changes and opens a before/after review. Only `enter`
+on that review saves. `esc` returns to editing. Save errors retain the draft.
+Leaving or changing destination with pending changes requires explicit discard
+confirmation. Configuration needs at least 60 columns and 16 rows; undersized
+views prevent hidden editing or save actions. Explicit configuration CLI
+subcommands remain available without entering this browser.
+
 This crate is an internal component of `gitserious`.
 
 The Rust API exposed here is unstable and may have breaking changes in any

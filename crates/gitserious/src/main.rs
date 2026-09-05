@@ -8,7 +8,7 @@ use gitserious_fs::{
     GitCommitWriter, GitRepositoryLocator, SystemGlobalPathResolver, TomlGlobalConfigurationStore,
     TomlProjectStateStore,
 };
-use gitserious_tui::RatatuiCommitDraftAuthor;
+use gitserious_tui::{RatatuiCommitDraftAuthor, RatatuiConfigurationEditor};
 
 fn main() -> ExitCode {
     let mut stderr = io::stderr();
@@ -21,7 +21,8 @@ fn main() -> ExitCode {
     let store = TomlProjectStateStore;
     let author = RatatuiCommitDraftAuthor;
     let writer = GitCommitWriter;
-    let commit = CommitAdapters::new(&author, &writer);
+    let editor = RatatuiConfigurationEditor;
+    let commit = CommitAdapters::new(&author, &writer).with_configuration_editor(&editor);
     let mut stdout = io::stdout();
 
     gitserious_cli::run_with_commit(
