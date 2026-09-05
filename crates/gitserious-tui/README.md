@@ -23,6 +23,18 @@ change type, `ctrl+d` removes the selected type, and `alt+up/down` reorders it.
 taxonomy ids are fixed and accepted semantic edits advance the version. Built-in
 definitions remain read-only. `esc` confirms discard when a form has changes.
 
+The Typesets list supports `n`, `e`, and `d` with the same reviewed workflow.
+New typesets choose a taxonomy using left/right in the Taxonomy field. Each
+change type has an explicit schema; empty schemas are shown as intentionally
+empty. Select a type header or property, then use `ctrl+n` to add a property,
+`ctrl+d` to remove it, and `alt+up/down` to reorder properties within that type.
+Requirement and multiplicity fields use left/right choices. Conditional
+requirements enable a condition id and rationale; both are validated before
+staging. Existing qualified typeset identities are fixed. When a staged taxonomy
+adds or removes a type, opening its typeset proposes corresponding schema coverage
+for review. Changing taxonomy in a new form retains each taxonomy's unsaved
+property draft so switching back is lossless.
+
 This crate is an internal component of `gitserious`.
 
 The Rust API exposed here is unstable and may have breaking changes in any

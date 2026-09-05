@@ -1,6 +1,8 @@
+mod editor;
 mod form;
 mod presentation;
 mod taxonomy_form;
+mod typeset_form;
 
 use std::io::{self, IsTerminal};
 
@@ -77,7 +79,7 @@ struct State {
     max_scroll: u16,
     status: String,
     too_small: bool,
-    editor: Option<taxonomy_form::TaxonomyForm>,
+    editor: Option<editor::Editor>,
 }
 
 impl State {
@@ -152,7 +154,7 @@ impl State {
             if !self.too_small
                 && matches!(self.screen, Screen::Edit)
                 && let Some(editor) = &mut self.editor
-                && let Err(error) = editor.form.paste(text)
+                && let Err(error) = editor.form_mut().paste(text)
             {
                 self.status = error;
             }
@@ -177,7 +179,7 @@ impl State {
                     if self
                         .editor
                         .as_ref()
-                        .is_some_and(|editor| editor.form.confirming_discard())
+                        .is_some_and(|editor| editor.form().confirming_discard())
                         && matches!(key.code, KeyCode::Char('y' | 'n') | KeyCode::Enter) => {}
                 _ => return false,
             }
@@ -231,9 +233,9 @@ impl State {
         workspace: &dyn ConfigurationWorkspace,
     ) -> bool {
         match key {
-            KeyCode::Char('n') => self.open_taxonomy(true),
-            KeyCode::Char('e') => self.open_taxonomy(false),
-            KeyCode::Char('d') => self.delete_taxonomy(),
+            KeyCode::Char('n') => self.open_definition(true),
+            KeyCode::Char('e') => self.open_definition(false),
+            KeyCode::Char('d') => self.delete_definition(),
             KeyCode::Char('q') | KeyCode::Esc => return self.leave(Leave::Quit, workspace),
             KeyCode::Tab => {
                 let destination = match self.destination {
@@ -298,7 +300,7 @@ impl State {
                 || self
                     .editor
                     .as_ref()
-                    .is_some_and(|editor| editor.form.confirming_discard())
+                    .is_some_and(|editor| editor.form().confirming_discard())
             {
                 "Discard unsaved changes? y: discard | n/esc: keep editing"
             } else {
@@ -318,9 +320,9 @@ impl State {
         let hint = match &self.screen {
             Screen::Edit => {
                 if let Some(editor) = &mut self.editor {
-                    editor.form.render(frame, body);
+                    editor.form_mut().render(frame, body);
                 }
-                "tab/shift+tab: fields | ctrl+n/d: add/remove type | alt+↑/↓: order\nctrl+s: stage | esc: back"
+                "tab/shift+tab: fields | ctrl+n/d: add/remove | alt+↑/↓: order\nctrl+s: stage | esc: back"
             }
             Screen::Browse => {
                 let [list_area, detail_area] =
@@ -359,7 +361,7 @@ impl State {
                         .block(Block::bordered().title("Definition — enter to inspect")),
                     detail_area,
                 );
-                "tab: destination | 1/2/3: kinds | enter: inspect | n/e/d: taxonomy\nctrl+s: review changes | q: quit"
+                "tab: destination | 1/2/3: kinds | enter: inspect | n/e/d: definitions\nctrl+s: review changes | q: quit"
             }
             Screen::Details(text) => {
                 self.render_text(frame, body, text.clone(), "Definition");
@@ -430,43 +432,64 @@ impl State {
         );
     }
 
-    fn open_taxonomy(&mut self, create: bool) {
-        if self.session.is_none() {
+    fn open_definition(&mut self, create: bool) {
+        let Some(session) = &self.session else {
             return;
-        }
-        if self.kind != Kind::Taxonomy {
-            self.status = "Select Taxonomies to create or edit a taxonomy.".into();
-            return;
-        }
-        let original = if create {
-            None
-        } else {
-            match self.selected() {
-                Some(Definition::Taxonomy(value)) => {
-                    if gitserious_app::taxonomy_origin(value.id())
-                        == gitserious_app::ConfigurationOrigin::BuiltIn
-                    {
-                        self.status = "Built-in definitions are read-only.".into();
-                        return;
-                    }
-                    Some(value)
-                }
-                _ => return,
-            }
         };
-        self.editor = Some(taxonomy_form::TaxonomyForm::new(original));
-        self.screen = Screen::Edit;
-        self.status.clear();
+        let original = if create { None } else { self.selected() };
+        if original.as_ref().is_some_and(Definition::is_builtin) {
+            self.status = "Built-in definitions are read-only.".into();
+            return;
+        }
+        let result = match self.kind {
+            Kind::Taxonomy => {
+                let original = match original {
+                    Some(Definition::Taxonomy(value)) => Some(value),
+                    _ => None,
+                };
+                Ok(editor::Editor::Taxonomy(taxonomy_form::TaxonomyForm::new(
+                    original,
+                )))
+            }
+            Kind::Typeset => {
+                let original = match original {
+                    Some(Definition::Typeset(value)) => Some(value),
+                    _ => None,
+                };
+                let taxonomies = entries(session.custom(), Kind::Taxonomy)
+                    .into_iter()
+                    .filter_map(|value| match value {
+                        Definition::Taxonomy(value) => Some(value),
+                        _ => None,
+                    })
+                    .collect();
+                typeset_form::TypesetForm::new(taxonomies, original).map(editor::Editor::Typeset)
+            }
+            Kind::Template => Err("Select Taxonomies or Typesets to author definitions.".into()),
+        };
+        match result {
+            Ok(editor) => {
+                self.editor = Some(editor);
+                self.screen = Screen::Edit;
+                self.status.clear();
+            }
+            Err(error) => self.status = error,
+        }
     }
 
-    fn delete_taxonomy(&mut self) {
-        let Some(Definition::Taxonomy(value)) = self.selected() else {
-            return;
+    fn delete_definition(&mut self) {
+        let edit = match self.selected() {
+            Some(Definition::Taxonomy(value)) => {
+                gitserious_app::ConfigurationEdit::DeleteTaxonomy(value.id().clone())
+            }
+            Some(Definition::Typeset(value)) => gitserious_app::ConfigurationEdit::DeleteTypeset {
+                taxonomy: value.taxonomy().clone(),
+                typeset: value.id().clone(),
+            },
+            _ => return,
         };
         if let Some(session) = &mut self.session {
-            match session.stage([gitserious_app::ConfigurationEdit::DeleteTaxonomy(
-                value.id().clone(),
-            )]) {
+            match session.stage([edit]) {
                 Ok(()) => {
                     self.status = "Deletion staged. ctrl+s reviews changes before saving.".into();
                 }

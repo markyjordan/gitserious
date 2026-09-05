@@ -6,6 +6,170 @@ use ratatui::crossterm::event::KeyEvent;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+fn filled_typeset() -> Result<super::typeset_form::TypesetForm, Box<dyn std::error::Error>> {
+    let changes = filled_taxonomy().submit()?;
+    let ConfigurationEdit::CreateTaxonomy(taxonomy) = &changes[0] else {
+        return Err("wrong edit".into());
+    };
+    let mut editor = super::typeset_form::TypesetForm::new(vec![taxonomy.clone()], None)?;
+    editor.form.fields[0].set_value("context");
+    editor.form.fields[2].set_value("Context worth preserving.");
+    editor.form.focus = 3;
+    Ok(editor)
+}
+
+#[test]
+fn typeset_form_covers_empty_schemas_and_validates_conditional_guidance() -> TestResult {
+    use gitserious_core::{PropertyMultiplicity, PropertyRequirement};
+    let mut editor = filled_typeset()?;
+    let changes = editor.submit()?;
+    let ConfigurationEdit::CreateTypeset(empty) = &changes[0] else {
+        return Err("wrong edit".into());
+    };
+    assert_eq!(empty.schemas().len(), 1);
+    assert!(empty.schemas()[0].properties().is_empty());
+    editor.key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL))?;
+    editor.form.fields[4].set_value("scope");
+    editor.form.fields[5].set_value("Non-obvious bounds.\nIncluding external requirements.");
+    editor.form.fields[7].set_value("multiple");
+    editor.form.focus = 6;
+    for _ in 0..3 {
+        editor.key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))?;
+    }
+    assert_eq!(editor.form.fields[6].value(), "conditional");
+    assert!(!editor.form.fields[8].readonly);
+    assert!(editor.submit().is_err());
+    editor.form.fields[8].set_value("external-bounds");
+    assert!(editor.submit().is_err());
+    editor.form.fields[9].set_value("Required when external constraints apply.");
+    let changes = editor.submit()?;
+    let ConfigurationEdit::CreateTypeset(value) = &changes[0] else {
+        return Err("wrong edit".into());
+    };
+    let property = &value.schemas()[0].properties()[0];
+    assert_eq!(property.key().as_str(), "scope");
+    assert_eq!(property.multiplicity(), PropertyMultiplicity::Multiple);
+    let PropertyRequirement::Conditional(condition) = property.requirement() else {
+        return Err("missing condition".into());
+    };
+    assert_eq!(condition.id().as_str(), "external-bounds");
+    editor.key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))?;
+    assert!(editor.form.fields[8].readonly);
+    let changes = editor.submit()?;
+    let ConfigurationEdit::CreateTypeset(value) = &changes[0] else {
+        return Err("wrong edit".into());
+    };
+    assert_eq!(
+        value.schemas()[0].properties()[0].requirement(),
+        &PropertyRequirement::Required
+    );
+    Ok(())
+}
+
+#[test]
+fn typeset_properties_can_be_ordered_removed_and_repaired_without_losing_values() -> TestResult {
+    let mut editor = filled_typeset()?;
+    editor.key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL))?;
+    editor.form.fields[4].set_value("description");
+    editor.form.fields[5].set_value("First property meaning.");
+    editor.key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL))?;
+    editor.form.fields[10].set_value("description");
+    editor.form.fields[11].set_value("Second property meaning.");
+    assert!(editor.submit().is_err());
+    editor.form.fields[10].set_value("intent");
+    editor.key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT))?;
+    let changes = editor.submit()?;
+    let ConfigurationEdit::CreateTypeset(value) = &changes[0] else {
+        return Err("wrong edit".into());
+    };
+    assert_eq!(
+        value.schemas()[0]
+            .properties()
+            .iter()
+            .map(|value| value.key().as_str())
+            .collect::<Vec<_>>(),
+        ["intent", "description"]
+    );
+    editor.key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL))?;
+    editor.form.focus = 4;
+    editor.key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL))?;
+    let changes = editor.submit()?;
+    let ConfigurationEdit::CreateTypeset(value) = &changes[0] else {
+        return Err("wrong edit".into());
+    };
+    assert!(value.schemas()[0].properties().is_empty());
+    Ok(())
+}
+
+#[test]
+fn changing_taxonomy_retains_each_unsaved_property_draft() -> TestResult {
+    let taxonomies = gitserious_core::built_in_configuration().taxonomies()[..2].to_vec();
+    let mut editor = super::typeset_form::TypesetForm::new(taxonomies, None)?;
+    editor.form.fields[0].set_value("context");
+    editor.form.fields[2].set_value("Durable context.");
+    editor.form.focus = 3;
+    editor.key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL))?;
+    editor.form.fields[4].set_value("intent");
+    editor.form.fields[5].set_value("Why this change exists.");
+    editor.form.focus = 1;
+    editor.key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))?;
+    assert_eq!(editor.form.fields[1].value(), "ml-research");
+    editor.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))?;
+    assert_eq!(editor.form.fields[1].value(), "conventional");
+    assert_eq!(editor.form.fields[4].value(), "intent");
+    let changes = editor.submit()?;
+    let ConfigurationEdit::CreateTypeset(value) = &changes[0] else {
+        return Err("wrong edit".into());
+    };
+    assert_eq!(
+        value.schemas()[0].properties()[0].description(),
+        "Why this change exists."
+    );
+    Ok(())
+}
+
+#[test]
+fn edited_typesets_reconcile_staged_taxonomy_coverage_and_advance_version() -> TestResult {
+    use gitserious_core::{
+        ChangeTypeDefinition, ChangeTypeId, Description, TaxonomyDefinition, TaxonomyVersion,
+    };
+    let changes = filled_typeset()?.submit()?;
+    let ConfigurationEdit::CreateTypeset(typeset) = &changes[0] else {
+        return Err("wrong edit".into());
+    };
+    let changes = filled_taxonomy().submit()?;
+    let ConfigurationEdit::CreateTaxonomy(taxonomy) = &changes[0] else {
+        return Err("wrong edit".into());
+    };
+    let unchanged =
+        super::typeset_form::TypesetForm::new(vec![taxonomy.clone()], Some(typeset.clone()))?;
+    assert!(unchanged.submit()?.is_empty());
+    let mut types = taxonomy.change_types().to_vec();
+    types.push(ChangeTypeDefinition::new(
+        ChangeTypeId::new("finding")?,
+        Description::new("A finding.")?,
+    ));
+    let taxonomy = TaxonomyDefinition::new(
+        taxonomy.id().clone(),
+        TaxonomyVersion::new(2)?,
+        taxonomy.description().clone(),
+        types,
+    )?;
+    let mut editor = super::typeset_form::TypesetForm::new(vec![taxonomy], Some(typeset.clone()))?;
+    editor.form.focus = 0;
+    editor.key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE))?;
+    assert_eq!(editor.form.fields[0].value(), "context");
+    let changes = editor.submit()?;
+    let ConfigurationEdit::UpdateTypeset(value) = &changes[0] else {
+        return Err("wrong edit".into());
+    };
+    assert_eq!(value.version().get(), 2);
+    assert_eq!(value.schemas().len(), 2);
+    assert_eq!(value.schemas()[1].change_type().as_str(), "finding");
+    assert!(value.schemas()[1].properties().is_empty());
+    Ok(())
+}
+
 fn filled_taxonomy() -> TaxonomyForm {
     let mut editor = TaxonomyForm::new(None);
     for (index, value) in [
@@ -89,7 +253,7 @@ fn form_submission_stages_but_does_not_save_and_builtins_are_readonly() -> TestR
     state.event(&key(KeyCode::Char('e')), &workspace);
     assert!(state.status.contains("read-only"));
     state.event(&key(KeyCode::Char('n')), &workspace);
-    state.editor = Some(filled_taxonomy());
+    state.editor = Some(editor::Editor::Taxonomy(filled_taxonomy()));
     state.event(
         &Event::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
         &workspace,
@@ -107,14 +271,14 @@ fn form_submission_stages_but_does_not_save_and_builtins_are_readonly() -> TestR
     );
     assert_eq!(workspace.saves.get(), 0);
     state.event(&key(KeyCode::Char('n')), &workspace);
-    state.editor = Some(filled_taxonomy());
+    state.editor = Some(editor::Editor::Taxonomy(filled_taxonomy()));
     state.event(&key(KeyCode::Esc), &workspace);
     assert!(
         state
             .editor
             .as_ref()
             .ok_or("missing form")?
-            .form
+            .form()
             .confirming_discard()
     );
     state.event(&key(KeyCode::Char('y')), &workspace);

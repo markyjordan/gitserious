@@ -11,6 +11,8 @@ use tui_textarea::TextArea;
 pub(super) enum Group {
     Metadata,
     Item(usize),
+    Schema(usize),
+    Property(usize, usize),
 }
 
 pub(super) struct Field {
@@ -23,6 +25,10 @@ pub(super) struct Field {
 }
 
 impl Field {
+    pub(super) fn choices(mut self, options: Vec<String>) -> Self {
+        self.options = options;
+        self
+    }
     pub(super) fn new(
         label: impl Into<String>,
         value: &str,

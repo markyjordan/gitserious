@@ -34,6 +34,14 @@ pub(super) enum Definition {
 }
 
 impl Definition {
+    pub(super) fn is_builtin(&self) -> bool {
+        let origin = match self {
+            Self::Taxonomy(value) => taxonomy_origin(value.id()),
+            Self::Typeset(value) => typeset_origin(value.taxonomy(), value.id()),
+            Self::Template(value) => template_origin(value.id()),
+        };
+        origin == gitserious_app::ConfigurationOrigin::BuiltIn
+    }
     pub(super) fn identity(&self) -> String {
         match self {
             Self::Taxonomy(value) => value.id().to_string(),
