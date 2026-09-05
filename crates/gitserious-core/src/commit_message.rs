@@ -6,8 +6,9 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    CommitDraft, CommitTypeDefinition, CommitTypeId, PropertyKey, PropertyMultiplicity,
-    PropertyResponse, PropertyValidationIssue, PropertyValidationIssueKind, ValidationSeverity,
+    CommitDraft, CommitProvenance, CommitTypeDefinition, CommitTypeId, PropertyKey,
+    PropertyMultiplicity, PropertyResponse, PropertyValidationIssue, PropertyValidationIssueKind,
+    TemplateId, ValidationSeverity,
 };
 
 /// Maximum Unicode display width of canonical commit-message prose.
@@ -85,6 +86,58 @@ pub fn render_commit_message(
         }
     }
 
+    Ok(CommitMessage(message.into_boxed_str()))
+}
+
+/// Validates against the provenance schema and appends its canonical trailers.
+///
+/// The schema used for validation also supplies every identity and version in
+/// the trailers. Fingerprint computation and verification belong to the caller
+/// that resolves project policy; this function does not read mutable state.
+/// Legacy drafts retain the validation behavior of [`render_commit_message`].
+///
+/// # Errors
+///
+/// Returns [`CommitValidationErrors`] if the draft type is absent from the
+/// provenance schema or its properties do not satisfy the selected definition.
+pub fn render_commit_message_with_provenance(
+    provenance: &CommitProvenance,
+    draft: &CommitDraft,
+) -> Result<CommitMessage, CommitValidationErrors> {
+    let schema = provenance.schema();
+    let definition = schema
+        .change_types()
+        .iter()
+        .find(|definition| definition.id() == draft.commit_type())
+        .ok_or_else(|| {
+            CommitValidationErrors::new(vec![CommitValidationError::UnknownCommitType {
+                template: schema.template_id().clone(),
+                actual: draft.commit_type().clone(),
+            }])
+        })?;
+    let rendered = render_commit_message(&definition.commit_type_definition(), draft)?;
+    let mut message = rendered.as_str().to_owned();
+    message.push('\n');
+    let _ = writeln!(
+        message,
+        "Gitserious-Template: {}@{}",
+        schema.template_id(),
+        schema.template_version()
+    );
+    let _ = writeln!(
+        message,
+        "Gitserious-Taxonomy: {}@{}",
+        schema.taxonomy_id(),
+        schema.taxonomy_version()
+    );
+    let _ = writeln!(
+        message,
+        "Gitserious-Typeset: {}/{}@{}",
+        schema.taxonomy_id(),
+        schema.typeset_id(),
+        schema.typeset_version()
+    );
+    let _ = writeln!(message, "Gitserious-Schema: {}", provenance.fingerprint());
     Ok(CommitMessage(message.into_boxed_str()))
 }
 
@@ -256,6 +309,13 @@ pub fn validate_commit_draft_report(
 /// One violation between an authored draft and its selected schema.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CommitValidationError {
+    /// The provenance schema does not contain the authored type.
+    UnknownCommitType {
+        /// Template that defines the available types.
+        template: TemplateId,
+        /// Rejected header type.
+        actual: CommitTypeId,
+    },
     /// An explicit response violates applicability or response structure.
     PropertyResponse(PropertyValidationIssueKind),
     /// The draft identifies a different type than the selected schema.
@@ -283,6 +343,10 @@ pub enum CommitValidationError {
 impl Display for CommitValidationError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::UnknownCommitType { template, actual } => write!(
+                formatter,
+                "type {actual:?} is not available in template {template:?}"
+            ),
             Self::PropertyResponse(kind) => Display::fmt(kind, formatter),
             Self::TypeMismatch { expected, actual } => write!(
                 formatter,

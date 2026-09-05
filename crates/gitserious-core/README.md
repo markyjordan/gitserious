@@ -76,3 +76,32 @@ even if all other responses are complete. `CommitDraft::new` remains the legacy
 constructor for existing adapters and does not require conditional decisions.
 An empty explicit response list still opts into the stricter contract. Adapter
 migration to explicit responses belongs to the subsequent commit/TUI work.
+
+## Schema provenance
+
+`CommitProvenance` owns one immutable `ResolvedTaxonomy` and its semantic
+`Fingerprint`. The application must compute that fingerprint from the exact
+resolved schema. Core does not hash policy or independently verify the digest.
+The fingerprint value is shared with the application's existing public re-export;
+its `sha256:` representation and application-level computation remain unchanged.
+
+`render_commit_message_with_provenance(&provenance, &draft)` selects the draft's
+change type within that schema, validates it, and appends these four trailers:
+
+```text
+Gitserious-Template: <id>@<version>
+Gitserious-Taxonomy: <id>@<version>
+Gitserious-Typeset: <taxonomy>/<typeset>@<version>
+Gitserious-Schema: sha256:<resolved-schema-fingerprint>
+```
+
+The same schema supplies validation and trailer identities, so overlapping type
+names cannot select a definition from another template. The trailers follow the
+canonical message after a blank line, in this fixed order, with a final newline.
+They remain unwrapped structural lines; body and breaking-change prose retains
+its existing 80-column wrapping. Identity and version values come from resolved
+policy, never authored property fields. Provenance identifies the schema rather
+than validating the truth of the author's statements.
+
+The existing renderer remains available and does not add provenance implicitly.
+Runtime use of the new renderer belongs to the subsequent COMMIT checkpoint.

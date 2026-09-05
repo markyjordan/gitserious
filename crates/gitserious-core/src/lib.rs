@@ -5,9 +5,11 @@ mod built_in_configuration;
 mod built_in_template;
 mod commit_draft;
 mod commit_message;
+mod commit_provenance;
 mod commit_type;
 mod configuration_template;
 mod description;
+mod fingerprint;
 mod identifier;
 mod property;
 mod property_validation;
@@ -29,12 +31,14 @@ pub use commit_draft::{
 };
 pub use commit_message::{
     COMMIT_MESSAGE_WIDTH, CommitMessage, CommitValidationError, CommitValidationErrors,
-    CommitValidationReport, render_commit_message, validate_commit_draft,
-    validate_commit_draft_report,
+    CommitValidationReport, render_commit_message, render_commit_message_with_provenance,
+    validate_commit_draft, validate_commit_draft_report,
 };
+pub use commit_provenance::CommitProvenance;
 pub use commit_type::{CommitTypeDefinition, CommitTypeDefinitionError};
 pub use configuration_template::TemplateDefinition;
 pub use description::{Description, DescriptionError};
+pub use fingerprint::{Fingerprint, FingerprintError};
 pub use identifier::{
     ChangeTypeId, CommitTypeId, ConditionId, IdentifierError, IdentifierErrorKind, PropertyKey,
     TaxonomyId, TemplateId, TypesetId,

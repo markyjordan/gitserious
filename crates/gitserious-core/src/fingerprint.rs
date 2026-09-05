@@ -7,11 +7,15 @@ use std::str::FromStr;
 pub struct Fingerprint([u8; 32]);
 
 impl Fingerprint {
-    pub(crate) const fn from_bytes(bytes: [u8; 32]) -> Self {
+    /// Wraps a SHA-256 digest computed by application-level fingerprinting.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 
-    pub(crate) const fn as_bytes(self) -> [u8; 32] {
+    /// Returns the digest bytes without the textual algorithm prefix.
+    #[must_use]
+    pub const fn as_bytes(self) -> [u8; 32] {
         self.0
     }
 }
