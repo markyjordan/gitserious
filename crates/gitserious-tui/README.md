@@ -44,9 +44,10 @@ id, and descriptions in the remaining width. A two-cell gap separates the
 columns, matching Message Properties. Rows alternate between `#000000` and
 `#101010`; the current type uses a full black-on-yellow row. The selected
 catalog tab uses the same black-on-yellow chip; `tab` cycles available type
-sets and a click on a chip selects that set. Only the Conventional set exists
-today, so `tab` and a click on `CONVENTIONAL` keep the current table. Type ids,
-ordering, and descriptions come directly from the effective core catalog.
+sets and a click on a chip selects that set. The tab is currently fixed to `CONVENTIONAL`, so `tab` and a click on it
+keep the current table. Type ids, ordering, and descriptions come from the
+active project template, including domain and custom templates. A template-aware
+label and per-commit template switching belong to the later TUI checkpoint.
 
 The composer presents one prepopulated document as three immutable structural
 sections. `Message Subject` contains optional `scope` and required `description`

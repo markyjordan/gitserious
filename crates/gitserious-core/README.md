@@ -105,3 +105,29 @@ than validating the truth of the author's statements.
 
 The existing renderer remains available and does not add provenance implicitly.
 Runtime use of the new renderer belongs to the subsequent COMMIT checkpoint.
+
+## Domain defaults
+
+The built-in catalog contains these version-1 bundles in this order:
+
+| Template | Taxonomy | Typeset |
+| --- | --- | --- |
+| `default` | `conventional` | `default` |
+| `ml-research` | `ml-research` | `default` |
+| `infra-ops` | `infra-ops` | `default` |
+
+Conventional definitions remain unchanged. ML Research covers hypotheses, data,
+models, experiments, evaluation, analysis, reproduction, research fixes,
+infrastructure, and documentation. Infra Ops covers provisioning, configuration,
+deployment, migration, scaling, observation, incidents, recovery, security, and
+decommissioning.
+
+Both new typesets use ordered, single-valued multiline properties with required
+or recommended levels. Reproduction results remain required. Operational guidance
+asks for observed outcomes and unresolved risks without treating supplied prose
+as proof of success or protection.
+
+Existing `config list`/`config show` commands expose each bundle. Select a domain
+for a fresh project with `gitserious init --template ml-research` or
+`gitserious init --template infra-ops`. Per-commit template switching and general
+bundle forking remain later work.

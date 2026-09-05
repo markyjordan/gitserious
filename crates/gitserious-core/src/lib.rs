@@ -2,6 +2,9 @@
 
 mod built_in;
 mod built_in_configuration;
+mod built_in_domain;
+mod built_in_infra_ops;
+mod built_in_ml_research;
 mod built_in_template;
 mod commit_draft;
 mod commit_message;
