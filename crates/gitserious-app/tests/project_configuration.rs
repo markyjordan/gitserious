@@ -357,3 +357,73 @@ fn unknown_selection_and_invalid_custom_batch_never_write() -> Result<(), Box<dy
     assert_eq!(store.replacements.get(), 0);
     Ok(())
 }
+
+#[test]
+fn project_forks_use_built_in_or_local_sources_without_selecting_them() -> Result<(), Box<dyn Error>>
+{
+    for source in ["default", "ml-research", "infra-ops", "platform"] {
+        let initial = initialized(source_configuration()?, "default")?;
+        let store = FakeStore::new(initial);
+        let result = gitserious_app::fork_project_template(
+            &FakeLocator,
+            &store,
+            Path::new("."),
+            &TemplateId::new(source)?,
+            &TemplateId::new("copy")?,
+            &gitserious_core::TaxonomyId::new("copy-taxonomy")?,
+            &TypesetId::new("copy-typeset")?,
+        )?;
+        assert_eq!(result.config().active_template().as_str(), "default");
+        assert_eq!(result.lock(), &resolve_project_lock(result.config())?);
+        let catalog = ConfigurationCatalog::new(result.config().custom())?;
+        assert_eq!(
+            catalog.resolve(&TemplateId::new(source)?)?.change_types(),
+            catalog.resolve(&TemplateId::new("copy")?)?.change_types()
+        );
+        assert_eq!(store.replacements.get(), 1);
+        let before = store.state.borrow().clone();
+        assert!(
+            gitserious_app::fork_project_template(
+                &FakeLocator,
+                &store,
+                Path::new("."),
+                &TemplateId::new(source)?,
+                &TemplateId::new("copy")?,
+                &gitserious_core::TaxonomyId::new("other")?,
+                &TypesetId::new("other")?
+            )
+            .is_err()
+        );
+        assert_eq!(*store.state.borrow(), before);
+    }
+    let store = FakeStore::new(initialized(CustomConfiguration::default(), "default")?);
+    let before = store.state.borrow().clone();
+    assert!(matches!(
+        gitserious_app::fork_project_template(
+            &FakeLocator,
+            &store,
+            Path::new("."),
+            &TemplateId::new("platform")?,
+            &TemplateId::new("copy")?,
+            &gitserious_core::TaxonomyId::new("copy-taxonomy")?,
+            &TypesetId::new("copy-typeset")?
+        ),
+        Err(ProjectConfigurationError::Source(_))
+    ));
+    assert_eq!(*store.state.borrow(), before);
+    store.fail_replace.set(true);
+    assert!(matches!(
+        gitserious_app::fork_project_template(
+            &FakeLocator,
+            &store,
+            Path::new("."),
+            &TemplateId::new("ml-research")?,
+            &TemplateId::new("copy")?,
+            &gitserious_core::TaxonomyId::new("copy-taxonomy")?,
+            &TypesetId::new("copy-typeset")?
+        ),
+        Err(ProjectConfigurationError::Store(_))
+    ));
+    assert_eq!(*store.state.borrow(), before);
+    Ok(())
+}

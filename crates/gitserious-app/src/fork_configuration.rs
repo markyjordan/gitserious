@@ -4,11 +4,11 @@ use gitserious_core::{
 };
 
 use crate::{
-    ConfigurationEdit, ConfigurationMutationError, GlobalConfigurationStore,
-    apply_configuration_edits,
+    ConfigurationCatalog, ConfigurationCatalogError, ConfigurationEdit, ConfigurationMutationError,
+    GlobalConfigurationStore, apply_custom_configuration_edits,
 };
 
-/// The custom identities minted by one built-in-configuration fork.
+/// The custom identities minted by one configuration bundle fork.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ForkedConfiguration {
     template: TemplateId,
@@ -59,13 +59,89 @@ pub fn fork_conventional<S>(
 where
     S: GlobalConfigurationStore + ?Sized,
 {
-    let edits = fork_conventional_edits(&template, &taxonomy, &typeset);
-    apply_configuration_edits(store, edits)?;
+    fork_configuration(
+        store,
+        built_in_configuration().template().id(),
+        template,
+        taxonomy,
+        typeset,
+    )
+}
+
+/// Forks a built-in or global custom template into new global custom identities.
+///
+/// The source and destination are read from one snapshot. New definitions start
+/// at version one while preserving source descriptions and schema ordering.
+///
+/// # Errors
+///
+/// Returns [`ConfigurationMutationError`] for an unavailable source, invalid or
+/// conflicting target identities, concurrent changes, or persistence failures.
+pub fn fork_configuration<S>(
+    store: &S,
+    source: &TemplateId,
+    template: TemplateId,
+    taxonomy: TaxonomyId,
+    typeset: TypesetId,
+) -> Result<ForkedConfiguration, ConfigurationMutationError<S::Error>>
+where
+    S: GlobalConfigurationStore + ?Sized,
+{
+    let current = store.load().map_err(ConfigurationMutationError::Store)?;
+    let catalog =
+        ConfigurationCatalog::new(&current).map_err(ConfigurationMutationError::Catalog)?;
+    let edits = fork_configuration_edits(&catalog, source, &template, &taxonomy, &typeset)
+        .map_err(ConfigurationMutationError::Catalog)?;
+    let replacement = apply_custom_configuration_edits::<S::Error>(&current, edits)?;
+    store
+        .compare_and_swap(&current, &replacement)
+        .map_err(ConfigurationMutationError::Store)?;
     Ok(ForkedConfiguration {
         template,
         taxonomy,
         typeset,
     })
+}
+
+/// Builds a complete fork batch from one resolved catalog snapshot.
+///
+/// # Errors
+///
+/// Returns [`ConfigurationCatalogError`] when the requested source is absent or
+/// cannot resolve. Target identity and dependency checks happen when applying
+/// the batch to the destination configuration.
+pub fn fork_configuration_edits(
+    source: &ConfigurationCatalog,
+    selected: &TemplateId,
+    template: &TemplateId,
+    taxonomy: &TaxonomyId,
+    typeset: &TypesetId,
+) -> Result<Vec<ConfigurationEdit>, ConfigurationCatalogError> {
+    source.resolve(selected)?;
+    let source_template = source
+        .find_template(selected)
+        .ok_or_else(|| ConfigurationCatalogError::UnknownTemplate(selected.clone()))?;
+    let source_taxonomy = source
+        .find_taxonomy(source_template.taxonomy())
+        .ok_or_else(|| ConfigurationCatalogError::UnknownTemplateTaxonomy {
+            template: selected.clone(),
+            taxonomy: source_template.taxonomy().clone(),
+        })?;
+    let source_typeset = source
+        .find_typeset(source_template.taxonomy(), source_template.typeset())
+        .ok_or_else(|| ConfigurationCatalogError::UnknownTemplateTypeset {
+            template: selected.clone(),
+            taxonomy: source_template.taxonomy().clone(),
+            typeset: source_template.typeset().clone(),
+        })?;
+    Ok(bundle_edits(
+        source_taxonomy,
+        source_typeset,
+        source_template,
+        template,
+        taxonomy,
+        typeset,
+    ))
 }
 
 /// Builds the atomic edit batch for one editable Conventional fork.
@@ -76,23 +152,41 @@ pub fn fork_conventional_edits(
     typeset: &TypesetId,
 ) -> Vec<ConfigurationEdit> {
     let built_in = built_in_configuration();
+    bundle_edits(
+        built_in.taxonomy(),
+        built_in.typeset(),
+        built_in.template(),
+        template,
+        taxonomy,
+        typeset,
+    )
+}
+
+fn bundle_edits(
+    source_taxonomy: &TaxonomyDefinition,
+    source_typeset: &TypesetDefinition,
+    source_template: &TemplateDefinition,
+    template: &TemplateId,
+    taxonomy: &TaxonomyId,
+    typeset: &TypesetId,
+) -> Vec<ConfigurationEdit> {
     let taxonomy_definition = TaxonomyDefinition::from_trusted(
         taxonomy.clone(),
         TaxonomyVersion::V1,
-        built_in.taxonomy().description().clone(),
-        built_in.taxonomy().change_types().to_vec(),
+        source_taxonomy.description().clone(),
+        source_taxonomy.change_types().to_vec(),
     );
     let typeset_definition = TypesetDefinition::from_trusted(
         taxonomy.clone(),
         typeset.clone(),
         TypesetVersion::V1,
-        built_in.typeset().description().clone(),
-        built_in.typeset().schemas().to_vec(),
+        source_typeset.description().clone(),
+        source_typeset.schemas().to_vec(),
     );
     let template_definition = TemplateDefinition::new(
         template.clone(),
         TemplateVersion::V1,
-        built_in.template().description().clone(),
+        source_template.description().clone(),
         taxonomy.clone(),
         typeset.clone(),
     );
