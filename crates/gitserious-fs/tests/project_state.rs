@@ -214,6 +214,57 @@ fn initialization_refreshes_a_legacy_single_template_lock() -> Result<(), Box<dy
 }
 
 #[test]
+fn old_default_alias_collection_refreshes_without_rewriting_authored_config()
+-> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    let root = root(repository.path())?;
+    let config = ProjectConfig::default_channel()?;
+    let expected = resolve_project_lock(&config)?;
+    let templates = expected
+        .resolved_templates()
+        .iter()
+        .map(|template| {
+            if template.id().as_str() == "default" {
+                expected.resolved_template().clone()
+            } else {
+                template.clone()
+            }
+        })
+        .collect();
+    let legacy = gitserious_app::ProjectLock::with_resolved_templates(
+        expected.version(),
+        expected.config_fingerprint(),
+        expected.template_reference().clone(),
+        expected.resolved_template().clone(),
+        templates,
+    )?;
+    TomlProjectStateStore.initialize(&root, &config, &legacy)?;
+    let paths = project_paths(repository.path());
+    let authored = format!(
+        "# preserve my comments\n{}",
+        fs::read_to_string(&paths.config)?
+    );
+    fs::write(&paths.config, &authored)?;
+    let outcome = initialize_project(
+        &GitRepositoryLocator,
+        &TomlProjectStateStore,
+        &catalog()?,
+        None,
+        repository.path(),
+    )?;
+    assert_eq!(outcome.status(), InitStatus::LockRefreshed);
+    assert_eq!(fs::read_to_string(&paths.config)?, authored);
+    assert_eq!(
+        TomlProjectStateStore.inspect(&root)?,
+        ProjectState::Initialized {
+            config,
+            lock: expected
+        }
+    );
+    Ok(())
+}
+
+#[test]
 fn populated_project_configuration_round_trips_canonically() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     let paths = project_paths(repository.path());

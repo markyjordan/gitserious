@@ -458,7 +458,7 @@ pub fn apply_custom_configuration_edits<StoreError>(
     Ok(replacement)
 }
 
-fn apply_edit<StoreError>(
+pub(crate) fn apply_edit<StoreError>(
     configuration: &mut CustomConfiguration,
     edit: ConfigurationEdit,
 ) -> Result<(), ConfigurationMutationError<StoreError>> {

@@ -12,7 +12,7 @@ repository = { workspace = true }
 [dependencies]
 gitserious-app = { workspace = true }
 gitserious-core = { workspace = true }
-ratatui = { workspace = true }
+ratatui = { workspace = true, features = ["unstable-rendered-line-info"] }
 tui-textarea = { workspace = true }
 
 [lints]

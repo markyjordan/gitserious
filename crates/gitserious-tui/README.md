@@ -1,5 +1,59 @@
 # gitserious-tui
 
+## Configuration browser
+
+Bare `gitserious config` opens the configuration browser in the Global
+destination. `tab` changes between Global and Project; Project requires an
+initialized repository with current policy. `1`, `2`, and `3` select taxonomies,
+typesets, and templates. Arrow keys select a definition; `enter` opens its full
+details, with arrows or page up/down for scrolling and `esc` to return.
+
+`ctrl+s` validates staged changes and opens a before/after review. Only `enter`
+on that review saves. `esc` returns to editing. Save errors retain the draft.
+Leaving or changing destination with pending changes requires explicit discard
+confirmation. Configuration needs at least 60 columns and 16 rows; undersized
+views prevent hidden editing or save actions. Explicit configuration CLI
+subcommands remain available without entering this browser.
+
+In the Taxonomies list, `n` creates a taxonomy, `e` edits a custom taxonomy,
+and `d` stages deletion. The form uses `tab` / `shift+tab` for fields; ids are
+single-line and descriptions accept multiline Unicode text. `ctrl+n` adds a
+change type, `ctrl+d` removes the selected type, and `alt+up/down` reorders it.
+`ctrl+s` validates and stages the form, then returns to the browser. Existing
+taxonomy ids are fixed and accepted semantic edits advance the version. Built-in
+definitions remain read-only. `esc` confirms discard when a form has changes.
+
+The Typesets list supports `n`, `e`, and `d` with the same reviewed workflow.
+New typesets choose a taxonomy using left/right in the Taxonomy field. Each
+change type has an explicit schema; empty schemas are shown as intentionally
+empty. Select a type header or property, then use `ctrl+n` to add a property,
+`ctrl+d` to remove it, and `alt+up/down` to reorder properties within that type.
+Requirement and multiplicity fields use left/right choices. Conditional
+requirements enable a condition id and rationale; both are validated before
+staging. Existing qualified typeset identities are fixed. When a staged taxonomy
+adds or removes a type, opening its typeset proposes corresponding schema coverage
+for review. Changing taxonomy in a new form retains each taxonomy's unsaved
+property draft so switching back is lossless.
+
+In Templates, `n` and `e` open a template form with taxonomy and typeset choices.
+Typeset choices follow the selected taxonomy. Existing template ids are fixed;
+editing their content advances the version. `d` stages deletion. In Project,
+`s` stages the selected template as the project default; an active custom
+template cannot be deleted unless another default is selected before saving.
+
+`f` forks a complete template bundle into three new custom identities. From a
+taxonomy or typeset row, it starts with a template that references that definition;
+the source template can be changed in the form. Blank target taxonomy/typeset ids
+derive from the new template id. Source definitions remain immutable.
+
+In Project, `i` imports a template from the global catalog. The form offers import
+alone or import-and-select. The complete dependency chain is copied with original
+identities; exact matches are reused and conflicting project definitions are
+preserved with an error. Global files are not changed by project imports.
+
+All these actions stage changes for the shared before/after review. Failed saves
+retain the draft, and changing destination requires discarding pending edits.
+
 This crate is an internal component of `gitserious`.
 
 The Rust API exposed here is unstable and may have breaking changes in any

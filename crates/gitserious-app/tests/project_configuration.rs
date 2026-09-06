@@ -1,4 +1,6 @@
 use std::cell::{Cell, RefCell};
+#[path = "support/configuration_session.rs"]
+mod editing_session;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};

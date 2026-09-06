@@ -5,6 +5,7 @@ mod commit_type_catalog;
 mod commit_writer;
 mod configuration_catalog;
 mod configuration_crud;
+mod configuration_editor;
 mod create_commit;
 mod custom_configuration;
 mod directory_creator;
@@ -39,6 +40,10 @@ pub use configuration_crud::{
     delete_taxonomy, delete_template, delete_typeset, find_taxonomy, find_template, find_typeset,
     list_taxonomies, list_templates, list_typesets, update_taxonomy, update_template,
     update_typeset,
+};
+pub use configuration_editor::{
+    ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
+    edit_configuration,
 };
 pub use create_commit::{
     CommitOutcome, CommitPolicyError, CreateCommitError, CreateCommitResult, create_commit,

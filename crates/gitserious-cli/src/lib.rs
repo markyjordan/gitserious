@@ -12,10 +12,10 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
-    ConfigurationOrigin, GlobalConfigurationStore, InitOutcome, InitStatus, ProjectStateStore,
-    RepositoryLocator, RepositoryRoot, built_in_effective_catalog, create_commit, delete_taxonomy,
-    delete_template, delete_typeset, fork_conventional, initialize_project, load_effective_catalog,
-    template_origin,
+    ConfigurationEditor, ConfigurationOrigin, GlobalConfigurationStore, InitOutcome, InitStatus,
+    ProjectStateStore, RepositoryLocator, RepositoryRoot, built_in_effective_catalog,
+    create_commit, delete_taxonomy, delete_template, delete_typeset, edit_configuration,
+    fork_conventional, initialize_project, load_effective_catalog, template_origin,
 };
 use gitserious_core::{CommitMessage, CommitTypeDefinition, CommitTypeId, TemplateId};
 
@@ -46,10 +46,10 @@ enum Command {
         #[arg(long, value_name = "TEMPLATE")]
         template: Option<TemplateId>,
     },
-    /// Inspect the installed configuration catalog.
+    /// Manage reusable global and project configuration.
     Config {
         #[command(subcommand)]
-        action: ConfigAction,
+        action: Option<ConfigAction>,
     },
 }
 
@@ -113,13 +113,25 @@ impl From<ConfigKindArg> for config_view::ConfigurationKind {
 pub struct CommitAdapters<'a, A: ?Sized, W: ?Sized> {
     author: &'a A,
     writer: &'a W,
+    configuration_editor: Option<&'a dyn ConfigurationEditor>,
 }
 
 impl<'a, A: ?Sized, W: ?Sized> CommitAdapters<'a, A, W> {
     /// Bundles the independent commit-workflow adapters for command dispatch.
     #[must_use]
     pub const fn new(author: &'a A, writer: &'a W) -> Self {
-        Self { author, writer }
+        Self {
+            author,
+            writer,
+            configuration_editor: None,
+        }
+    }
+
+    /// Supplies the optional configuration interaction adapter for bare `config`.
+    #[must_use]
+    pub fn with_configuration_editor(mut self, editor: &'a dyn ConfigurationEditor) -> Self {
+        self.configuration_editor = Some(editor);
+        self
     }
 }
 
@@ -374,6 +386,18 @@ where
             }
         }
         Command::Config { action } => {
+            let Some(action) = action else {
+                let Some(editor) = commit.configuration_editor else {
+                    return write_operational_error(
+                        stderr,
+                        "configuration editor is not configured",
+                    );
+                };
+                return match edit_configuration(locator, store, configuration, start, editor) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(error) => write_operational_error(stderr, error),
+                };
+            };
             let catalog = match load_effective_catalog(configuration) {
                 Ok(catalog) => catalog,
                 Err(error) => return write_operational_error(stderr, error),
