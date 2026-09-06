@@ -37,6 +37,41 @@ use author_harness::state::{
 const JET_BLACK: Color = Color::Rgb(0, 0, 0);
 
 #[test]
+fn template_picker_switches_schema_and_confirms_discard() -> Result<(), Box<dyn Error>> {
+    let catalog = gitserious_app::built_in_effective_catalog()?;
+    let ids = ["default", "ml-research", "infra-ops"]
+        .map(gitserious_core::TemplateId::new)
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    let schemas = ids
+        .iter()
+        .map(|id| catalog.resolve(id))
+        .collect::<Result<Vec<_>, _>>()?;
+    let context = gitserious_app::CommitAuthoringContext::new(schemas, &ids[0], None)?;
+    let mut session = AuthoringSession::with_context(&context);
+    assert!(rendered(&mut session, 100, 32)?.contains("ml-research"));
+    press(&mut session, KeyCode::Tab);
+    assert_eq!(session.template.ok_or("missing template")?.id(), &ids[1]);
+    assert_eq!(session.definitions, context.templates()[1].definitions());
+    press(&mut session, KeyCode::Enter);
+    press(&mut session, KeyCode::Char('x'));
+    let edited = session.composer.editor.lines().to_vec();
+    press(&mut session, KeyCode::Esc);
+    assert_eq!(session.stage, Stage::Confirm);
+    press(&mut session, KeyCode::Char('n'));
+    assert_eq!(session.composer.editor.lines(), edited);
+    press(&mut session, KeyCode::Esc);
+    press(&mut session, KeyCode::Char('y'));
+    assert_eq!(session.stage, Stage::SelectType);
+    press(&mut session, KeyCode::Tab);
+    assert_eq!(session.template.ok_or("missing template")?.id(), &ids[2]);
+    assert!(!session.composer.dirty());
+    press(&mut session, KeyCode::Tab);
+    assert_eq!(session.template.ok_or("missing template")?.id(), &ids[0]);
+    Ok(())
+}
+
+#[test]
 fn context_review_includes_provenance_and_returns_the_latest_approved_bytes()
 -> Result<(), Box<dyn Error>> {
     let id = gitserious_core::TemplateId::new("default")?;

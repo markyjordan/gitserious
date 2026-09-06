@@ -11,7 +11,7 @@ use tui_textarea::{CursorMove, TextArea, WrapMode};
 
 use super::state::{
     AuthoringSession, CatalogTab, ConfirmationAction, ConfirmationButtons, FieldId, FieldKind,
-    FieldStatus, SCOPE_VALUE_LINE, Stage, available_type_catalogs,
+    FieldStatus, SCOPE_VALUE_LINE, Stage,
 };
 
 const MINIMUM_WIDTH: u16 = 60;
@@ -224,25 +224,32 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
 
 fn render_catalog_tabs(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
     let mut x = area.x;
-    for kind in available_type_catalogs() {
+    let mut catalogs = session.available_type_catalogs();
+    let total_width: u16 = catalogs
+        .iter()
+        .map(|kind| text_button_width(&session.catalog_label(*kind)).saturating_add(1))
+        .fold(0, u16::saturating_add);
+    if total_width > area.width {
+        let selected = catalogs
+            .iter()
+            .position(|kind| *kind == session.type_catalog)
+            .unwrap_or(0);
+        catalogs.rotate_left(selected);
+    }
+    for kind in catalogs {
         if x >= area.right() {
             break;
         }
-        let width = text_button_width(kind.label()).min(area.right().saturating_sub(x));
+        let label = session.catalog_label(kind);
+        let width = text_button_width(&label).min(area.right().saturating_sub(x));
         let button = Rect::new(x, area.y, width, 1);
-        let style = if session.type_catalog == *kind {
+        let style = if session.type_catalog == kind {
             navigation_key_style()
         } else {
             Style::default()
         };
-        frame.render_widget(
-            Paragraph::new(format!(" {} ", kind.label())).style(style),
-            button,
-        );
-        session.catalog_tabs.push(CatalogTab {
-            kind: *kind,
-            area: button,
-        });
+        frame.render_widget(Paragraph::new(format!(" {label} ")).style(style), button);
+        session.catalog_tabs.push(CatalogTab { kind, area: button });
         x = x.saturating_add(width).saturating_add(1);
     }
 }
@@ -259,6 +266,9 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
                 session.definition().id().as_str(),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
+            Span::raw(session.template.map_or_else(String::new, |template| {
+                format!("  Template: {}", template.id())
+            })),
         ])),
         header[1],
     );

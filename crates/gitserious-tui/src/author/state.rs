@@ -875,14 +875,7 @@ pub(crate) struct ConfirmationButtons {
 pub(crate) enum TypeCatalogKind {
     #[default]
     Conventional,
-}
-
-impl TypeCatalogKind {
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Conventional => "CONVENTIONAL",
-        }
-    }
+    Template(usize),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -891,11 +884,8 @@ pub(crate) struct CatalogTab {
     pub(crate) area: Rect,
 }
 
-pub(crate) fn available_type_catalogs() -> &'static [TypeCatalogKind] {
-    &[TypeCatalogKind::Conventional]
-}
-
 pub(crate) struct AuthoringSession<'a> {
+    context: Option<&'a CommitAuthoringContext>,
     pub(crate) template: Option<&'a CommitTemplate>,
     pub(crate) approved_message: Option<CommitMessage>,
     pub(crate) definitions: &'a [CommitTypeDefinition],
@@ -920,6 +910,7 @@ impl<'a> AuthoringSession<'a> {
         let selected_type = preselected_index.unwrap_or(0);
         Self {
             definitions,
+            context: None,
             template: None,
             approved_message: None,
             selected_type,
@@ -954,11 +945,40 @@ impl<'a> AuthoringSession<'a> {
         });
         let mut session = Self::new(template.definitions(), preselected);
         session.template = Some(template);
+        session.context = Some(context);
+        session.type_catalog = TypeCatalogKind::Template(
+            context
+                .templates()
+                .iter()
+                .position(|item| item.id() == template.id())
+                .unwrap_or(0),
+        );
         session
     }
 
+    pub(crate) fn available_type_catalogs(&self) -> Vec<TypeCatalogKind> {
+        self.context.map_or_else(
+            || vec![TypeCatalogKind::Conventional],
+            |context| {
+                (0..context.templates().len())
+                    .map(TypeCatalogKind::Template)
+                    .collect()
+            },
+        )
+    }
+
+    pub(crate) fn catalog_label(&self, kind: TypeCatalogKind) -> String {
+        match kind {
+            TypeCatalogKind::Conventional => "CONVENTIONAL".to_owned(),
+            TypeCatalogKind::Template(index) => self
+                .context
+                .and_then(|context| context.templates().get(index))
+                .map_or_else(String::new, |template| template.id().to_string()),
+        }
+    }
+
     fn cycle_type_catalog(&mut self) {
-        let catalogs = available_type_catalogs();
+        let catalogs = self.available_type_catalogs();
         let current = catalogs
             .iter()
             .position(|kind| *kind == self.type_catalog)
@@ -967,6 +987,23 @@ impl<'a> AuthoringSession<'a> {
     }
 
     fn select_type_catalog(&mut self, kind: TypeCatalogKind) {
+        if self.preselected || self.type_catalog == kind {
+            return;
+        }
+        if let TypeCatalogKind::Template(index) = kind {
+            let Some(template) = self
+                .context
+                .and_then(|context| context.templates().get(index))
+            else {
+                return;
+            };
+            self.template = Some(template);
+            self.definitions = template.definitions();
+            self.selected_type = 0;
+            self.composer = ComposerState::new(self.definition());
+            self.review = None;
+            self.approved_message = None;
+        }
         self.type_catalog = kind;
     }
 

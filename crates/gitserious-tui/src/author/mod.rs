@@ -132,7 +132,11 @@ fn run_author_with_context(
                         io::Error::other("the approved commit message is missing")
                     })?;
                     Ok(CommitAuthoringOutcome::Authored(AuthoredCommit::reviewed(
-                        context.initial_template().id().clone(),
+                        session
+                            .template
+                            .ok_or_else(|| io::Error::other("selected template is missing"))?
+                            .id()
+                            .clone(),
                         draft,
                         message,
                     )))
