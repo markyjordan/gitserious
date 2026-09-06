@@ -1,3 +1,4 @@
+use crate::{AuthoredCommit, CommitAuthoringContext, CommitAuthoringOutcome};
 use gitserious_core::{CommitDraft, CommitTypeDefinition};
 
 /// The user's result from one complete commit-draft authoring interaction.
@@ -25,4 +26,25 @@ pub trait CommitDraftAuthor {
         definitions: &[CommitTypeDefinition],
         preselected: Option<&CommitTypeDefinition>,
     ) -> Result<CommitDraftAuthorOutcome, Self::Error>;
+
+    /// Authors within a captured set of project template choices.
+    ///
+    /// The compatibility implementation delegates to the initial template's
+    /// definitions. Interactive template switching can override this method.
+    ///
+    /// # Errors
+    /// Returns the adapter's interaction error unchanged.
+    fn author_with_context(
+        &self,
+        context: &CommitAuthoringContext,
+    ) -> Result<CommitAuthoringOutcome, Self::Error> {
+        let template = context.initial_template();
+        self.author(template.definitions(), context.preselected_type())
+            .map(|outcome| match outcome {
+                CommitDraftAuthorOutcome::Authored(draft) => CommitAuthoringOutcome::Authored(
+                    AuthoredCommit::new(template.id().clone(), draft),
+                ),
+                CommitDraftAuthorOutcome::Cancelled => CommitAuthoringOutcome::Cancelled,
+            })
+    }
 }

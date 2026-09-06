@@ -1,5 +1,18 @@
 # gitserious-app
 
+## Commit template snapshots
+
+`create_commit_with_template` selects an explicit template or the project's
+active default after verifying the complete lock. Only built-ins and project
+custom templates are eligible. The author receives a `CommitAuthoringContext`
+containing immutable resolved choices and returns an `AuthoredCommit` carrying
+the chosen template identity. The returned type is validated within that schema.
+Type preselection belongs to the initial template and cannot silently move to
+another template, even when both contain the same type identifier.
+
+`create_commit` remains the no-override entry point. Neither path changes
+project configuration or consults mutable global templates while authoring.
+
 ## Reviewed configuration sessions
 
 `ConfigurationSession` retains the original snapshot and staged edits for one

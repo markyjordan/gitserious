@@ -1,4 +1,6 @@
 use std::cell::RefCell;
+#[path = "support/commit_templates.rs"]
+mod template_tests;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};

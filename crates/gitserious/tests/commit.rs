@@ -1,4 +1,29 @@
 use std::error::Error;
+
+#[test]
+fn template_overrides_leave_project_files_unchanged_before_terminal_authoring()
+-> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    initialize(repository.path())?;
+    let config = fs::read(repository.path().join("gitserious.toml"))?;
+    let lock = fs::read(repository.path().join("gitserious.lock"))?;
+    for arguments in [
+        vec!["commit", "--template", "ml-research", "--type", "fix"],
+        vec!["commit", "--template", "infra-ops", "--type", "deploy"],
+    ] {
+        let output = run(repository.path(), &arguments)?;
+        assert!(!output.status.success());
+        assert!(
+            stderr(&output).contains("interactive terminal"),
+            "{}",
+            stderr(&output)
+        );
+        assert_eq!(fs::read(repository.path().join("gitserious.toml"))?, config);
+        assert_eq!(fs::read(repository.path().join("gitserious.lock"))?, lock);
+        assert!(!head_exists(repository.path())?);
+    }
+    Ok(())
+}
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};

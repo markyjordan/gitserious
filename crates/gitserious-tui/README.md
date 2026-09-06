@@ -65,6 +65,11 @@ coordination remain in `gitserious-app`.
 
 ## Commit authoring
 
+`gitserious commit --template <TEMPLATE>` selects a built-in or project template
+for that commit. `--type` preselects a type within it. Omitting `--template` uses
+the project default. This CLI selection does not rewrite project policy;
+switching templates within the picker belongs to the later TUI checkpoint.
+
 `gitserious commit` runs one structured terminal session:
 
 1. select an effective commit type;
