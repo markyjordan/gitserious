@@ -1,5 +1,6 @@
 //! Application ports and use cases for gitserious.
 
+mod commit_authoring_context;
 mod commit_draft_author;
 mod commit_type_catalog;
 mod commit_writer;
@@ -27,6 +28,9 @@ mod repository_locator;
 mod resolve_global_paths;
 mod storage_directory;
 
+pub use commit_authoring_context::{
+    AuthoredCommit, CommitAuthoringContext, CommitAuthoringOutcome, CommitTemplate,
+};
 pub use commit_draft_author::{CommitDraftAuthor, CommitDraftAuthorOutcome};
 pub use commit_type_catalog::CommitTypeCatalog;
 pub use commit_writer::{CommitOutput, CommitWriter};
@@ -47,6 +51,7 @@ pub use configuration_editor::{
 };
 pub use create_commit::{
     CommitOutcome, CommitPolicyError, CreateCommitError, CreateCommitResult, create_commit,
+    create_commit_with_template,
 };
 pub use custom_configuration::{
     CUSTOM_CONFIGURATION_VERSION, CustomConfiguration, CustomConfigurationError,

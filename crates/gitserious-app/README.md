@@ -1,5 +1,18 @@
 # gitserious-app
 
+## Commit template snapshots
+
+`create_commit_with_template` selects an explicit template or the project's
+active default after verifying the complete lock. Only built-ins and project
+custom templates are eligible. The author receives a `CommitAuthoringContext`
+containing immutable resolved choices and returns an `AuthoredCommit` carrying
+the chosen template identity. The returned type is validated within that schema.
+Type preselection belongs to the initial template and cannot silently move to
+another template, even when both contain the same type identifier.
+
+`create_commit` remains the no-override entry point. Neither path changes
+project configuration or consults mutable global templates while authoring.
+
 ## Reviewed configuration sessions
 
 `ConfigurationSession` retains the original snapshot and staged edits for one
@@ -30,6 +43,14 @@ readable and refresh through `gitserious init` without rewriting authored config
 This internal crate owns application workflows, configuration snapshots,
 persistence ports, and semantic fingerprint computation. The supported public
 interface is the `gitserious` CLI; the internal Rust API remains unstable.
+
+Context-aware commit authors render through the selected `CommitTemplate`, show
+that complete message including provenance, and return `AuthoredCommit::reviewed`
+after approval. The workflow checks those bytes against the captured schema and
+draft, then passes the approved message to the Git writer. Missing or mismatched
+reviewed messages fail before writing; legacy draft-only adapters must implement
+`author_with_context` to complete a commit. Project policy is not reread after
+review, so concurrent edits cannot silently change the approved schema.
 
 ## Forking reusable configuration
 

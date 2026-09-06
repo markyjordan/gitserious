@@ -3,14 +3,13 @@ use std::fmt::{self, Display, Formatter};
 use std::path::Path;
 
 use gitserious_core::{
-    CommitTypeDefinition, CommitTypeId, CommitValidationErrors, ResolvedChangeType,
-    render_commit_message,
+    CommitTypeDefinition, CommitTypeId, CommitValidationErrors, ResolvedChangeType, TemplateId,
 };
 
 use crate::{
-    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitWriter, ConfigurationCatalog,
-    Fingerprint, ProjectState, ProjectStateStore, RepositoryLocator, ResolveProjectPolicyError,
-    fingerprint_commit_type_definition, resolve_project_lock,
+    CommitAuthoringContext, CommitAuthoringOutcome, CommitDraftAuthor, CommitOutput, CommitWriter,
+    ConfigurationCatalog, Fingerprint, ProjectState, ProjectStateStore, RepositoryLocator,
+    ResolveProjectPolicyError, fingerprint_commit_type_definition, resolve_project_lock,
 };
 
 /// The result of an interactive commit workflow.
@@ -91,6 +90,22 @@ impl Error for CommitPolicyError {
 /// Failure to author or create an interactive commit.
 #[derive(Debug)]
 pub enum CreateCommitError<LocatorError, StoreError, AuthorError, WriterError> {
+    /// The author supplied no message that was reviewed with provenance.
+    MissingReviewedMessage,
+    /// The approved bytes differ from the selected schema and draft rendering.
+    ReviewedMessageMismatch,
+    /// The requested or returned template is outside project policy.
+    UnknownTemplate {
+        requested: TemplateId,
+        available: Vec<TemplateId>,
+    },
+    /// A type preselection cannot be carried to another template implicitly.
+    AuthoredTemplateMismatch {
+        expected: TemplateId,
+        actual: TemplateId,
+    },
+    /// Captured choices violate authoring-context invariants.
+    InvalidContext(String),
     /// Repository discovery failed.
     Repository(LocatorError),
     /// Repository-local project state could not be read.
@@ -133,6 +148,29 @@ where
 {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MissingReviewedMessage => {
+                formatter.write_str("commit author did not return a reviewed canonical message")
+            }
+            Self::ReviewedMessageMismatch => formatter.write_str(
+                "reviewed commit message does not match the selected template and draft",
+            ),
+            Self::UnknownTemplate {
+                requested,
+                available,
+            } => write!(
+                formatter,
+                "template {requested} is not available; choose one of: {}",
+                available
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::AuthoredTemplateMismatch { expected, actual } => write!(
+                formatter,
+                "preselected type belongs to template {expected}, not {actual}"
+            ),
+            Self::InvalidContext(error) => formatter.write_str(error),
             Self::Repository(error) => Display::fmt(error, formatter),
             Self::Store(error) => Display::fmt(error, formatter),
             Self::Policy(error) => Display::fmt(error, formatter),
@@ -179,7 +217,13 @@ where
             Self::Author(error) => Some(error),
             Self::InvalidDraft(error) => Some(error),
             Self::Writer(error) => Some(error),
-            Self::UnknownCommitType { .. } | Self::AuthoredTypeMismatch { .. } => None,
+            Self::UnknownCommitType { .. }
+            | Self::AuthoredTypeMismatch { .. }
+            | Self::UnknownTemplate { .. }
+            | Self::AuthoredTemplateMismatch { .. }
+            | Self::InvalidContext(_)
+            | Self::MissingReviewedMessage
+            | Self::ReviewedMessageMismatch => None,
         }
     }
 }
@@ -196,6 +240,28 @@ pub fn create_commit<L, S, A, W>(
     author: &A,
     writer: &W,
     start: &Path,
+    requested_type: Option<&CommitTypeId>,
+) -> CreateCommitResult<L::Error, S::Error, A::Error, W::Error>
+where
+    L: RepositoryLocator + ?Sized,
+    S: ProjectStateStore + ?Sized,
+    A: CommitDraftAuthor + ?Sized,
+    W: CommitWriter + ?Sized,
+{
+    create_commit_with_template(locator, store, author, writer, start, None, requested_type)
+}
+
+/// Authors with an explicit template override or the active project default.
+///
+/// # Errors
+/// Returns policy, selection, authoring, validation, or Git creation errors.
+pub fn create_commit_with_template<L, S, A, W>(
+    locator: &L,
+    store: &S,
+    author: &A,
+    writer: &W,
+    start: &Path,
+    requested_template: Option<&TemplateId>,
     requested_type: Option<&CommitTypeId>,
 ) -> CreateCommitResult<L::Error, S::Error, A::Error, W::Error>
 where
@@ -232,30 +298,88 @@ where
         return Err(CreateCommitError::Policy(CommitPolicyError::StaleLock));
     }
 
-    let available = locked_definitions(&lock, &catalog).map_err(CreateCommitError::Policy)?;
-    let preselected = requested_type
-        .map(|requested| find_definition(&available, requested))
-        .transpose()?;
-    let draft = match author
-        .author(&available, preselected)
-        .map_err(CreateCommitError::Author)?
-    {
-        CommitDraftAuthorOutcome::Authored(draft) => draft,
-        CommitDraftAuthorOutcome::Cancelled => return Ok(CommitOutcome::Cancelled),
-    };
-    if let Some(expected) = preselected
-        && expected.id() != draft.commit_type()
-    {
-        return Err(CreateCommitError::AuthoredTypeMismatch {
-            expected: expected.id().clone(),
-            actual: draft.commit_type().clone(),
+    let reference = requested_template.unwrap_or(config.active_template());
+    if catalog.find_template(reference).is_none() {
+        return Err(CreateCommitError::UnknownTemplate {
+            requested: reference.clone(),
+            available: catalog
+                .templates()
+                .iter()
+                .map(|template| template.id().clone())
+                .collect(),
         });
     }
-    let definition = find_definition(&available, draft.commit_type())?;
-    let message =
-        render_commit_message(definition, &draft).map_err(CreateCommitError::InvalidDraft)?;
+    let available =
+        locked_definitions(&lock, &catalog, reference).map_err(CreateCommitError::Policy)?;
+    if let Some(requested) = requested_type {
+        find_definition(&available, requested)?;
+    }
+    let schemas = catalog
+        .templates()
+        .iter()
+        .map(|template| catalog.resolve(template.id()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(ResolveProjectPolicyError::Catalog)
+        .map_err(CommitPolicyError::Resolution)
+        .map_err(CreateCommitError::Policy)?;
+    let context = CommitAuthoringContext::new(schemas, reference, requested_type)
+        .map_err(CreateCommitError::InvalidContext)?;
+    author_and_write(author, writer, &root, &context)
+}
+
+fn author_and_write<L, S, A, W>(
+    author: &A,
+    writer: &W,
+    root: &crate::RepositoryRoot,
+    context: &CommitAuthoringContext,
+) -> CreateCommitResult<L, S, A::Error, W::Error>
+where
+    A: CommitDraftAuthor + ?Sized,
+    W: CommitWriter + ?Sized,
+{
+    let authored = match author
+        .author_with_context(context)
+        .map_err(CreateCommitError::Author)?
+    {
+        CommitAuthoringOutcome::Authored(authored) => authored,
+        CommitAuthoringOutcome::Cancelled => return Ok(CommitOutcome::Cancelled),
+    };
+    let template = context.find_template(authored.template()).ok_or_else(|| {
+        CreateCommitError::UnknownTemplate {
+            requested: authored.template().clone(),
+            available: context
+                .templates()
+                .iter()
+                .map(|template| template.id().clone())
+                .collect(),
+        }
+    })?;
+    if let Some(expected) = context.preselected_type() {
+        if template.id() != context.initial_template().id() {
+            return Err(CreateCommitError::AuthoredTemplateMismatch {
+                expected: context.initial_template().id().clone(),
+                actual: template.id().clone(),
+            });
+        }
+        if expected.id() != authored.draft().commit_type() {
+            return Err(CreateCommitError::AuthoredTypeMismatch {
+                expected: expected.id().clone(),
+                actual: authored.draft().commit_type().clone(),
+            });
+        }
+    }
+    find_definition(template.definitions(), authored.draft().commit_type())?;
+    let message = template
+        .render(authored.draft())
+        .map_err(CreateCommitError::InvalidDraft)?;
+    let reviewed = authored
+        .reviewed_message()
+        .ok_or(CreateCommitError::MissingReviewedMessage)?;
+    if reviewed != &message {
+        return Err(CreateCommitError::ReviewedMessageMismatch);
+    }
     let output = writer
-        .commit(&root, &message)
+        .commit(root, reviewed)
         .map_err(CreateCommitError::Writer)?;
     Ok(CommitOutcome::Created(output))
 }
@@ -282,8 +406,8 @@ fn find_definition<'a, LocatorError, StoreError, AuthorError, WriterError>(
 fn locked_definitions(
     lock: &crate::ProjectLock,
     catalog: &ConfigurationCatalog,
+    reference: &TemplateId,
 ) -> Result<Vec<CommitTypeDefinition>, CommitPolicyError> {
-    let reference = lock.template_reference();
     let resolved = catalog.resolve(reference).map_err(|error| {
         CommitPolicyError::Resolution(ResolveProjectPolicyError::Catalog(error))
     })?;
@@ -292,15 +416,23 @@ fn locked_definitions(
         .iter()
         .map(ResolvedChangeType::commit_type_definition)
         .collect::<Vec<_>>();
-    resolve_locked_definitions(lock, &available)
+    let locked = lock
+        .resolved_templates()
+        .iter()
+        .find(|template| template.id() == reference)
+        .ok_or_else(|| {
+            CommitPolicyError::Resolution(ResolveProjectPolicyError::UnknownTemplate(
+                reference.clone(),
+            ))
+        })?;
+    resolve_locked_definitions(locked, &available)
 }
 
 fn resolve_locked_definitions(
-    lock: &crate::ProjectLock,
+    lock: &crate::ResolvedTemplate,
     definitions: &[CommitTypeDefinition],
 ) -> Result<Vec<CommitTypeDefinition>, CommitPolicyError> {
-    lock.resolved_template()
-        .commit_types()
+    lock.commit_types()
         .iter()
         .map(|locked| {
             let Some(definition) = definitions

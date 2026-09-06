@@ -1,4 +1,39 @@
 use std::cell::{Cell, RefCell};
+
+#[test]
+fn template_option_selects_only_project_policy_without_loading_global_defaults()
+-> Result<(), Box<dyn Error>> {
+    let harness = Harness::new(initialized_state()?);
+    let (exit, _, error) = harness.run(&[
+        "gitserious",
+        "commit",
+        "--template",
+        "ml-research",
+        "--type",
+        "hypothesis",
+    ]);
+    assert_eq!(exit, ExitCode::SUCCESS, "{error}");
+    assert!(harness.writer.messages.borrow()[0].starts_with("hypothesis"));
+    assert!(harness.writer.messages.borrow()[0].contains("prediction:"));
+    let invalid = Harness::new(initialized_state()?);
+    let (exit, _, error) = invalid.run(&[
+        "gitserious",
+        "commit",
+        "--template",
+        "infra-ops",
+        "--type",
+        "feat",
+    ]);
+    assert_eq!(exit, ExitCode::FAILURE);
+    assert!(error.contains("choose one of: provision"));
+    assert_eq!(invalid.author.calls.get(), 0);
+    assert_eq!(invalid.writer.calls.get(), 0);
+    let (exit, _, error) = invalid.run(&["gitserious", "commit", "--template", "global-only"]);
+    assert_eq!(exit, ExitCode::FAILURE);
+    assert!(error.contains("template global-only is not available"));
+    assert_eq!(invalid.author.calls.get(), 0);
+    Ok(())
+}
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
@@ -99,6 +134,24 @@ enum AuthorOutcome {
 
 impl CommitDraftAuthor for FakeAuthor {
     type Error = FakeError;
+
+    fn author_with_context(
+        &self,
+        context: &gitserious_app::CommitAuthoringContext,
+    ) -> Result<gitserious_app::CommitAuthoringOutcome, Self::Error> {
+        let template = context.initial_template();
+        match self.author(template.definitions(), context.preselected_type())? {
+            CommitDraftAuthorOutcome::Cancelled => {
+                Ok(gitserious_app::CommitAuthoringOutcome::Cancelled)
+            }
+            CommitDraftAuthorOutcome::Authored(draft) => {
+                let message = template.render(&draft).map_err(|_| FakeError)?;
+                Ok(gitserious_app::CommitAuthoringOutcome::Authored(
+                    gitserious_app::AuthoredCommit::reviewed(template.id().clone(), draft, message),
+                ))
+            }
+        }
+    }
 
     fn author(
         &self,
@@ -252,9 +305,14 @@ fn type_option_is_a_preselection_and_forwards_exact_git_output() -> Result<(), B
         Some(CommitTypeId::new("feat")?)
     );
     assert_eq!(harness.writer.calls.get(), 1);
+    let schema = gitserious_app::built_in_effective_catalog()?
+        .resolve(&gitserious_core::TemplateId::new("default")?)?;
+    let fingerprint = gitserious_app::fingerprint_resolved_taxonomy(&schema);
     assert_eq!(
         harness.writer.messages.borrow()[0],
-        "feat(tui-editor)!: expose command\n\nintent:\nauthored intent\n\ndecision:\nauthored decision\n\nBREAKING CHANGE: replace CLI contract\n"
+        format!(
+            "feat(tui-editor)!: expose command\n\nintent:\nauthored intent\n\ndecision:\nauthored decision\n\nBREAKING CHANGE: replace CLI contract\n\nGitserious-Template: default@1\nGitserious-Taxonomy: conventional@1\nGitserious-Typeset: conventional/default@1\nGitserious-Schema: {fingerprint}\n"
+        )
     );
     Ok(())
 }

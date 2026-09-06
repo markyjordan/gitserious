@@ -14,8 +14,9 @@ use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
     ConfigurationEditor, ConfigurationOrigin, GlobalConfigurationStore, InitOutcome, InitStatus,
     ProjectStateStore, RepositoryLocator, RepositoryRoot, built_in_effective_catalog,
-    create_commit, delete_taxonomy, delete_template, delete_typeset, edit_configuration,
-    fork_conventional, initialize_project, load_effective_catalog, template_origin,
+    create_commit_with_template, delete_taxonomy, delete_template, delete_typeset,
+    edit_configuration, fork_conventional, initialize_project, load_effective_catalog,
+    template_origin,
 };
 use gitserious_core::{CommitMessage, CommitTypeDefinition, CommitTypeId, TemplateId};
 
@@ -36,6 +37,9 @@ struct Cli {
 enum Command {
     /// Author and create a durable commit from the staged index.
     Commit {
+        /// Select a template for this commit without changing project policy.
+        #[arg(long, value_name = "TEMPLATE")]
+        template: Option<TemplateId>,
         /// Select a commit type without opening the terminal picker.
         #[arg(long = "type", value_name = "COMMIT TYPE")]
         commit_type: Option<CommitTypeId>,
@@ -354,12 +358,16 @@ where
     Err: Write + ?Sized,
 {
     match &cli.command {
-        Command::Commit { commit_type } => match create_commit(
+        Command::Commit {
+            template,
+            commit_type,
+        } => match create_commit_with_template(
             locator,
             store,
             commit.author,
             commit.writer,
             start,
+            template.as_ref(),
             commit_type.as_ref(),
         ) {
             Ok(outcome) => write_commit_outcome(stdout, stderr, &outcome),
