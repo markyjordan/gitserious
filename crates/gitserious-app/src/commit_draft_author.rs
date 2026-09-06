@@ -30,7 +30,10 @@ pub trait CommitDraftAuthor {
     /// Authors within a captured set of project template choices.
     ///
     /// The compatibility implementation delegates to the initial template's
-    /// definitions. Interactive template switching can override this method.
+    /// definitions but cannot certify a provenance-bearing preview. Override
+    /// this method to display `CommitTemplate::render` and return that approved
+    /// message with `AuthoredCommit::reviewed`. The workflow rejects successful
+    /// draft-only results; cancellations and interaction errors still pass through.
     ///
     /// # Errors
     /// Returns the adapter's interaction error unchanged.

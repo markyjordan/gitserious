@@ -226,3 +226,9 @@ double-line `Discard Message` alert. Its `y: discard` and
 `enter/esc/n: keep editing` controls are distinct black-on-yellow buttons that
 accept both mouse clicks and their existing keyboard inputs. Mouse capture is
 disabled on every terminal exit path.
+
+Template-aware commit sessions include schema provenance in the review preview.
+Approval returns the exact displayed message; returning to the composer and
+reviewing again replaces the earlier preview. The selected schema remains fixed
+for this session. Interactive template switching and explicit applicability
+controls belong to the later composer checkpoints.

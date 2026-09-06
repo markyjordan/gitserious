@@ -1,4 +1,4 @@
-use gitserious_app::CommitDraftAuthorOutcome;
+use gitserious_app::{CommitAuthoringContext, CommitDraftAuthorOutcome, CommitTemplate};
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
     PropertyMultiplicity, PropertyRequirement, PropertyValue, PropertyValues,
@@ -896,6 +896,8 @@ pub(crate) fn available_type_catalogs() -> &'static [TypeCatalogKind] {
 }
 
 pub(crate) struct AuthoringSession<'a> {
+    pub(crate) template: Option<&'a CommitTemplate>,
+    pub(crate) approved_message: Option<CommitMessage>,
     pub(crate) definitions: &'a [CommitTypeDefinition],
     pub(crate) selected_type: usize,
     pub(crate) type_catalog: TypeCatalogKind,
@@ -918,6 +920,8 @@ impl<'a> AuthoringSession<'a> {
         let selected_type = preselected_index.unwrap_or(0);
         Self {
             definitions,
+            template: None,
+            approved_message: None,
             selected_type,
             type_catalog: TypeCatalogKind::Conventional,
             preselected: preselected_index.is_some(),
@@ -938,6 +942,19 @@ impl<'a> AuthoringSession<'a> {
 
     pub(crate) fn definition(&self) -> &CommitTypeDefinition {
         &self.definitions[self.selected_type]
+    }
+
+    pub(crate) fn with_context(context: &'a CommitAuthoringContext) -> Self {
+        let template = context.initial_template();
+        let preselected = context.preselected_type().and_then(|selected| {
+            template
+                .definitions()
+                .iter()
+                .position(|definition| definition.id() == selected.id())
+        });
+        let mut session = Self::new(template.definitions(), preselected);
+        session.template = Some(template);
+        session
     }
 
     fn cycle_type_catalog(&mut self) {
@@ -1078,6 +1095,22 @@ impl<'a> AuthoringSession<'a> {
         if control(key, 's') {
             let definition = self.definition().clone();
             if let Some((draft, message)) = self.composer.validate(&definition) {
+                let message = if let Some(template) = self.template {
+                    match template.render(&draft) {
+                        Ok(message) => message,
+                        Err(error) => {
+                            self.composer.issues = vec![ValidationIssue {
+                                field: None,
+                                line: self.composer.editor.cursor().0,
+                                message: error.to_string(),
+                            }];
+                            return None;
+                        }
+                    }
+                } else {
+                    message
+                };
+                self.approved_message = None;
                 self.review = Some(ReviewState {
                     draft,
                     message,
@@ -1159,10 +1192,9 @@ impl<'a> AuthoringSession<'a> {
     fn handle_review_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
         match key.code {
             KeyCode::Enter => {
-                return self
-                    .review
-                    .take()
-                    .map(|review| CommitDraftAuthorOutcome::Authored(review.draft));
+                let review = self.review.take()?;
+                self.approved_message = Some(review.message);
+                return Some(CommitDraftAuthorOutcome::Authored(review.draft));
             }
             KeyCode::Esc => {
                 self.review = None;

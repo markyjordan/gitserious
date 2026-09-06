@@ -2,6 +2,9 @@ use gitserious_core::{
     CommitDraft, CommitTypeDefinition, CommitTypeId, ResolvedChangeType, ResolvedTaxonomy,
     TemplateId,
 };
+use gitserious_core::{
+    CommitMessage, CommitProvenance, CommitValidationErrors, render_commit_message_with_provenance,
+};
 use std::collections::BTreeSet;
 
 /// A resolved template and its schema-ordered authoring definitions.
@@ -12,6 +15,17 @@ pub struct CommitTemplate {
 }
 
 impl CommitTemplate {
+    /// Renders canonical content and provenance from this exact schema snapshot.
+    ///
+    /// # Errors
+    /// Returns validation errors for types or properties outside this schema.
+    pub fn render(&self, draft: &CommitDraft) -> Result<CommitMessage, CommitValidationErrors> {
+        let provenance = CommitProvenance::new(
+            self.schema.clone(),
+            crate::fingerprint_resolved_taxonomy(&self.schema),
+        );
+        render_commit_message_with_provenance(&provenance, draft)
+    }
     /// Captures immutable template meaning for one authoring interaction.
     #[must_use]
     pub fn new(schema: ResolvedTaxonomy) -> Self {
@@ -124,13 +138,39 @@ impl CommitAuthoringContext {
 pub struct AuthoredCommit {
     template: TemplateId,
     draft: CommitDraft,
+    reviewed: Option<CommitMessage>,
 }
 
 impl AuthoredCommit {
-    /// Records an adapter's selected identity and authored draft for validation.
+    /// Records a legacy draft without a certified reviewed message.
+    ///
+    /// The commit workflow rejects this result before writing. Context-aware
+    /// adapters should return [`Self::reviewed`] after displaying the message.
     #[must_use]
     pub const fn new(template: TemplateId, draft: CommitDraft) -> Self {
-        Self { template, draft }
+        Self {
+            template,
+            draft,
+            reviewed: None,
+        }
+    }
+    /// Records exactly the message the user reviewed and approved.
+    #[must_use]
+    pub const fn reviewed(
+        template: TemplateId,
+        draft: CommitDraft,
+        message: CommitMessage,
+    ) -> Self {
+        Self {
+            template,
+            draft,
+            reviewed: Some(message),
+        }
+    }
+    /// Returns the adapter's approved message for independent validation.
+    #[must_use]
+    pub const fn reviewed_message(&self) -> Option<&CommitMessage> {
+        self.reviewed.as_ref()
     }
     /// Returns the adapter's selected template identity.
     #[must_use]

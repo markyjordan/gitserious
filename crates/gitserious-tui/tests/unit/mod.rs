@@ -35,6 +35,54 @@ use author_harness::state::{
 };
 
 const JET_BLACK: Color = Color::Rgb(0, 0, 0);
+
+#[test]
+fn context_review_includes_provenance_and_returns_the_latest_approved_bytes()
+-> Result<(), Box<dyn Error>> {
+    let id = gitserious_core::TemplateId::new("default")?;
+    let catalog = gitserious_app::built_in_effective_catalog()?;
+    let context = gitserious_app::CommitAuthoringContext::new(
+        vec![catalog.resolve(&id)?],
+        &id,
+        Some(&CommitTypeId::new("feat")?),
+    )?;
+    let mut session = AuthoringSession::with_context(&context);
+    set_document(&mut session, valid_feat_document(), 10);
+    modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    let review = session.review.as_ref().ok_or("review missing")?;
+    assert_eq!(
+        review.message,
+        context.initial_template().render(&review.draft)?
+    );
+    assert!(
+        review
+            .message
+            .as_str()
+            .contains("Gitserious-Template: default@1\n")
+    );
+    let frame = rendered(&mut session, 100, 32)?;
+    assert!(frame.contains("Gitserious-Schema:"));
+    press(&mut session, KeyCode::Esc);
+    assert!(session.approved_message.is_none());
+    set_document(
+        &mut session,
+        &valid_feat_document().replace("compose durable message", "revise the message"),
+        10,
+    );
+    modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    let expected = session
+        .review
+        .as_ref()
+        .ok_or("review missing")?
+        .message
+        .clone();
+    let outcome = session.handle_event(key(KeyCode::Enter));
+    assert!(
+        matches!(outcome, Some(CommitDraftAuthorOutcome::Authored(draft)) if draft.subject().as_str() == "revise the message")
+    );
+    assert_eq!(session.approved_message, Some(expected));
+    Ok(())
+}
 const ZEBRA_BACKGROUND: Color = Color::Rgb(16, 16, 16);
 
 fn key(code: KeyCode) -> Event {

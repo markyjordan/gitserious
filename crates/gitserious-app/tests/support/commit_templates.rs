@@ -4,15 +4,126 @@ use gitserious_app::{
     create_commit_with_template,
 };
 
+#[derive(Clone, Copy, Default)]
+enum ReviewMode {
+    #[default]
+    Canonical,
+    Missing,
+    Plain,
+    WrongFingerprint,
+}
+
 #[derive(Default)]
-struct ContextAuthor {
+struct ContextAuthor<'a> {
     choose: Option<TemplateId>,
     forged: Option<TemplateId>,
     initial_schema: bool,
+    review_mode: ReviewMode,
+    change_policy: Option<&'a FakeStore>,
+    reviewed: RefCell<Vec<String>>,
     seen: RefCell<Vec<CommitAuthoringContext>>,
 }
 
-impl CommitDraftAuthor for ContextAuthor {
+#[test]
+fn missing_or_mismatched_reviewed_bytes_never_reach_git() -> Result<(), Box<dyn Error>> {
+    for review_mode in [
+        ReviewMode::Missing,
+        ReviewMode::Plain,
+        ReviewMode::WrongFingerprint,
+    ] {
+        let harness = Harness::new(initialized_state()?);
+        let author = ContextAuthor {
+            review_mode,
+            ..Default::default()
+        };
+        let error = create_commit_with_template(
+            &harness.locator,
+            &harness.store,
+            &author,
+            &harness.writer,
+            &repository_path(),
+            None,
+            None,
+        )
+        .err()
+        .ok_or("unreviewed message accepted")?;
+        if matches!(review_mode, ReviewMode::Missing) {
+            assert!(matches!(error, CreateCommitError::MissingReviewedMessage));
+        } else {
+            assert!(matches!(error, CreateCommitError::ReviewedMessageMismatch));
+        }
+        assert!(harness.writer.messages.borrow().is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn approved_message_uses_the_captured_policy_even_if_the_project_changes()
+-> Result<(), Box<dyn Error>> {
+    let harness = Harness::new(initialized_state()?);
+    let author = ContextAuthor {
+        change_policy: Some(&harness.store),
+        ..Default::default()
+    };
+    create_commit_with_template(
+        &harness.locator,
+        &harness.store,
+        &author,
+        &harness.writer,
+        &repository_path(),
+        None,
+        None,
+    )?;
+    assert_eq!(*harness.writer.messages.borrow(), *author.reviewed.borrow());
+    assert!(harness.writer.messages.borrow()[0].contains("Gitserious-Template: default@1\n"));
+    assert!(
+        matches!(&*harness.store.state.borrow(), Ok(ProjectState::Initialized { config, .. }) if config.active_template().as_str() == "ml-research")
+    );
+    assert_eq!(
+        harness
+            .trace
+            .borrow()
+            .iter()
+            .filter(|call| **call == "inspect")
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+struct LegacyAuthor;
+impl CommitDraftAuthor for LegacyAuthor {
+    type Error = FakeError;
+    fn author(
+        &self,
+        definitions: &[CommitTypeDefinition],
+        _: Option<&CommitTypeDefinition>,
+    ) -> Result<CommitDraftAuthorOutcome, Self::Error> {
+        valid_draft(&definitions[0])
+            .map(CommitDraftAuthorOutcome::Authored)
+            .map_err(|_| FakeError("invalid legacy draft"))
+    }
+}
+
+#[test]
+fn legacy_draft_only_adapter_cannot_write_unreviewed_provenance() -> Result<(), Box<dyn Error>> {
+    let harness = Harness::new(initialized_state()?);
+    assert!(matches!(
+        create_commit(
+            &harness.locator,
+            &harness.store,
+            &LegacyAuthor,
+            &harness.writer,
+            &repository_path(),
+            None
+        ),
+        Err(CreateCommitError::MissingReviewedMessage)
+    ));
+    assert!(harness.writer.messages.borrow().is_empty());
+    Ok(())
+}
+
+impl CommitDraftAuthor for ContextAuthor<'_> {
     type Error = FakeError;
     fn author(
         &self,
@@ -44,10 +155,38 @@ impl CommitDraftAuthor for ContextAuthor {
             .find(|definition| definition.id().as_str() == "fix")
             .ok_or(FakeError("missing fix"))?;
         let draft = valid_draft(definition).map_err(|_| FakeError("invalid draft"))?;
-        Ok(CommitAuthoringOutcome::Authored(AuthoredCommit::new(
-            self.forged.clone().unwrap_or_else(|| template.id().clone()),
-            draft,
-        )))
+        let message = match self.review_mode {
+            ReviewMode::Missing => None,
+            ReviewMode::Plain => gitserious_core::render_commit_message(definition, &draft).ok(),
+            ReviewMode::WrongFingerprint => gitserious_core::render_commit_message_with_provenance(
+                &gitserious_core::CommitProvenance::new(
+                    template.schema().clone(),
+                    gitserious_core::Fingerprint::from_bytes([0; 32]),
+                ),
+                &draft,
+            )
+            .ok(),
+            ReviewMode::Canonical => template.render(&draft).ok(),
+        };
+        let id = self.forged.clone().unwrap_or_else(|| template.id().clone());
+        let authored = match message {
+            Some(message) => {
+                self.reviewed.borrow_mut().push(message.as_str().to_owned());
+                AuthoredCommit::reviewed(id, draft, message)
+            }
+            None => AuthoredCommit::new(id, draft),
+        };
+        if let Some(store) = self.change_policy {
+            let config = ProjectConfig::new(
+                1,
+                TemplateId::new("ml-research").map_err(|_| FakeError("invalid id"))?,
+                CustomConfiguration::default(),
+            )
+            .map_err(|_| FakeError("invalid policy"))?;
+            let lock = resolve_project_lock(&config).map_err(|_| FakeError("invalid lock"))?;
+            *store.state.borrow_mut() = Ok(ProjectState::Initialized { config, lock });
+        }
+        Ok(CommitAuthoringOutcome::Authored(authored))
     }
 }
 

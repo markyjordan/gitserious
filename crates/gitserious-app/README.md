@@ -44,6 +44,14 @@ This internal crate owns application workflows, configuration snapshots,
 persistence ports, and semantic fingerprint computation. The supported public
 interface is the `gitserious` CLI; the internal Rust API remains unstable.
 
+Context-aware commit authors render through the selected `CommitTemplate`, show
+that complete message including provenance, and return `AuthoredCommit::reviewed`
+after approval. The workflow checks those bytes against the captured schema and
+draft, then passes the approved message to the Git writer. Missing or mismatched
+reviewed messages fail before writing; legacy draft-only adapters must implement
+`author_with_context` to complete a commit. Project policy is not reread after
+review, so concurrent edits cannot silently change the approved schema.
+
 ## Forking reusable configuration
 
 `fork_configuration` forks any built-in or global custom template into new global

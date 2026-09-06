@@ -4,7 +4,6 @@ use std::path::Path;
 
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, CommitValidationErrors, ResolvedChangeType, TemplateId,
-    render_commit_message,
 };
 
 use crate::{
@@ -91,6 +90,10 @@ impl Error for CommitPolicyError {
 /// Failure to author or create an interactive commit.
 #[derive(Debug)]
 pub enum CreateCommitError<LocatorError, StoreError, AuthorError, WriterError> {
+    /// The author supplied no message that was reviewed with provenance.
+    MissingReviewedMessage,
+    /// The approved bytes differ from the selected schema and draft rendering.
+    ReviewedMessageMismatch,
     /// The requested or returned template is outside project policy.
     UnknownTemplate {
         requested: TemplateId,
@@ -145,6 +148,12 @@ where
 {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MissingReviewedMessage => {
+                formatter.write_str("commit author did not return a reviewed canonical message")
+            }
+            Self::ReviewedMessageMismatch => formatter.write_str(
+                "reviewed commit message does not match the selected template and draft",
+            ),
             Self::UnknownTemplate {
                 requested,
                 available,
@@ -212,7 +221,9 @@ where
             | Self::AuthoredTypeMismatch { .. }
             | Self::UnknownTemplate { .. }
             | Self::AuthoredTemplateMismatch { .. }
-            | Self::InvalidContext(_) => None,
+            | Self::InvalidContext(_)
+            | Self::MissingReviewedMessage
+            | Self::ReviewedMessageMismatch => None,
         }
     }
 }
@@ -357,11 +368,18 @@ where
             });
         }
     }
-    let definition = find_definition(template.definitions(), authored.draft().commit_type())?;
-    let message = render_commit_message(definition, authored.draft())
+    find_definition(template.definitions(), authored.draft().commit_type())?;
+    let message = template
+        .render(authored.draft())
         .map_err(CreateCommitError::InvalidDraft)?;
+    let reviewed = authored
+        .reviewed_message()
+        .ok_or(CreateCommitError::MissingReviewedMessage)?;
+    if reviewed != &message {
+        return Err(CreateCommitError::ReviewedMessageMismatch);
+    }
     let output = writer
-        .commit(root, &message)
+        .commit(root, reviewed)
         .map_err(CreateCommitError::Writer)?;
     Ok(CommitOutcome::Created(output))
 }
