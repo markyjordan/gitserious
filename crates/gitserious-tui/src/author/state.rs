@@ -230,6 +230,85 @@ impl ComposerState {
         parse_document(self.editor.lines(), definition)
     }
 
+    fn edit_occurrence(&mut self, definition: &CommitTypeDefinition, add: bool) {
+        let Some(
+            kind @ FieldKind::Property {
+                definition_index,
+                value_index,
+            },
+        ) = self.current_field(definition)
+        else {
+            return;
+        };
+        let property = &definition.properties()[definition_index];
+        if property.multiplicity() != PropertyMultiplicity::Multiple {
+            return;
+        }
+        let parsed = self.parse(definition);
+        let Some(section) = parsed.sections.iter().find(|section| section.kind == kind) else {
+            return;
+        };
+        let count = parsed
+            .sections
+            .iter()
+            .filter(|section| section.kind.id() == kind.id())
+            .count();
+        let mut lines = self.editor.lines().to_vec();
+        let before_group = lines.get(section.end_line).is_some_and(|line| {
+            matches!(
+                structural_marker(line, definition),
+                Some(DocumentMarker::Section(_))
+            )
+        });
+        let target_occurrence = if add {
+            let insertion = section.end_line.saturating_sub(usize::from(before_group));
+            lines.splice(
+                insertion..insertion,
+                [
+                    property_heading(property.key().as_str()),
+                    String::new(),
+                    String::new(),
+                ],
+            );
+            value_index + 1
+        } else if count == 1 {
+            lines.splice(
+                section.heading_line + 1..section.end_line,
+                vec![String::new(); if before_group { 3 } else { 2 }],
+            );
+            0
+        } else {
+            lines.drain(section.heading_line..section.end_line);
+            if before_group {
+                lines.insert(section.heading_line, String::new());
+            }
+            value_index.min(count - 2)
+        };
+        if !headings_are_intact(&lines, definition) {
+            return;
+        }
+        let target = parse_document(&lines, definition)
+            .sections
+            .into_iter()
+            .find(|section| {
+                section.kind
+                    == FieldKind::Property {
+                        definition_index,
+                        value_index: target_occurrence,
+                    }
+            })
+            .map_or(SCOPE_VALUE_LINE, |section| section.heading_line + 1);
+        self.editor
+            .set_atomic_ranges(std::iter::empty::<AtomicRange>());
+        self.editor.select_all();
+        self.editor.insert_str(lines.join("\n"));
+        apply_heading_guards(&mut self.editor, definition);
+        self.editor
+            .move_cursor(CursorMove::Jump(terminal_line(target), 0));
+        self.issues.clear();
+        self.warnings.clear();
+    }
+
     fn validate(
         &mut self,
         definition: &CommitTypeDefinition,
@@ -342,12 +421,12 @@ impl ComposerState {
     ) {
         let previous_editor = self.editor.clone();
         let previous_issues = self.issues.clone();
-        let previous_field = self.current_field(definition).map(FieldKind::id);
+        let previous_field = self.current_field(definition);
         if previous_field.is_none() {
             return;
         }
         self.edit_preserving_headings(definition, edit);
-        if self.current_field(definition).map(FieldKind::id) != previous_field {
+        if self.current_field(definition) != previous_field {
             self.editor = previous_editor;
             self.issues = previous_issues;
         }
@@ -496,10 +575,12 @@ fn headings_are_intact(lines: &[String], definition: &CommitTypeDefinition) -> b
             structural_marker(line, definition).map(|marker| (line_index, marker))
         })
         .collect::<Vec<_>>();
-    let signature = markers
+    let mut signature = markers
         .iter()
         .map(|(_, marker)| *marker)
         .collect::<Vec<_>>();
+    signature.dedup_by(|right, left| right == left && matches!(left,
+        DocumentMarker::Field(FieldId::Property(index)) if definition.properties()[*index].multiplicity() == PropertyMultiplicity::Multiple));
     let headings = markers
         .iter()
         .filter(|(_, marker)| matches!(marker, DocumentMarker::Field(_)))
@@ -637,7 +718,7 @@ fn scaffold_lines(definition: &CommitTypeDefinition) -> Vec<String> {
     lines.push(String::new());
     lines.push(MessageSection::Body.label().to_owned());
     for (index, property) in definition.properties().iter().enumerate() {
-        lines.push(format!("{}:", property.key()));
+        lines.push(property_heading(property.key().as_str()));
         lines.push(String::new());
         lines.push(String::new());
         if index + 1 == definition.properties().len() {
@@ -746,6 +827,14 @@ fn structural_marker(line: &str, definition: &CommitTypeDefinition) -> Option<Do
     section.or_else(|| exact_heading(line, definition).map(DocumentMarker::Field))
 }
 
+pub(crate) fn property_heading(key: &str) -> String {
+    if matches!(key, "scope" | "description" | "breaking-change") {
+        format!("property[{key}]:")
+    } else {
+        format!("{key}:")
+    }
+}
+
 fn exact_heading(line: &str, definition: &CommitTypeDefinition) -> Option<FieldId> {
     match line {
         "scope:" => Some(FieldId::Scope),
@@ -754,7 +843,7 @@ fn exact_heading(line: &str, definition: &CommitTypeDefinition) -> Option<FieldI
         _ => definition
             .properties()
             .iter()
-            .position(|property| line == format!("{}:", property.key()))
+            .position(|property| line == property_heading(property.key().as_str()))
             .map(FieldId::Property),
     }
 }
@@ -1209,6 +1298,13 @@ impl<'a> AuthoringSession<'a> {
     }
 
     fn handle_composer_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
+        if key.modifiers.contains(KeyModifiers::ALT) && matches!(key.code, KeyCode::Char('=' | '-'))
+        {
+            let definition = self.definition().clone();
+            self.composer
+                .edit_occurrence(&definition, key.code == KeyCode::Char('='));
+            return None;
+        }
         if key.modifiers.contains(KeyModifiers::ALT)
             && matches!(key.code, KeyCode::Char('a' | 'n'))
             && let Some(FieldKind::Property {
@@ -1274,6 +1370,24 @@ impl<'a> AuthoringSession<'a> {
 
     fn input_key(&mut self, key: KeyEvent) {
         let definition = self.definition().clone();
+        if control(key, 'u') || control(key, 'r') {
+            self.composer
+                .edit_preserving_headings(&definition, |editor| {
+                    // Selection replacement records deletion and insertion separately.
+                    // Never expose the intermediate document without its field headers.
+                    for _ in 0..2 {
+                        let changed = if control(key, 'u') {
+                            editor.undo()
+                        } else {
+                            editor.redo()
+                        };
+                        if !changed || headings_are_intact(editor.lines(), &definition) {
+                            break;
+                        }
+                    }
+                });
+            return;
+        }
         if key.code == KeyCode::Enter && self.composer.advance_on_enter(&definition) {
             return;
         }

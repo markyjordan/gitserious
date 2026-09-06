@@ -778,7 +778,7 @@ fn render_document_rules(
             definition
                 .properties()
                 .iter()
-                .map(|property| format!("{}:", property.key())),
+                .map(|property| super::state::property_heading(property.key().as_str())),
         )
         .chain(std::iter::once("breaking-change:".to_owned()))
         .collect::<Vec<_>>();
@@ -1090,10 +1090,17 @@ fn field_guidance(kind: FieldKind, definition: &CommitTypeDefinition) -> FieldGu
 fn session_field_guidance(kind: FieldKind, session: &AuthoringSession<'_>) -> FieldGuidance {
     let mut guidance = field_guidance(kind, session.definition());
     if let FieldKind::Property {
-        definition_index, ..
+        definition_index,
+        value_index,
     } = kind
     {
         let property = &session.definition().properties()[definition_index];
+        if property.multiplicity() == gitserious_core::PropertyMultiplicity::Multiple {
+            guidance.paragraphs.push(format!(
+                "Value {}. alt+=: add value | alt+-: remove value (ctrl+u: undo)",
+                value_index + 1
+            ));
+        }
         if matches!(property.requirement(), PropertyRequirement::Conditional(_)) {
             let status = match session.composer.applicability[definition_index] {
                 None => "unanswered",

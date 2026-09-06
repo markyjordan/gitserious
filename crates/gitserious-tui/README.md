@@ -243,3 +243,13 @@ backtracking and count as draft changes for discard confirmation.
 The composer uses the core response-validation report. Blocking errors focus
 the affected field. Missing recommended values remain nonblocking and appear
 after the canonical message in review, clearly excluded from the Git message.
+
+For repeatable properties, `alt+=` inserts a new value after the current one and
+`alt+-` removes the current occurrence. Removing the last occurrence leaves an
+empty field so it can be filled again. `ctrl+u` and `ctrl+r` undo and redo these
+changes. Each occurrence keeps its own multiline text, and review preserves
+their order. These controls do not duplicate or remove single-valued fields.
+
+Custom properties named `scope`, `description`, or `breaking-change` have
+`property[scope]:`-style editor headings to distinguish them from header/footer
+fields. This editor notation never changes the durable property key in Git.

@@ -36,6 +36,8 @@ use author_harness::state::{
 
 const JET_BLACK: Color = Color::Rgb(0, 0, 0);
 
+mod occurrences;
+
 #[test]
 fn conditional_decisions_block_contradictions_and_survive_review() -> Result<(), Box<dyn Error>> {
     use gitserious_core::ConditionalApplicability::{Applies, DoesNotApply};
