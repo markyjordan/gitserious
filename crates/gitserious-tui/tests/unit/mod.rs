@@ -36,6 +36,94 @@ use author_harness::state::{
 
 const JET_BLACK: Color = Color::Rgb(0, 0, 0);
 
+mod occurrences;
+
+#[test]
+fn conditional_decisions_block_contradictions_and_survive_review() -> Result<(), Box<dyn Error>> {
+    use gitserious_core::ConditionalApplicability::{Applies, DoesNotApply};
+    let definitions = vec![presentation_definition()?];
+    let mut session = AuthoringSession::new(&definitions, Some(0));
+    let document = "scope:\n\ndescription:\nexplicit decisions\n\nrequired-field:\ncomplete\n\nrecommended-field:\n\n\noptional-field:\n\n\nconditional-field:\n\n";
+    set_document(&mut session, document, 15);
+    session.composer.applicability.fill(None);
+    modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    assert_eq!(session.stage, Stage::Compose);
+    assert!(!session.composer.issues.is_empty());
+    assert!(rendered(&mut session, 100, 40)?.contains("alt+a"));
+    modified_press(&mut session, KeyCode::Char('a'), KeyModifiers::ALT);
+    assert_eq!(session.composer.applicability[3], Some(Applies));
+    modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    assert_eq!(session.stage, Stage::Compose);
+    modified_press(&mut session, KeyCode::Char('n'), KeyModifiers::ALT);
+    assert_eq!(session.composer.applicability[3], Some(DoesNotApply));
+    modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    assert_eq!(session.stage, Stage::Review);
+    assert!(!session.composer.warnings.is_empty());
+    assert!(rendered(&mut session, 100, 40)?.contains("nonblocking"));
+    let draft = &session.review.as_ref().ok_or("missing review")?.draft;
+    assert_eq!(
+        draft.responses().ok_or("missing responses")?[3].applicability(),
+        Some(DoesNotApply)
+    );
+    press(&mut session, KeyCode::Esc);
+    assert_eq!(session.composer.applicability[3], Some(DoesNotApply));
+    set_document(
+        &mut session,
+        &format!("{document}contradictory value\n"),
+        16,
+    );
+    modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    assert_eq!(session.stage, Stage::Compose);
+    modified_press(&mut session, KeyCode::Char('a'), KeyModifiers::ALT);
+    modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    assert_eq!(session.stage, Stage::Review);
+    assert!(
+        session
+            .review
+            .as_ref()
+            .ok_or("missing review")?
+            .message
+            .as_str()
+            .contains("contradictory value")
+    );
+    Ok(())
+}
+
+#[test]
+fn template_picker_switches_schema_and_confirms_discard() -> Result<(), Box<dyn Error>> {
+    let catalog = gitserious_app::built_in_effective_catalog()?;
+    let ids = ["default", "ml-research", "infra-ops"]
+        .map(gitserious_core::TemplateId::new)
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    let schemas = ids
+        .iter()
+        .map(|id| catalog.resolve(id))
+        .collect::<Result<Vec<_>, _>>()?;
+    let context = gitserious_app::CommitAuthoringContext::new(schemas, &ids[0], None)?;
+    let mut session = AuthoringSession::with_context(&context);
+    assert!(rendered(&mut session, 100, 32)?.contains("ml-research"));
+    press(&mut session, KeyCode::Tab);
+    assert_eq!(session.template.ok_or("missing template")?.id(), &ids[1]);
+    assert_eq!(session.definitions, context.templates()[1].definitions());
+    press(&mut session, KeyCode::Enter);
+    press(&mut session, KeyCode::Char('x'));
+    let edited = session.composer.editor.lines().to_vec();
+    press(&mut session, KeyCode::Esc);
+    assert_eq!(session.stage, Stage::Confirm);
+    press(&mut session, KeyCode::Char('n'));
+    assert_eq!(session.composer.editor.lines(), edited);
+    press(&mut session, KeyCode::Esc);
+    press(&mut session, KeyCode::Char('y'));
+    assert_eq!(session.stage, Stage::SelectType);
+    press(&mut session, KeyCode::Tab);
+    assert_eq!(session.template.ok_or("missing template")?.id(), &ids[2]);
+    assert!(!session.composer.dirty());
+    press(&mut session, KeyCode::Tab);
+    assert_eq!(session.template.ok_or("missing template")?.id(), &ids[0]);
+    Ok(())
+}
+
 #[test]
 fn context_review_includes_provenance_and_returns_the_latest_approved_bytes()
 -> Result<(), Box<dyn Error>> {
@@ -129,6 +217,18 @@ fn set_document(session: &mut AuthoringSession<'_>, document: &str, cursor_line:
         .editor
         .move_cursor(CursorMove::Jump(cursor_line, 0));
     session.composer.issues.clear();
+    // Existing document fixtures declare empty conditional fields inapplicable.
+    // Applicability-specific tests override these explicit fixture decisions.
+    for (index, property) in session.definitions[session.selected_type]
+        .properties()
+        .iter()
+        .enumerate()
+    {
+        if matches!(property.requirement(), PropertyRequirement::Conditional(_)) {
+            session.composer.applicability[index] =
+                Some(gitserious_core::ConditionalApplicability::DoesNotApply);
+        }
+    }
 }
 
 fn buffer_text(backend: &TestBackend) -> String {
@@ -702,6 +802,8 @@ fn breaking_change_footer_is_optional_multiline_and_normalizes_scope_only_in_out
     paste(&mut session, "reduce cost");
     session.composer.editor.move_cursor(CursorMove::Jump(13, 0));
     paste(&mut session, "compose once");
+    session.composer.editor.move_cursor(CursorMove::Jump(16, 0));
+    modified_press(&mut session, KeyCode::Char('n'), KeyModifiers::ALT);
     session.composer.editor.move_cursor(CursorMove::Jump(21, 0));
     paste(&mut session, "remove old fields\nuse fixed form");
 
@@ -1294,10 +1396,12 @@ fn hud_tracks_requirement_completion_validation_and_cursor_context() -> Result<(
     assert_eq!(hud[1].status, FieldStatus::Complete);
     assert_eq!(hud[2].status, FieldStatus::Complete);
     assert!(
-        hud[3..]
+        hud[3..5]
             .iter()
             .all(|field| field.status == FieldStatus::Incomplete)
     );
+
+    assert_eq!(hud[5].status, FieldStatus::Complete);
 
     modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
     assert_eq!(session.stage, Stage::Review);

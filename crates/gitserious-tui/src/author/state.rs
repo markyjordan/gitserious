@@ -1,8 +1,8 @@
 use gitserious_app::{CommitAuthoringContext, CommitDraftAuthorOutcome, CommitTemplate};
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
-    PropertyMultiplicity, PropertyRequirement, PropertyValue, PropertyValues,
-    render_commit_message,
+    ConditionalApplicability, PropertyMultiplicity, PropertyRequirement, PropertyResponse,
+    PropertyValue, PropertyValues, render_commit_message, validate_commit_draft_report,
 };
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -139,6 +139,8 @@ pub(crate) struct ComposerState {
     pub(crate) editor: TextArea<'static>,
     pristine: Vec<String>,
     pub(crate) issues: Vec<ValidationIssue>,
+    pub(crate) applicability: Vec<Option<ConditionalApplicability>>,
+    pub(crate) warnings: Vec<String>,
 }
 
 impl ComposerState {
@@ -150,11 +152,13 @@ impl ComposerState {
             editor,
             pristine,
             issues: Vec::new(),
+            applicability: vec![None; definition.properties().len()],
+            warnings: Vec::new(),
         }
     }
 
     pub(crate) fn dirty(&self) -> bool {
-        self.editor.lines() != self.pristine
+        self.editor.lines() != self.pristine || self.applicability.iter().any(Option::is_some)
     }
 
     pub(crate) fn current_field(&self, definition: &CommitTypeDefinition) -> Option<FieldKind> {
@@ -191,7 +195,23 @@ impl ComposerState {
                     }
                     FieldId::Property(_) | FieldId::BreakingChange => false,
                 });
-            let complete = sections.iter().any(|section| !section.text.is_empty());
+            let has_value = sections.iter().any(|section| !section.text.is_empty());
+            let decision = match id {
+                FieldId::Property(index) => self.applicability[index],
+                _ => None,
+            };
+            let conditional = matches!(id, FieldId::Property(index) if matches!(definition.properties()[index].requirement(), PropertyRequirement::Conditional(_)));
+            let invalid =
+                invalid || (decision == Some(ConditionalApplicability::DoesNotApply) && has_value);
+            let complete = if conditional {
+                match decision {
+                    Some(ConditionalApplicability::Applies) => has_value,
+                    Some(ConditionalApplicability::DoesNotApply) => !has_value,
+                    None => false,
+                }
+            } else {
+                has_value
+            };
             fields.push(HudField {
                 id,
                 status: if invalid {
@@ -208,6 +228,85 @@ impl ComposerState {
 
     fn parse(&self, definition: &CommitTypeDefinition) -> ParsedDocument {
         parse_document(self.editor.lines(), definition)
+    }
+
+    fn edit_occurrence(&mut self, definition: &CommitTypeDefinition, add: bool) {
+        let Some(
+            kind @ FieldKind::Property {
+                definition_index,
+                value_index,
+            },
+        ) = self.current_field(definition)
+        else {
+            return;
+        };
+        let property = &definition.properties()[definition_index];
+        if property.multiplicity() != PropertyMultiplicity::Multiple {
+            return;
+        }
+        let parsed = self.parse(definition);
+        let Some(section) = parsed.sections.iter().find(|section| section.kind == kind) else {
+            return;
+        };
+        let count = parsed
+            .sections
+            .iter()
+            .filter(|section| section.kind.id() == kind.id())
+            .count();
+        let mut lines = self.editor.lines().to_vec();
+        let before_group = lines.get(section.end_line).is_some_and(|line| {
+            matches!(
+                structural_marker(line, definition),
+                Some(DocumentMarker::Section(_))
+            )
+        });
+        let target_occurrence = if add {
+            let insertion = section.end_line.saturating_sub(usize::from(before_group));
+            lines.splice(
+                insertion..insertion,
+                [
+                    property_heading(property.key().as_str()),
+                    String::new(),
+                    String::new(),
+                ],
+            );
+            value_index + 1
+        } else if count == 1 {
+            lines.splice(
+                section.heading_line + 1..section.end_line,
+                vec![String::new(); if before_group { 3 } else { 2 }],
+            );
+            0
+        } else {
+            lines.drain(section.heading_line..section.end_line);
+            if before_group {
+                lines.insert(section.heading_line, String::new());
+            }
+            value_index.min(count - 2)
+        };
+        if !headings_are_intact(&lines, definition) {
+            return;
+        }
+        let target = parse_document(&lines, definition)
+            .sections
+            .into_iter()
+            .find(|section| {
+                section.kind
+                    == FieldKind::Property {
+                        definition_index,
+                        value_index: target_occurrence,
+                    }
+            })
+            .map_or(SCOPE_VALUE_LINE, |section| section.heading_line + 1);
+        self.editor
+            .set_atomic_ranges(std::iter::empty::<AtomicRange>());
+        self.editor.select_all();
+        self.editor.insert_str(lines.join("\n"));
+        apply_heading_guards(&mut self.editor, definition);
+        self.editor
+            .move_cursor(CursorMove::Jump(terminal_line(target), 0));
+        self.issues.clear();
+        self.warnings.clear();
     }
 
     fn validate(
@@ -230,21 +329,43 @@ impl ComposerState {
             return None;
         }
         let subject = subject?;
-        let draft = match CommitDraft::new(definition.id().clone(), scope, subject, authored) {
-            Ok(draft) => draft,
-            Err(error) => {
-                self.issues = vec![ValidationIssue {
-                    field: self.current_field(definition).map(FieldKind::id),
-                    line: self.editor.cursor().0,
-                    message: error.to_string(),
-                }];
-                return None;
-            }
-        };
+        let responses = definition
+            .properties()
+            .iter()
+            .enumerate()
+            .map(|(index, property)| {
+                PropertyResponse::new(
+                    property.key().clone(),
+                    authored
+                        .iter()
+                        .find(|item| item.key() == property.key())
+                        .map(|item| item.values().clone()),
+                    self.applicability[index],
+                )
+            })
+            .collect();
+        let draft =
+            match CommitDraft::from_responses(definition.id().clone(), scope, subject, responses) {
+                Ok(draft) => draft,
+                Err(error) => {
+                    self.issues = vec![ValidationIssue {
+                        field: self.current_field(definition).map(FieldKind::id),
+                        line: self.editor.cursor().0,
+                        message: error.to_string(),
+                    }];
+                    return None;
+                }
+            };
         let draft = match breaking_change {
             Some(value) => draft.with_breaking_change(value),
             None => draft,
         };
+        let report = validate_commit_draft_report(definition, &draft);
+        self.warnings = report
+            .warnings()
+            .iter()
+            .map(|issue| issue.kind().to_string())
+            .collect();
         match render_commit_message(definition, &draft) {
             Ok(message) => {
                 self.issues.clear();
@@ -254,12 +375,23 @@ impl ComposerState {
                 self.issues = errors
                     .as_slice()
                     .iter()
-                    .map(|error| ValidationIssue {
-                        field: self.current_field(definition).map(FieldKind::id),
-                        line: self.editor.cursor().0,
-                        message: error.to_string(),
+                    .map(|error| {
+                        let field = validation_field(error, definition);
+                        ValidationIssue {
+                            field,
+                            line: parsed
+                                .sections
+                                .iter()
+                                .find(|section| Some(section.kind.id()) == field)
+                                .map_or(self.editor.cursor().0, |section| section.heading_line + 1),
+                            message: error.to_string(),
+                        }
                     })
                     .collect();
+                if let Some(issue) = self.issues.first() {
+                    self.editor
+                        .move_cursor(CursorMove::Jump(terminal_line(issue.line), 0));
+                }
                 None
             }
         }
@@ -289,12 +421,12 @@ impl ComposerState {
     ) {
         let previous_editor = self.editor.clone();
         let previous_issues = self.issues.clone();
-        let previous_field = self.current_field(definition).map(FieldKind::id);
+        let previous_field = self.current_field(definition);
         if previous_field.is_none() {
             return;
         }
         self.edit_preserving_headings(definition, edit);
-        if self.current_field(definition).map(FieldKind::id) != previous_field {
+        if self.current_field(definition) != previous_field {
             self.editor = previous_editor;
             self.issues = previous_issues;
         }
@@ -342,6 +474,33 @@ impl ComposerState {
         }
         true
     }
+}
+
+fn validation_field(
+    error: &gitserious_core::CommitValidationError,
+    definition: &CommitTypeDefinition,
+) -> Option<FieldId> {
+    use gitserious_core::{CommitValidationError as E, PropertyValidationIssueKind as P};
+    let key = match error {
+        E::UnknownProperty(key) | E::MissingRequired(key) | E::Multiplicity { key, .. } => key,
+        E::PropertyResponse(kind) => match kind {
+            P::UnknownProperty(key)
+            | P::DuplicateProperty(key)
+            | P::MissingRequired(key)
+            | P::MissingRecommended(key)
+            | P::MissingConditionalDecision(key)
+            | P::MissingApplicableValue(key)
+            | P::ValueForNonApplicableProperty(key)
+            | P::UnexpectedConditionalDecision(key)
+            | P::Multiplicity { key, .. } => key,
+        },
+        E::UnknownCommitType { .. } | E::TypeMismatch { .. } => return None,
+    };
+    definition
+        .properties()
+        .iter()
+        .position(|property| property.key() == key)
+        .map(FieldId::Property)
 }
 
 fn text_area(lines: Vec<String>, definition: &CommitTypeDefinition) -> TextArea<'static> {
@@ -416,10 +575,12 @@ fn headings_are_intact(lines: &[String], definition: &CommitTypeDefinition) -> b
             structural_marker(line, definition).map(|marker| (line_index, marker))
         })
         .collect::<Vec<_>>();
-    let signature = markers
+    let mut signature = markers
         .iter()
         .map(|(_, marker)| *marker)
         .collect::<Vec<_>>();
+    signature.dedup_by(|right, left| right == left && matches!(left,
+        DocumentMarker::Field(FieldId::Property(index)) if definition.properties()[*index].multiplicity() == PropertyMultiplicity::Multiple));
     let headings = markers
         .iter()
         .filter(|(_, marker)| matches!(marker, DocumentMarker::Field(_)))
@@ -557,7 +718,7 @@ fn scaffold_lines(definition: &CommitTypeDefinition) -> Vec<String> {
     lines.push(String::new());
     lines.push(MessageSection::Body.label().to_owned());
     for (index, property) in definition.properties().iter().enumerate() {
-        lines.push(format!("{}:", property.key()));
+        lines.push(property_heading(property.key().as_str()));
         lines.push(String::new());
         lines.push(String::new());
         if index + 1 == definition.properties().len() {
@@ -666,6 +827,14 @@ fn structural_marker(line: &str, definition: &CommitTypeDefinition) -> Option<Do
     section.or_else(|| exact_heading(line, definition).map(DocumentMarker::Field))
 }
 
+pub(crate) fn property_heading(key: &str) -> String {
+    if matches!(key, "scope" | "description" | "breaking-change") {
+        format!("property[{key}]:")
+    } else {
+        format!("{key}:")
+    }
+}
+
 fn exact_heading(line: &str, definition: &CommitTypeDefinition) -> Option<FieldId> {
     match line {
         "scope:" => Some(FieldId::Scope),
@@ -674,7 +843,7 @@ fn exact_heading(line: &str, definition: &CommitTypeDefinition) -> Option<FieldI
         _ => definition
             .properties()
             .iter()
-            .position(|property| line == format!("{}:", property.key()))
+            .position(|property| line == property_heading(property.key().as_str()))
             .map(FieldId::Property),
     }
 }
@@ -875,14 +1044,7 @@ pub(crate) struct ConfirmationButtons {
 pub(crate) enum TypeCatalogKind {
     #[default]
     Conventional,
-}
-
-impl TypeCatalogKind {
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Conventional => "CONVENTIONAL",
-        }
-    }
+    Template(usize),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -891,11 +1053,8 @@ pub(crate) struct CatalogTab {
     pub(crate) area: Rect,
 }
 
-pub(crate) fn available_type_catalogs() -> &'static [TypeCatalogKind] {
-    &[TypeCatalogKind::Conventional]
-}
-
 pub(crate) struct AuthoringSession<'a> {
+    context: Option<&'a CommitAuthoringContext>,
     pub(crate) template: Option<&'a CommitTemplate>,
     pub(crate) approved_message: Option<CommitMessage>,
     pub(crate) definitions: &'a [CommitTypeDefinition],
@@ -920,6 +1079,7 @@ impl<'a> AuthoringSession<'a> {
         let selected_type = preselected_index.unwrap_or(0);
         Self {
             definitions,
+            context: None,
             template: None,
             approved_message: None,
             selected_type,
@@ -954,11 +1114,40 @@ impl<'a> AuthoringSession<'a> {
         });
         let mut session = Self::new(template.definitions(), preselected);
         session.template = Some(template);
+        session.context = Some(context);
+        session.type_catalog = TypeCatalogKind::Template(
+            context
+                .templates()
+                .iter()
+                .position(|item| item.id() == template.id())
+                .unwrap_or(0),
+        );
         session
     }
 
+    pub(crate) fn available_type_catalogs(&self) -> Vec<TypeCatalogKind> {
+        self.context.map_or_else(
+            || vec![TypeCatalogKind::Conventional],
+            |context| {
+                (0..context.templates().len())
+                    .map(TypeCatalogKind::Template)
+                    .collect()
+            },
+        )
+    }
+
+    pub(crate) fn catalog_label(&self, kind: TypeCatalogKind) -> String {
+        match kind {
+            TypeCatalogKind::Conventional => "CONVENTIONAL".to_owned(),
+            TypeCatalogKind::Template(index) => self
+                .context
+                .and_then(|context| context.templates().get(index))
+                .map_or_else(String::new, |template| template.id().to_string()),
+        }
+    }
+
     fn cycle_type_catalog(&mut self) {
-        let catalogs = available_type_catalogs();
+        let catalogs = self.available_type_catalogs();
         let current = catalogs
             .iter()
             .position(|kind| *kind == self.type_catalog)
@@ -967,6 +1156,23 @@ impl<'a> AuthoringSession<'a> {
     }
 
     fn select_type_catalog(&mut self, kind: TypeCatalogKind) {
+        if self.preselected || self.type_catalog == kind {
+            return;
+        }
+        if let TypeCatalogKind::Template(index) = kind {
+            let Some(template) = self
+                .context
+                .and_then(|context| context.templates().get(index))
+            else {
+                return;
+            };
+            self.template = Some(template);
+            self.definitions = template.definitions();
+            self.selected_type = 0;
+            self.composer = ComposerState::new(self.definition());
+            self.review = None;
+            self.approved_message = None;
+        }
         self.type_catalog = kind;
     }
 
@@ -1092,6 +1298,32 @@ impl<'a> AuthoringSession<'a> {
     }
 
     fn handle_composer_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
+        if key.modifiers.contains(KeyModifiers::ALT) && matches!(key.code, KeyCode::Char('=' | '-'))
+        {
+            let definition = self.definition().clone();
+            self.composer
+                .edit_occurrence(&definition, key.code == KeyCode::Char('='));
+            return None;
+        }
+        if key.modifiers.contains(KeyModifiers::ALT)
+            && matches!(key.code, KeyCode::Char('a' | 'n'))
+            && let Some(FieldKind::Property {
+                definition_index, ..
+            }) = self.composer.current_field(self.definition())
+            && matches!(
+                self.definition().properties()[definition_index].requirement(),
+                PropertyRequirement::Conditional(_)
+            )
+        {
+            self.composer.applicability[definition_index] =
+                Some(if key.code == KeyCode::Char('a') {
+                    ConditionalApplicability::Applies
+                } else {
+                    ConditionalApplicability::DoesNotApply
+                });
+            self.composer.issues.clear();
+            return None;
+        }
         if control(key, 's') {
             let definition = self.definition().clone();
             if let Some((draft, message)) = self.composer.validate(&definition) {
@@ -1138,6 +1370,24 @@ impl<'a> AuthoringSession<'a> {
 
     fn input_key(&mut self, key: KeyEvent) {
         let definition = self.definition().clone();
+        if control(key, 'u') || control(key, 'r') {
+            self.composer
+                .edit_preserving_headings(&definition, |editor| {
+                    // Selection replacement records deletion and insertion separately.
+                    // Never expose the intermediate document without its field headers.
+                    for _ in 0..2 {
+                        let changed = if control(key, 'u') {
+                            editor.undo()
+                        } else {
+                            editor.redo()
+                        };
+                        if !changed || headings_are_intact(editor.lines(), &definition) {
+                            break;
+                        }
+                    }
+                });
+            return;
+        }
         if key.code == KeyCode::Enter && self.composer.advance_on_enter(&definition) {
             return;
         }

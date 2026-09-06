@@ -67,8 +67,9 @@ coordination remain in `gitserious-app`.
 
 `gitserious commit --template <TEMPLATE>` selects a built-in or project template
 for that commit. `--type` preselects a type within it. Omitting `--template` uses
-the project default. This CLI selection does not rewrite project policy;
-switching templates within the picker belongs to the later TUI checkpoint.
+the project default. The picker can switch between built-in and project custom
+templates without rewriting policy. An explicit `--type` fixes the template and
+skips the picker.
 
 `gitserious commit` runs one structured terminal session:
 
@@ -97,16 +98,17 @@ composer. Both forms require interactive standard input and output. There is no
 configured-Git-editor fallback or non-interactive authoring mode in this slice.
 
 Step 1 lists the effective catalog as a table inside that shared frame. A
-`CONVENTIONAL` tab pane sits above a fused heading rule, then the type table: a
+Template tabs sit above a fused heading rule, then the type table: a
 one-cell `›` marker on the current type, type identifiers that hug the longest
 id, and descriptions in the remaining width. A two-cell gap separates the
 columns, matching Message Properties. Rows alternate between `#000000` and
 `#101010`; the current type uses a full black-on-yellow row. The selected
 catalog tab uses the same black-on-yellow chip; `tab` cycles available type
-sets and a click on a chip selects that set. The tab is currently fixed to `CONVENTIONAL`, so `tab` and a click on it
-keep the current table. Type ids, ordering, and descriptions come from the
-active project template, including domain and custom templates. A template-aware
-label and per-commit template switching belong to the later TUI checkpoint.
+templates and a click on a chip selects that template. Tabs use template ids,
+distinguishing templates that share a taxonomy. The selected tab stays visible
+when the list exceeds the viewport. Type ids, ordering, and descriptions come
+from the selected schema. Returning from an edited draft to the picker requires
+discard confirmation before a different template can replace it.
 
 The composer presents one prepopulated document as three immutable structural
 sections. `Message Subject` contains optional `scope` and required `description`
@@ -149,7 +151,7 @@ columns. Rows alternate between `#000000` and `#101010`; the current property
 uses a full black-on-yellow row while its status marker retains its semantic
 color. Property guidance comes directly from the selected core definition. A
 conditional property shows its description followed by the catalog's separate
-`Required when...` rationale while remaining nonblocking. The description pane
+`Required when...` rationale and explicit applicability controls. The description pane
 does not repeat the selected field name or requirement already shown in Message
 Properties. Scope and description guidance illustrates `type(scope):
 description`, including the scope-free `type: description` form. The composer
@@ -230,5 +232,24 @@ disabled on every terminal exit path.
 Template-aware commit sessions include schema provenance in the review preview.
 Approval returns the exact displayed message; returning to the composer and
 reviewing again replaces the earlier preview. The selected schema remains fixed
-for this session. Interactive template switching and explicit applicability
-controls belong to the later composer checkpoints.
+through composition and review.
+
+Conditional fields start unanswered. While editing one, `alt+a` marks it
+applicable and requires a value; `alt+n` marks it not applicable and requires an
+empty value. The contextual guidance shows the decision, and the HUD treats an
+empty, explicitly inapplicable field as complete. Decisions survive review and
+backtracking and count as draft changes for discard confirmation.
+
+The composer uses the core response-validation report. Blocking errors focus
+the affected field. Missing recommended values remain nonblocking and appear
+after the canonical message in review, clearly excluded from the Git message.
+
+For repeatable properties, `alt+=` inserts a new value after the current one and
+`alt+-` removes the current occurrence. Removing the last occurrence leaves an
+empty field so it can be filled again. `ctrl+u` and `ctrl+r` undo and redo these
+changes. Each occurrence keeps its own multiline text, and review preserves
+their order. These controls do not duplicate or remove single-valued fields.
+
+Custom properties named `scope`, `description`, or `breaking-change` have
+`property[scope]:`-style editor headings to distinguish them from header/footer
+fields. This editor notation never changes the durable property key in Git.
