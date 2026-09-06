@@ -574,7 +574,7 @@ fn render_field_description(frame: &mut Frame<'_>, area: Rect, session: &Authori
     let current = session.composer.current_field(&definition);
     let guidance = current.map_or_else(
         || FieldGuidance::new("Edit values beneath the schema-generated field headers."),
-        |kind| field_guidance(kind, &definition),
+        |kind| session_field_guidance(kind, session),
     );
     let lines = guidance
         .paragraphs
@@ -939,15 +939,19 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
     render_frame_rule(frame, shell.frame, review_sections[1].y, None);
     let message = Pane::new(review_sections[2]).content;
     if let Some(review) = &mut session.review {
-        let mut measured_message =
-            TextArea::new(review.message.as_str().lines().map(str::to_owned).collect());
+        let mut preview = review.message.as_str().to_owned();
+        if !session.composer.warnings.is_empty() {
+            preview.push_str("\nRecommendations (nonblocking; not included in commit):\n");
+            preview.push_str(&session.composer.warnings.join("\n"));
+        }
+        let mut measured_message = TextArea::new(preview.lines().map(str::to_owned).collect());
         measured_message.set_wrap_mode(WrapMode::WordOrGlyph);
         review.scrollable = measured_message.measure(message.width).content_rows > message.height;
         if !review.scrollable {
             review.scroll = 0;
         }
         frame.render_widget(
-            Paragraph::new(review.message.as_str())
+            Paragraph::new(preview)
                 .wrap(Wrap { trim: false })
                 .scroll((review.scroll, 0)),
             message,
@@ -1083,13 +1087,38 @@ fn field_guidance(kind: FieldKind, definition: &CommitTypeDefinition) -> FieldGu
     }
 }
 
+fn session_field_guidance(kind: FieldKind, session: &AuthoringSession<'_>) -> FieldGuidance {
+    let mut guidance = field_guidance(kind, session.definition());
+    if let FieldKind::Property {
+        definition_index, ..
+    } = kind
+    {
+        let property = &session.definition().properties()[definition_index];
+        if matches!(property.requirement(), PropertyRequirement::Conditional(_)) {
+            let status = match session.composer.applicability[definition_index] {
+                None => "unanswered",
+                Some(gitserious_core::ConditionalApplicability::Applies) => {
+                    "applicable (value required)"
+                }
+                Some(gitserious_core::ConditionalApplicability::DoesNotApply) => {
+                    "not applicable (leave empty)"
+                }
+            };
+            guidance.paragraphs.push(format!(
+                "Applicability: {status}. alt+a: applicable | alt+n: not applicable"
+            ));
+        }
+    }
+    guidance
+}
+
 fn context_content_height(description_width: u16, session: &AuthoringSession<'_>) -> u16 {
     let hud_height =
         u16::try_from(session.composer.hud_fields(session.definition()).len()).unwrap_or(u16::MAX);
     let definition = session.definition().clone();
     let guidance = session.composer.current_field(&definition).map_or_else(
         || FieldGuidance::new("Edit values beneath the schema-generated field headers."),
-        |kind| field_guidance(kind, &definition),
+        |kind| session_field_guidance(kind, session),
     );
     let guidance_height = guidance.paragraphs.iter().fold(0_u16, |height, paragraph| {
         height.saturating_add(wrapped_line_count(paragraph, description_width))

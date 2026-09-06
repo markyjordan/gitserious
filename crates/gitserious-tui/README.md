@@ -151,7 +151,7 @@ columns. Rows alternate between `#000000` and `#101010`; the current property
 uses a full black-on-yellow row while its status marker retains its semantic
 color. Property guidance comes directly from the selected core definition. A
 conditional property shows its description followed by the catalog's separate
-`Required when...` rationale while remaining nonblocking. The description pane
+`Required when...` rationale and explicit applicability controls. The description pane
 does not repeat the selected field name or requirement already shown in Message
 Properties. Scope and description guidance illustrates `type(scope):
 description`, including the scope-free `type: description` form. The composer
@@ -232,5 +232,14 @@ disabled on every terminal exit path.
 Template-aware commit sessions include schema provenance in the review preview.
 Approval returns the exact displayed message; returning to the composer and
 reviewing again replaces the earlier preview. The selected schema remains fixed
-through composition and review. Explicit applicability controls belong to the
-next composer checkpoint.
+through composition and review.
+
+Conditional fields start unanswered. While editing one, `alt+a` marks it
+applicable and requires a value; `alt+n` marks it not applicable and requires an
+empty value. The contextual guidance shows the decision, and the HUD treats an
+empty, explicitly inapplicable field as complete. Decisions survive review and
+backtracking and count as draft changes for discard confirmation.
+
+The composer uses the core response-validation report. Blocking errors focus
+the affected field. Missing recommended values remain nonblocking and appear
+after the canonical message in review, clearly excluded from the Git message.

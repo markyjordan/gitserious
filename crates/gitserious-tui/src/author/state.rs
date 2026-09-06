@@ -1,8 +1,8 @@
 use gitserious_app::{CommitAuthoringContext, CommitDraftAuthorOutcome, CommitTemplate};
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
-    PropertyMultiplicity, PropertyRequirement, PropertyValue, PropertyValues,
-    render_commit_message,
+    ConditionalApplicability, PropertyMultiplicity, PropertyRequirement, PropertyResponse,
+    PropertyValue, PropertyValues, render_commit_message, validate_commit_draft_report,
 };
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -139,6 +139,8 @@ pub(crate) struct ComposerState {
     pub(crate) editor: TextArea<'static>,
     pristine: Vec<String>,
     pub(crate) issues: Vec<ValidationIssue>,
+    pub(crate) applicability: Vec<Option<ConditionalApplicability>>,
+    pub(crate) warnings: Vec<String>,
 }
 
 impl ComposerState {
@@ -150,11 +152,13 @@ impl ComposerState {
             editor,
             pristine,
             issues: Vec::new(),
+            applicability: vec![None; definition.properties().len()],
+            warnings: Vec::new(),
         }
     }
 
     pub(crate) fn dirty(&self) -> bool {
-        self.editor.lines() != self.pristine
+        self.editor.lines() != self.pristine || self.applicability.iter().any(Option::is_some)
     }
 
     pub(crate) fn current_field(&self, definition: &CommitTypeDefinition) -> Option<FieldKind> {
@@ -191,7 +195,23 @@ impl ComposerState {
                     }
                     FieldId::Property(_) | FieldId::BreakingChange => false,
                 });
-            let complete = sections.iter().any(|section| !section.text.is_empty());
+            let has_value = sections.iter().any(|section| !section.text.is_empty());
+            let decision = match id {
+                FieldId::Property(index) => self.applicability[index],
+                _ => None,
+            };
+            let conditional = matches!(id, FieldId::Property(index) if matches!(definition.properties()[index].requirement(), PropertyRequirement::Conditional(_)));
+            let invalid =
+                invalid || (decision == Some(ConditionalApplicability::DoesNotApply) && has_value);
+            let complete = if conditional {
+                match decision {
+                    Some(ConditionalApplicability::Applies) => has_value,
+                    Some(ConditionalApplicability::DoesNotApply) => !has_value,
+                    None => false,
+                }
+            } else {
+                has_value
+            };
             fields.push(HudField {
                 id,
                 status: if invalid {
@@ -230,21 +250,43 @@ impl ComposerState {
             return None;
         }
         let subject = subject?;
-        let draft = match CommitDraft::new(definition.id().clone(), scope, subject, authored) {
-            Ok(draft) => draft,
-            Err(error) => {
-                self.issues = vec![ValidationIssue {
-                    field: self.current_field(definition).map(FieldKind::id),
-                    line: self.editor.cursor().0,
-                    message: error.to_string(),
-                }];
-                return None;
-            }
-        };
+        let responses = definition
+            .properties()
+            .iter()
+            .enumerate()
+            .map(|(index, property)| {
+                PropertyResponse::new(
+                    property.key().clone(),
+                    authored
+                        .iter()
+                        .find(|item| item.key() == property.key())
+                        .map(|item| item.values().clone()),
+                    self.applicability[index],
+                )
+            })
+            .collect();
+        let draft =
+            match CommitDraft::from_responses(definition.id().clone(), scope, subject, responses) {
+                Ok(draft) => draft,
+                Err(error) => {
+                    self.issues = vec![ValidationIssue {
+                        field: self.current_field(definition).map(FieldKind::id),
+                        line: self.editor.cursor().0,
+                        message: error.to_string(),
+                    }];
+                    return None;
+                }
+            };
         let draft = match breaking_change {
             Some(value) => draft.with_breaking_change(value),
             None => draft,
         };
+        let report = validate_commit_draft_report(definition, &draft);
+        self.warnings = report
+            .warnings()
+            .iter()
+            .map(|issue| issue.kind().to_string())
+            .collect();
         match render_commit_message(definition, &draft) {
             Ok(message) => {
                 self.issues.clear();
@@ -254,12 +296,23 @@ impl ComposerState {
                 self.issues = errors
                     .as_slice()
                     .iter()
-                    .map(|error| ValidationIssue {
-                        field: self.current_field(definition).map(FieldKind::id),
-                        line: self.editor.cursor().0,
-                        message: error.to_string(),
+                    .map(|error| {
+                        let field = validation_field(error, definition);
+                        ValidationIssue {
+                            field,
+                            line: parsed
+                                .sections
+                                .iter()
+                                .find(|section| Some(section.kind.id()) == field)
+                                .map_or(self.editor.cursor().0, |section| section.heading_line + 1),
+                            message: error.to_string(),
+                        }
                     })
                     .collect();
+                if let Some(issue) = self.issues.first() {
+                    self.editor
+                        .move_cursor(CursorMove::Jump(terminal_line(issue.line), 0));
+                }
                 None
             }
         }
@@ -342,6 +395,33 @@ impl ComposerState {
         }
         true
     }
+}
+
+fn validation_field(
+    error: &gitserious_core::CommitValidationError,
+    definition: &CommitTypeDefinition,
+) -> Option<FieldId> {
+    use gitserious_core::{CommitValidationError as E, PropertyValidationIssueKind as P};
+    let key = match error {
+        E::UnknownProperty(key) | E::MissingRequired(key) | E::Multiplicity { key, .. } => key,
+        E::PropertyResponse(kind) => match kind {
+            P::UnknownProperty(key)
+            | P::DuplicateProperty(key)
+            | P::MissingRequired(key)
+            | P::MissingRecommended(key)
+            | P::MissingConditionalDecision(key)
+            | P::MissingApplicableValue(key)
+            | P::ValueForNonApplicableProperty(key)
+            | P::UnexpectedConditionalDecision(key)
+            | P::Multiplicity { key, .. } => key,
+        },
+        E::UnknownCommitType { .. } | E::TypeMismatch { .. } => return None,
+    };
+    definition
+        .properties()
+        .iter()
+        .position(|property| property.key() == key)
+        .map(FieldId::Property)
 }
 
 fn text_area(lines: Vec<String>, definition: &CommitTypeDefinition) -> TextArea<'static> {
@@ -1129,6 +1209,25 @@ impl<'a> AuthoringSession<'a> {
     }
 
     fn handle_composer_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
+        if key.modifiers.contains(KeyModifiers::ALT)
+            && matches!(key.code, KeyCode::Char('a' | 'n'))
+            && let Some(FieldKind::Property {
+                definition_index, ..
+            }) = self.composer.current_field(self.definition())
+            && matches!(
+                self.definition().properties()[definition_index].requirement(),
+                PropertyRequirement::Conditional(_)
+            )
+        {
+            self.composer.applicability[definition_index] =
+                Some(if key.code == KeyCode::Char('a') {
+                    ConditionalApplicability::Applies
+                } else {
+                    ConditionalApplicability::DoesNotApply
+                });
+            self.composer.issues.clear();
+            return None;
+        }
         if control(key, 's') {
             let definition = self.definition().clone();
             if let Some((draft, message)) = self.composer.validate(&definition) {
