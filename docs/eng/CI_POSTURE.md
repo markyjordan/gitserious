@@ -20,6 +20,11 @@ Developer bootstrap, build/run, Rust quality, and dependency-security scripts
 initialize this guard before invoking Cargo. They consistently use `"$CARGO"`;
 third-party subcommands such as cargo-audit remain discoverable on PATH.
 
+Release metadata, packaging, native builds, publication, and summaries use
+the same guard and executable override. Early validation and skipped publish
+paths retain their existing behavior. Release fixtures supply isolated fake
+toolchains and version-validated Cargo executables, with no guard bypass.
+
 > This document is the source of truth for continuous integration, automation
 > trust, dependency security, and hosted merge/deployment controls. Tracked
 > workflow code describes intended machinery; only a live GitHub settings audit

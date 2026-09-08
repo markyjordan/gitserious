@@ -13,9 +13,16 @@ for file in README.md LICENSE-MIT LICENSE-APACHE-2.0; do
   printf '%s\n' "$file" >"$repo/$file"
 done
 
+# shellcheck source=scripts/release/tests/toolchain-fixture.sh
+source "$script_dir/tests/toolchain-fixture.sh"
+
 cat >"$fake_bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == --version ]]; then
+  printf 'cargo %s\n' "$FIXTURE_RUST_PIN"
+  exit 0
+fi
 target=""
 while (($#)); do
   if [[ "$1" == --target ]]; then
@@ -32,6 +39,16 @@ printf '%s\n' '#!/usr/bin/env bash' 'echo gitserious fixture' >"target/${target}
 chmod +x "target/${target}/release/gitserious${suffix}"
 EOF
 chmod +x "$fake_bin/cargo"
+
+if (
+  cd "$repo"
+  env CARGO="$FIXTURE_RUST_TOOLS/rustc" TARGET=x86_64-unknown-linux-gnu \
+    OUTPUT_DIR=rejected bash "$builder" >/dev/null 2>&1
+); then
+  echo 'Native builder accepted an invalid Cargo override.' >&2
+  exit 1
+fi
+[[ ! -e "$repo/target" && ! -e "$repo/rejected" ]]
 
 (
   cd "$repo"

@@ -5,7 +5,6 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 artifact_dir="${ARTIFACT_DIR:-target/release-artifacts}"
 source_ref="${RELEASE_SOURCE_REF:?RELEASE_SOURCE_REF is required}"
 summary_file="${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY is required}"
-cargo_command="${CARGO:-cargo}"
 
 for required_file in SHA256SUMS release-manifest.json; do
   [[ -f "$artifact_dir/$required_file" ]] || {
@@ -27,7 +26,11 @@ command -v python3 >/dev/null || {
 metadata_file="$(mktemp)"
 package_order_file="$(mktemp)"
 trap 'rm -f "$metadata_file" "$package_order_file"' EXIT
-"$cargo_command" metadata --locked --format-version 1 >"$metadata_file"
+# shellcheck source=scripts/shared/rust-toolchain.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/shared/rust-toolchain.sh"
+require_pinned_toolchain
+
+"$CARGO" metadata --locked --format-version 1 >"$metadata_file"
 python3 "$script_dir/list-publishable-packages.py" "$metadata_file" >"$package_order_file"
 
 [[ -s "$package_order_file" ]] || {

@@ -60,8 +60,12 @@ if [[ -n "$tag" && "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-rc([1-9][0-9]*))?$ 
     exit 1
   fi
 
+  # shellcheck source=scripts/shared/rust-toolchain.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/shared/rust-toolchain.sh"
+  require_pinned_toolchain
+
   workspace_versions="$(
-    cargo metadata --locked --no-deps --format-version 1 |
+    "$CARGO" metadata --locked --no-deps --format-version 1 |
       jq -r '[.packages[] | select(.source == null) | .version] | unique | .[]'
   )"
   workspace_version_count="$(

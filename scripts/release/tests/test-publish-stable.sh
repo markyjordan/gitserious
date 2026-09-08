@@ -15,9 +15,16 @@ mkdir -p "$fake_bin" "$artifact_dir"
 : >"$publish_log"
 : >"$indexed_file"
 
+# shellcheck source=scripts/release/tests/toolchain-fixture.sh
+source "$script_dir/tests/toolchain-fixture.sh"
+
 cat >"$fake_bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == --version ]]; then
+  printf 'cargo %s\n' "$FIXTURE_RUST_PIN"
+  exit 0
+fi
 case "${1:-}" in
   metadata)
     cat <<'JSON'

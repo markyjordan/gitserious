@@ -26,9 +26,16 @@ cat >"$repo/CHANGELOG.md" <<'EOF'
 ## [0.1.0] - 2026-08-01
 EOF
 
+# shellcheck source=scripts/release/tests/toolchain-fixture.sh
+source "$script_dir/tests/toolchain-fixture.sh"
+
 cat >"$fake_bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == --version ]]; then
+  printf 'cargo %s\n' "$FIXTURE_RUST_PIN"
+  exit 0
+fi
 if [[ "${1:-}" == "metadata" ]]; then
   printf '%s\n' '{"packages":[{"source":null,"version":"0.1.0"}]}'
   exit 0

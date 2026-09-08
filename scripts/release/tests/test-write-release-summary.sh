@@ -11,9 +11,16 @@ artifact_dir="$fixture_dir/artifacts"
 summary_file="$fixture_dir/summary.md"
 mkdir -p "$fake_bin" "$artifact_dir"
 
+# shellcheck source=scripts/release/tests/toolchain-fixture.sh
+source "$script_dir/tests/toolchain-fixture.sh"
+
 cat >"$fake_bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == --version ]]; then
+  printf 'cargo %s\n' "$FIXTURE_RUST_PIN"
+  exit 0
+fi
 [[ "${1:-}" == metadata ]] || exit 2
 cat <<'JSON'
 {"workspace_members":["app 0.1.0","cli 0.1.0"],"packages":[{"id":"app 0.1.0","name":"gitserious-app","version":"0.1.0","source":null,"publish":null},{"id":"cli 0.1.0","name":"gitserious","version":"0.1.0","source":null,"publish":null}],"resolve":{"nodes":[{"id":"app 0.1.0","dependencies":[],"deps":[]},{"id":"cli 0.1.0","dependencies":["app 0.1.0"],"deps":[{"pkg":"app 0.1.0"}]}]}}
