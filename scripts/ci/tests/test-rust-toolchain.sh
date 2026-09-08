@@ -37,6 +37,18 @@ if (export CARGO="$fixture/hostile/cargo"; require_pinned_toolchain); then
   echo 'Accepted mismatched override' >&2; exit 1
 fi
 (export CARGO="$fixture/tools/cargo"; require_pinned_toolchain)
+mkdir -p "$fixture/repo/scripts/dev" "$fixture/repo/scripts/ci"
+cp -R "$root/scripts/dev/justfile" "$fixture/repo/scripts/dev/"
+cp "$root/scripts/ci/run-rust-quality.sh" "$root/scripts/ci/run-dependency-security.sh" "$fixture/repo/scripts/ci/"
+git -C "$fixture/repo" init -q
+touch "$fixture/repo/Cargo.lock"
+for entry in dev/justfile/cargo.sh ci/run-rust-quality.sh ci/run-dependency-security.sh; do
+  if (cd "$fixture/repo"; export CARGO="$fixture/hostile/cargo"; bash "scripts/$entry" check); then
+    echo "Entry point skipped guard: $entry" >&2; exit 1
+  fi
+done
+(cd "$fixture/repo"; bash scripts/dev/justfile/cargo.sh build)
+(cd "$fixture/repo"; bash scripts/ci/run-rust-quality.sh lint)
 mv "$fixture/tools/rustc" "$fixture/tools/original"
 cp "$fixture/hostile/cargo" "$fixture/tools/rustc"
 if (require_pinned_toolchain); then exit 1; fi

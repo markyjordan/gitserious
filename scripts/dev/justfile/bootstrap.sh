@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# shellcheck source=scripts/shared/rust-toolchain.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/shared/rust-toolchain.sh"
+require_pinned_toolchain
+
 REQUIRED_COMMANDS=(
   rustc
   cargo
@@ -22,11 +26,11 @@ for command_name in "${REQUIRED_COMMANDS[@]}"; do
   require_command "${command_name}"
 done
 
-rustc --version
-cargo --version
+"$RUSTC" --version
+"$CARGO" --version
 
 if command -v rustup >/dev/null 2>&1; then
   rustup show active-toolchain
 fi
 
-cargo fetch
+"$CARGO" fetch

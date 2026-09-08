@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck source=scripts/shared/rust-toolchain.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/shared/rust-toolchain.sh"
+require_pinned_toolchain
+
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
@@ -10,26 +14,26 @@ if [[ ! -f Cargo.lock ]]; then
 fi
 
 run_check() {
-  cargo metadata --locked --no-deps --format-version 1 >/dev/null
-  cargo check --locked --workspace --all-targets --all-features
+  "$CARGO" metadata --locked --no-deps --format-version 1 >/dev/null
+  "$CARGO" check --locked --workspace --all-targets --all-features
 }
 
 run_fmt() {
-  cargo fmt --all --check
+  "$CARGO" fmt --all --check
 }
 
 run_lint() {
-  cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+  "$CARGO" clippy --locked --workspace --all-targets --all-features -- -D warnings
 }
 
 run_test() {
-  cargo test --locked --workspace --all-targets --all-features
-  cargo test --locked --workspace --doc
+  "$CARGO" test --locked --workspace --all-targets --all-features
+  "$CARGO" test --locked --workspace --doc
 }
 
 run_release() {
-  cargo build --locked --workspace --all-targets --all-features --release
-  cargo package --locked --workspace --list
+  "$CARGO" build --locked --workspace --all-targets --all-features --release
+  "$CARGO" package --locked --workspace --list
 }
 
 component="${1:-}"

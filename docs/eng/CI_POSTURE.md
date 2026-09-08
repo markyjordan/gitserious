@@ -16,6 +16,10 @@ Arguments embedded in `CARGO` are unsupported. Custom `CARGO_HOME` and
 `RUSTUP_HOME` installations are supported through rustup discovery; no
 toolchain storage layout is assumed.
 
+Developer bootstrap, build/run, Rust quality, and dependency-security scripts
+initialize this guard before invoking Cargo. They consistently use `"$CARGO"`;
+third-party subcommands such as cargo-audit remain discoverable on PATH.
+
 > This document is the source of truth for continuous integration, automation
 > trust, dependency security, and hosted merge/deployment controls. Tracked
 > workflow code describes intended machinery; only a live GitHub settings audit
