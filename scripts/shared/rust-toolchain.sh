@@ -2,8 +2,8 @@
 # Source this file, then call require_pinned_toolchain before Rust operations.
 GITSERIOUS_TOOLCHAIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-require_pinned_toolchain() {
-  local root pin rustup_command compiler tool_dir path_dir override tool version resolved
+read_rust_toolchain_pin() {
+  local root pin
   root="$GITSERIOUS_TOOLCHAIN_ROOT"
   pin="$(awk '
     /^[[:space:]]*\[/ { section = ($0 ~ /^[[:space:]]*\[toolchain\][[:space:]]*(#.*)?$/) }
@@ -20,13 +20,11 @@ require_pinned_toolchain() {
     echo "error: expected one exact Rust version in $root/rust-toolchain.toml" >&2
     return 1
   fi
-  override="${CARGO:-}"
-  if [[ -n "$override" ]]; then
-    override="$(type -P "$override")" || {
-      echo "error: CARGO must name one executable" >&2; return 1;
-    }
-    override="$(cd "$(dirname "$override")" && pwd)/$(basename "$override")"
-  fi
+  printf '%s\n' "$pin"
+}
+
+find_rustup() {
+  local rustup_command
   if [[ -n "${CARGO_HOME:-}" && -x "$CARGO_HOME/bin/rustup" ]]; then
     rustup_command="$CARGO_HOME/bin/rustup"
   elif rustup_command="$(type -P rustup)"; then
@@ -37,6 +35,20 @@ require_pinned_toolchain() {
     echo "error: install rustup or expose it through CARGO_HOME/bin or PATH" >&2
     return 1
   fi
+  printf '%s\n' "$rustup_command"
+}
+
+require_pinned_toolchain() {
+  local pin rustup_command compiler tool_dir path_dir override tool version resolved
+  pin="$(read_rust_toolchain_pin)" || return 1
+  override="${CARGO:-}"
+  if [[ -n "$override" ]]; then
+    override="$(type -P "$override")" || {
+      echo "error: CARGO must name one executable" >&2; return 1;
+    }
+    override="$(cd "$(dirname "$override")" && pwd)/$(basename "$override")"
+  fi
+  rustup_command="$(find_rustup)" || return 1
   compiler="$("$rustup_command" which --toolchain "$pin" rustc)" || {
     echo "error: install the pinned toolchain with rustup toolchain install $pin --component clippy --component rustfmt" >&2
     return 1
