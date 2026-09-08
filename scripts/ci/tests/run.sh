@@ -4,6 +4,7 @@ set -euo pipefail
 test_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 fixtures=(
+  test-rust-toolchain.sh
   test-maintainer-registry.sh
   test-maintainer-signatures.sh
   test-report-trusted-automation-status.sh

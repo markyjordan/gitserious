@@ -1,5 +1,30 @@
 # Gitserious CI/CD Posture
 
+## Shared Rust toolchain selection
+
+`scripts/shared/rust-toolchain.sh` exposes `require_pinned_toolchain` for
+scripts to call before Rust operations. It reads the repository's exact pin
+relative to its own location, resolves installed tools through rustup, and
+checks Cargo and rustc versions. The selected tool directory precedes PATH
+so Clippy and rustfmt cannot fall through to another installation. Selection
+persists across directory changes through explicit tool paths and
+`RUSTUP_TOOLCHAIN`. Missing tools produce setup errors without installation.
+
+`CARGO` may name one executable, including a path containing spaces. It is
+resolved before PATH changes and must report the pinned Cargo version.
+Arguments embedded in `CARGO` are unsupported. Custom `CARGO_HOME` and
+`RUSTUP_HOME` installations are supported through rustup discovery; no
+toolchain storage layout is assumed.
+
+Developer bootstrap, build/run, Rust quality, and dependency-security scripts
+initialize this guard before invoking Cargo. They consistently use `"$CARGO"`;
+third-party subcommands such as cargo-audit remain discoverable on PATH.
+
+Release metadata, packaging, native builds, publication, and summaries use
+the same guard and executable override. Early validation and skipped publish
+paths retain their existing behavior. Release fixtures supply isolated fake
+toolchains and version-validated Cargo executables, with no guard bypass.
+
 > This document is the source of truth for continuous integration, automation
 > trust, dependency security, and hosted merge/deployment controls. Tracked
 > workflow code describes intended machinery; only a live GitHub settings audit

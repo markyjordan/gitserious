@@ -46,7 +46,11 @@ fi
 metadata_file="$(mktemp)"
 target_file="$(mktemp)"
 trap 'rm -f "$metadata_file" "$target_file"' EXIT
-cargo metadata --locked --no-deps --format-version 1 >"$metadata_file"
+# shellcheck source=scripts/shared/rust-toolchain.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/shared/rust-toolchain.sh"
+require_pinned_toolchain
+
+"$CARGO" metadata --locked --no-deps --format-version 1 >"$metadata_file"
 version="$($python_command - "$metadata_file" <<'PY'
 import json
 import sys
@@ -135,7 +139,7 @@ PY
 done
 
 cp CHANGELOG.md "$artifact_dir/CHANGELOG.md"
-cargo package --locked --workspace --list >"$artifact_dir/package-files.txt"
+"$CARGO" package --locked --workspace --list >"$artifact_dir/package-files.txt"
 
 awk -v heading="## [${version}]" '
   index($0, heading) == 1 { capture = 1 }

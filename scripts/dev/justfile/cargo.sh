@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# shellcheck source=scripts/shared/rust-toolchain.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/shared/rust-toolchain.sh"
+require_pinned_toolchain
+
 readonly CARGO_RECIPE="${1:-}"
 
 if [[ -z "${CARGO_RECIPE}" ]]; then
@@ -13,10 +17,10 @@ shift
 
 case "${CARGO_RECIPE}" in
   build)
-    cargo build --locked --workspace "$@"
+    "$CARGO" build --locked --workspace "$@"
     ;;
   run)
-    cargo run --locked --package gitserious --bin gitserious -- "$@"
+    "$CARGO" run --locked --package gitserious --bin gitserious -- "$@"
     ;;
   *)
     echo "error: unsupported Cargo recipe \`${CARGO_RECIPE}\`" >&2

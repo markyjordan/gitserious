@@ -4,7 +4,6 @@ set -euo pipefail
 target="${TARGET:?TARGET is required}"
 archive_format="${ARCHIVE_FORMAT:-tar.gz}"
 output_dir="${OUTPUT_DIR:-target/release-binaries}"
-cargo_command="${CARGO:-cargo}"
 
 case "$archive_format" in
   tar.gz | zip) ;;
@@ -45,7 +44,11 @@ if [[ -z "$python_command" ]]; then
   fi
 fi
 
-"$cargo_command" build --locked --package gitserious --bin gitserious --release --target "$target"
+# shellcheck source=scripts/shared/rust-toolchain.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/shared/rust-toolchain.sh"
+require_pinned_toolchain
+
+"$CARGO" build --locked --package gitserious --bin gitserious --release --target "$target"
 
 binary="target/${target}/release/gitserious${binary_suffix}"
 [[ -f "$binary" ]] || {

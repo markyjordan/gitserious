@@ -11,9 +11,16 @@ repo="$fixture_dir/repo"
 binary_dir="$repo/native"
 mkdir -p "$fake_bin" "$repo" "$binary_dir"
 
+# shellcheck source=scripts/release/tests/toolchain-fixture.sh
+source "$script_dir/tests/toolchain-fixture.sh"
+
 cat >"$fake_bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == --version ]]; then
+  printf 'cargo %s\n' "$FIXTURE_RUST_PIN"
+  exit 0
+fi
 case "${1:-}" in
   metadata)
     printf '%s\n' '{"workspace_members":["gitserious 0.1.0"],"packages":[{"id":"gitserious 0.1.0","version":"0.1.0","source":null}]}'

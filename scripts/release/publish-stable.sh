@@ -78,7 +78,11 @@ fi
 metadata_file="$(mktemp)"
 package_order_file="$(mktemp)"
 trap 'rm -f "$metadata_file" "$package_order_file"' EXIT
-cargo metadata --locked --format-version 1 >"$metadata_file"
+# shellcheck source=scripts/shared/rust-toolchain.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/shared/rust-toolchain.sh"
+require_pinned_toolchain
+
+"$CARGO" metadata --locked --format-version 1 >"$metadata_file"
 python3 "$script_dir/list-publishable-packages.py" "$metadata_file" >"$package_order_file"
 
 if [[ ! -s "$package_order_file" ]]; then
@@ -89,7 +93,7 @@ fi
 package_is_indexed() {
   local package="$1"
   local version="$2"
-  cargo info "${package}@${version}" >/dev/null 2>&1
+  "$CARGO" info "${package}@${version}" >/dev/null 2>&1
 }
 
 verify_indexed_package() {
@@ -99,7 +103,7 @@ verify_indexed_package() {
   local local_checksum
   local registry_checksum
 
-  cargo package --locked --no-verify -p "$package" >/dev/null
+  "$CARGO" package --locked --no-verify -p "$package" >/dev/null
   [[ -f "$crate_file" ]] || {
     echo "Expected packaged crate at ${crate_file}." >&2
     return 1
@@ -147,9 +151,9 @@ while IFS=$'\t' read -r package version; do
   fi
 
   echo "Dry-running ${package} ${version}."
-  cargo publish --locked --dry-run -p "$package"
+  "$CARGO" publish --locked --dry-run -p "$package"
   echo "Publishing ${package} ${version}."
-  cargo publish --locked -p "$package"
+  "$CARGO" publish --locked -p "$package"
   wait_for_package "$package" "$version"
   verify_indexed_package "$package" "$version"
 done <"$package_order_file"
