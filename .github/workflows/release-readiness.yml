@@ -66,10 +66,9 @@ jobs:
         run: bash scripts/release/validate-release-readiness.sh
 
       - name: Set up Rust toolchain for manual readiness
+        shell: bash
         if: github.event_name == 'workflow_dispatch'
-        run: |
-          rustup toolchain install --no-self-update
-          rustup show
+        run: bash scripts/shared/setup-rust-toolchain.sh
 
       - name: Run full manual release readiness
         if: github.event_name == 'workflow_dispatch'

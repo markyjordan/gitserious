@@ -23,6 +23,13 @@ export PATH="$fixture/hostile:$PATH"
 unset CARGO
 # shellcheck source=scripts/shared/rust-toolchain.sh
 source "$fixture/repo/scripts/shared/rust-toolchain.sh"
+mv "$fixture/tools" "$fixture/uninstalled"
+(
+  cd /
+  [[ "$(read_rust_toolchain_pin)" == 9.8.7 ]]
+  [[ "$(find_rustup)" == "$fixture/custom cargo/bin/rustup" ]]
+)
+mv "$fixture/uninstalled" "$fixture/tools"
 (
   cd /
   export RUSTUP_TOOLCHAIN=stable RUSTC=/missing

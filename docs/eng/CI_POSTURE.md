@@ -2,6 +2,18 @@
 
 ## Shared Rust toolchain selection
 
+`bash scripts/shared/setup-rust-toolchain.sh [--target <triple>]` explicitly
+installs the repository pin with the minimal profile, Clippy, and rustfmt,
+without updating rustup itself. Optional targets are installed against that
+same pin. Installation failures stop setup; successful installation is
+validated with the shared guard and reports resolved Cargo/rustc versions.
+The runtime guard remains validation-only.
+
+All ten hosted Rust setup blocks call this entrypoint using Bash. Native
+release builds forward their matrix target explicitly. Downstream scripts
+retain their guards: setup-step shell exports do not persist between Actions
+steps. Workflow contract fixtures enforce shared setup and target forwarding.
+
 `scripts/shared/rust-toolchain.sh` exposes `require_pinned_toolchain` for
 scripts to call before Rust operations. It reads the repository's exact pin
 relative to its own location, resolves installed tools through rustup, and

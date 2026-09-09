@@ -27,7 +27,7 @@ jobs:
 
       - name: Set up Rust toolchain
         shell: bash
-        run: rustup toolchain install --no-self-update
+        run: bash scripts/shared/setup-rust-toolchain.sh
 
       - name: Test Rust workspace
         shell: bash
