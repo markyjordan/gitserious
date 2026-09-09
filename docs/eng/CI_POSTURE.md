@@ -2,6 +2,10 @@
 
 ## Shared Rust toolchain selection
 
+`just bootstrap` requires rustup, explicitly installs the repository toolchain,
+then selects it in the bootstrap process and fetches dependencies with
+`--locked` from the repository root. Setup and version failures stop the fetch.
+
 `bash scripts/shared/setup-rust-toolchain.sh [--target <triple>]` explicitly
 installs the repository pin with the minimal profile, Clippy, and rustfmt,
 without updating rustup itself. Optional targets are installed against that
