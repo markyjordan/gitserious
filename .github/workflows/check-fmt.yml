@@ -19,7 +19,8 @@ jobs:
           persist-credentials: false
 
       - name: Set up Rust toolchain
-        run: rustup toolchain install --no-self-update
+        shell: bash
+        run: bash scripts/shared/setup-rust-toolchain.sh
 
       - name: Check Rust formatting
         run: bash scripts/ci/run-rust-quality.sh fmt

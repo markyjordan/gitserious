@@ -55,7 +55,8 @@ jobs:
           persist-credentials: false
 
       - name: Set up Rust toolchain
-        run: rustup toolchain install --no-self-update
+        shell: bash
+        run: bash scripts/shared/setup-rust-toolchain.sh
 
       - name: Install pinned cargo-audit binary
         run: |

@@ -89,9 +89,8 @@ jobs:
           ref: ${{ needs.validate.outputs.checkout_ref }}
 
       - name: Set up locked Rust toolchain
-        run: |
-          rustup toolchain install --no-self-update
-          rustup show
+        shell: bash
+        run: bash scripts/shared/setup-rust-toolchain.sh
 
       - name: Run complete release readiness
         env:
@@ -252,7 +251,8 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
 
       - name: Set up locked Rust toolchain
-        run: rustup toolchain install --no-self-update
+        shell: bash
+        run: bash scripts/shared/setup-rust-toolchain.sh
 
       # actions/download-artifact@v8
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c

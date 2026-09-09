@@ -44,10 +44,7 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
-        run: |
-          rustup toolchain install --no-self-update
-          rustup target add "$TARGET"
-          rustup show
+        run: bash scripts/shared/setup-rust-toolchain.sh --target "$TARGET"
 
       - name: Build, execute, and package native binary
         shell: bash
