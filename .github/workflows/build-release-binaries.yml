@@ -9,7 +9,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: read # why: Read repository source and metadata required by this workflow.
 
 defaults:
   run:
@@ -41,6 +41,7 @@ jobs:
       # actions/checkout@v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 1
           persist-credentials: false
           ref: ${{ inputs.release-ref }}
 

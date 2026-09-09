@@ -9,7 +9,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: read # why: Read repository source and metadata required by this workflow.
 
 concurrency:
   group: prepare-release-${{ inputs['version-family'] }}
@@ -24,7 +24,7 @@ jobs:
     name: prepare-release
     environment: release-branch-management
     permissions:
-      contents: write
+      contents: write # why: Create the release preparation branch.
     runs-on: ubuntu-24.04
     timeout-minutes: 10
 

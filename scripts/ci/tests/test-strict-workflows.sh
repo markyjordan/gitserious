@@ -13,6 +13,16 @@ for path in (pathlib.Path(sys.argv[1]) / '.github/workflows').glob('*.yml'):
         assert shell == 'bash', (path, shell)
     for match in re.finditer(r'^        run: (.*)\n(.*)', text, re.M):
         assert match[1] == '|' and match[2] == '          set -euo pipefail', path
+    for step in re.split(r'(?m)^      - ', text)[1:]:
+        if 'uses: actions/checkout@' in step:
+            assert re.search(r'^          fetch-depth: [012]$', step, re.M), path
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if re.match(r'^\s+(contents|issues|pull-requests|statuses|attestations|id-token): (read|write)\b', line):
+            assert '# why:' in line, (path, line)
+    if path.name == 'trusted-automation-review.yml':
+        assert 'statuses: write' not in text.split('jobs:', 1)[0]
+        assert '      statuses: write' in text
 PY
 fixture="$(mktemp -d)"
 trap 'rm -rf "$fixture"' EXIT

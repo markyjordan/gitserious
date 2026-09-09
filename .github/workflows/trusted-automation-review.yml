@@ -25,10 +25,9 @@ on:
       - deleted
 
 permissions:
-  contents: read
-  issues: read
-  pull-requests: read
-  statuses: write
+  contents: read # why: Read repository source and metadata required by this workflow.
+  issues: read # why: Read human approval comments on the pull request.
+  pull-requests: read # why: Read pull request identity and review evidence.
 
 concurrency:
   group: trusted-automation-review-${{ github.event.pull_request.number || github.event.issue.number }}
@@ -40,6 +39,11 @@ defaults:
 
 jobs:
   trusted-automation-review:
+    permissions:
+      contents: read # why: Read repository source and metadata required by this workflow.
+      issues: read # why: Read human approval comments on the pull request.
+      pull-requests: read # why: Read pull request identity and review evidence.
+      statuses: write # why: Report the trust decision on the reviewed commit.
     name: trusted-automation-review
     if: >-
       github.repository == 'markyjordan/gitserious' &&

@@ -15,7 +15,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: read # why: Read repository source and metadata required by this workflow.
 
 concurrency:
   group: release-readiness-${{ github.event.pull_request.number || github.ref }}

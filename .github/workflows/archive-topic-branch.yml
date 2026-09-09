@@ -14,8 +14,8 @@ on:
         type: string
 
 permissions:
-  contents: read
-  pull-requests: read
+  contents: read # why: Read repository source and metadata required by this workflow.
+  pull-requests: read # why: Read the pull request selected for archival.
 
 concurrency:
   group: archive-topic-branch-${{ inputs['pr-number'] }}

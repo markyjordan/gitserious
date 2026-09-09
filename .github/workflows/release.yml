@@ -21,7 +21,7 @@ on:
           - publish
 
 permissions:
-  contents: read
+  contents: read # why: Read repository source and metadata required by this workflow.
 
 concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}
@@ -195,9 +195,9 @@ jobs:
       - assemble
     environment: release-candidate
     permissions:
-      attestations: write
-      contents: write
-      id-token: write
+      attestations: write # why: Publish provenance for the verified release bundle.
+      contents: write # why: Publish release assets and release metadata.
+      id-token: write # why: Obtain OIDC identity for release provenance signing.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -260,9 +260,9 @@ jobs:
       - assemble
     environment: crates-io-release
     permissions:
-      attestations: write
-      contents: write
-      id-token: write
+      attestations: write # why: Publish provenance for the verified release bundle.
+      contents: write # why: Publish release assets and release metadata.
+      id-token: write # why: Obtain OIDC identity for release provenance signing.
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     env:
@@ -331,8 +331,8 @@ jobs:
       - validate
       - publish-stable
     permissions:
-      attestations: read
-      contents: read
+      attestations: read # why: Verify provenance before the Homebrew handoff.
+      contents: read # why: Read repository source and metadata required by this workflow.
     uses: ./.github/workflows/update-homebrew-tap.yml
     with:
       tag: ${{ needs.validate.outputs.release_tag }}

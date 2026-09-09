@@ -19,8 +19,8 @@ on:
         type: string
 
 permissions:
-  attestations: read
-  contents: read
+  attestations: read # why: Verify provenance before the Homebrew handoff.
+  contents: read # why: Read repository source and metadata required by this workflow.
 
 concurrency:
   group: homebrew-tap-${{ inputs.tag }}

@@ -2,6 +2,15 @@
 
 ## Shared Rust toolchain selection
 
+Status-write permission is confined to the trust-reporting job. Permission
+grants carry purpose comments, and every checkout states its history depth;
+existing full-history and two-commit policy checkouts retain their depth.
+
+Self-repository `$/` conversion is deferred: actionlint 1.7.12, currently the
+latest release, rejects that syntax. Keep `./` references and medium zizmor
+thresholds until a compatible actionlint release is adopted; do not suppress
+workflow validation to enable the conversion.
+
 Workflow run steps use Bash and begin with `set -euo pipefail`, including
 single-script invocations. Contract fixtures enforce the preamble and execute
 the provenance block against manifest, pipeline-input, and artifact failures
