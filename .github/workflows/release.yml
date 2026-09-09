@@ -21,11 +21,15 @@ on:
           - publish
 
 permissions:
-  contents: read
+  contents: read # why: Read repository source and metadata required by this workflow.
 
 concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   validate:
@@ -54,14 +58,18 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
 
       - name: Exercise release request fixtures
-        run: bash scripts/release/tests/test-validate-release-request.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/tests/test-validate-release-request.sh
 
       - name: Validate release request
         id: release
         env:
           EVENT_NAME: ${{ github.event_name }}
           RELEASE_REF: ${{ github.ref }}
-        run: bash scripts/release/validate-release-request.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/validate-release-request.sh
 
       # The verifier and maintainer registry come from the protected default
       # branch checkout above. No tagged source has been checked out or run yet.
@@ -71,7 +79,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
-        run: bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"
+        run: |
+          set -euo pipefail
+          bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"
 
   release-check:
     name: release-check
@@ -90,14 +100,18 @@ jobs:
 
       - name: Set up locked Rust toolchain
         shell: bash
-        run: bash scripts/shared/setup-rust-toolchain.sh
+        run: |
+          set -euo pipefail
+          bash scripts/shared/setup-rust-toolchain.sh
 
       - name: Run complete release readiness
         env:
           RELEASE_MODE: ${{ needs.validate.outputs.release_mode }}
           RELEASE_REF: ${{ needs.validate.outputs.source_ref }}
           RELEASE_TAG: ${{ needs.validate.outputs.readiness_tag }}
-        run: bash scripts/release/check-release.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/check-release.sh
 
   native-binaries:
     name: native-four
@@ -137,24 +151,32 @@ jobs:
           merge-multiple: true
 
       - name: Exercise bundle assembly fixtures
-        run: bash scripts/release/tests/test-build-artifacts.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/tests/test-build-artifacts.sh
 
       - name: Assemble final release bundle
         env:
           ARTIFACT_DIR: target/release-artifacts
           BINARY_ARTIFACT_DIR: target/release-binaries
-        run: bash scripts/release/build-artifacts.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/build-artifacts.sh
 
       - name: Verify assembled release bundle
         env:
           ARTIFACT_DIR: target/release-artifacts
-        run: bash scripts/release/verify-release-bundle.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/verify-release-bundle.sh
 
       - name: Summarize release authorization state
         env:
           ARTIFACT_DIR: target/release-artifacts
           RELEASE_SOURCE_REF: ${{ needs.validate.outputs.checkout_ref }}
-        run: bash scripts/release/write-release-summary.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/write-release-summary.sh
 
       # actions/upload-artifact@v7.0.1
       - name: Upload release bundle
@@ -173,9 +195,9 @@ jobs:
       - assemble
     environment: release-candidate
     permissions:
-      attestations: write
-      contents: write
-      id-token: write
+      attestations: write # why: Publish provenance for the verified release bundle.
+      contents: write # why: Publish release assets and release metadata.
+      id-token: write # why: Obtain OIDC identity for release provenance signing.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -197,13 +219,17 @@ jobs:
           path: target/release-artifacts
 
       - name: Exercise release-candidate publication fixtures
-        run: bash scripts/release/tests/test-publish-release-candidate.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/tests/test-publish-release-candidate.sh
 
       - name: Verify release-candidate bundle
         id: verify-release-candidate
         env:
           ARTIFACT_DIR: target/release-artifacts
-        run: bash scripts/release/verify-release-bundle.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/verify-release-bundle.sh
 
       # actions/attest@v4.2.2
       - name: Attest release artifacts
@@ -222,7 +248,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: bash scripts/release/publish-release-candidate.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/publish-release-candidate.sh
 
   publish-stable:
     name: publish-stable
@@ -232,9 +260,9 @@ jobs:
       - assemble
     environment: crates-io-release
     permissions:
-      attestations: write
-      contents: write
-      id-token: write
+      attestations: write # why: Publish provenance for the verified release bundle.
+      contents: write # why: Publish release assets and release metadata.
+      id-token: write # why: Obtain OIDC identity for release provenance signing.
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     env:
@@ -252,7 +280,9 @@ jobs:
 
       - name: Set up locked Rust toolchain
         shell: bash
-        run: bash scripts/shared/setup-rust-toolchain.sh
+        run: |
+          set -euo pipefail
+          bash scripts/shared/setup-rust-toolchain.sh
 
       # actions/download-artifact@v8
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -261,13 +291,17 @@ jobs:
           path: target/release-artifacts
 
       - name: Exercise stable publication fixtures
-        run: bash scripts/release/tests/test-publish-stable.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/tests/test-publish-stable.sh
 
       - name: Verify stable release bundle
         id: verify-stable
         env:
           ARTIFACT_DIR: target/release-artifacts
-        run: bash scripts/release/verify-release-bundle.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/verify-release-bundle.sh
 
       # actions/attest@v4.2.2
       - name: Attest release artifacts
@@ -286,7 +320,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: bash scripts/release/publish-stable.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/publish-stable.sh
 
   update-homebrew-tap:
     name: update-homebrew-tap
@@ -295,8 +331,8 @@ jobs:
       - validate
       - publish-stable
     permissions:
-      attestations: read
-      contents: read
+      attestations: read # why: Verify provenance before the Homebrew handoff.
+      contents: read # why: Read repository source and metadata required by this workflow.
     uses: ./.github/workflows/update-homebrew-tap.yml
     with:
       tag: ${{ needs.validate.outputs.release_tag }}

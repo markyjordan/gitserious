@@ -13,7 +13,7 @@ expected = {
     'dependency-security.yml': 1, 'release-readiness.yml': 1,
     'release.yml': 2, 'test.yml': 1,
 }
-command = 'run: bash scripts/shared/setup-rust-toolchain.sh'
+command = 'bash scripts/shared/setup-rust-toolchain.sh'
 for name, count in expected.items():
     text = (workflows / name).read_text()
     steps = re.split(r'(?m)^      - ', text)[1:]
@@ -21,12 +21,13 @@ for name, count in expected.items():
     assert len(setups) == count, (name, 'missing setup blocks')
     for step in setups:
         assert '        shell: bash' in step, (name, 'setup must use Bash')
-        run = next(line.strip() for line in step.splitlines() if line.strip().startswith('run:'))
+        run = next(line.strip() for line in step.splitlines() if 'bash scripts/shared/setup-rust-toolchain.sh' in line)
         suffix = ' --target "$TARGET"' if name == 'build-release-binaries.yml' else ''
         assert run == command + suffix, (name, run)
     if name == 'build-release-binaries.yml':
         assert 'TARGET: ${{ matrix.target }}' in setups[0]
 for path in workflows.glob('*.yml'):
+    assert not re.search(r'\b(?:ubuntu|macos|windows)-latest\b', path.read_text()), path
     assert not re.search(r'rustup\s+(toolchain\s+install|target\s+add|show)', path.read_text()), path
 print('Rust setup workflow contracts passed.')
 PY

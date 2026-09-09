@@ -20,6 +20,16 @@ case "$1 $2" in
       printf '#!/usr/bin/env bash\necho "%s %s"\n' "$tool" "$EXPECTED_PIN" >"$FIXTURE/tools/$tool"
     done
     chmod +x "$FIXTURE/tools/"*
+    cat >"$FIXTURE/tools/cargo" <<'CARGO'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == --version ]]; then
+  echo "cargo $EXPECTED_PIN"
+else
+  [[ "$*" == 'fetch --locked' && "$PWD" == "$FIXTURE/repo" ]]
+  echo fetched >>"$FIXTURE/fetch-log"
+fi
+CARGO
     ;;
   'target add')
     [[ "$*" == "target add --toolchain $EXPECTED_PIN x86_64-unknown-linux-gnu" ]]
@@ -61,3 +71,22 @@ done
 if bash "$setup" --target '--bad' >/dev/null 2>&1; then exit 1; fi
 [[ ! -s "$fixture/log" ]]
 echo 'Explicit toolchain setup fixtures passed.'
+
+mkdir -p "$fixture/repo/scripts/dev/justfile" "$fixture/isolated" "$fixture/empty-home"
+cp "$root/scripts/dev/justfile/bootstrap.sh" "$fixture/repo/scripts/dev/justfile/"
+bootstrap="$fixture/repo/scripts/dev/justfile/bootstrap.sh"
+(cd /; bash "$bootstrap") >/dev/null
+[[ "$(cat "$fixture/fetch-log")" == fetched ]]
+for failure in FAIL_INSTALL FAIL_VALIDATE; do
+  if env "$failure=1" bash "$bootstrap" >/dev/null 2>&1; then exit 1; fi
+done
+if env CARGO="$fixture/tools/rustc" bash "$bootstrap" >"$fixture/error" 2>&1; then exit 1; fi
+grep -q 'expected cargo' "$fixture/error"
+for tool in bash dirname awk; do
+  ln -s "$(command -v "$tool")" "$fixture/isolated/$tool"
+done
+if env -i PATH="$fixture/isolated" HOME="$fixture/empty-home" \
+  CARGO_HOME="$fixture/empty-home/cargo" bash "$bootstrap" >"$fixture/error" 2>&1; then exit 1; fi
+grep -q 'install rustup' "$fixture/error"
+[[ "$(cat "$fixture/fetch-log")" == fetched ]]
+echo 'Bootstrap fixtures passed.'

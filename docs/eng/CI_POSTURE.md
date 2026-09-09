@@ -2,6 +2,52 @@
 
 ## Shared Rust toolchain selection
 
+### Analyzer parity
+
+The authoritative analyzer is zizmor **1.30.0**, separately from the pinned
+zizmor-action **v0.6.4** (`cc914d7f3750a2d13d75c7f184a1060aa0e9d482`). The
+previous action v0.6.2 only mapped versions through 1.29.0; v0.6.4 includes
+the 1.30.0 container digest. Local verification uses
+`bash scripts/ci/run-zizmor.sh` with `GH_TOKEN` or `GITHUB_TOKEN` supplied by
+the caller. It rejects other analyzer versions and runs authenticated audits
+with the hosted pedantic persona and medium confidence/severity thresholds.
+`--offline` is explicitly partial verification, never evidence of online parity.
+
+Authenticated 1.29.0/1.30.0 comparison on the same pre-upgrade revision
+`82bcd83cefd5f484bbcbf59463ae2c44a1138179` found no medium-or-higher findings;
+1.30.0 added only the ten low-severity self-repository findings deferred for
+actionlint compatibility. Shared low-severity reference/comment findings
+were reviewed separately; permission rationale is now attached inline so
+the analyzer recognizes it. Keep low-severity enforcement deferred until
+hosted medium-threshold runs have passed and the remaining findings are reviewed.
+
+Status-write permission is confined to the trust-reporting job. Permission
+grants carry purpose comments, and every checkout states its history depth;
+existing full-history and two-commit policy checkouts retain their depth.
+
+Self-repository `$/` conversion is deferred: actionlint 1.7.12, currently the
+latest release, rejects that syntax. Keep `./` references and medium zizmor
+thresholds until a compatible actionlint release is adopted; do not suppress
+workflow validation to enable the conversion.
+
+Workflow run steps use Bash and begin with `set -euo pipefail`, including
+single-script invocations. Contract fixtures enforce the preamble and execute
+the provenance block against manifest, pipeline-input, and artifact failures
+to ensure none can reach downstream release work.
+
+Check/test matrices select Ubuntu 24.04, macOS 15, and Windows 2025 explicitly.
+These labels pin OS generations, not immutable images: GitHub continues to
+update installed packages within each generation. Contract fixtures reject
+floating `*-latest` OS labels.
+
+Automation entrypoints identify missing actionlint, ShellCheck, and cargo-audit
+on stderr with the workflow containing the required version. Installed-tool
+failures still propagate as failures rather than missing-prerequisite messages.
+
+`just bootstrap` requires rustup, explicitly installs the repository toolchain,
+then selects it in the bootstrap process and fetches dependencies with
+`--locked` from the repository root. Setup and version failures stop the fetch.
+
 `bash scripts/shared/setup-rust-toolchain.sh [--target <triple>]` explicitly
 installs the repository pin with the minimal profile, Clippy, and rustfmt,
 without updating rustup itself. Optional targets are installed against that
@@ -310,10 +356,9 @@ remain in [`docs/security/DEPENDABOT.md`](../security/DEPENDABOT.md).
 ### zizmor
 
 The repository already uses zizmor's officially recommended GitHub Actions
-integration. `zizmorcore/zizmor-action` v0.6.2 remains pinned at
-`3dc1ecc9bcb9e94e9b2c709687979e1298497054`, and the wrapper selects analyzer
-version 1.29.0. This is not an antiquated `pip`/`uv` installer to retire; the
-wrapper and analyzer are separate versioned layers.
+integration. `zizmorcore/zizmor-action` v0.6.4 is pinned at
+`cc914d7f3750a2d13d75c7f184a1060aa0e9d482`, and the wrapper selects analyzer
+version 1.30.0. The wrapper and analyzer are separate versioned layers.
 
 The hosted scan uses the pedantic persona, all audit collections, online
 audits, medium confidence/severity blocking thresholds, fail-on-no-inputs, and
@@ -480,7 +525,7 @@ environment reviewer configuration.
 Before merging this implementation:
 
 1. run `just ci-fixtures` and every release/archive fixture;
-2. run actionlint 1.7.12, ShellCheck 0.11.0, and zizmor 1.29.0 with the hosted
+2. run actionlint 1.7.12, ShellCheck 0.11.0, and zizmor 1.30.0 with the hosted
    blocking thresholds;
 3. run locked Rust check, format, Clippy, tests, doctests, and release/package
    inspection;

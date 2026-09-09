@@ -4,7 +4,11 @@ on:
   workflow_call:
 
 permissions:
-  contents: read
+  contents: read # why: Read repository source and metadata required by this workflow.
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   actionlint:
@@ -16,6 +20,7 @@ jobs:
       # actions/checkout@v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Install pinned actionlint
@@ -23,6 +28,7 @@ jobs:
           ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
           ACTIONLINT_VERSION: 1.7.12
         run: |
+          set -euo pipefail
           archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
           install_dir="$RUNNER_TEMP/actionlint"
           curl -fsSLo "$RUNNER_TEMP/$archive" \
@@ -33,7 +39,9 @@ jobs:
           printf '%s\n' "$install_dir" >>"$GITHUB_PATH"
 
       - name: Validate workflow syntax and expressions
-        run: bash scripts/ci/run-automation-quality.sh actionlint
+        run: |
+          set -euo pipefail
+          bash scripts/ci/run-automation-quality.sh actionlint
 
   shellcheck:
     name: shellcheck
@@ -44,6 +52,7 @@ jobs:
       # actions/checkout@v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Install pinned ShellCheck
@@ -51,6 +60,7 @@ jobs:
           SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
           SHELLCHECK_VERSION: v0.11.0
         run: |
+          set -euo pipefail
           archive="shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.gz"
           curl -fsSLo "/tmp/$archive" \
             "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/$archive"
@@ -59,7 +69,9 @@ jobs:
           printf '%s\n' "/tmp/shellcheck-${SHELLCHECK_VERSION}" >>"$GITHUB_PATH"
 
       - name: Validate shell scripts
-        run: bash scripts/ci/run-automation-quality.sh shellcheck
+        run: |
+          set -euo pipefail
+          bash scripts/ci/run-automation-quality.sh shellcheck
 
   release-policy-fixtures:
     name: release-policy-fixtures
@@ -70,10 +82,13 @@ jobs:
       # actions/checkout@v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Exercise release policy fixtures
-        run: bash scripts/ci/run-automation-quality.sh release-policy-fixtures
+        run: |
+          set -euo pipefail
+          bash scripts/ci/run-automation-quality.sh release-policy-fixtures
 
   ci-script-fixtures:
     name: ci-script-fixtures
@@ -84,10 +99,13 @@ jobs:
       # actions/checkout@v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Exercise CI script fixtures
-        run: bash scripts/ci/tests/run.sh
+        run: |
+          set -euo pipefail
+          bash scripts/ci/tests/run.sh
 
   zizmor:
     name: zizmor
@@ -98,11 +116,12 @@ jobs:
       # actions/checkout@v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 1
           persist-credentials: false
 
-      # zizmorcore/zizmor-action@v0.6.2
+      # zizmorcore/zizmor-action@v0.6.4; includes the analyzer 1.30.0 image digest.
       - name: Audit GitHub Actions security
-        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482
         with:
           advanced-security: false
           annotations: true
@@ -114,7 +133,7 @@ jobs:
           min-severity: medium
           online-audits: true
           persona: pedantic
-          version: "1.29.0"
+          version: "1.30.0"
 
   automation-quality:
     name: automation-quality
@@ -132,9 +151,12 @@ jobs:
       # actions/checkout@v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Require automation quality evidence
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
-        run: bash scripts/ci/require-job-results.sh
+        run: |
+          set -euo pipefail
+          bash scripts/ci/require-job-results.sh

@@ -59,15 +59,15 @@ done
 grep -F 'actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6' \
   "$release_workflow" >/dev/null
 grep -F 'target/release-artifacts/release-manifest.json' "$release_workflow" >/dev/null
-grep -F 'run: bash scripts/release/write-release-summary.sh' "$release_workflow" >/dev/null
+grep -F '          bash scripts/release/write-release-summary.sh' "$release_workflow" >/dev/null
 
 request_validation_line="$(
-  grep -nF 'run: bash scripts/release/validate-release-request.sh' "$release_workflow" |
+  grep -nF '          bash scripts/release/validate-release-request.sh' "$release_workflow" |
     head -n 1 | cut -d: -f1
 )"
 # shellcheck disable=SC2016
 tag_verification_line="$(
-  grep -nF 'run: bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"' \
+  grep -nF '          bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"' \
     "$release_workflow" | head -n 1 | cut -d: -f1
 )"
 # shellcheck disable=SC2016
@@ -86,7 +86,7 @@ readiness_verifier_line="$(
 )"
 # shellcheck disable=SC2016
 readiness_signature_line="$(
-  grep -nF 'run: bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"' \
+  grep -nF '          bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"' \
     "$repo_root/.github/workflows/release-readiness.yml" | head -n 1 | cut -d: -f1
 )"
 # shellcheck disable=SC2016
@@ -105,7 +105,7 @@ homebrew_policy_line="$(
 )"
 # shellcheck disable=SC2016
 homebrew_signature_line="$(
-  grep -nF 'run: bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"' \
+  grep -nF '          bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"' \
     "$homebrew_workflow" | head -n 1 | cut -d: -f1
 )"
 homebrew_tag_checkout_line="$(
@@ -118,7 +118,7 @@ if ((homebrew_policy_line >= homebrew_signature_line || homebrew_signature_line 
 fi
 
 bundle_verifications="$(
-  grep -Fc 'run: bash scripts/release/verify-release-bundle.sh' "$release_workflow"
+  grep -Fc '          bash scripts/release/verify-release-bundle.sh' "$release_workflow"
 )"
 [[ "$bundle_verifications" == 3 ]] || {
   echo "Release assembly, RC publication, and stable publication must verify the bundle." >&2

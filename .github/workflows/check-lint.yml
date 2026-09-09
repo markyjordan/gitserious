@@ -4,7 +4,11 @@ on:
   workflow_call:
 
 permissions:
-  contents: read
+  contents: read # why: Read repository source and metadata required by this workflow.
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   clippy:
@@ -16,11 +20,16 @@ jobs:
       # actions/checkout@v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Set up Rust toolchain
         shell: bash
-        run: bash scripts/shared/setup-rust-toolchain.sh
+        run: |
+          set -euo pipefail
+          bash scripts/shared/setup-rust-toolchain.sh
 
       - name: Lint Rust workspace
-        run: bash scripts/ci/run-rust-quality.sh lint
+        run: |
+          set -euo pipefail
+          bash scripts/ci/run-rust-quality.sh lint
