@@ -2,6 +2,25 @@
 
 ## Shared Rust toolchain selection
 
+### Analyzer parity
+
+The authoritative analyzer is zizmor **1.30.0**, separately from the pinned
+zizmor-action **v0.6.4** (`cc914d7f3750a2d13d75c7f184a1060aa0e9d482`). The
+previous action v0.6.2 only mapped versions through 1.29.0; v0.6.4 includes
+the 1.30.0 container digest. Local verification uses
+`bash scripts/ci/run-zizmor.sh` with `GH_TOKEN` or `GITHUB_TOKEN` supplied by
+the caller. It rejects other analyzer versions and runs authenticated audits
+with the hosted pedantic persona and medium confidence/severity thresholds.
+`--offline` is explicitly partial verification, never evidence of online parity.
+
+Authenticated 1.29.0/1.30.0 comparison on the same pre-upgrade revision
+`82bcd83cefd5f484bbcbf59463ae2c44a1138179` found no medium-or-higher findings;
+1.30.0 added only the ten low-severity self-repository findings deferred for
+actionlint compatibility. Shared low-severity reference/comment findings
+were reviewed separately; permission rationale is now attached inline so
+the analyzer recognizes it. Keep low-severity enforcement deferred until
+hosted medium-threshold runs have passed and the remaining findings are reviewed.
+
 Status-write permission is confined to the trust-reporting job. Permission
 grants carry purpose comments, and every checkout states its history depth;
 existing full-history and two-commit policy checkouts retain their depth.
@@ -337,10 +356,9 @@ remain in [`docs/security/DEPENDABOT.md`](../security/DEPENDABOT.md).
 ### zizmor
 
 The repository already uses zizmor's officially recommended GitHub Actions
-integration. `zizmorcore/zizmor-action` v0.6.2 remains pinned at
-`3dc1ecc9bcb9e94e9b2c709687979e1298497054`, and the wrapper selects analyzer
-version 1.29.0. This is not an antiquated `pip`/`uv` installer to retire; the
-wrapper and analyzer are separate versioned layers.
+integration. `zizmorcore/zizmor-action` v0.6.4 is pinned at
+`cc914d7f3750a2d13d75c7f184a1060aa0e9d482`, and the wrapper selects analyzer
+version 1.30.0. The wrapper and analyzer are separate versioned layers.
 
 The hosted scan uses the pedantic persona, all audit collections, online
 audits, medium confidence/severity blocking thresholds, fail-on-no-inputs, and
@@ -507,7 +525,7 @@ environment reviewer configuration.
 Before merging this implementation:
 
 1. run `just ci-fixtures` and every release/archive fixture;
-2. run actionlint 1.7.12, ShellCheck 0.11.0, and zizmor 1.29.0 with the hosted
+2. run actionlint 1.7.12, ShellCheck 0.11.0, and zizmor 1.30.0 with the hosted
    blocking thresholds;
 3. run locked Rust check, format, Clippy, tests, doctests, and release/package
    inspection;

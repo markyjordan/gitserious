@@ -4,6 +4,7 @@ set -euo pipefail
 test_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 fixtures=(
+  test-zizmor-runner.sh
   test-strict-workflows.sh
   test-prerequisite-errors.sh
   test-rust-setup-workflows.sh
