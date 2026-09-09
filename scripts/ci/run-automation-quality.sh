@@ -4,13 +4,20 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
+require_tool() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "error: missing $1; install the version pinned in automation-quality.yml and add it to PATH" >&2
+    return 1
+  fi
+}
+
 run_actionlint() {
-  command -v actionlint >/dev/null
+  require_tool actionlint
   actionlint
 }
 
 run_shellcheck() {
-  command -v shellcheck >/dev/null
+  require_tool shellcheck
   find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck
 }
 

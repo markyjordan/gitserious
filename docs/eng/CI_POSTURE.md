@@ -2,6 +2,10 @@
 
 ## Shared Rust toolchain selection
 
+Automation entrypoints identify missing actionlint, ShellCheck, and cargo-audit
+on stderr with the workflow containing the required version. Installed-tool
+failures still propagate as failures rather than missing-prerequisite messages.
+
 `just bootstrap` requires rustup, explicitly installs the repository toolchain,
 then selects it in the bootstrap process and fetches dependencies with
 `--locked` from the repository root. Setup and version failures stop the fetch.
