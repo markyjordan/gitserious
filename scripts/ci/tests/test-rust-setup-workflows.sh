@@ -27,6 +27,7 @@ for name, count in expected.items():
     if name == 'build-release-binaries.yml':
         assert 'TARGET: ${{ matrix.target }}' in setups[0]
 for path in workflows.glob('*.yml'):
+    assert not re.search(r'\b(?:ubuntu|macos|windows)-latest\b', path.read_text()), path
     assert not re.search(r'rustup\s+(toolchain\s+install|target\s+add|show)', path.read_text()), path
 print('Rust setup workflow contracts passed.')
 PY

@@ -2,6 +2,11 @@
 
 ## Shared Rust toolchain selection
 
+Check/test matrices select Ubuntu 24.04, macOS 15, and Windows 2025 explicitly.
+These labels pin OS generations, not immutable images: GitHub continues to
+update installed packages within each generation. Contract fixtures reject
+floating `*-latest` OS labels.
+
 Automation entrypoints identify missing actionlint, ShellCheck, and cargo-audit
 on stderr with the workflow containing the required version. Installed-tool
 failures still propagate as failures rather than missing-prerequisite messages.
