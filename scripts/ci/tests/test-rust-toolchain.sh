@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Each case deliberately isolates environment changes in a subshell.
-# shellcheck disable=SC2030,SC2031
+# Quoted bash -c programs expand inside the isolated child shell.
+# shellcheck disable=SC2030,SC2031,SC2016
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 fixture="$(mktemp -d)"
@@ -18,6 +19,16 @@ for tool in cargo rustc rustdoc cargo-clippy clippy-driver cargo-fmt rustfmt; do
 done
 printf '#!/usr/bin/env bash\necho cargo 9.8.70\n' >"$fixture/hostile/cargo"
 chmod +x "$fixture/custom cargo/bin/rustup" "$fixture/tools/"* "$fixture/hostile/cargo"
+cat >"$fixture/tools/cargo" <<'SH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == clippy ]]; then
+  shift
+  exec cargo-clippy "$@"
+fi
+echo 'cargo 9.8.7 (fixture)'
+SH
+cp "$fixture/hostile/cargo" "$fixture/hostile/rustc"
+cp "$fixture/hostile/cargo" "$fixture/hostile/cargo-clippy"
 export FIXTURE="$fixture" CARGO_HOME="$fixture/custom cargo"
 export PATH="$fixture/hostile:$PATH"
 unset CARGO
@@ -37,6 +48,7 @@ mv "$fixture/uninstalled" "$fixture/tools"
   [[ "$CARGO" == "$fixture/tools/cargo" && "$RUSTC" == "$fixture/tools/rustc" ]]
   [[ "$(command -v cargo-clippy)" == "$fixture/tools/cargo-clippy" ]]
   [[ "$(command -v cargo-fmt)" == "$fixture/tools/cargo-fmt" ]]
+  [[ "$("$CARGO" clippy --version)" == 'cargo-clippy 9.8.7 (fixture)' ]]
   cd "$fixture"
   [[ "$("$CARGO" --version)" == 'cargo 9.8.7 (fixture)' ]]
 )
@@ -81,4 +93,19 @@ if (export CARGO='missing-cargo --flag'; require_pinned_toolchain); then exit 1;
 )
 printf '[toolchain]\nchannel = "9.8.6"\n' >"$fixture/repo/rust-toolchain.toml"
 if (require_pinned_toolchain); then exit 1; fi
+mkdir -p "$fixture/isolated" "$fixture/empty-home" "$fixture/xdg/cargo/bin" "$fixture/empty-home/.cargo/bin"
+for tool in bash dirname awk; do
+  ln -s "$(command -v "$tool")" "$fixture/isolated/$tool"
+done
+helper="$fixture/repo/scripts/shared/rust-toolchain.sh"
+if env -i PATH="$fixture/isolated" HOME="$fixture/empty-home" \
+  bash -c 'source "$1"; find_rustup' bash "$helper" >"$fixture/error" 2>&1; then exit 1; fi
+grep -q 'install rustup' "$fixture/error"
+cp "$fixture/custom cargo/bin/rustup" "$fixture/xdg/cargo/bin/"
+env -i PATH="$fixture/isolated" HOME="$fixture/empty-home" \
+  XDG_DATA_HOME="$fixture/xdg" CARGO_HOME="$fixture/xdg/cargo" \
+  bash -c 'source "$1"; [[ "$(find_rustup)" == "$CARGO_HOME/bin/rustup" ]]' bash "$helper"
+cp "$fixture/custom cargo/bin/rustup" "$fixture/empty-home/.cargo/bin/"
+env -i PATH="$fixture/isolated" HOME="$fixture/empty-home" \
+  bash -c 'source "$1"; [[ "$(find_rustup)" == "$HOME/.cargo/bin/rustup" ]]' bash "$helper"
 echo 'Rust toolchain fixtures passed.'
