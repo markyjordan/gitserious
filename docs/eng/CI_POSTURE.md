@@ -2,6 +2,11 @@
 
 ## Shared Rust toolchain selection
 
+Workflow run steps use Bash and begin with `set -euo pipefail`, including
+single-script invocations. Contract fixtures enforce the preamble and execute
+the provenance block against manifest, pipeline-input, and artifact failures
+to ensure none can reach downstream release work.
+
 Check/test matrices select Ubuntu 24.04, macOS 15, and Windows 2025 explicitly.
 These labels pin OS generations, not immutable images: GitHub continues to
 update installed packages within each generation. Contract fixtures reject

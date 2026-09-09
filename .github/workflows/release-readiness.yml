@@ -21,6 +21,10 @@ concurrency:
   group: release-readiness-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   release-readiness:
     name: release-readiness
@@ -47,7 +51,9 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.tag }}
         working-directory: .trusted-release-verifier
-        run: bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"
+        run: |
+          set -euo pipefail
+          bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"
 
       # actions/checkout@v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -57,22 +63,30 @@ jobs:
           ref: ${{ inputs.tag || github.ref }}
 
       - name: Exercise release validation fixtures
-        run: bash scripts/release/tests/test-check-release.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/tests/test-check-release.sh
 
       - name: Validate promotion readiness without rerunning quality
         if: github.event_name == 'pull_request'
         env:
           RELEASE_REF: ${{ inputs.release-ref }}
-        run: bash scripts/release/validate-release-readiness.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/validate-release-readiness.sh
 
       - name: Set up Rust toolchain for manual readiness
         shell: bash
         if: github.event_name == 'workflow_dispatch'
-        run: bash scripts/shared/setup-rust-toolchain.sh
+        run: |
+          set -euo pipefail
+          bash scripts/shared/setup-rust-toolchain.sh
 
       - name: Run full manual release readiness
         if: github.event_name == 'workflow_dispatch'
         env:
           RELEASE_REF: ${{ github.ref_name }}
           RELEASE_TAG: ${{ inputs.tag }}
-        run: bash scripts/release/check-release.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/check-release.sh

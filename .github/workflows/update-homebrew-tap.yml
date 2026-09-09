@@ -26,6 +26,10 @@ concurrency:
   group: homebrew-tap-${{ inputs.tag }}
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   update-homebrew-tap:
     name: update-homebrew-tap
@@ -48,6 +52,7 @@ jobs:
 
       - name: Reject non-stable handoffs
         run: |
+          set -euo pipefail
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Homebrew handoff accepts only stable vX.Y.Z releases." >&2
             exit 1
@@ -57,7 +62,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"
+        run: |
+          set -euo pipefail
+          bash scripts/ci/verify-maintainer-signature.sh tag "$RELEASE_TAG"
 
       # actions/checkout@v7.0.1
       - name: Check out verified stable source
@@ -71,6 +78,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           mkdir -p target/homebrew-release-assets
           gh release download "$RELEASE_TAG" --repo "$SOURCE_REPOSITORY" \
             --dir target/homebrew-release-assets
@@ -79,6 +87,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           release_metadata="${RUNNER_TEMP}/gitserious-release-metadata.json"
           gh release view "$RELEASE_TAG" --repo "$SOURCE_REPOSITORY" \
             --json isDraft,isPrerelease,tagName,url >"$release_metadata"
@@ -94,6 +103,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           gh attestation verify target/homebrew-release-assets/release-manifest.json \
             --repo "$SOURCE_REPOSITORY"
           jq -r '.targets[].filename, .source_archive.filename' \
@@ -106,10 +116,13 @@ jobs:
       - name: Clone Homebrew tap
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: gh repo clone "$TAP_REPOSITORY" "${RUNNER_TEMP}/homebrew-tap"
+        run: |
+          set -euo pipefail
+          gh repo clone "$TAP_REPOSITORY" "${RUNNER_TEMP}/homebrew-tap"
 
       - name: Exercise formula and handoff fixtures
         run: |
+          set -euo pipefail
           bash scripts/release/tests/test-render-homebrew-formula.sh
           bash scripts/release/tests/test-update-homebrew-tap.sh
 
@@ -119,4 +132,6 @@ jobs:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           MANIFEST_FILE: target/homebrew-release-assets/release-manifest.json
           TAP_DIR: ${{ runner.temp }}/homebrew-tap
-        run: bash scripts/release/update-homebrew-tap.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/update-homebrew-tap.sh

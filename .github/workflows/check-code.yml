@@ -6,6 +6,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   rust:
     name: cargo check (${{ matrix.os }})
@@ -27,8 +31,12 @@ jobs:
 
       - name: Set up Rust toolchain
         shell: bash
-        run: bash scripts/shared/setup-rust-toolchain.sh
+        run: |
+          set -euo pipefail
+          bash scripts/shared/setup-rust-toolchain.sh
 
       - name: Check Rust workspace
         shell: bash
-        run: bash scripts/ci/run-rust-quality.sh check
+        run: |
+          set -euo pipefail
+          bash scripts/ci/run-rust-quality.sh check

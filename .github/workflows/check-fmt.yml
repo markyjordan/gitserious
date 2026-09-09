@@ -6,6 +6,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   rustfmt:
     name: rustfmt
@@ -20,7 +24,11 @@ jobs:
 
       - name: Set up Rust toolchain
         shell: bash
-        run: bash scripts/shared/setup-rust-toolchain.sh
+        run: |
+          set -euo pipefail
+          bash scripts/shared/setup-rust-toolchain.sh
 
       - name: Check Rust formatting
-        run: bash scripts/ci/run-rust-quality.sh fmt
+        run: |
+          set -euo pipefail
+          bash scripts/ci/run-rust-quality.sh fmt

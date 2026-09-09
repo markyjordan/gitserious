@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     name: ${{ matrix.target }}
@@ -44,7 +48,9 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
-        run: bash scripts/shared/setup-rust-toolchain.sh --target "$TARGET"
+        run: |
+          set -euo pipefail
+          bash scripts/shared/setup-rust-toolchain.sh --target "$TARGET"
 
       - name: Build, execute, and package native binary
         shell: bash
@@ -52,7 +58,9 @@ jobs:
           ARCHIVE_FORMAT: ${{ matrix.archive-format }}
           OUTPUT_DIR: target/release-binaries
           TARGET: ${{ matrix.target }}
-        run: bash scripts/release/build-release-binary.sh
+        run: |
+          set -euo pipefail
+          bash scripts/release/build-release-binary.sh
 
       # actions/upload-artifact@v7.0.1
       - name: Upload target archive
@@ -76,6 +84,7 @@ jobs:
         env:
           BUILD_RESULT: ${{ needs.build.result }}
         run: |
+          set -euo pipefail
           if [[ "$BUILD_RESULT" != success ]]; then
             echo "Native release binaries did not all pass: ${BUILD_RESULT}." >&2
             exit 1

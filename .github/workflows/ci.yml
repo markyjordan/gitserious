@@ -19,6 +19,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   ref-policy:
     name: ref-policy
@@ -33,7 +37,9 @@ jobs:
           persist-credentials: false
 
       - name: Exercise accepted and rejected topology fixtures
-        run: bash scripts/ci/tests/test-validate-ref-policy.sh
+        run: |
+          set -euo pipefail
+          bash scripts/ci/tests/test-validate-ref-policy.sh
 
       - name: Validate branch topology
         env:
@@ -45,7 +51,9 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           BEFORE_SHA: ${{ github.event.before }}
           CURRENT_SHA: ${{ github.sha }}
-        run: bash scripts/ci/validate-ref-policy.sh
+        run: |
+          set -euo pipefail
+          bash scripts/ci/validate-ref-policy.sh
 
   check-code:
     needs:
@@ -94,10 +102,14 @@ jobs:
 
       - name: Set up Rust toolchain
         shell: bash
-        run: bash scripts/shared/setup-rust-toolchain.sh
+        run: |
+          set -euo pipefail
+          bash scripts/shared/setup-rust-toolchain.sh
 
       - name: Build and inspect release packages
-        run: bash scripts/ci/run-rust-quality.sh release
+        run: |
+          set -euo pipefail
+          bash scripts/ci/run-rust-quality.sh release
 
   native-binaries:
     name: native-four
@@ -150,4 +162,6 @@ jobs:
       - name: Require every CI component
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
-        run: bash scripts/ci/require-job-results.sh package-inspect native-binaries
+        run: |
+          set -euo pipefail
+          bash scripts/ci/require-job-results.sh package-inspect native-binaries

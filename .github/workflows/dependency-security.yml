@@ -28,6 +28,10 @@ env:
   CARGO_AUDIT_SHA256: ab28a1bdb54db4d5d8ad5981cf1f959410370b3d28250dbd35f6a44248620e39
   CARGO_AUDIT_VERSION: "0.22.2"
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   dependency-review:
     name: dependency-review
@@ -56,10 +60,13 @@ jobs:
 
       - name: Set up Rust toolchain
         shell: bash
-        run: bash scripts/shared/setup-rust-toolchain.sh
+        run: |
+          set -euo pipefail
+          bash scripts/shared/setup-rust-toolchain.sh
 
       - name: Install pinned cargo-audit binary
         run: |
+          set -euo pipefail
           archive="cargo-audit-x86_64-unknown-linux-gnu-v${CARGO_AUDIT_VERSION}.tgz"
           release_dir="cargo-audit-x86_64-unknown-linux-gnu-v${CARGO_AUDIT_VERSION}"
           curl -fsSLo "/tmp/$archive" \
@@ -69,7 +76,9 @@ jobs:
           printf '%s\n' "/tmp/$release_dir" >>"$GITHUB_PATH"
 
       - name: Audit committed dependency graph
-        run: bash scripts/ci/run-dependency-security.sh cargo-audit
+        run: |
+          set -euo pipefail
+          bash scripts/ci/run-dependency-security.sh cargo-audit
 
   dependency-security:
     name: dependency-security
@@ -89,4 +98,6 @@ jobs:
       - name: Require dependency security evidence
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
-        run: bash scripts/ci/require-job-results.sh dependency-review
+        run: |
+          set -euo pipefail
+          bash scripts/ci/require-job-results.sh dependency-review
