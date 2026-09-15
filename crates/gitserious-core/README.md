@@ -1,133 +1,41 @@
 # gitserious-core
 
-This crate is an internal component of `gitserious`.
+This crate owns validated commit-message values, taxonomy aggregates, durable
+property rules, canonical rendering, and built-in authoring definitions. The
+Rust API is internal and unstable; the supported interface is the CLI.
 
-The Rust API exposed here is unstable and may have breaking changes in any
-release. The supported public interface is the `gitserious` command-line tool.
+## Taxonomies
 
-This crate owns the core domain model for Git workflow policy, commit-message
-taxonomies, templates, validation, and canonical message rendering.
+One taxonomy owns its ordered commit types and every type's ordered durable
+properties. Commit types may intentionally define no durable properties.
+Taxonomy identities are immutable, semantic edits advance the taxonomy version,
+and optional fork lineage records only the source snapshot.
 
-## Canonical commit messages
+The built-in taxonomy order is:
 
-Validated drafts render their header and schema-defined properties in schema
-order:
+1. `conventional`
+2. `research`
+3. `infra-ops`
 
-```text
-feat(parser): reject invalid tokens
+All three are available by default, with Conventional selected. The `research`
+and Infra Ops definitions retain the established domain-specific categories and
+property requirements.
 
-intent:
-make parser failures actionable
+## Canonical messages
 
-decision:
-report the invalid token
-preserve its source location
-```
+The Conventional Commit envelope remains `type(scope): subject`, followed by
+schema-ordered property sections and an optional uppercase breaking-change
+footer. Prose wraps to 80 Unicode display columns without splitting grapheme
+clusters unnecessarily.
 
-Each property value begins at column 1. Rendering does not add indentation, so
-any leading whitespace is authored content and is preserved exactly. Blank
-nonrequired properties are omitted, repeatable values retain authored order,
-and every rendered message ends with a newline. Property and breaking-change
-prose wraps at 80 Unicode display columns. Wrapping prefers authored whitespace,
-breaks an overlong token only at grapheme boundaries, and preserves explicit
-authored line breaks. Conventional Commit headers and property labels remain
-structural single lines.
-
-Internal whitespace in a scope is normalized to a single hyphen only when the
-canonical message is rendered. For example, an authored `tui editor` scope is
-reviewed and written as `tui-editor`; the typed draft retains the authored
-scope.
-
-Drafts may also carry an optional breaking-change description. When present,
-the canonical renderer adds `!` immediately before the header colon and emits
-the Conventional Commits footer after the body:
+Taxonomy-aware rendering validates against the exact selected snapshot and
+appends two structural trailers:
 
 ```text
-feat(parser)!: replace the token API
-
-BREAKING CHANGE: callers must use TokenStream
-remove calls to the legacy parser
-```
-
-The first line follows the uppercase footer token, multiline continuation text
-remains unindented, and blank breaking-change fields are omitted entirely.
-
-## Built-in catalog
-
-`built_in_configuration()` exposes ordered `taxonomies()`, `typesets()`, and
-`templates()` collections and identity-based lookups. Typeset lookup includes
-the taxonomy identity. The singular `taxonomy()`, `typeset()`, and `template()`
-accessors continue to identify the original Conventional/default bundle;
-catalog consumers must use the collections to discover all built-ins.
-
-## Explicit property responses
-
-`CommitDraft::from_responses` preserves `PropertyResponse` values and explicit
-conditional applicability, including responses that have no rendered value.
-`validate_commit_draft_report` returns blocking errors and nonblocking
-recommended-property warnings from the shared property validator. Canonical
-rendering revalidates the draft and refuses invalid applicability, unknown
-properties, missing required values, or incorrect multiplicity. Repeatable
-values remain in authored order within schema-ordered properties.
-
-An applicable conditional property requires a value; a not-applicable property
-rejects a value. An omitted conditional decision blocks response-based drafts,
-even if all other responses are complete. `CommitDraft::new` remains the legacy
-constructor for existing adapters and does not require conditional decisions.
-An empty explicit response list still opts into the stricter contract. Adapter
-migration to explicit responses belongs to the subsequent commit/TUI work.
-
-## Schema provenance
-
-`CommitProvenance` owns one immutable `ResolvedTaxonomy` and its semantic
-`Fingerprint`. The application must compute that fingerprint from the exact
-resolved schema. Core does not hash policy or independently verify the digest.
-The fingerprint value is shared with the application's existing public re-export;
-its `sha256:` representation and application-level computation remain unchanged.
-
-`render_commit_message_with_provenance(&provenance, &draft)` selects the draft's
-change type within that schema, validates it, and appends these four trailers:
-
-```text
-Gitserious-Template: <id>@<version>
 Gitserious-Taxonomy: <id>@<version>
-Gitserious-Typeset: <taxonomy>/<typeset>@<version>
-Gitserious-Schema: sha256:<resolved-schema-fingerprint>
+Gitserious-Schema: sha256:<taxonomy-fingerprint>
 ```
 
-The same schema supplies validation and trailer identities, so overlapping type
-names cannot select a definition from another template. The trailers follow the
-canonical message after a blank line, in this fixed order, with a final newline.
-They remain unwrapped structural lines; body and breaking-change prose retains
-its existing 80-column wrapping. Identity and version values come from resolved
-policy, never authored property fields. Provenance identifies the schema rather
-than validating the truth of the author's statements.
-
-The existing renderer remains available and does not add provenance implicitly.
-Runtime use of the new renderer belongs to the subsequent COMMIT checkpoint.
-
-## Domain defaults
-
-The built-in catalog contains these version-1 bundles in this order:
-
-| Template | Taxonomy | Typeset |
-| --- | --- | --- |
-| `default` | `conventional` | `default` |
-| `ml-research` | `ml-research` | `default` |
-| `infra-ops` | `infra-ops` | `default` |
-
-Conventional definitions remain unchanged. ML Research covers hypotheses, data,
-models, experiments, evaluation, analysis, reproduction, research fixes,
-infrastructure, and documentation. Infra Ops covers provisioning, configuration,
-deployment, migration, scaling, observation, incidents, recovery, security, and
-decommissioning.
-
-Both new typesets use ordered, single-valued multiline properties with required
-or recommended levels. Reproduction results remain required. Operational guidance
-asks for observed outcomes and unresolved risks without treating supplied prose
-as proof of success or protection.
-
-Existing `config list`/`config show` commands expose each bundle. Select a domain
-for a fresh project with `gitserious init --template ml-research` or
-`gitserious init --template infra-ops`. Per-commit template switching and general
-bundle forking remain later work.
+The fingerprint covers taxonomy identity, version, description, fork lineage,
+commit-type schemas, property order, requirements, conditions, descriptions,
+and multiplicity.

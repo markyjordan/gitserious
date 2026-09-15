@@ -1,255 +1,41 @@
 # gitserious-tui
 
-## Configuration browser
+## Configuration
 
-Bare `gitserious config` opens the configuration browser in the Global
-destination. `tab` changes between Global and Project; Project requires an
-initialized repository with current policy. `1`, `2`, and `3` select taxonomies,
-typesets, and templates. Arrow keys select a definition; `enter` opens its full
-details, with arrows or page up/down for scrolling and `esc` to return.
+Bare `gitserious config` opens a project-first configuration home. Its left
+navigation separates Project and Global selection from the Taxonomy Library.
+Overview screens explain effective state; focused child screens perform edits.
 
-`ctrl+s` validates staged changes and opens a before/after review. Only `enter`
-on that review saves. `esc` returns to editing. Save errors retain the draft.
-Leaving or changing destination with pending changes requires explicit discard
-confirmation. Configuration needs at least 60 columns and 16 rows; undersized
-views prevent hidden editing or save actions. Explicit configuration CLI
-subcommands remain available without entering this browser.
+Global configuration owns the user taxonomy library, default taxonomy, and
+ordered set available to new project policy. Project configuration may override
+the default and available set independently or inherit either field. An
+uninitialized repository offers an Initialize action that reviews the portable
+policy before creating `gitserious.toml` and `gitserious.lock`.
 
-In the Taxonomies list, `n` creates a taxonomy, `e` edits a custom taxonomy,
-and `d` stages deletion. The form uses `tab` / `shift+tab` for fields; ids are
-single-line and descriptions accept multiline Unicode text. `ctrl+n` adds a
-change type, `ctrl+d` removes the selected type, and `alt+up/down` reorders it.
-`ctrl+s` validates and stages the form, then returns to the browser. Existing
-taxonomy ids are fixed and accepted semantic edits advance the version. Built-in
-definitions remain read-only. `esc` confirms discard when a form has changes.
+Taxonomy browsing uses a list and focused detail view. `enter` inspects commit
+types and their durable properties. Built-ins may be forked; custom taxonomies
+may also be edited or deleted. Create, edit, fork, delete, configuration, and
+property work each open a focused child screen and return to the previous
+selection on completion. Fork lineage is informational and never updates.
 
-The Typesets list supports `n`, `e`, and `d` with the same reviewed workflow.
-New typesets choose a taxonomy using left/right in the Taxonomy field. Each
-change type has an explicit schema; empty schemas are shown as intentionally
-empty. Select a type header or property, then use `ctrl+n` to add a property,
-`ctrl+d` to remove it, and `alt+up/down` to reorder properties within that type.
-Requirement and multiplicity fields use left/right choices. Conditional
-requirements enable a condition id and rationale; both are validated before
-staging. Existing qualified typeset identities are fixed. When a staged taxonomy
-adds or removes a type, opening its typeset proposes corresponding schema coverage
-for review. Changing taxonomy in a new form retains each taxonomy's unsaved
-property draft so switching back is lossless.
+Changes remain in memory until `ctrl+s` opens semantic review and `enter`
+applies them. Global saves use compare-and-swap. Project saves atomically replace
+authored overrides and the complete portable lock. Failed saves retain the
+draft. Leaving a dirty scope requires an explicit apply or discard decision.
 
-In Templates, `n` and `e` open a template form with taxonomy and typeset choices.
-Typeset choices follow the selected taxonomy. Existing template ids are fixed;
-editing their content advances the version. `d` stages deletion. In Project,
-`s` stages the selected template as the project default; an active custom
-template cannot be deleted unless another default is selected before saving.
-
-`f` forks a complete template bundle into three new custom identities. From a
-taxonomy or typeset row, it starts with a template that references that definition;
-the source template can be changed in the form. Blank target taxonomy/typeset ids
-derive from the new template id. Source definitions remain immutable.
-
-In Project, `i` imports a template from the global catalog. The form offers import
-alone or import-and-select. The complete dependency chain is copied with original
-identities; exact matches are reused and conflicting project definitions are
-preserved with an error. Global files are not changed by project imports.
-
-All these actions stage changes for the shared before/after review. Failed saves
-retain the draft, and changing destination requires discarding pending edits.
-
-This crate is an internal component of `gitserious`.
-
-The Rust API exposed here is unstable and may have breaking changes in any
-release. The supported public interface is the `gitserious` command-line tool.
-
-This crate implements terminal interaction ports with Ratatui. It owns terminal
-setup, rendering, event handling, and restoration; commit policy and workflow
-coordination remain in `gitserious-app`.
+The interface shares the commit TUI's true-black canvas, dark Unicode frames,
+yellow active rows and navigation strip, zebra tables, mouse targets, bracketed
+paste, and a 60-column by 18-row minimum-size guard.
 
 ## Commit authoring
 
-`gitserious commit --template <TEMPLATE>` selects a built-in or project template
-for that commit. `--type` preselects a type within it. Omitting `--template` uses
-the project default. The picker can switch between built-in and project custom
-templates without rewriting policy. An explicit `--type` fixes the template and
-skips the picker.
+`gitserious commit --taxonomy <TAXONOMY>` selects one taxonomy from the portable
+project lock for that commit. `--type` preselects a type within it. With no
+taxonomy option, authoring starts from the pinned project default. Picker tabs
+show taxonomy identities and never mutate project policy.
 
-`gitserious commit` runs one structured terminal session:
-
-1. select an effective commit type;
-2. author scope, description, and schema-defined property values;
-3. review the exact canonical message and confirm before Git creates the
-   staged-index commit.
-
-Each view starts with a borderless one-line header: `Select commit type`,
-`Compose commit message`, or `Review and commit` on the left, with `Step 1/3`,
-`Step 2/3`, or `Step 3/3` on the right. The composer keeps `Type: <type>`
-directly below its header. A preselected commit type starts directly at
-`Step 2/3`.
-
-Every view is painted on a true `#000000` background. The picker, composer, and
-review use dark-gray Unicode frames that consume the leftover area between the
-header chrome and the navigation strip, with no extra outer spacer row or
-column. Framed content retains one blank column on its left and right and
-occupies the row immediately inside horizontal borders; this avoids the
-visually taller inset produced by a full blank terminal row. Headers and
-navigation strips remain outside the frames. The too-small fallback remains
-borderless.
-
-`gitserious commit --type <COMMIT TYPE>` preselects the type and starts in the
-composer. Both forms require interactive standard input and output. There is no
-configured-Git-editor fallback or non-interactive authoring mode in this slice.
-
-Step 1 lists the effective catalog as a table inside that shared frame. A
-Template tabs sit above a fused heading rule, then the type table: a
-one-cell `›` marker on the current type, type identifiers that hug the longest
-id, and descriptions in the remaining width. A two-cell gap separates the
-columns, matching Message Properties. Rows alternate between `#000000` and
-`#101010`; the current type uses a full black-on-yellow row. The selected
-catalog tab uses the same black-on-yellow chip; `tab` cycles available type
-templates and a click on a chip selects that template. Tabs use template ids,
-distinguishing templates that share a taxonomy. The selected tab stays visible
-when the list exceeds the viewport. Type ids, ordering, and descriptions come
-from the selected schema. Returning from an edited draft to the picker requires
-discard confirmation before a different template can replace it.
-
-The composer presents one prepopulated document as three immutable structural
-sections. `Message Subject` contains optional `scope` and required `description`
-fields; `Message Body` contains the selected type's schema-defined properties;
-and `Message Footer` contains a global optional multiline `breaking-change`
-field. Section and field headings are immutable. The form hides the
-scaffold's internal heading colons and displays each field as a bold neutral
-label followed by a dark-gray rule. Values are authored beneath field headings
-without traversing separate controls. The cursor starts in the scope value and
-skips structural headings and reserved separators. Scope and description accept
-one authored line; schema properties remain multiline. Blank nonrequired fields
-are omitted, while blank required fields block review. The core domain retains
-the Conventional Commit subject primitive internally; `description` is the
-adapter's user-facing vocabulary.
-
-Step 2 places `Message Properties`, `Property Description`, the editor, and its
-validation row inside one dark-gray Unicode frame. The header and type metadata
-remain above that frame, and the navigation strip remains below it. Nested
-panes retain a one-column content inset. At up to 100 terminal columns, the
-properties and description remain side by side above the full-width editor.
-At 101 columns and wider, the properties table hugs its content in the
-upper-left pane, the description fills the lower-left pane, and the editor
-occupies the right pane.
-Both wide left-pane headings retain a horizontal rule beneath them. The
-validation and column-status row stays fixed across the complete frame bottom
-in both layouts. Resizing across the breakpoint does not alter the document,
-cursor, selection, history, or viewport.
-
-Nested layouts give the headings, HUD, description, editor, and
-validation/status row independent content rectangles while one composite chrome
-pass keeps their shared borders single-width. The properties pane measures the
-complete marker, field-name, and requirement columns from the selected
-definition and takes only the width they require. The requirement column hugs
-the longest label in that definition (`recommended` / `conditional` stay
-eleven cells; `style` and `revert` shrink to `required` / `optional`).
-Property names never clip. A definition whose complete table cannot fit uses
-a definition-specific too-small fallback. The HUD tracks
-complete, incomplete, and invalid values and leaves a two-cell gap between its
-columns. Rows alternate between `#000000` and `#101010`; the current property
-uses a full black-on-yellow row while its status marker retains its semantic
-color. Property guidance comes directly from the selected core definition. A
-conditional property shows its description followed by the catalog's separate
-`Required when...` rationale and explicit applicability controls. The description pane
-does not repeat the selected field name or requirement already shown in Message
-Properties. Scope and description guidance illustrates `type(scope):
-description`, including the scope-free `type: description` form. The composer
-requires at least 22 terminal rows so its context, editor, validation row, and
-separators remain usable.
-
-Step 3 places `Final Git Commit Message` in a heading pane with the same
-under-heading rule as the Step 2 context headings. The canonical message
-occupies the remaining framed area.
-
-The `Compose commit message` view always edits an 80-column virtual surface. If
-the framed editor is narrower, it follows the cursor horizontally instead of
-wrapping early, then returns to column 1 when a word or glyph soft-wraps at
-column 80. An always-visible scrollbar occupies the editor region's right edge,
-immediately inside the outer frame, with a dark-gray `│` track and solid yellow
-`█` thumb. Text and field rules retain their one-column right content inset
-before that edge-fixed scrollbar. The thumb fills the track when all content
-fits. When content overflows, deterministic viewport geometry maps the first
-and final meaningful document rows to the exact ends of the track; the final
-reserved scaffold separator does not extend the scroll range. The track covers
-only the editable viewport and excludes validation errors and column status.
-The single-line rules introducing `Message Body` and `Message Footer` also stop
-before the content inset and scrollbar. All rules are render-only chrome and
-never enter the authored document or Git message. `Message Subject`, `Message
-Body`, and `Message Footer` remain the only yellow editor headings.
-
-Backspace and Delete operate only inside the active semantic field. They may
-join explicit lines within a multiline value, but an edit that would cross a
-field heading or reserved separator is rejected without changing text, cursor,
-selection, or undo history. This includes the final `breaking-change` field.
-
-The fixed validation row shows red errors on the left and the right-aligned
-`col N/80` status on the right, clipping long errors before the status. The
-yellow navigation strip contains only its pipe-delimited key hints. `ctrl+s`
-compiles the form into the exact canonical message shown during review.
-Compilation removes trailing whitespace from every encoded line without
-changing the editor document or intentional leading whitespace. Property
-values are rendered beneath their headings without automatic indentation.
-Canonical rendering wraps property and breaking-change prose at the same
-80-column Unicode display-width boundary used by the editor, without mutating
-the authored document. Step 3 displays those encoded line breaks exactly, even
-when its viewport is wider than 80 columns. Internal scope whitespace converts
-to hyphens. A populated `breaking-change` value also adds `!` before the header
-colon and renders an uppercase `BREAKING CHANGE:` footer; a blank value adds
-neither.
-
-| Context | Controls |
-| --- | --- |
-| Type picker | `tab` switches type set; `↑`/`↓` moves; `enter` selects; `esc`/`q` cancels |
-| Composer | Conventional document editing; `↑`/`↓` moves within and between fields; `esc` goes back; `ctrl+s` validates and reviews |
-| Review | `enter` confirms; `esc` returns to editing; arrows or page up/page down scroll when the message exceeds the viewport; `q` cancels |
-| Cancellation | Untouched drafts cancel immediately; dirty drafts require explicit keyboard or mouse confirmation |
-
-The composer uses conventional cursor movement, selection, word movement,
-soft-wrapped Unicode input, paste, undo/redo, and `ctrl+k` deletion to the end
-of the line through the text-area widget. `up` and `down` move by visual line
-inside multiline properties, then cross into adjacent fields without landing
-on immutable headers or reserved separators. Left/right movement, including
-word movement and selection, remains inside the current field. `enter` advances
-from scope or description and skips a blank property; inside a populated
-property it inserts a newline normally. The final blank property does not cycle
-back to scope.
-
-Explicit property lines join normally with Backspace or Delete. Each field has
-one empty value row and one reserved separator row; description and the final
-body property include an additional structural row consumed by their following
-section divider. The cursor uses a visible cell without underlining the input
-line. A blank cursor at terminal column zero uses a one-cell foreground block
-so terminal background bleed cannot make it appear wider. Navigation hints at
-the bottom of each terminal view use a highlighted strip, bold `key: action`
-pairs, ` | ` separators, and lowercase key names for quick scanning.
-Dirty-draft confirmation centers its bold heading, question, and controls in a
-double-line `Discard Message` alert. Its `y: discard` and
-`enter/esc/n: keep editing` controls are distinct black-on-yellow buttons that
-accept both mouse clicks and their existing keyboard inputs. Mouse capture is
-disabled on every terminal exit path.
-
-Template-aware commit sessions include schema provenance in the review preview.
-Approval returns the exact displayed message; returning to the composer and
-reviewing again replaces the earlier preview. The selected schema remains fixed
-through composition and review.
-
-Conditional fields start unanswered. While editing one, `alt+a` marks it
-applicable and requires a value; `alt+n` marks it not applicable and requires an
-empty value. The contextual guidance shows the decision, and the HUD treats an
-empty, explicitly inapplicable field as complete. Decisions survive review and
-backtracking and count as draft changes for discard confirmation.
-
-The composer uses the core response-validation report. Blocking errors focus
-the affected field. Missing recommended values remain nonblocking and appear
-after the canonical message in review, clearly excluded from the Git message.
-
-For repeatable properties, `alt+=` inserts a new value after the current one and
-`alt+-` removes the current occurrence. Removing the last occurrence leaves an
-empty field so it can be filled again. `ctrl+u` and `ctrl+r` undo and redo these
-changes. Each occurrence keeps its own multiline text, and review preserves
-their order. These controls do not duplicate or remove single-valued fields.
-
-Custom properties named `scope`, `description`, or `breaking-change` have
-`property[scope]:`-style editor headings to distinguish them from header/footer
-fields. This editor notation never changes the durable property key in Git.
+The composer retains the established schema-document interaction: immutable
+section headings, contextual property guidance, completion markers, explicit
+conditional applicability, repeatable property controls, canonical review, and
+discard confirmation. Generated messages contain `Gitserious-Taxonomy` and
+`Gitserious-Schema` provenance trailers.
