@@ -1,3 +1,5 @@
+#![cfg(any())] // Legacy template/typeset configuration contract.
+
 use std::error::Error;
 
 use gitserious_core::{

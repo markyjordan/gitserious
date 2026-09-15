@@ -1,3 +1,5 @@
+#![cfg(any())] // Legacy template/typeset CLI contract.
+
 use std::cell::RefCell;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};

@@ -1,3 +1,5 @@
+#![cfg(any())] // Legacy four-trailer provenance contract.
+
 use std::error::Error;
 
 use gitserious_app::{Fingerprint, built_in_effective_catalog, fingerprint_resolved_taxonomy};

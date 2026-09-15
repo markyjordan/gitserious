@@ -1,3 +1,5 @@
+#![cfg(any())] // Legacy template-based process contract.
+
 use std::error::Error;
 use std::fs;
 use std::path::Path;

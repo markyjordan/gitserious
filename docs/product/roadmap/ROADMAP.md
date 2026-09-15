@@ -20,24 +20,24 @@ later evaluation, rather than making measured improvement a publication gate.
 
 ### Release boundary
 
-A user can initialize repository-local policy, choose a template for one commit,
+A user can initialize repository-local policy, choose a taxonomy for one commit,
 author its structured properties, review the exact message, and create the staged
-Git commit. A configuration TUI lets the user define taxonomies and typesets,
-assemble templates, and manage reusable global and project-local configuration.
+Git commit. A configuration TUI lets the user define complete taxonomies and
+manage global defaults plus project-local selection overrides.
 
 Ship:
 
-- The existing Conventional bundle, plus ML Research and Infra Ops bundles.
-- Per-commit template selection with a persistent active project default.
+- The existing Conventional taxonomy, plus Research and Infra Ops taxonomies.
+- Per-commit taxonomy selection with a persistent active project default.
 - Complete configuration authoring and management through a TUI.
 - Consistent property validation, including explicit conditional applicability.
-- Template and schema provenance in generated commit messages.
+- Taxonomy and schema provenance in generated commit messages.
 - Installation and workflow documentation, plus existing release verification.
 
 Defer from v0.1.0:
 
 - Standalone message validation and automatic hook installation.
-- The `gsrs` alias and further Conventional typeset iteration.
+- The `gsrs` alias and further Conventional taxonomy iteration.
 - Taxonomy composition, external artifact integrations, and additional defaults.
 - Noninteractive agent authoring, MCP, Lore, AST parsing, and repository graphs.
 - Hypothesis evaluation and claims of measured reconstruction improvements.
@@ -45,78 +45,54 @@ Defer from v0.1.0:
 Existing ordinary Git hooks and signing behavior still run through Git. Deferring
 hook installation does not authorize bypassing hooks or changing signing policy.
 
-### Current foundation
+### Taxonomy configuration contracts
 
-At the reviewed integration baseline, `7e664db`, the project already provides
-`init`, interactive `commit`, explicit configuration CLI subcommands, domain
-configuration models, global persistence, and self-contained project policy.
-The built-in catalog and picker still assume Conventional. Configuration backend
-operations exceed what the CLI exposes. The composer and newer property validator
-also differ on conditional applicability. These are the seams the release closes.
+A taxonomy owns its ordered commit types and every type's ordered durable
+properties. There is no selectable template or independently configurable
+typeset. Built-ins are immutable. Custom taxonomy identities remain immutable,
+semantic edits advance versions, and forks record informational source lineage
+without inheriting later updates.
 
-### Configuration and template contracts
+Global configuration stores the custom taxonomy library, one default taxonomy,
+and the ordered set available to projects. Project configuration stores optional
+default and available-set overrides; each field inherits global independently.
+The effective default must be available.
 
-Preserve `Template -> Taxonomy + Typeset`:
-
-- A taxonomy defines change categories and their ordered descriptions.
-- A typeset defines the ordered durable properties for every taxonomy type,
-  including intentional empty schemas.
-- A template chooses one taxonomy and one typeset.
-
-Keep the existing Conventional definitions, versions, ordering, and `default`
-template identity unchanged. Add `ml-research` and `infra-ops` template identities,
-each referencing its same-named taxonomy and its taxonomy-scoped `default` typeset.
-The two new bundles start at version 1. Do not introduce a competing Conventional
-template identity merely to make names symmetrical.
-
-Built-ins are immutable. Custom definitions use the same resolution and validation
-model. Their identities remain immutable; semantic edits advance versions.
-
-Global configuration stores reusable custom definitions. Project configuration
-stores repository-owned custom definitions and one active template. Commit
-selection uses all built-ins plus project-local custom templates. A global custom
-template must be explicitly imported with its complete dependency chain before
-it can be used by a project. Later global changes cannot alter project policy.
-
-Keep authored project configuration compatible. Extend generated locks to cover
-every selectable template, not only the active one. Support reading existing
-locks so `gitserious init` can upgrade them atomically. Old or stale locks block
-commit creation with a repair instruction. Guard configuration/lock updates using
-the existing persistence protections and preserve files when migration fails.
+Generated locks contain the complete effective taxonomy snapshots. Commit
+authoring uses this portable pinned policy without consulting mutable global
+configuration. Global changes appear as updates in `gitserious config` and take
+effect only after reviewed refresh. A project-config/lock mismatch blocks commit
+creation with an actionable path through the Project configuration screen.
 
 ### Configuration user experience
 
-Bare `gitserious config` opens the configuration TUI; existing explicit CLI
-subcommands remain available. The TUI provides explicit Global and Project
-destinations and shows which destination each operation affects.
+Bare `gitserious config` opens the configuration TUI. Taxonomy-focused
+`config list` and `config show` remain available for noninteractive inspection.
 
-Support browse, create, edit, fork, import, select, and delete where applicable.
+Support browse, create, edit, fork, select, and delete where applicable.
 Provide forms for taxonomy types, property descriptions and ordering, requirement
-levels and condition rationales, multiplicity, and template references. Permit
-forking any available bundle into editable custom definitions.
+levels and condition rationales, and multiplicity. Creation and forking add to
+the library; separate Global and Project screens manage availability and defaults.
 
 Keep related edits in a session and review the complete change before applying
 it. An intermediate draft can be incomplete; saved configuration must be valid.
-Reject dangling references, invalid schemas, identity conflicts, and unsafe
-active-template deletion. Cancellation, invalid edits, concurrent changes, and
-failed saves preserve stored configuration. Import can copy a complete global
-bundle alone or import and select it in one operation; conflicts never silently
-replace project definitions.
+Reject unknown taxonomy references, invalid schemas, identity conflicts, and
+deleting a globally selected taxonomy. Cancellation, invalid edits, concurrent
+changes, and failed saves preserve stored configuration.
 
 ### Commit user experience and interfaces
 
-Add `gitserious commit --template <id>` alongside the existing `--type` option.
-Without an explicit template, begin with the active project template. Resolve
-`--type` only within the selected template; do not search other taxonomies for a
+Add `gitserious commit --taxonomy <id>` alongside the existing `--type` option.
+Without an explicit taxonomy, begin with the pinned project default. Resolve
+`--type` only within the selected taxonomy; do not search other taxonomies for a
 matching identifier.
 
-Replace the flat authoring input with resolved template choices. Carry the
-selected template identity with the authored draft through validation, review,
-and commit creation. Overlapping types such as Conventional `fix` and ML Research
+Carry the selected taxonomy identity with the authored draft through validation,
+review, and commit creation. Overlapping types such as Conventional `fix` and Research
 `fix` must never share a schema accidentally.
 
-The picker displays available templates and the selected template's change types.
-Distinguish custom templates sharing a taxonomy. Temporary selection does not
+The picker displays available taxonomies and the selected taxonomy's change types.
+Temporary selection does not
 rewrite project configuration or the lock. Switching after editing requires the
 existing discard confirmation before resetting the draft.
 
@@ -136,12 +112,10 @@ ordinary staged-index Git commit behavior.
 
 ### Commit provenance
 
-Append these four application-generated trailers in the listed order:
+Append these two application-generated trailers in the listed order:
 
 ```text
-Gitserious-Template: <id>@<version>
 Gitserious-Taxonomy: <id>@<version>
-Gitserious-Typeset: <taxonomy>/<typeset>@<version>
 Gitserious-Schema: sha256:<resolved-schema-fingerprint>
 ```
 
@@ -152,7 +126,7 @@ is not an editable durable property. It identifies the schema, not the truth of
 authored claims. Keep trailers structural and unwrapped while preserving current
 body and breaking-change rendering.
 
-### Default taxonomies and typesets
+### Default taxonomies
 
 Conventional remains the current repository baseline:
 
@@ -169,10 +143,10 @@ schema order, including their requirement levels: **R** = required, **rec** =
 recommended. All new properties are single-valued multiline text. Preserve the
 agreed explicit levels, including required `reproduce.result`. For schemas where
 the conversation omitted levels or definitions, this table records the adopted
-completion. No new domain properties are conditional in v0.1; custom typesets and
+completion. No new domain properties are conditional in v0.1; custom taxonomies and
 the existing Conventional bundle still exercise conditional requirements.
 
-#### ML Research
+#### Research
 
 | Type | Meaning | Ordered properties |
 | --- | --- | --- |
@@ -210,15 +184,15 @@ must not imply that supplying prose proves an experiment or operation succeeded.
 
 ### Release acceptance
 
-- [ ] All three built-in bundles resolve through the generic catalog; every type
+- [ ] All three built-in taxonomies resolve through the generic catalog; every type
   has a schema and Conventional definitions remain unchanged.
-- [ ] Custom global/project definitions support complete authoring, arbitrary
-  bundle forks, import, default selection, and safe deletion.
-- [ ] Invalid dependencies, import conflicts, cancellation, concurrent edits,
+- [ ] Custom global definitions support complete authoring, taxonomy forks,
+  default/availability selection, and safe deletion.
+- [ ] Invalid references, cancellation, concurrent edits,
   and persistence failures preserve stored state.
-- [ ] Old locks upgrade through initialization; stale policy blocks commits with
+- [ ] Project locks contain portable schemas; stale policy blocks commits with
   actionable repair output, including in linked worktrees.
-- [ ] Commits using all three built-ins and a custom template use the selected
+- [ ] Commits using all three built-ins and a custom taxonomy use the selected
   schema, including overlapping type identifiers.
 - [ ] Temporary selection leaves project files unchanged and does not depend on
   later edits to global configuration.
@@ -226,7 +200,7 @@ must not imply that supplying prose proves an experiment or operation succeeded.
   behave consistently, including custom label collisions and long names.
 - [ ] Git receives exactly the reviewed message, including provenance and
   breaking-change content; cancellation creates no commit.
-- [ ] Fresh-install walkthroughs cover first commit, template switching, and
+- [ ] Fresh-install walkthroughs cover first commit, taxonomy switching, and
   global/project custom configuration.
 - [ ] Repository-required quality and release checks pass. Verify all six current
   workspace crates in dependency-ordered packaging/publication.
@@ -247,7 +221,7 @@ under the existing release posture. Hypothesis evaluation is not a release gate.
 - Conduct evals comparing ordinary user-authored commits with Gitserious-authored
   commits, including selection across the three default domains.
 - Build MCP v2 in a v0.1 patch release.
-- Iterate on the Conventional typeset after the initial release.
+- Iterate on the Conventional taxonomy after the initial release.
 
 ## v0.2
 

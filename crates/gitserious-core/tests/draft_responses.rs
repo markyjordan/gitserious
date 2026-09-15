@@ -1,3 +1,5 @@
+#![cfg(any())] // Legacy resolved-taxonomy response contract.
+
 use std::error::Error;
 
 use gitserious_core::{

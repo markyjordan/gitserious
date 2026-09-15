@@ -1,3 +1,5 @@
+#![cfg(any())] // Legacy project template configuration contract.
+
 use std::cell::{Cell, RefCell};
 #[path = "support/configuration_session.rs"]
 mod editing_session;

@@ -133,8 +133,8 @@ fn run_author_with_context(
                     })?;
                     Ok(CommitAuthoringOutcome::Authored(AuthoredCommit::reviewed(
                         session
-                            .template
-                            .ok_or_else(|| io::Error::other("selected template is missing"))?
+                            .taxonomy
+                            .ok_or_else(|| io::Error::other("selected taxonomy is missing"))?
                             .id()
                             .clone(),
                         draft,

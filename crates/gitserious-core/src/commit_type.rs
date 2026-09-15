@@ -18,8 +18,8 @@ impl CommitTypeDefinition {
     ///
     /// # Errors
     ///
-    /// Returns [`CommitTypeDefinitionError`] when the description is blank, no
-    /// properties are supplied, or a property key is repeated.
+    /// Returns [`CommitTypeDefinitionError`] when the description is blank or
+    /// a property key is repeated. An empty property set is intentional.
     pub fn new(
         schema_version: SchemaVersion,
         id: CommitTypeId,
@@ -30,10 +30,6 @@ impl CommitTypeDefinition {
         if description.trim().is_empty() {
             return Err(CommitTypeDefinitionError::EmptyDescription);
         }
-        if properties.is_empty() {
-            return Err(CommitTypeDefinitionError::EmptyProperties);
-        }
-
         let mut keys = BTreeSet::new();
         for property in &properties {
             if !keys.insert(property.key()) {
@@ -107,8 +103,6 @@ impl CommitTypeDefinition {
 pub enum CommitTypeDefinitionError {
     /// The commit type has no semantic description.
     EmptyDescription,
-    /// The commit type defines no durable properties.
-    EmptyProperties,
     /// Two properties use the same key.
     DuplicateProperty(PropertyKey),
 }
@@ -118,9 +112,6 @@ impl Display for CommitTypeDefinitionError {
         match self {
             Self::EmptyDescription => formatter
                 .write_str("commit type definition description must contain non-whitespace text"),
-            Self::EmptyProperties => {
-                formatter.write_str("commit type definition must contain at least one property")
-            }
             Self::DuplicateProperty(key) => {
                 write!(formatter, "commit type definition repeats property {key:?}")
             }
@@ -196,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn definitions_reject_empty_property_sets() -> Result<(), Box<dyn Error>> {
+    fn definitions_allow_intentionally_empty_property_sets() -> Result<(), Box<dyn Error>> {
         let result = CommitTypeDefinition::new(
             SchemaVersion::V1,
             CommitTypeId::new("custom")?,
@@ -204,12 +195,7 @@ mod tests {
             Vec::new(),
         );
 
-        assert_eq!(result, Err(CommitTypeDefinitionError::EmptyProperties));
-        assert!(
-            !CommitTypeDefinitionError::EmptyProperties
-                .to_string()
-                .is_empty()
-        );
+        assert!(result.is_ok());
 
         Ok(())
     }

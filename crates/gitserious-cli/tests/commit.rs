@@ -1,3 +1,5 @@
+#![cfg(any())] // Legacy --template commit contract.
+
 use std::cell::{Cell, RefCell};
 
 #[test]

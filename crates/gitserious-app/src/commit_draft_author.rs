@@ -27,11 +27,11 @@ pub trait CommitDraftAuthor {
         preselected: Option<&CommitTypeDefinition>,
     ) -> Result<CommitDraftAuthorOutcome, Self::Error>;
 
-    /// Authors within a captured set of project template choices.
+    /// Authors within a captured set of project taxonomy choices.
     ///
-    /// The compatibility implementation delegates to the initial template's
+    /// The compatibility implementation delegates to the initial taxonomy's
     /// definitions but cannot certify a provenance-bearing preview. Override
-    /// this method to display `CommitTemplate::render` and return that approved
+    /// this method to display `CommitTaxonomy::render` and return that approved
     /// message with `AuthoredCommit::reviewed`. The workflow rejects successful
     /// draft-only results; cancellations and interaction errors still pass through.
     ///
@@ -41,11 +41,11 @@ pub trait CommitDraftAuthor {
         &self,
         context: &CommitAuthoringContext,
     ) -> Result<CommitAuthoringOutcome, Self::Error> {
-        let template = context.initial_template();
-        self.author(template.definitions(), context.preselected_type())
+        let taxonomy = context.initial_taxonomy();
+        self.author(taxonomy.definitions(), context.preselected_type())
             .map(|outcome| match outcome {
                 CommitDraftAuthorOutcome::Authored(draft) => CommitAuthoringOutcome::Authored(
-                    AuthoredCommit::new(template.id().clone(), draft),
+                    AuthoredCommit::new(taxonomy.id().clone(), draft),
                 ),
                 CommitDraftAuthorOutcome::Cancelled => CommitAuthoringOutcome::Cancelled,
             })

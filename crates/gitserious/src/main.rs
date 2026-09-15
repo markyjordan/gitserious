@@ -8,7 +8,7 @@ use gitserious_fs::{
     GitCommitWriter, GitRepositoryLocator, SystemGlobalPathResolver, TomlGlobalConfigurationStore,
     TomlProjectStateStore,
 };
-use gitserious_tui::{RatatuiCommitDraftAuthor, RatatuiConfigurationEditor};
+use gitserious_tui::{RatatuiCommitDraftAuthor, RatatuiTaxonomyConfigurationEditor};
 
 fn main() -> ExitCode {
     let mut stderr = io::stderr();
@@ -21,7 +21,9 @@ fn main() -> ExitCode {
     let store = TomlProjectStateStore;
     let author = RatatuiCommitDraftAuthor;
     let writer = GitCommitWriter;
-    let editor = RatatuiConfigurationEditor;
+    // Legacy template/typeset editor construction retained in gitserious-tui/src/config/.
+    // let editor = RatatuiConfigurationEditor;
+    let editor = RatatuiTaxonomyConfigurationEditor;
     let commit = CommitAdapters::new(&author, &writer).with_configuration_editor(&editor);
     let mut stdout = io::stdout();
 

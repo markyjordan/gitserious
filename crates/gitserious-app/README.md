@@ -1,73 +1,32 @@
 # gitserious-app
 
-## Commit template snapshots
+This crate owns taxonomy policy, application workflows, persistence ports, and
+semantic fingerprinting. Its Rust API is internal and unstable; the supported
+interface is the `gitserious` CLI.
 
-`create_commit_with_template` selects an explicit template or the project's
-active default after verifying the complete lock. Only built-ins and project
-custom templates are eligible. The author receives a `CommitAuthoringContext`
-containing immutable resolved choices and returns an `AuthoredCommit` carrying
-the chosen template identity. The returned type is validated within that schema.
-Type preselection belongs to the initial template and cannot silently move to
-another template, even when both contain the same type identifier.
+## Taxonomy policy
 
-`create_commit` remains the no-override entry point. Neither path changes
-project configuration or consults mutable global templates while authoring.
+A taxonomy is the complete selectable authoring aggregate: identity, semantic
+version, description, optional fork lineage, ordered commit types, and each
+type's ordered durable properties. Built-ins are immutable. Custom taxonomies
+live only in the global user library. A fork is a version-one snapshot with
+informational source identity and version.
 
-## Reviewed configuration sessions
+Global configuration contains the default taxonomy, ordered available set, and
+custom library. Project configuration contains optional default and available
+overrides. Each project field falls back independently to the corresponding
+global field, and the effective default must be available.
 
-`ConfigurationSession` retains the original snapshot and staged edits for one
-explicit global or project destination. Staging validates identity and version
-rules while permitting incomplete relationships between definitions. Review
-validates the complete catalog and project policy. `ConfigurationWorkspace`
-loads snapshots and saves the reviewed state with compare-and-swap against the
-original snapshot, so concurrent changes are never silently overwritten.
+## Portable project locks
 
-`ConfigurationEditor` owns the interaction. Recoverable workspace errors stay
-inside that interaction so the draft can be repaired or retained. Cancelling a
-session has no persistence effect. A successful save returns a clean session
-without rereading mutable global or project state.
+Project locks contain the complete ordered taxonomy definitions used for commit
+authoring. Commit creation validates only the authored project fingerprint and
+then uses the pinned lock, so another machine does not need the originating
+global custom taxonomy. Later global edits appear as an available project-policy
+update and require reviewed refresh; they do not silently alter commits.
 
-Sessions can stage a complete bundle fork, import a global template chain into a
-project, and choose a project default. Imports reuse exact matching definitions
-and reject conflicting identities before changing either the draft or selection.
-Deleting an active custom template requires staging another default before save.
-Deleting and recreating an original identity within one session is rejected so
-its version history cannot be reset.
-
-Selectable lock entries use actual template identities (`default` for the
-built-in Conventional template). The active compatibility summary retains its
-historical `conventional` identity. This lets a custom template independently use
-the valid name `conventional`. Earlier lock collections using the old alias remain
-readable and refresh through `gitserious init` without rewriting authored config.
-
-This internal crate owns application workflows, configuration snapshots,
-persistence ports, and semantic fingerprint computation. The supported public
-interface is the `gitserious` CLI; the internal Rust API remains unstable.
-
-Context-aware commit authors render through the selected `CommitTemplate`, show
-that complete message including provenance, and return `AuthoredCommit::reviewed`
-after approval. The workflow checks those bytes against the captured schema and
-draft, then passes the approved message to the Git writer. Missing or mismatched
-reviewed messages fail before writing; legacy draft-only adapters must implement
-`author_with_context` to complete a commit. Project policy is not reread after
-review, so concurrent edits cannot silently change the approved schema.
-
-## Forking reusable configuration
-
-`fork_configuration` forks any built-in or global custom template into new global
-identities. `fork_project_template` forks a built-in or project-local custom
-source into the same project's custom configuration without changing the active
-template. Import global templates first when using them in a project.
-
-A fork copies the complete taxonomy/typeset/template chain. Descriptions, type
-order, schema order, requirements, and multiplicity are preserved. New identities
-start at version one; source definitions remain unchanged. Source resolution and
-destination saving share one inspected snapshot and guarded persistence rejects
-concurrent changes. Conflicting or reserved target identities do not partially
-save a bundle.
-
-`fork_configuration_edits` builds a batch from a catalog snapshot for reviewed
-editing sessions. Applying that batch validates destination identities and
-references. The Conventional-only fork helpers remain compatible entry points.
-CLI/TUI exposure of arbitrary source selection belongs to the later configuration
-interface checkpoint.
+Configuration sessions stage one persistence destination at a time. Global
+changes use whole-snapshot compare-and-swap. Project apply and initialization
+write `gitserious.toml` and `gitserious.lock` through the project-state port.
+Review is required before either adapter is called, and save failures retain the
+draft.

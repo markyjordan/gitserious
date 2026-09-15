@@ -8,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     CommitDraft, CommitProvenance, CommitTypeDefinition, CommitTypeId, PropertyKey,
     PropertyMultiplicity, PropertyResponse, PropertyValidationIssue, PropertyValidationIssueKind,
-    TemplateId, ValidationSeverity,
+    TaxonomyId, ValidationSeverity,
 };
 
 /// Maximum Unicode display width of canonical commit-message prose.
@@ -104,38 +104,25 @@ pub fn render_commit_message_with_provenance(
     provenance: &CommitProvenance,
     draft: &CommitDraft,
 ) -> Result<CommitMessage, CommitValidationErrors> {
-    let schema = provenance.schema();
-    let definition = schema
-        .change_types()
+    let taxonomy = provenance.taxonomy();
+    let definition = taxonomy
+        .commit_types()
         .iter()
         .find(|definition| definition.id() == draft.commit_type())
         .ok_or_else(|| {
             CommitValidationErrors::new(vec![CommitValidationError::UnknownCommitType {
-                template: schema.template_id().clone(),
+                taxonomy: taxonomy.id().clone(),
                 actual: draft.commit_type().clone(),
             }])
         })?;
-    let rendered = render_commit_message(&definition.commit_type_definition(), draft)?;
+    let rendered = render_commit_message(definition, draft)?;
     let mut message = rendered.as_str().to_owned();
     message.push('\n');
     let _ = writeln!(
         message,
-        "Gitserious-Template: {}@{}",
-        schema.template_id(),
-        schema.template_version()
-    );
-    let _ = writeln!(
-        message,
         "Gitserious-Taxonomy: {}@{}",
-        schema.taxonomy_id(),
-        schema.taxonomy_version()
-    );
-    let _ = writeln!(
-        message,
-        "Gitserious-Typeset: {}/{}@{}",
-        schema.taxonomy_id(),
-        schema.typeset_id(),
-        schema.typeset_version()
+        taxonomy.id(),
+        taxonomy.version()
     );
     let _ = writeln!(message, "Gitserious-Schema: {}", provenance.fingerprint());
     Ok(CommitMessage(message.into_boxed_str()))
@@ -311,8 +298,8 @@ pub fn validate_commit_draft_report(
 pub enum CommitValidationError {
     /// The provenance schema does not contain the authored type.
     UnknownCommitType {
-        /// Template that defines the available types.
-        template: TemplateId,
+        /// Taxonomy that defines the available types.
+        taxonomy: TaxonomyId,
         /// Rejected header type.
         actual: CommitTypeId,
     },
@@ -343,9 +330,9 @@ pub enum CommitValidationError {
 impl Display for CommitValidationError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnknownCommitType { template, actual } => write!(
+            Self::UnknownCommitType { taxonomy, actual } => write!(
                 formatter,
-                "type {actual:?} is not available in template {template:?}"
+                "type {actual:?} is not available in taxonomy {taxonomy:?}"
             ),
             Self::PropertyResponse(kind) => Display::fmt(kind, formatter),
             Self::TypeMismatch { expected, actual } => write!(

@@ -1,3 +1,5 @@
+#![cfg(any())] // Legacy global custom-configuration contract.
+
 use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
