@@ -1,4 +1,4 @@
-use gitserious_app::{CommitAuthoringContext, CommitDraftAuthorOutcome, CommitTemplate};
+use gitserious_app::{CommitAuthoringContext, CommitDraftAuthorOutcome, CommitTaxonomy};
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
     ConditionalApplicability, PropertyMultiplicity, PropertyRequirement, PropertyResponse,
@@ -1044,7 +1044,7 @@ pub(crate) struct ConfirmationButtons {
 pub(crate) enum TypeCatalogKind {
     #[default]
     Conventional,
-    Template(usize),
+    Taxonomy(usize),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1055,7 +1055,7 @@ pub(crate) struct CatalogTab {
 
 pub(crate) struct AuthoringSession<'a> {
     context: Option<&'a CommitAuthoringContext>,
-    pub(crate) template: Option<&'a CommitTemplate>,
+    pub(crate) taxonomy: Option<&'a CommitTaxonomy>,
     pub(crate) approved_message: Option<CommitMessage>,
     pub(crate) definitions: &'a [CommitTypeDefinition],
     pub(crate) selected_type: usize,
@@ -1080,7 +1080,7 @@ impl<'a> AuthoringSession<'a> {
         Self {
             definitions,
             context: None,
-            template: None,
+            taxonomy: None,
             approved_message: None,
             selected_type,
             type_catalog: TypeCatalogKind::Conventional,
@@ -1105,21 +1105,21 @@ impl<'a> AuthoringSession<'a> {
     }
 
     pub(crate) fn with_context(context: &'a CommitAuthoringContext) -> Self {
-        let template = context.initial_template();
+        let taxonomy = context.initial_taxonomy();
         let preselected = context.preselected_type().and_then(|selected| {
-            template
+            taxonomy
                 .definitions()
                 .iter()
                 .position(|definition| definition.id() == selected.id())
         });
-        let mut session = Self::new(template.definitions(), preselected);
-        session.template = Some(template);
+        let mut session = Self::new(taxonomy.definitions(), preselected);
+        session.taxonomy = Some(taxonomy);
         session.context = Some(context);
-        session.type_catalog = TypeCatalogKind::Template(
+        session.type_catalog = TypeCatalogKind::Taxonomy(
             context
-                .templates()
+                .taxonomies()
                 .iter()
-                .position(|item| item.id() == template.id())
+                .position(|item| item.id() == taxonomy.id())
                 .unwrap_or(0),
         );
         session
@@ -1129,8 +1129,8 @@ impl<'a> AuthoringSession<'a> {
         self.context.map_or_else(
             || vec![TypeCatalogKind::Conventional],
             |context| {
-                (0..context.templates().len())
-                    .map(TypeCatalogKind::Template)
+                (0..context.taxonomies().len())
+                    .map(TypeCatalogKind::Taxonomy)
                     .collect()
             },
         )
@@ -1139,10 +1139,10 @@ impl<'a> AuthoringSession<'a> {
     pub(crate) fn catalog_label(&self, kind: TypeCatalogKind) -> String {
         match kind {
             TypeCatalogKind::Conventional => "CONVENTIONAL".to_owned(),
-            TypeCatalogKind::Template(index) => self
+            TypeCatalogKind::Taxonomy(index) => self
                 .context
-                .and_then(|context| context.templates().get(index))
-                .map_or_else(String::new, |template| template.id().to_string()),
+                .and_then(|context| context.taxonomies().get(index))
+                .map_or_else(String::new, |taxonomy| taxonomy.id().to_string()),
         }
     }
 
@@ -1159,15 +1159,15 @@ impl<'a> AuthoringSession<'a> {
         if self.preselected || self.type_catalog == kind {
             return;
         }
-        if let TypeCatalogKind::Template(index) = kind {
-            let Some(template) = self
+        if let TypeCatalogKind::Taxonomy(index) = kind {
+            let Some(taxonomy) = self
                 .context
-                .and_then(|context| context.templates().get(index))
+                .and_then(|context| context.taxonomies().get(index))
             else {
                 return;
             };
-            self.template = Some(template);
-            self.definitions = template.definitions();
+            self.taxonomy = Some(taxonomy);
+            self.definitions = taxonomy.definitions();
             self.selected_type = 0;
             self.composer = ComposerState::new(self.definition());
             self.review = None;
@@ -1327,8 +1327,8 @@ impl<'a> AuthoringSession<'a> {
         if control(key, 's') {
             let definition = self.definition().clone();
             if let Some((draft, message)) = self.composer.validate(&definition) {
-                let message = if let Some(template) = self.template {
-                    match template.render(&draft) {
+                let message = if let Some(taxonomy) = self.taxonomy {
+                    match taxonomy.render(&draft) {
                         Ok(message) => message,
                         Err(error) => {
                             self.composer.issues = vec![ValidationIssue {

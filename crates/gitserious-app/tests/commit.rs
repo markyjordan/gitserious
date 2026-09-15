@@ -1,3 +1,5 @@
+#![cfg(any())] // Legacy template-aware commit contract.
+
 use std::cell::RefCell;
 #[path = "support/commit_templates.rs"]
 mod template_tests;

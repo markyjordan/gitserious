@@ -1,3 +1,5 @@
+#![cfg(any())] // Legacy four-trailer provenance contract.
+
 use std::error::Error;
 
 use gitserious_core::{

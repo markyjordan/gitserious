@@ -13,12 +13,11 @@ use super::state::{
     AuthoringSession, CatalogTab, ConfirmationAction, ConfirmationButtons, FieldId, FieldKind,
     FieldStatus, SCOPE_VALUE_LINE, Stage,
 };
+use crate::theme::{JET_BLACK, ZEBRA_BACKGROUND};
 
 const MINIMUM_WIDTH: u16 = 60;
 const MINIMUM_HEIGHT: u16 = 18;
 const COMPOSER_MINIMUM_HEIGHT: u16 = 22;
-const JET_BLACK: Color = Color::Rgb(0, 0, 0);
-const ZEBRA_BACKGROUND: Color = Color::Rgb(16, 16, 16);
 const MAX_EDITOR_INNER_WIDTH: u16 = COMMIT_MESSAGE_WIDTH;
 const FIELD_COLUMN_SPACING: u16 = 2;
 const FIELD_MARKER_WIDTH: u16 = 1;
@@ -138,14 +137,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
 }
 
 fn normalize_background(frame: &mut Frame<'_>, area: Rect) {
-    for y in area.y..area.bottom() {
-        for x in area.x..area.right() {
-            let cell = &mut frame.buffer_mut()[(x, y)];
-            if matches!(cell.bg, Color::Reset | Color::Black) {
-                cell.set_bg(JET_BLACK);
-            }
-        }
-    }
+    crate::theme::normalize_background(frame, area);
 }
 
 fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
@@ -266,8 +258,8 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
                 session.definition().id().as_str(),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(session.template.map_or_else(String::new, |template| {
-                format!("  Template: {}", template.id())
+            Span::raw(session.taxonomy.map_or_else(String::new, |taxonomy| {
+                format!("  Taxonomy: {}", taxonomy.id())
             })),
         ])),
         header[1],
@@ -1157,13 +1149,11 @@ fn wrapped_line_count(text: &str, width: u16) -> u16 {
 }
 
 fn section_heading_style() -> Style {
-    Style::default()
-        .fg(Color::Yellow)
-        .add_modifier(Modifier::BOLD)
+    crate::theme::section_heading_style()
 }
 
 fn frame_style() -> Style {
-    Style::default().fg(Color::DarkGray)
+    crate::theme::frame_style()
 }
 
 fn render_section_heading(frame: &mut Frame<'_>, area: Rect, title: &'static str) {
@@ -1287,38 +1277,19 @@ fn render_stage_header(frame: &mut Frame<'_>, area: Rect, title: &'static str, s
 }
 
 fn navigation_style() -> Style {
-    Style::default().fg(JET_BLACK).bg(Color::Yellow)
+    crate::theme::navigation_style()
 }
 
 fn navigation_key_style() -> Style {
-    navigation_style().add_modifier(Modifier::BOLD)
-}
-
-fn navigation_line<'a>(hints: &'a [(&'a str, &'a str)]) -> Line<'a> {
-    let mut spans = Vec::with_capacity(hints.len().saturating_mul(3));
-    for (index, (key, action)) in hints.iter().copied().enumerate() {
-        if index > 0 {
-            spans.push(Span::raw(" | "));
-        }
-        spans.push(Span::styled(key, navigation_key_style()));
-        spans.push(Span::raw(": "));
-        spans.push(Span::raw(action));
-    }
-    Line::from(spans)
+    crate::theme::navigation_key_style()
 }
 
 fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &[(&str, &str)]) {
-    let line = navigation_line(hints);
-    frame.render_widget(Paragraph::new(line).style(navigation_style()), area);
+    crate::theme::render_navigation_row(frame, area, hints);
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
-    let vertical = Layout::vertical([Constraint::Length(height)])
-        .flex(Flex::Center)
-        .split(area);
-    Layout::horizontal([Constraint::Length(width.min(area.width))])
-        .flex(Flex::Center)
-        .split(vertical[0])[0]
+    crate::theme::centered_rect(width, height, area)
 }
 
 fn stage_shell(area: Rect, header_rows: u16) -> StageShell {

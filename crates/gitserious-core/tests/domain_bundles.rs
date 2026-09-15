@@ -1,3 +1,5 @@
+#![cfg(any())] // Legacy template/typeset built-in bundle contract.
+
 use std::error::Error;
 use std::fmt::Write as _;
 

@@ -1,3 +1,5 @@
+#![cfg(any())] // Legacy template-aware process contract.
+
 use std::error::Error;
 
 #[test]

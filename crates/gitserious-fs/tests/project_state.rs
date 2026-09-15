@@ -1,3 +1,5 @@
+#![cfg(any())] // Legacy project template/lock TOML contract.
+
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};

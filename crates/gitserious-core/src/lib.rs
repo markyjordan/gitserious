@@ -1,33 +1,49 @@
 //! Domain types for durable, type-specific commit-message properties.
 
 mod built_in;
+#[allow(dead_code)]
 mod built_in_configuration;
+#[allow(dead_code)]
 mod built_in_domain;
+#[allow(dead_code)]
 mod built_in_infra_ops;
+#[allow(dead_code)]
 mod built_in_ml_research;
-mod built_in_template;
+// Legacy configurable message-template renderer retained in built_in_template.rs.
+// mod built_in_template;
 mod commit_draft;
 mod commit_message;
-mod commit_provenance;
+// Legacy selectable-template provenance retained in commit_provenance.rs.
+// mod commit_provenance;
 mod commit_type;
+#[allow(dead_code)]
 mod configuration_template;
+mod configured_taxonomy;
 mod description;
 mod fingerprint;
 mod identifier;
 mod property;
 mod property_validation;
+#[allow(dead_code)]
 mod resolved_taxonomy;
 mod schema_version;
+#[allow(dead_code)]
 mod taxonomy;
+mod taxonomy_provenance;
 mod taxonomy_version;
-mod template;
+// Legacy configurable message-template renderer retained in template.rs.
+// mod template;
+#[allow(dead_code)]
 mod template_version;
+#[allow(dead_code)]
 mod typeset;
+#[allow(dead_code)]
 mod typeset_version;
 
 pub use built_in::built_in_commit_types;
-pub use built_in_configuration::{BuiltInConfiguration, built_in_configuration};
-pub use built_in_template::default_commit_message_template;
+// Legacy template/typeset catalog exports retained privately for the bridge.
+#[allow(unused_imports)]
+pub(crate) use built_in_configuration::{BuiltInConfiguration, built_in_configuration};
 pub use commit_draft::{
     AuthoredProperty, CommitDraft, CommitDraftError, CommitScope, CommitScopeError, CommitSubject,
     CommitSubjectError,
@@ -37,14 +53,17 @@ pub use commit_message::{
     CommitValidationReport, render_commit_message, render_commit_message_with_provenance,
     validate_commit_draft, validate_commit_draft_report,
 };
-pub use commit_provenance::CommitProvenance;
+// Legacy configuration provenance remains in commit_provenance.rs for manual inspection.
+// pub use commit_provenance::CommitProvenance;
 pub use commit_type::{CommitTypeDefinition, CommitTypeDefinitionError};
-pub use configuration_template::TemplateDefinition;
+#[allow(unused_imports)]
+pub(crate) use configuration_template::TemplateDefinition;
+pub use configured_taxonomy::{Taxonomy, TaxonomyError, TaxonomyLineage, built_in_taxonomies};
 pub use description::{Description, DescriptionError};
 pub use fingerprint::{Fingerprint, FingerprintError};
+pub(crate) use identifier::{ChangeTypeId, TemplateId, TypesetId};
 pub use identifier::{
-    ChangeTypeId, CommitTypeId, ConditionId, IdentifierError, IdentifierErrorKind, PropertyKey,
-    TaxonomyId, TemplateId, TypesetId,
+    CommitTypeId, ConditionId, IdentifierError, IdentifierErrorKind, PropertyKey, TaxonomyId,
 };
 pub use property::{
     PropertyCondition, PropertyConditionError, PropertyDefinition, PropertyDefinitionError,
@@ -56,13 +75,18 @@ pub use property_validation::{
     PropertyValidationIssueKind, PropertyValidationReport, ValidationSeverity,
     validate_property_responses,
 };
-pub use resolved_taxonomy::{ResolveTaxonomyError, ResolvedChangeType, ResolvedTaxonomy};
+#[allow(unused_imports)]
+pub(crate) use resolved_taxonomy::{ResolveTaxonomyError, ResolvedChangeType, ResolvedTaxonomy};
 pub use schema_version::{SchemaVersion, SchemaVersionError};
-pub use taxonomy::{ChangeTypeDefinition, TaxonomyDefinition, TaxonomyDefinitionError};
+#[allow(unused_imports)]
+pub(crate) use taxonomy::{ChangeTypeDefinition, TaxonomyDefinition, TaxonomyDefinitionError};
+pub use taxonomy_provenance::CommitProvenance;
 pub use taxonomy_version::{TaxonomyVersion, TaxonomyVersionError};
-pub use template::{CommitMessageTemplateDefinition, CommitMessageTemplateDefinitionError};
-pub use template_version::{TemplateVersion, TemplateVersionError};
-pub use typeset::{
+#[allow(unused_imports)]
+pub(crate) use template_version::{TemplateVersion, TemplateVersionError};
+#[allow(unused_imports)]
+pub(crate) use typeset::{
     ChangeTypeSchema, ChangeTypeSchemaError, TypesetDefinition, TypesetDefinitionError,
 };
-pub use typeset_version::{TypesetVersion, TypesetVersionError};
+#[allow(unused_imports)]
+pub(crate) use typeset_version::{TypesetVersion, TypesetVersionError};

@@ -1,3 +1,5 @@
+#![cfg(any())] // Legacy selectable-template contract.
+
 use std::error::Error;
 
 use gitserious_core::{

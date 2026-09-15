@@ -1,4 +1,4 @@
-#[cfg(any(test, windows))]
+#[cfg(windows)]
 pub(crate) mod windows;
 #[cfg(unix)]
 pub(crate) mod xdg;

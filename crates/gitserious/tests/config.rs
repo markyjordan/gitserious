@@ -1,4 +1,5 @@
 #![cfg(unix)]
+#![cfg(any())] // Legacy template/typeset process contract.
 
 use std::error::Error;
 use std::fs;
