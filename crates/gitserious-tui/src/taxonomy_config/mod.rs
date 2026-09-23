@@ -1529,12 +1529,29 @@ impl State {
 
     fn render_message(&self, frame: &mut Frame<'_>, outer: Rect, divider: Rect, message: Rect) {
         render_frame_divider(frame, outer, divider.y);
+        let load_error = if matches!(self.screen, Screen::Home) {
+            match self.category.items()[self.home_selected[self.category.index()]] {
+                HomeItem::Project if self.project.is_none() => Some(self.project_error.as_str()),
+                HomeItem::Global if self.global.is_none() => Some(self.global_error.as_str()),
+                HomeItem::Browse | HomeItem::Create if self.global.is_none() => {
+                    Some(self.global_error.as_str())
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
         if let Some(status) = &self.status {
             let (text, style) = match status {
                 Notice::Error(text) => (text, Style::default().fg(Color::Red)),
                 Notice::Info(text) => (text, Style::default()),
             };
             frame.render_widget(Paragraph::new(text.as_str()).style(style), message);
+        } else if let Some(error) = load_error {
+            frame.render_widget(
+                Paragraph::new(error).style(Style::default().fg(Color::Red)),
+                message,
+            );
         }
     }
 
@@ -2249,6 +2266,33 @@ mod tests {
         state.status = None;
         terminal.draw(|frame| state.render(frame))?;
         assert_eq!(terminal.backend().buffer()[(1, 27)].symbol(), " ");
+        Ok(())
+    }
+
+    #[test]
+    fn selected_load_failure_uses_message_row_below_transient_notices()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        state.project = None;
+        state.project_error = "project load failed".into();
+        terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(terminal.backend().buffer()[(1, 27)].fg, Color::Red);
+        assert_eq!(terminal.backend().buffer()[(1, 27)].symbol(), "p");
+
+        state.status = Some(Notice::Info("Review pending".into()));
+        terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(terminal.backend().buffer()[(1, 27)].fg, Color::White);
+        assert_eq!(terminal.backend().buffer()[(1, 27)].symbol(), "R");
+
+        state.status = None;
+        state.category = Category::Taxonomies;
+        state.global = None;
+        state.global_error = "global load failed".into();
+        terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(terminal.backend().buffer()[(1, 27)].fg, Color::Red);
+        assert_eq!(terminal.backend().buffer()[(1, 27)].symbol(), "g");
         Ok(())
     }
 
