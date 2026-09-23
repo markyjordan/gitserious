@@ -2,9 +2,10 @@
 
 ## Configuration
 
-Bare `gitserious config` opens a project-first configuration home. Its left
-navigation separates Project and Global selection from the Taxonomy Library.
-Overview screens explain effective state; focused child screens perform edits.
+Bare `gitserious config` opens a project-first configuration home. Framed Scope
+and Taxonomies tabs group Project/Global policy and Browse/Create library
+actions. Overview screens explain effective state; focused child screens perform
+edits. A framed message row shows errors and action status below the content.
 
 Global configuration owns the user taxonomy library, default taxonomy, and
 ordered set available to new project policy. Project configuration may override
