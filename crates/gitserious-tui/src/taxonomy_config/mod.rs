@@ -14,7 +14,7 @@ use ratatui::crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
@@ -78,8 +78,6 @@ enum HomeItem {
 }
 
 impl HomeItem {
-    const ALL: [Self; 4] = [Self::Project, Self::Global, Self::Browse, Self::Create];
-
     const fn label(self) -> &'static str {
         match self {
             Self::Project => "Project",
@@ -95,6 +93,49 @@ impl HomeItem {
             Self::Global | Self::Browse | Self::Create => ConfigurationDestination::Global,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Category {
+    Scope,
+    Taxonomies,
+}
+
+impl Category {
+    const ALL: [Self; 2] = [Self::Scope, Self::Taxonomies];
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Scope => 0,
+            Self::Taxonomies => 1,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Scope => "Scope",
+            Self::Taxonomies => "Taxonomies",
+        }
+    }
+
+    const fn items(self) -> [HomeItem; 2] {
+        match self {
+            Self::Scope => [HomeItem::Project, HomeItem::Global],
+            Self::Taxonomies => [HomeItem::Browse, HomeItem::Create],
+        }
+    }
+
+    const fn next(self) -> Self {
+        match self {
+            Self::Scope => Self::Taxonomies,
+            Self::Taxonomies => Self::Scope,
+        }
+    }
+}
+
+enum Notice {
+    Error(String),
+    Info(String),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -300,12 +341,13 @@ struct State {
     project: Option<ConfigurationSession>,
     project_error: String,
     active_scope: ConfigurationDestination,
+    category: Category,
     screen: Screen,
-    home_selected: usize,
+    home_selected: [usize; 2],
     browse_selected: usize,
     child_selected: usize,
     scroll: u16,
-    status: String,
+    status: Option<Notice>,
     editor: Option<TaxonomyDraft>,
     editor_mode: EditorMode,
     form: Option<FormState>,
@@ -313,6 +355,7 @@ struct State {
     fork_target: String,
     too_small: bool,
     home_area: Rect,
+    tab_areas: [Rect; 2],
     browser_area: Rect,
 }
 
@@ -328,12 +371,13 @@ impl State {
             project,
             project_error,
             active_scope: ConfigurationDestination::Project,
+            category: Category::Scope,
             screen: Screen::Home,
-            home_selected: 0,
+            home_selected: [0; 2],
             browse_selected: 0,
             child_selected: 0,
             scroll: 0,
-            status: String::new(),
+            status: None,
             editor: None,
             editor_mode: EditorMode::Create,
             form: None,
@@ -341,6 +385,7 @@ impl State {
             fork_target: String::new(),
             too_small: false,
             home_area: Rect::default(),
+            tab_areas: [Rect::default(); 2],
             browser_area: Rect::default(),
         }
     }
@@ -363,10 +408,20 @@ impl State {
         if let Event::Mouse(mouse) = event {
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
                 if matches!(self.screen, Screen::Home)
+                    && let Some(category) = Category::ALL.into_iter().find(|category| {
+                        contains(self.tab_areas[category.index()], mouse.column, mouse.row)
+                    })
+                {
+                    if self.category != category {
+                        self.category = category;
+                        self.status = None;
+                    }
+                } else if matches!(self.screen, Screen::Home)
                     && contains(self.home_area, mouse.column, mouse.row)
                 {
-                    self.home_selected = usize::from(mouse.row.saturating_sub(self.home_area.y))
-                        .min(HomeItem::ALL.len() - 1);
+                    self.home_selected[self.category.index()] =
+                        usize::from(mouse.row.saturating_sub(self.home_area.y))
+                            .min(self.category.items().len() - 1);
                     self.open_home_item(workspace);
                 } else if matches!(self.screen, Screen::Browse)
                     && contains(self.browser_area, mouse.column, mouse.row)
@@ -412,9 +467,17 @@ impl State {
 
     fn home_key(&mut self, key: KeyEvent, workspace: &dyn ConfigurationWorkspace) -> bool {
         match key.code {
-            KeyCode::Up => self.home_selected = self.home_selected.saturating_sub(1),
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.category = self.category.next();
+                self.status = None;
+            }
+            KeyCode::Up => {
+                let selected = &mut self.home_selected[self.category.index()];
+                *selected = selected.saturating_sub(1);
+            }
             KeyCode::Down => {
-                self.home_selected = (self.home_selected + 1).min(HomeItem::ALL.len() - 1)
+                let selected = &mut self.home_selected[self.category.index()];
+                *selected = (*selected + 1).min(self.category.items().len() - 1);
             }
             KeyCode::Enter => self.open_home_item(workspace),
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -433,7 +496,7 @@ impl State {
     }
 
     fn open_home_item(&mut self, _workspace: &dyn ConfigurationWorkspace) {
-        let item = HomeItem::ALL[self.home_selected];
+        let item = self.category.items()[self.home_selected[self.category.index()]];
         if item.scope() != self.active_scope && self.scope_dirty(self.active_scope) {
             self.screen = Screen::ScopeChange(item);
             return;
@@ -442,7 +505,7 @@ impl State {
         match item {
             HomeItem::Project => {
                 let Some(session) = &mut self.project else {
-                    self.status = self.project_error.clone();
+                    self.status = Some(Notice::Error(self.project_error.clone()));
                     return;
                 };
                 if session.project_config().is_none() {
@@ -451,7 +514,7 @@ impl State {
                         .and_then(|()| session.review().map(|_| ()))
                     {
                         Ok(()) => self.screen = Screen::Review(ConfigurationDestination::Project),
-                        Err(error) => self.status = error,
+                        Err(error) => self.status = Some(Notice::Error(error)),
                     }
                 } else {
                     self.open_settings(ConfigurationDestination::Project);
@@ -598,8 +661,9 @@ impl State {
                 if let Some(id) = selected_id {
                     settings.inherit_available = false;
                     if id == settings.default {
-                        self.status =
-                            "Choose another default before removing this taxonomy.".into();
+                        self.status = Some(Notice::Error(
+                            "Choose another default before removing this taxonomy.".into(),
+                        ));
                     } else if let Some(index) =
                         settings.available.iter().position(|item| item == &id)
                     {
@@ -666,10 +730,11 @@ impl State {
                     Ok(()) => {
                         self.settings = None;
                         self.screen = Screen::Home;
-                        self.status =
-                            "Configuration change staged. Ctrl+S reviews before applying.".into();
+                        self.status = Some(Notice::Info(
+                            "Configuration change staged. Ctrl+S reviews before applying.".into(),
+                        ));
                     }
-                    Err(error) => self.status = error,
+                    Err(error) => self.status = Some(Notice::Error(error)),
                 }
             }
             KeyCode::Esc => {
@@ -904,9 +969,11 @@ impl State {
                 match result {
                     Ok(()) => {
                         self.screen = Screen::Browse;
-                        self.status = "Fork staged. Ctrl+S reviews before applying.".into();
+                        self.status = Some(Notice::Info(
+                            "Fork staged. Ctrl+S reviews before applying.".into(),
+                        ));
                     }
-                    Err(error) => self.status = error,
+                    Err(error) => self.status = Some(Notice::Error(error)),
                 }
             }
             KeyCode::Esc => self.screen = Screen::Browse,
@@ -937,11 +1004,13 @@ impl State {
                     Ok(()) => {
                         self.browse_selected = self.browse_selected.saturating_sub(1);
                         self.screen = Screen::Browse;
-                        self.status = "Deletion staged. Ctrl+S reviews before applying.".into();
+                        self.status = Some(Notice::Info(
+                            "Deletion staged. Ctrl+S reviews before applying.".into(),
+                        ));
                     }
                     Err(error) => {
                         self.screen = Screen::Browse;
-                        self.status = error;
+                        self.status = Some(Notice::Error(error));
                     }
                 }
             }
@@ -975,11 +1044,11 @@ impl State {
                             self.project_error = error;
                         }
                         self.screen = Screen::Home;
-                        self.status = "Configuration applied.".into();
+                        self.status = Some(Notice::Info("Configuration applied.".into()));
                     }
                     Err(error) => {
                         self.screen = Screen::Home;
-                        self.status = error;
+                        self.status = Some(Notice::Error(error));
                     }
                 }
             }
@@ -1015,7 +1084,7 @@ impl State {
                     }
                     Err(error) => {
                         self.screen = Screen::Home;
-                        self.status = error;
+                        self.status = Some(Notice::Error(error));
                     }
                 }
             }
@@ -1052,13 +1121,15 @@ impl State {
                 .session(destination)
                 .and_then(|session| session.review().err())
             {
-                self.status = error;
+                self.status = Some(Notice::Error(error));
             } else {
                 self.scroll = 0;
                 self.screen = Screen::Review(destination);
             }
         } else {
-            self.status = "No changes or taxonomy updates to apply.".into();
+            self.status = Some(Notice::Info(
+                "No changes or taxonomy updates to apply.".into(),
+            ));
         }
     }
 
@@ -1073,7 +1144,9 @@ impl State {
             .and_then(|catalog| catalog.origin(taxonomy.id()))
             != Some(TaxonomyOrigin::Custom)
         {
-            self.status = "Built-in taxonomies are read-only; fork one to customize it.".into();
+            self.status = Some(Notice::Error(
+                "Built-in taxonomies are read-only; fork one to customize it.".into(),
+            ));
             return;
         }
         self.editor = Some(TaxonomyDraft::from_taxonomy(&taxonomy));
@@ -1201,7 +1274,7 @@ impl State {
                 self.form = None;
                 self.screen = parent_screen(kind, self.editor_mode);
             }
-            Err(error) => self.status = error,
+            Err(error) => self.status = Some(Notice::Error(error)),
         }
     }
 
@@ -1239,9 +1312,11 @@ impl State {
                 } else {
                     Screen::Home
                 };
-                self.status = "Taxonomy change staged. Ctrl+S reviews before applying.".into();
+                self.status = Some(Notice::Info(
+                    "Taxonomy change staged. Ctrl+S reviews before applying.".into(),
+                ));
             }
-            Err(error) => self.status = error,
+            Err(error) => self.status = Some(Notice::Error(error)),
         }
     }
 
@@ -1289,18 +1364,30 @@ impl State {
             normalize_background(frame, area);
             return;
         }
-        let rows = Layout::vertical([
-            Constraint::Length(2),
+        let [outer, footer] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+        frame.render_widget(Block::bordered().border_style(frame_style()), outer);
+        let inner = Rect::new(
+            outer.x.saturating_add(1),
+            outer.y.saturating_add(1),
+            outer.width.saturating_sub(2),
+            outer.height.saturating_sub(2),
+        );
+        let [tabs, tabs_divider, body, message_divider, message] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(1),
             Constraint::Length(1),
         ])
-        .split(area);
-        self.render_header(frame, rows[0]);
+        .areas(inner);
+        self.render_tabs(frame, tabs);
+        render_frame_divider(frame, outer, tabs_divider.y);
         let hints = match self.screen.clone() {
             Screen::Home => {
-                self.render_home(frame, rows[1]);
+                self.render_home(frame, body);
                 vec![
+                    ("tab", "category"),
                     ("↑/↓", "move"),
                     ("enter", "open"),
                     ("ctrl+s", "review"),
@@ -1308,7 +1395,7 @@ impl State {
                 ]
             }
             Screen::Browse => {
-                self.render_browser(frame, rows[1]);
+                self.render_browser(frame, body);
                 vec![
                     ("↑/↓", "move"),
                     ("enter", "inspect"),
@@ -1317,15 +1404,15 @@ impl State {
                 ]
             }
             Screen::TaxonomyDetail => {
-                self.render_taxonomy_detail(frame, rows[1]);
+                self.render_taxonomy_detail(frame, body);
                 vec![("↑/↓", "move"), ("enter", "properties"), ("esc", "back")]
             }
             Screen::CommitTypeDetail(index) => {
-                self.render_commit_type_detail(frame, rows[1], index);
+                self.render_commit_type_detail(frame, body, index);
                 vec![("↑/↓", "scroll"), ("esc", "back")]
             }
             Screen::Settings(destination) => {
-                self.render_settings(frame, rows[1], destination);
+                self.render_settings(frame, body, destination);
                 vec![
                     ("space", "available"),
                     ("enter", "default"),
@@ -1336,7 +1423,7 @@ impl State {
                 ]
             }
             Screen::TaxonomyEditor(mode) => {
-                self.render_taxonomy_editor(frame, rows[1], mode);
+                self.render_taxonomy_editor(frame, body, mode);
                 vec![
                     ("enter", "open"),
                     ("n/d", "add/remove"),
@@ -1346,7 +1433,7 @@ impl State {
                 ]
             }
             Screen::TypeEditor(index) => {
-                self.render_type_editor(frame, rows[1], index);
+                self.render_type_editor(frame, body, index);
                 vec![
                     ("enter", "edit"),
                     ("n/d", "add/remove"),
@@ -1355,7 +1442,7 @@ impl State {
                 ]
             }
             Screen::Form(kind) => {
-                self.render_form(frame, rows[1], kind);
+                self.render_form(frame, body, kind);
                 vec![
                     ("tab", "field"),
                     ("←/→", "choice"),
@@ -1365,26 +1452,26 @@ impl State {
                 ]
             }
             Screen::Fork => {
-                self.render_fork(frame, rows[1]);
+                self.render_fork(frame, body);
                 vec![("ctrl+s", "fork"), ("esc", "back")]
             }
             Screen::Delete => {
                 self.render_confirmation(
                     frame,
-                    rows[1],
+                    body,
                     "Delete this custom taxonomy?",
                     "y: stage deletion    enter/esc/n: keep",
                 );
                 vec![("y", "delete"), ("esc/n", "keep")]
             }
             Screen::Review(destination) => {
-                self.render_review(frame, rows[1], destination);
+                self.render_review(frame, body, destination);
                 vec![("enter", "apply"), ("esc", "back"), ("↑/↓", "scroll")]
             }
             Screen::Leave => {
                 self.render_confirmation(
                     frame,
-                    rows[1],
+                    body,
                     "Discard all unapplied configuration changes?",
                     "y: discard and quit    enter/esc/n: keep",
                 );
@@ -1393,37 +1480,79 @@ impl State {
             Screen::ScopeChange(_) => {
                 self.render_confirmation(
                     frame,
-                    rows[1],
+                    body,
                     "This scope has unapplied changes.",
                     "a: apply    d: discard    enter/esc: cancel",
                 );
                 vec![("a", "apply"), ("d", "discard"), ("esc", "cancel")]
             }
         };
-        frame.render_widget(
-            Paragraph::new(self.status.as_str()).style(Style::default().fg(Color::Yellow)),
-            rows[2],
-        );
-        render_navigation_row(frame, rows[3], &hints);
+        self.render_message(frame, outer, message_divider, message);
+        render_navigation_row(frame, footer, &hints);
         normalize_background(frame, area);
     }
 
-    fn render_header(&self, frame: &mut Frame<'_>, area: Rect) {
+    fn render_tabs(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        self.tab_areas = [Rect::default(); 2];
+        let mut x = area.x.saturating_add(1);
+        for category in Category::ALL {
+            let label = category.label();
+            let width = u16::try_from(Line::from(label).width())
+                .unwrap_or(u16::MAX)
+                .saturating_add(2);
+            let tab = Rect::new(x, area.y, width.min(area.right().saturating_sub(x)), 1);
+            self.tab_areas[category.index()] = tab;
+            let style = if category == self.category {
+                navigation_key_style()
+            } else {
+                Style::default()
+            };
+            frame.render_widget(Paragraph::new(format!(" {label} ")).style(style), tab);
+            x = x.saturating_add(width).saturating_add(1);
+        }
         let dirty = if self.any_dirty() {
-            " • unapplied changes"
+            "unapplied changes"
         } else {
             ""
         };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(
-                    "gitserious config",
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(dirty, Style::default().fg(Color::Yellow)),
-            ])),
-            area,
-        );
+        if !dirty.is_empty() {
+            let width = u16::try_from(Line::from(dirty).width()).unwrap_or(u16::MAX);
+            if x.saturating_add(width) < area.right() {
+                let indicator = Rect::new(area.right().saturating_sub(width), area.y, width, 1);
+                frame.render_widget(
+                    Paragraph::new(dirty).style(section_heading_style()),
+                    indicator,
+                );
+            }
+        }
+    }
+
+    fn render_message(&self, frame: &mut Frame<'_>, outer: Rect, divider: Rect, message: Rect) {
+        render_frame_divider(frame, outer, divider.y);
+        let load_error = if matches!(self.screen, Screen::Home) {
+            match self.category.items()[self.home_selected[self.category.index()]] {
+                HomeItem::Project if self.project.is_none() => Some(self.project_error.as_str()),
+                HomeItem::Global if self.global.is_none() => Some(self.global_error.as_str()),
+                HomeItem::Browse | HomeItem::Create if self.global.is_none() => {
+                    Some(self.global_error.as_str())
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(status) = &self.status {
+            let (text, style) = match status {
+                Notice::Error(text) => (text, Style::default().fg(Color::Red)),
+                Notice::Info(text) => (text, Style::default()),
+            };
+            frame.render_widget(Paragraph::new(text.as_str()).style(style), message);
+        } else if let Some(error) = load_error {
+            frame.render_widget(
+                Paragraph::new(error).style(Style::default().fg(Color::Red)),
+                message,
+            );
+        }
     }
 
     fn render_home(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -1433,7 +1562,6 @@ impl State {
             Constraint::Min(1),
         ])
         .split(area);
-        frame.render_widget(Block::bordered().border_style(frame_style()), area);
         let nav = Rect::new(
             columns[0].x + 1,
             columns[0].y + 1,
@@ -1441,28 +1569,24 @@ impl State {
             columns[0].height.saturating_sub(2),
         );
         self.home_area = nav;
-        let rows = HomeItem::ALL
+        let items = self.category.items();
+        let rows = items
             .iter()
             .enumerate()
             .map(|(index, item)| {
-                let section = match item {
-                    HomeItem::Project | HomeItem::Global => "Config",
-                    HomeItem::Browse | HomeItem::Create => "Taxonomies",
-                };
                 ListItem::new(format!(
-                    "{}{:11} {}",
-                    if index == self.home_selected {
+                    "{}{}",
+                    if index == self.home_selected[self.category.index()] {
                         "› "
                     } else {
                         "  "
                     },
-                    section,
                     item.label()
                 ))
             })
             .collect::<Vec<_>>();
         let mut state = ListState::default();
-        state.select(Some(self.home_selected));
+        state.select(Some(self.home_selected[self.category.index()]));
         frame.render_stateful_widget(
             List::new(rows).highlight_style(navigation_key_style()),
             nav,
@@ -1474,7 +1598,7 @@ impl State {
             columns[2].width.saturating_sub(2),
             columns[2].height.saturating_sub(2),
         );
-        let text = self.home_detail(HomeItem::ALL[self.home_selected]);
+        let text = self.home_detail(items[self.home_selected[self.category.index()]]);
         frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), detail);
     }
 
@@ -1884,6 +2008,19 @@ impl State {
     }
 }
 
+fn render_frame_divider(frame: &mut Frame<'_>, outer: Rect, y: u16) {
+    let style = frame_style();
+    frame.buffer_mut()[(outer.x, y)]
+        .set_symbol("├")
+        .set_style(style);
+    for x in outer.x.saturating_add(1)..outer.right().saturating_sub(1) {
+        frame.buffer_mut()[(x, y)].set_symbol("─").set_style(style);
+    }
+    frame.buffer_mut()[(outer.right().saturating_sub(1), y)]
+        .set_symbol("┤")
+        .set_style(style);
+}
+
 fn split_result(
     result: Result<ConfigurationSession, String>,
 ) -> (Option<ConfigurationSession>, String) {
@@ -2019,19 +2156,48 @@ mod tests {
     }
 
     #[test]
-    fn home_and_browser_use_progressive_taxonomy_navigation()
+    fn category_tabs_group_existing_actions_and_keep_selection()
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
         let home = text(&terminal);
-        assert!(home.contains("gitserious config"));
+        assert!(!home.contains("gitserious config"));
+        assert!(home.contains("Scope"));
         assert!(home.contains("Project"));
         assert!(home.contains("Taxonomies"));
+        assert!(!home.contains("Browse"));
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, 0)].symbol(), "┌");
+        assert_eq!(buffer[(99, 0)].symbol(), "┐");
+        assert_eq!(buffer[(0, 2)].symbol(), "├");
+        assert_eq!(buffer[(1, 2)].symbol(), "─");
+        assert_eq!(buffer[(99, 2)].symbol(), "┤");
+        assert_eq!(buffer[(2, 1)].bg, Color::Yellow);
+        assert_eq!(buffer[(0, 28)].symbol(), "└");
+        assert_eq!(buffer[(0, 29)].symbol(), "t");
+        assert_eq!(buffer[(3, 29)].symbol(), ":");
+        assert!((0..100).all(|x| buffer[(x, 29)].bg == Color::Yellow));
 
         state.handle_event(key(KeyCode::Down), &workspace);
+        assert_eq!(state.home_selected[Category::Scope.index()], 1);
+        state.handle_event(key(KeyCode::Tab), &workspace);
+        assert_eq!(state.category, Category::Taxonomies);
+        terminal.draw(|frame| state.render(frame))?;
+        let home = text(&terminal);
+        assert!(home.contains("Browse"));
+        assert!(home.contains("Create"));
+        assert!(!home.contains("Project"));
+        assert_eq!(terminal.backend().buffer()[(12, 1)].bg, Color::Yellow);
+
         state.handle_event(key(KeyCode::Down), &workspace);
+        assert_eq!(state.home_selected[Category::Taxonomies.index()], 1);
+        state.handle_event(key(KeyCode::Tab), &workspace);
+        assert_eq!(state.home_selected[Category::Scope.index()], 1);
+        state.handle_event(key(KeyCode::Tab), &workspace);
+        assert_eq!(state.home_selected[Category::Taxonomies.index()], 1);
+        state.handle_event(key(KeyCode::Up), &workspace);
         state.handle_event(key(KeyCode::Enter), &workspace);
         assert!(matches!(state.screen, Screen::Browse));
         terminal.draw(|frame| state.render(frame))?;
@@ -2039,6 +2205,122 @@ mod tests {
         assert!(browser.contains("conventional"));
         assert!(browser.contains("research"));
         assert!(!browser.contains("ml-research"));
+        state.handle_event(key(KeyCode::Esc), &workspace);
+        assert!(matches!(state.screen, Screen::Home));
+        assert_eq!(state.category, Category::Taxonomies);
+        Ok(())
+    }
+
+    #[test]
+    fn category_mouse_switches_only_from_home() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let taxonomies = state.tab_areas[Category::Taxonomies.index()];
+        assert_eq!(taxonomies.y, 1);
+        assert!(taxonomies.x > 0);
+        let click = Event::Mouse(ratatui::crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: taxonomies.x,
+            row: taxonomies.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        state.handle_event(click, &workspace);
+        assert_eq!(state.category, Category::Taxonomies);
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert!(matches!(state.screen, Screen::Browse));
+        state.handle_event(key(KeyCode::Tab), &workspace);
+        let scope = state.tab_areas[Category::Scope.index()];
+        state.handle_event(
+            Event::Mouse(ratatui::crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: scope.x,
+                row: scope.y,
+                modifiers: KeyModifiers::NONE,
+            }),
+            &workspace,
+        );
+        assert_eq!(state.category, Category::Taxonomies);
+        assert!(matches!(state.screen, Screen::Browse));
+        Ok(())
+    }
+
+    #[test]
+    fn framed_message_row_distinguishes_errors_and_info() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        state.status = Some(Notice::Error("Invalid selection".into()));
+        terminal.draw(|frame| state.render(frame))?;
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, 26)].symbol(), "├");
+        assert_eq!(buffer[(99, 26)].symbol(), "┤");
+        assert_eq!(buffer[(1, 27)].fg, Color::Red);
+        assert_eq!(buffer[(1, 27)].symbol(), "I");
+        state.status = Some(Notice::Info("Configuration applied.".into()));
+        terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(terminal.backend().buffer()[(1, 27)].fg, Color::White);
+        assert!(text(&terminal).contains("Configuration applied."));
+        state.status = None;
+        terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(terminal.backend().buffer()[(1, 27)].symbol(), " ");
+        Ok(())
+    }
+
+    #[test]
+    fn selected_load_failure_uses_message_row_below_transient_notices()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        state.project = None;
+        state.project_error = "project load failed".into();
+        terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(terminal.backend().buffer()[(1, 27)].fg, Color::Red);
+        assert_eq!(terminal.backend().buffer()[(1, 27)].symbol(), "p");
+
+        state.status = Some(Notice::Info("Review pending".into()));
+        terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(terminal.backend().buffer()[(1, 27)].fg, Color::White);
+        assert_eq!(terminal.backend().buffer()[(1, 27)].symbol(), "R");
+
+        state.status = None;
+        state.category = Category::Taxonomies;
+        state.global = None;
+        state.global_error = "global load failed".into();
+        terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(terminal.backend().buffer()[(1, 27)].fg, Color::Red);
+        assert_eq!(terminal.backend().buffer()[(1, 27)].symbol(), "g");
+        Ok(())
+    }
+
+    #[test]
+    fn switching_category_keeps_scope_change_confirmation() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state
+            .project
+            .as_mut()
+            .ok_or("missing project")?
+            .initialize_project()?;
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(text(&terminal).contains("unapplied changes"));
+        assert_eq!(terminal.backend().buffer()[(83, 1)].fg, Color::Yellow);
+        state.handle_event(key(KeyCode::Tab), &workspace);
+        assert_eq!(state.category, Category::Taxonomies);
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert!(matches!(
+            state.screen,
+            Screen::ScopeChange(HomeItem::Browse)
+        ));
+        assert_eq!(workspace.saves.get(), 0);
+        state.handle_event(key(KeyCode::Esc), &workspace);
+        assert!(matches!(state.screen, Screen::Home));
+        assert_eq!(state.category, Category::Taxonomies);
         Ok(())
     }
 
@@ -2073,6 +2355,16 @@ mod tests {
         let before = state.home_selected;
         state.handle_event(key(KeyCode::Down), &workspace);
         assert_eq!(state.home_selected, before);
+        let mut short = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT - 1))?;
+        short.draw(|frame| state.render(frame))?;
+        assert!(text(&short).contains("Terminal too small"));
+        let mut minimum = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        minimum.draw(|frame| state.render(frame))?;
+        assert!(text(&minimum).contains("Scope"));
+        let buffer = minimum.backend().buffer();
+        assert_eq!(buffer[(0, 0)].symbol(), "┌");
+        assert_eq!(buffer[(0, 2)].symbol(), "├");
+        assert_eq!(buffer[(0, 16)].symbol(), "└");
         Ok(())
     }
 }
