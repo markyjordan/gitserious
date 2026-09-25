@@ -112,6 +112,12 @@ impl ConfigurationSession {
         self.project_working.as_ref()
     }
 
+    /// Returns the persisted project configuration captured before staged edits.
+    #[must_use]
+    pub const fn persisted_project_config(&self) -> Option<&ProjectConfig> {
+        self.project_original.as_ref()
+    }
+
     /// Returns the currently pinned lock.
     #[must_use]
     pub const fn lock(&self) -> Option<&ProjectLock> {

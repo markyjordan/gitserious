@@ -1,8 +1,10 @@
 use std::io::{self, IsTerminal};
+use std::path::PathBuf;
 
 use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
-    TaxonomyOrigin, revised_taxonomy,
+    ProjectConfig, RepositoryRoot, TaxonomyOrigin, resolve_effective_configuration,
+    revised_taxonomy,
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
@@ -24,8 +26,20 @@ use crate::theme::{
 };
 
 /// Taxonomy-first terminal configuration adapter.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct RatatuiTaxonomyConfigurationEditor;
+#[derive(Clone, Debug, Default)]
+pub struct RatatuiTaxonomyConfigurationEditor {
+    library_path: Option<PathBuf>,
+}
+
+impl RatatuiTaxonomyConfigurationEditor {
+    /// Supplies the resolved user-library source for Project resolution details.
+    #[must_use]
+    pub fn with_library_path(path: PathBuf) -> Self {
+        Self {
+            library_path: Some(path),
+        }
+    }
+}
 
 impl ConfigurationEditor for RatatuiTaxonomyConfigurationEditor {
     fn edit(&self, workspace: &dyn ConfigurationWorkspace) -> Result<(), String> {
@@ -35,6 +49,7 @@ impl ConfigurationEditor for RatatuiTaxonomyConfigurationEditor {
         ratatui::run(|terminal| {
             let _guard = TerminalGuard::enable()?;
             let mut state = State::new(workspace);
+            state.library_path.clone_from(&self.library_path);
             loop {
                 terminal.draw(|frame| state.render(frame))?;
                 if state.handle_event(event::read()?, workspace) {
@@ -70,85 +85,74 @@ impl Drop for TerminalGuard {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HomeItem {
-    Project,
-    Global,
-}
-
-impl HomeItem {
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Project => "Project",
-            Self::Global => "Global",
-        }
-    }
-
-    const fn scope(self) -> ConfigurationDestination {
-        match self {
-            Self::Project => ConfigurationDestination::Project,
-            Self::Global => ConfigurationDestination::Global,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Category {
-    Scope,
-    Taxonomies,
+    Project,
+    Library,
 }
 
 impl Category {
-    const ALL: [Self; 2] = [Self::Scope, Self::Taxonomies];
+    const ALL: [Self; 2] = [Self::Project, Self::Library];
 
     const fn index(self) -> usize {
         match self {
-            Self::Scope => 0,
-            Self::Taxonomies => 1,
+            Self::Project => 0,
+            Self::Library => 1,
         }
     }
 
     const fn label(self) -> &'static str {
         match self {
-            Self::Scope => "Scope",
-            Self::Taxonomies => "Taxonomies",
+            Self::Project => "Project",
+            Self::Library => "Library",
         }
     }
 
     const fn next(self) -> Self {
         match self {
-            Self::Scope => Self::Taxonomies,
-            Self::Taxonomies => Self::Scope,
+            Self::Project => Self::Library,
+            Self::Library => Self::Project,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TaxonomyPane {
-    Overview,
+enum LibraryFocus {
+    Taxonomies,
     Types,
 }
 
-impl TaxonomyPane {
-    const ALL: [Self; 2] = [Self::Overview, Self::Types];
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProjectSection {
+    Commit,
+    Resolution,
+    Files,
+}
+
+impl ProjectSection {
+    const ALL: [Self; 3] = [Self::Commit, Self::Resolution, Self::Files];
 
     const fn index(self) -> usize {
         match self {
-            Self::Overview => 0,
-            Self::Types => 1,
+            Self::Commit => 0,
+            Self::Resolution => 1,
+            Self::Files => 2,
         }
     }
 
     const fn label(self) -> &'static str {
         match self {
-            Self::Overview => "Overview",
-            Self::Types => "Types",
+            Self::Commit => "Commit",
+            Self::Resolution => "Resolution",
+            Self::Files => "Files",
         }
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 enum PendingAction {
-    Scope(HomeItem),
+    EditProject,
+    InitializeProject,
+    ReviewProject,
     Create,
     Edit,
     Fork,
@@ -170,7 +174,6 @@ enum EditorMode {
 #[derive(Clone, Debug)]
 enum Screen {
     Home,
-    CommitTypeDetail(usize),
     Settings(ConfigurationDestination),
     TaxonomyEditor(EditorMode),
     TypeEditor(usize),
@@ -357,21 +360,24 @@ struct SettingsDraft {
 }
 
 struct State {
+    library_path: Option<PathBuf>,
     global: Option<ConfigurationSession>,
     global_error: String,
     project: Option<ConfigurationSession>,
     project_error: String,
     active_scope: ConfigurationDestination,
     category: Category,
-    taxonomy_pane: TaxonomyPane,
+    library_focus: LibraryFocus,
+    project_section: ProjectSection,
     screen: Screen,
-    scope_selected: usize,
     browse_selected: usize,
     browser_offset: usize,
     type_selected: usize,
     type_offset: usize,
     child_selected: usize,
     scroll: u16,
+    project_scroll: u16,
+    property_scroll: u16,
     status: Option<Notice>,
     editor: Option<TaxonomyDraft>,
     editor_mode: EditorMode,
@@ -379,11 +385,10 @@ struct State {
     settings: Option<SettingsDraft>,
     fork_target: String,
     too_small: bool,
-    home_area: Rect,
+    project_area: Rect,
     tab_areas: [Rect; 2],
     browser_area: Rect,
     type_area: Rect,
-    pane_tabs: [Rect; 2],
 }
 
 impl State {
@@ -393,21 +398,24 @@ impl State {
         let (global, global_error) = split_result(global_result);
         let (project, project_error) = split_result(project_result);
         Self {
+            library_path: None,
             global,
             global_error,
             project,
             project_error,
             active_scope: ConfigurationDestination::Project,
-            category: Category::Scope,
-            taxonomy_pane: TaxonomyPane::Overview,
+            category: Category::Project,
+            library_focus: LibraryFocus::Taxonomies,
+            project_section: ProjectSection::Commit,
             screen: Screen::Home,
-            scope_selected: 0,
             browse_selected: 0,
             browser_offset: 0,
             type_selected: 0,
             type_offset: 0,
             child_selected: 0,
             scroll: 0,
+            project_scroll: 0,
+            property_scroll: 0,
             status: None,
             editor: None,
             editor_mode: EditorMode::Create,
@@ -415,11 +423,10 @@ impl State {
             settings: None,
             fork_target: String::new(),
             too_small: false,
-            home_area: Rect::default(),
+            project_area: Rect::default(),
             tab_areas: [Rect::default(); 2],
             browser_area: Rect::default(),
             type_area: Rect::default(),
-            pane_tabs: [Rect::default(); 2],
         }
     }
 
@@ -450,23 +457,16 @@ impl State {
                         self.status = None;
                     }
                 } else if matches!(self.screen, Screen::Home)
-                    && self.category == Category::Scope
-                    && contains(self.home_area, mouse.column, mouse.row)
+                    && self.category == Category::Project
+                    && contains(self.project_area, mouse.column, mouse.row)
                 {
-                    let index = usize::from(mouse.row.saturating_sub(self.home_area.y));
-                    if let Some(item) = [HomeItem::Project, HomeItem::Global].get(index) {
-                        self.scope_selected = index;
-                        self.request_scope_item(*item);
+                    let index = usize::from(mouse.row.saturating_sub(self.project_area.y));
+                    if let Some(section) = ProjectSection::ALL.get(index) {
+                        self.project_section = *section;
+                        self.project_scroll = 0;
                     }
                 } else if matches!(self.screen, Screen::Home)
-                    && self.category == Category::Taxonomies
-                    && let Some(pane) = TaxonomyPane::ALL.into_iter().find(|pane| {
-                        contains(self.pane_tabs[pane.index()], mouse.column, mouse.row)
-                    })
-                {
-                    self.taxonomy_pane = pane;
-                } else if matches!(self.screen, Screen::Home)
-                    && self.category == Category::Taxonomies
+                    && self.category == Category::Library
                     && contains(self.browser_area, mouse.column, mouse.row)
                 {
                     let index = self.browser_offset
@@ -474,11 +474,11 @@ impl State {
                     if index < self.catalog().map_or(0, |items| items.len()) {
                         self.browse_selected = index;
                         self.type_selected = 0;
+                        self.property_scroll = 0;
                         self.status = None;
                     }
                 } else if matches!(self.screen, Screen::Home)
-                    && self.category == Category::Taxonomies
-                    && self.taxonomy_pane == TaxonomyPane::Types
+                    && self.category == Category::Library
                     && contains(self.type_area, mouse.column, mouse.row)
                 {
                     let index =
@@ -489,6 +489,8 @@ impl State {
                             .map_or(0, |taxonomy| taxonomy.commit_types().len())
                     {
                         self.type_selected = index;
+                        self.library_focus = LibraryFocus::Types;
+                        self.property_scroll = 0;
                     }
                 }
             }
@@ -505,7 +507,6 @@ impl State {
         }
         match self.screen.clone() {
             Screen::Home => self.home_key(key, workspace),
-            Screen::CommitTypeDetail(_) => self.detail_key(key),
             Screen::Settings(destination) => self.settings_key(key, destination),
             Screen::TaxonomyEditor(mode) => self.taxonomy_editor_key(key, mode),
             Screen::TypeEditor(index) => self.type_editor_key(key, index),
@@ -531,19 +532,23 @@ impl State {
                 self.category = self.category.next();
                 self.status = None;
             }
-            KeyCode::Up | KeyCode::Down if self.category == Category::Scope => {
-                self.scope_selected = match key.code {
-                    KeyCode::Up => self.scope_selected.saturating_sub(1),
-                    _ => (self.scope_selected + 1).min(1),
+            KeyCode::Up | KeyCode::Down if self.category == Category::Project => {
+                let index = self.project_section.index();
+                let index = match key.code {
+                    KeyCode::Up => index.saturating_sub(1),
+                    _ => (index + 1).min(ProjectSection::ALL.len() - 1),
                 };
+                self.project_section = ProjectSection::ALL[index];
+                self.project_scroll = 0;
             }
-            KeyCode::Up | KeyCode::Down if self.taxonomy_pane == TaxonomyPane::Overview => {
+            KeyCode::Up | KeyCode::Down if self.library_focus == LibraryFocus::Taxonomies => {
                 let count = self.catalog().map_or(0, |items| items.len());
                 self.browse_selected = match key.code {
                     KeyCode::Up => self.browse_selected.saturating_sub(1),
                     _ => (self.browse_selected + 1).min(count.saturating_sub(1)),
                 };
                 self.type_selected = 0;
+                self.property_scroll = 0;
                 self.status = None;
             }
             KeyCode::Up | KeyCode::Down => {
@@ -554,54 +559,59 @@ impl State {
                     KeyCode::Up => self.type_selected.saturating_sub(1),
                     _ => (self.type_selected + 1).min(count.saturating_sub(1)),
                 };
+                self.property_scroll = 0;
             }
-            KeyCode::Right if self.category == Category::Taxonomies => {
-                self.taxonomy_pane = TaxonomyPane::Types;
+            KeyCode::Right if self.category == Category::Library => {
+                self.library_focus = LibraryFocus::Types;
             }
-            KeyCode::Left if self.category == Category::Taxonomies => {
-                self.taxonomy_pane = TaxonomyPane::Overview;
+            KeyCode::Left if self.category == Category::Library => {
+                self.library_focus = LibraryFocus::Taxonomies;
             }
-            KeyCode::Enter if self.category == Category::Scope => {
-                let item = [HomeItem::Project, HomeItem::Global][self.scope_selected];
-                self.request_scope_item(item);
+            KeyCode::PageUp if self.category == Category::Project => {
+                self.project_scroll = self.project_scroll.saturating_sub(8);
             }
-            KeyCode::Enter if self.taxonomy_pane == TaxonomyPane::Overview => {
-                self.taxonomy_pane = TaxonomyPane::Types;
+            KeyCode::PageDown if self.category == Category::Project => {
+                self.project_scroll = self.project_scroll.saturating_add(8);
             }
-            KeyCode::Enter => {
-                if self
-                    .selected_taxonomy()
-                    .is_some_and(|taxonomy| self.type_selected < taxonomy.commit_types().len())
-                {
-                    self.scroll = 0;
-                    self.screen = Screen::CommitTypeDetail(self.type_selected);
+            KeyCode::PageUp if self.category == Category::Library => {
+                self.property_scroll = self.property_scroll.saturating_sub(8);
+            }
+            KeyCode::PageDown if self.category == Category::Library => {
+                self.property_scroll = self.property_scroll.saturating_add(8);
+            }
+            KeyCode::Enter if self.category == Category::Project => {
+                if self.project_section == ProjectSection::Commit {
+                    self.request_project_action(PendingAction::EditProject);
                 }
             }
+            KeyCode::Char('i') if self.category == Category::Project => {
+                self.request_project_action(PendingAction::InitializeProject);
+            }
             KeyCode::Char('n')
-                if self.category == Category::Taxonomies && key.modifiers.is_empty() =>
+                if self.category == Category::Library && key.modifiers.is_empty() =>
             {
                 self.request_global_action(PendingAction::Create);
             }
             KeyCode::Char('e')
-                if self.category == Category::Taxonomies && key.modifiers.is_empty() =>
+                if self.category == Category::Library && key.modifiers.is_empty() =>
             {
                 self.request_global_action(PendingAction::Edit);
             }
             KeyCode::Char('f')
-                if self.category == Category::Taxonomies && key.modifiers.is_empty() =>
+                if self.category == Category::Library && key.modifiers.is_empty() =>
             {
                 self.request_global_action(PendingAction::Fork);
             }
             KeyCode::Char('d')
-                if self.category == Category::Taxonomies && key.modifiers.is_empty() =>
+                if self.category == Category::Library && key.modifiers.is_empty() =>
             {
                 self.request_global_action(PendingAction::Delete);
             }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if self.category == Category::Taxonomies {
+                if self.category == Category::Library {
                     self.request_global_action(PendingAction::ReviewGlobal);
                 } else {
-                    self.open_review();
+                    self.request_project_action(PendingAction::ReviewProject);
                 }
             }
             KeyCode::Esc | KeyCode::Char('q') => {
@@ -616,52 +626,32 @@ impl State {
         false
     }
 
-    fn request_scope_item(&mut self, item: HomeItem) {
+    fn request_project_action(&mut self, action: PendingAction) {
         self.status = None;
-        if item.scope() != self.active_scope && self.scope_dirty(self.active_scope) {
-            self.screen = Screen::ScopeChange(PendingAction::Scope(item));
+        let Some(session) = &self.project else {
+            self.status = Some(Notice::Error(self.project_error.clone()));
             return;
-        }
-        self.active_scope = item.scope();
-        self.open_scope_item(item);
-    }
-
-    fn open_scope_item(&mut self, item: HomeItem) {
-        match item {
-            HomeItem::Project => {
-                let Some(session) = &mut self.project else {
-                    self.status = Some(Notice::Error(self.project_error.clone()));
-                    return;
-                };
-                if session.project_config().is_none() {
-                    match session
-                        .initialize_project()
-                        .and_then(|()| session.review().map(|_| ()))
-                    {
-                        Ok(()) => self.screen = Screen::Review(ConfigurationDestination::Project),
-                        Err(error) => self.status = Some(Notice::Error(error)),
-                    }
-                } else {
-                    self.open_settings(ConfigurationDestination::Project);
-                }
+        };
+        match action {
+            PendingAction::EditProject if session.project_config().is_none() => {
+                self.status = Some(Notice::Error(
+                    "Initialize the project before editing.".into(),
+                ));
+                return;
             }
-            HomeItem::Global => self.open_settings(ConfigurationDestination::Global),
-        }
-    }
-
-    fn detail_key(&mut self, key: KeyEvent) -> bool {
-        match key.code {
-            KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
-            KeyCode::Down => self.scroll = self.scroll.saturating_add(1),
-            KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
-            KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
-            KeyCode::Esc | KeyCode::Char('q') => {
-                self.scroll = 0;
-                self.screen = Screen::Home;
+            PendingAction::InitializeProject if session.project_config().is_some() => {
+                self.status = Some(Notice::Info("Project is already initialized.".into()));
+                return;
             }
             _ => {}
         }
-        false
+        if self.active_scope == ConfigurationDestination::Global
+            && self.scope_dirty(ConfigurationDestination::Global)
+        {
+            self.screen = Screen::ScopeChange(action);
+            return;
+        }
+        self.perform_pending_action(action);
     }
 
     fn open_settings(&mut self, destination: ConfigurationDestination) {
@@ -1219,9 +1209,27 @@ impl State {
     fn perform_pending_action(&mut self, action: PendingAction) {
         self.screen = Screen::Home;
         match action {
-            PendingAction::Scope(item) => {
-                self.active_scope = item.scope();
-                self.open_scope_item(item);
+            PendingAction::EditProject => {
+                self.active_scope = ConfigurationDestination::Project;
+                self.open_settings(ConfigurationDestination::Project);
+            }
+            PendingAction::InitializeProject => {
+                self.active_scope = ConfigurationDestination::Project;
+                let Some(session) = &mut self.project else {
+                    self.status = Some(Notice::Error(self.project_error.clone()));
+                    return;
+                };
+                match session
+                    .initialize_project()
+                    .and_then(|()| session.review().map(|_| ()))
+                {
+                    Ok(()) => self.screen = Screen::Review(ConfigurationDestination::Project),
+                    Err(error) => self.status = Some(Notice::Error(error)),
+                }
+            }
+            PendingAction::ReviewProject => {
+                self.active_scope = ConfigurationDestination::Project;
+                self.open_review();
             }
             PendingAction::Create => {
                 self.active_scope = ConfigurationDestination::Global;
@@ -1533,47 +1541,31 @@ impl State {
         render_frame_divider(frame, outer, tabs_divider.y);
         let hints = match self.screen.clone() {
             Screen::Home => {
-                if self.category == Category::Scope {
-                    self.render_home(frame, body);
+                if self.category == Category::Project {
+                    self.render_project(frame, body);
                     vec![
-                        ("tab", "category"),
-                        ("↑/↓", "move"),
-                        ("enter", "open"),
+                        ("tab", "Library"),
+                        ("↑/↓", "section"),
+                        ("enter", "configure"),
+                        ("i", "initialize"),
                         ("ctrl+s", "review"),
+                        ("pgup/dn", "scroll"),
                         ("q", "quit"),
                     ]
                 } else {
                     self.render_library(frame, body);
-                    if self.taxonomy_pane == TaxonomyPane::Overview {
-                        vec![
-                            ("n", "new"),
-                            ("e", "edit"),
-                            ("f", "fork"),
-                            ("d", "delete"),
-                            ("ctrl+s", "review"),
-                            ("↑/↓", "taxonomy"),
-                            ("→", "types"),
-                            ("tab", "category"),
-                            ("q", "quit"),
-                        ]
-                    } else {
-                        vec![
-                            ("n", "new"),
-                            ("e", "edit"),
-                            ("f", "fork"),
-                            ("d", "delete"),
-                            ("ctrl+s", "review"),
-                            ("↑/↓", "type"),
-                            ("enter", "inspect"),
-                            ("←", "overview"),
-                            ("tab", "category"),
-                        ]
-                    }
+                    vec![
+                        ("n", "new"),
+                        ("e", "edit"),
+                        ("f", "fork"),
+                        ("d", "delete"),
+                        ("ctrl+s", "review"),
+                        ("←/→", "focus"),
+                        ("↑/↓", "move"),
+                        ("pgup/dn", "detail"),
+                        ("tab", "Project"),
+                    ]
                 }
-            }
-            Screen::CommitTypeDetail(index) => {
-                self.render_commit_type_detail(frame, body, index);
-                vec![("↑/↓", "scroll"), ("esc", "back")]
             }
             Screen::Settings(destination) => {
                 self.render_settings(frame, body, destination);
@@ -1695,14 +1687,11 @@ impl State {
         render_frame_divider(frame, outer, divider.y);
         let load_error = if matches!(self.screen, Screen::Home) {
             match self.category {
-                Category::Scope if self.scope_selected == 0 && self.project.is_none() => {
-                    Some(self.project_error.clone())
-                }
-                Category::Scope if self.scope_selected == 1 && self.global.is_none() => {
-                    Some(self.global_error.clone())
-                }
-                Category::Taxonomies => self.catalog_error(),
-                Category::Scope => None,
+                Category::Project => self.project.as_ref().map_or_else(
+                    || Some(self.project_error.clone()),
+                    ConfigurationSession::source_error,
+                ),
+                Category::Library => self.catalog_error(),
             }
         } else {
             None
@@ -1721,71 +1710,243 @@ impl State {
         }
     }
 
-    fn render_home(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let columns = Layout::horizontal([
-            Constraint::Length(20),
-            Constraint::Length(1),
-            Constraint::Min(1),
-        ])
-        .split(area);
+    fn render_project(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let columns = pane_columns(area);
+        frame.render_widget(
+            Block::bordered()
+                .border_style(frame_style())
+                .title("Project"),
+            columns[0],
+        );
+        let root = self
+            .project
+            .as_ref()
+            .and_then(ConfigurationSession::root)
+            .map(RepositoryRoot::as_path);
+        let name = root.and_then(|path| path.file_name()).map_or_else(
+            || "Project".into(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let path = root.map_or_else(
+            || "Repository unavailable".into(),
+            |path| path.display().to_string(),
+        );
+        frame.render_widget(
+            Paragraph::new(name).style(section_heading_style()),
+            Rect::new(
+                columns[0].x + 2,
+                columns[0].y + 2,
+                columns[0].width.saturating_sub(4),
+                1,
+            ),
+        );
+        frame.render_widget(
+            Paragraph::new(path),
+            Rect::new(
+                columns[0].x + 2,
+                columns[0].y + 3,
+                columns[0].width.saturating_sub(4),
+                1,
+            ),
+        );
+        frame.render_widget(
+            Paragraph::new("Configuration"),
+            Rect::new(
+                columns[0].x + 2,
+                columns[0].y + 5,
+                columns[0].width.saturating_sub(4),
+                1,
+            ),
+        );
         let nav = Rect::new(
             columns[0].x + 1,
-            columns[0].y + 1,
+            columns[0].y + 6,
             columns[0].width.saturating_sub(2),
-            columns[0].height.saturating_sub(2),
+            columns[0].height.saturating_sub(7),
         );
-        self.home_area = nav;
-        let items = [HomeItem::Project, HomeItem::Global];
-        let rows = items
-            .iter()
-            .enumerate()
-            .map(|(index, item)| {
+        self.project_area = nav;
+        let rows = ProjectSection::ALL
+            .into_iter()
+            .map(|section| {
                 ListItem::new(format!(
                     "{}{}",
-                    if index == self.scope_selected {
+                    if section == self.project_section {
                         "› "
                     } else {
                         "  "
                     },
-                    item.label()
+                    section.label()
                 ))
             })
             .collect::<Vec<_>>();
         let mut state = ListState::default();
-        state.select(Some(self.scope_selected));
+        state.select(Some(self.project_section.index()));
         frame.render_stateful_widget(
             List::new(rows).highlight_style(navigation_key_style()),
             nav,
             &mut state,
         );
-        let detail = Rect::new(
-            columns[2].x + 1,
-            columns[2].y + 1,
-            columns[2].width.saturating_sub(2),
-            columns[2].height.saturating_sub(2),
+
+        frame.render_widget(
+            Block::bordered()
+                .border_style(frame_style())
+                .title(self.project_section.label()),
+            columns[1],
         );
-        let text = self.home_detail(items[self.scope_selected]);
-        frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), detail);
+        let detail = Rect::new(
+            columns[1].x + 2,
+            columns[1].y + 2,
+            columns[1].width.saturating_sub(4),
+            columns[1].height.saturating_sub(3),
+        );
+        let text = self.project_detail();
+        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+        let max_scroll = paragraph
+            .line_count(detail.width)
+            .saturating_sub(usize::from(detail.height));
+        self.project_scroll = self
+            .project_scroll
+            .min(u16::try_from(max_scroll).unwrap_or(u16::MAX));
+        frame.render_widget(paragraph.scroll((self.project_scroll, 0)), detail);
     }
 
-    fn home_detail(&self, item: HomeItem) -> String {
-        match item {
-            HomeItem::Global => self.global.as_ref().map_or_else(|| self.global_error.clone(), |session| format!("Global configuration\n\nDefault taxonomy\n  {}\n\nAvailable\n  {}\n\nSource\n  user configuration", session.global().default_taxonomy(), session.global().available_taxonomies().iter().map(ToString::to_string).collect::<Vec<_>>().join(", "))),
-            HomeItem::Project => self.project.as_ref().map_or_else(|| self.project_error.clone(), |session| match session.project_config() {
-                None => "Project configuration\n\nNot initialized\n\nEnter to review initialization from the current global environment.".into(),
-                Some(config) => {
-                    let default = config.default_taxonomy().map_or_else(|| format!("{}  [inherited]", session.global().default_taxonomy()), |id| format!("{id}  [project override]"));
-                    let available = config.available_taxonomies().map_or_else(|| format!("{}  [inherited]", session.global().available_taxonomies().iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")), |ids| format!("{}  [project override]", ids.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")));
-                    let lock = if session.source_error().is_some() { "pinned source unavailable" } else if session.update_available() { "update available" } else if session.lock().is_some_and(|lock| lock.matches(config)) { "current" } else { "stale — review Apply/Refresh" };
-                    format!("Project configuration\n\nDefault taxonomy\n  {default}\n\nAvailable\n  {available}\n\nLock\n  {lock}\n\nSource\n  {}", session.root().map_or_else(String::new, |root| root.as_path().join("gitserious.toml").display().to_string()))
-                }
-            }),
+    fn project_detail(&self) -> String {
+        let Some(session) = &self.project else {
+            return self.project_error.clone();
+        };
+        let inherited = ProjectConfig::inherited();
+        let config = session.project_config().unwrap_or(&inherited);
+        let baseline = session.global();
+        let effective = resolve_effective_configuration(baseline, config);
+        let available = effective.as_ref().map_or_else(
+            |error| format!("Unresolved: {error}"),
+            |value| {
+                value
+                    .taxonomies()
+                    .iter()
+                    .map(|taxonomy| taxonomy.id().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+        );
+        let default = effective.as_ref().map_or_else(
+            |error| format!("Unresolved: {error}"),
+            |value| value.default_taxonomy().to_string(),
+        );
+        let pinned = session
+            .persisted_project_config()
+            .and_then(|config| session.lock().filter(|lock| lock.matches(config)));
+        let commit_default = pinned.map_or_else(
+            || format!("{default} (preview; commit blocked)"),
+            |lock| lock.default_taxonomy().to_string(),
+        );
+        let commit_available = pinned.map_or_else(
+            || format!("{available} (preview; commit blocked)"),
+            |lock| {
+                lock.taxonomies()
+                    .iter()
+                    .map(|taxonomy| taxonomy.id().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+        );
+        let status = project_status(session);
+        match self.project_section {
+            ProjectSection::Commit => {
+                let persisted = session.persisted_project_config().unwrap_or(&inherited);
+                let staged = if session.is_dirty() {
+                    format!("\n\nStaged resolution\n  Default: {default}\n  Available: {available}")
+                } else {
+                    String::new()
+                };
+                format!(
+                    "Commit taxonomy\n  {commit_default}\n\nSource\n  {}\n\nLibrary baseline\n  {}\n\nAvailable taxonomies\n  {commit_available}{staged}\n\nStatus\n  {status}\n  {}",
+                    if persisted.default_taxonomy().is_some() {
+                        "Project override"
+                    } else {
+                        "Inherited Library baseline"
+                    },
+                    baseline.default_taxonomy(),
+                    project_guidance(status),
+                )
+            }
+            ProjectSection::Resolution => {
+                let library_path = self.library_path.as_ref().map_or_else(
+                    || "Library config location unavailable".into(),
+                    |path| path.display().to_string(),
+                );
+                let project_path = session.root().map_or_else(String::new, |root| {
+                    root.as_path().join("gitserious.toml").display().to_string()
+                });
+                let project_default = config
+                    .default_taxonomy()
+                    .map_or_else(|| "inherit".into(), ToString::to_string);
+                let project_available = config.available_taxonomies().map_or_else(
+                    || "inherit".into(),
+                    |values| {
+                        values
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    },
+                );
+                let pinned_default = session.lock().map_or_else(
+                    || "Unavailable".to_owned(),
+                    |lock| lock.default_taxonomy().to_string(),
+                );
+                let pinned_available = session.lock().map_or_else(
+                    || "Unavailable".to_owned(),
+                    |lock| {
+                        lock.taxonomies()
+                            .iter()
+                            .map(|taxonomy| taxonomy.id().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    },
+                );
+                format!(
+                    "Library baseline\n  {library_path}\n  Default: {}\n  Available: {}\n\n{}\n  {project_path}\n  Default: {project_default}\n  Available: {project_available}\n\nCurrent resolution\n  Default: {default}\n  Available: {available}\n\nPinned lock\n  Default: {pinned_default}\n  Available: {pinned_available}\n\nStatus\n  {status}",
+                    baseline.default_taxonomy(),
+                    baseline
+                        .available_taxonomies()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    if session.is_dirty() {
+                        "Project overrides (staged)"
+                    } else {
+                        "Project overrides"
+                    },
+                )
+            }
+            ProjectSection::Files => {
+                let Some(root) = session.root() else {
+                    return "Repository unavailable.".into();
+                };
+                format!(
+                    "Project configuration\n  {}\n  {}\n\nLock\n  {}\n  {}\n\nStatus\n  {status}\n  {}",
+                    root.as_path().join("gitserious.toml").display(),
+                    if session.persisted_project_config().is_some() {
+                        "Present"
+                    } else {
+                        "Absent"
+                    },
+                    root.as_path().join("gitserious.lock").display(),
+                    if session.lock().is_some() {
+                        "Present"
+                    } else {
+                        "Absent"
+                    },
+                    project_guidance(status),
+                )
+            }
         }
     }
 
     fn render_library(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let columns = Layout::horizontal([Constraint::Percentage(38), Constraint::Percentage(62)])
-            .split(area);
+        let columns = pane_columns(area);
         let items = self.catalog().unwrap_or_default();
         self.browse_selected = self.browse_selected.min(items.len().saturating_sub(1));
         let list_area = Rect::new(
@@ -1799,14 +1960,29 @@ impl State {
             .iter()
             .enumerate()
             .map(|(index, taxonomy)| {
+                let origin = self
+                    .global
+                    .as_ref()
+                    .and_then(|session| session.catalog().ok())
+                    .and_then(|catalog| catalog.origin(taxonomy.id()))
+                    .map_or("unknown", |origin| match origin {
+                        TaxonomyOrigin::BuiltIn => "built-in",
+                        TaxonomyOrigin::Custom => "global",
+                    });
+                let id_width = usize::from(list_area.width).saturating_sub(origin.len() + 3);
+                let id = taxonomy
+                    .id()
+                    .to_string()
+                    .chars()
+                    .take(id_width)
+                    .collect::<String>();
                 ListItem::new(format!(
-                    "{}{}",
+                    "{}{id:<id_width$} {origin}",
                     if index == self.browse_selected {
                         "› "
                     } else {
                         "  "
-                    },
-                    taxonomy.id()
+                    }
                 ))
                 .style(Style::default().bg(if index % 2 == 0 {
                     JET_BLACK
@@ -1832,33 +2008,12 @@ impl State {
         );
         self.browser_offset = state.offset();
 
-        frame.render_widget(Block::bordered().border_style(frame_style()), columns[1]);
-        self.pane_tabs = [Rect::default(); 2];
-        let mut x = columns[1].x.saturating_add(2);
-        for pane in TaxonomyPane::ALL {
-            let width = u16::try_from(Line::from(pane.label()).width())
-                .unwrap_or(u16::MAX)
-                .saturating_add(2);
-            let tab = Rect::new(x, columns[1].y, width, 1);
-            self.pane_tabs[pane.index()] = tab;
-            let style = if pane == self.taxonomy_pane {
-                section_heading_style()
-            } else {
-                Style::default()
-            };
-            frame.render_widget(
-                Paragraph::new(format!(" {} ", pane.label())).style(style),
-                tab,
-            );
-            x = x.saturating_add(width);
-            if pane == TaxonomyPane::Overview {
-                frame.render_widget(
-                    Paragraph::new("│").style(frame_style()),
-                    Rect::new(x, columns[1].y, 1, 1),
-                );
-                x = x.saturating_add(1);
-            }
-        }
+        let selected = items.get(self.browse_selected);
+        let title = selected.map_or_else(|| "Taxonomy".to_owned(), |value| value.id().to_string());
+        frame.render_widget(
+            Block::bordered().border_style(frame_style()).title(title),
+            columns[1],
+        );
         let content = Rect::new(
             columns[1].x.saturating_add(2),
             columns[1].y.saturating_add(2),
@@ -1866,122 +2021,127 @@ impl State {
             columns[1].height.saturating_sub(3),
         );
         self.type_area = Rect::default();
-        match self.taxonomy_pane {
-            TaxonomyPane::Overview => {
-                let detail = items.get(self.browse_selected).map_or_else(
-                    || {
-                        if self.catalog_error().is_some() {
-                            "Taxonomy library unavailable.".to_owned()
-                        } else {
-                            "No taxonomies available.".to_owned()
-                        }
-                    },
-                    |taxonomy| {
-                        let origin = self
-                            .global
-                            .as_ref()
-                            .and_then(|session| session.catalog().ok())
-                            .and_then(|catalog| catalog.origin(taxonomy.id()))
-                            .map_or("unknown", TaxonomyOrigin::as_str);
-                        let mut detail = format!(
-                            "{}\n\n{}\n\nOrigin       {origin}\nVersion      {}\nTypes        {}",
-                            taxonomy.id(),
-                            taxonomy.description(),
-                            taxonomy.version(),
-                            taxonomy.commit_types().len()
-                        );
-                        if let Some(source) = taxonomy.derived_from() {
-                            detail.push_str(&format!(
-                                "\nForked from  {}@{}",
-                                source.id(),
-                                source.version()
-                            ));
-                        }
-                        detail
-                    },
-                );
-                frame.render_widget(Paragraph::new(detail).wrap(Wrap { trim: false }), content);
-            }
-            TaxonomyPane::Types => {
-                let Some(taxonomy) = items.get(self.browse_selected) else {
-                    frame.render_widget(Paragraph::new("No taxonomy selected."), content);
-                    return;
-                };
-                let definitions = taxonomy.commit_types();
-                self.type_selected = self.type_selected.min(definitions.len().saturating_sub(1));
-                if definitions.is_empty() {
-                    frame.render_widget(Paragraph::new("No commit types."), content);
-                    return;
-                }
-                self.type_area = content;
-                let rows = definitions
-                    .iter()
-                    .enumerate()
-                    .map(|(index, definition)| {
-                        ListItem::new(format!(
-                            "{}{}  {}",
-                            if index == self.type_selected {
-                                "› "
-                            } else {
-                                "  "
-                            },
-                            definition.id(),
-                            definition.description()
-                        ))
-                        .style(Style::default().bg(if index % 2 == 0 {
-                            JET_BLACK
-                        } else {
-                            ZEBRA_BACKGROUND
-                        }))
-                    })
-                    .collect::<Vec<_>>();
-                let mut state = ListState::default();
-                state.select(Some(self.type_selected));
-                frame.render_stateful_widget(
-                    List::new(rows).highlight_style(navigation_key_style()),
-                    content,
-                    &mut state,
-                );
-                self.type_offset = state.offset();
-            }
-        }
-    }
-
-    fn render_commit_type_detail(&self, frame: &mut Frame<'_>, area: Rect, index: usize) {
-        let Some(taxonomy) = self.selected_taxonomy() else {
+        let Some(taxonomy) = selected else {
+            frame.render_widget(
+                Paragraph::new(if self.catalog_error().is_some() {
+                    "Taxonomy library unavailable."
+                } else {
+                    "No taxonomies available."
+                }),
+                content,
+            );
             return;
         };
-        let Some(definition) = taxonomy.commit_types().get(index) else {
-            return;
-        };
-        let mut text = format!(
-            "{}\n\n{}\n\nProperties\n──────────\n",
-            definition.id(),
-            definition.description()
+        let origin = self
+            .global
+            .as_ref()
+            .and_then(|session| session.catalog().ok())
+            .and_then(|catalog| catalog.origin(taxonomy.id()))
+            .map_or("Unknown", |origin| match origin {
+                TaxonomyOrigin::BuiltIn => "Built-in",
+                TaxonomyOrigin::Custom => "Global",
+            });
+        let mut summary = format!(
+            "{}\n{origin} · v{} · {} types",
+            taxonomy.description(),
+            taxonomy.version(),
+            taxonomy.commit_types().len()
         );
-        if definition.properties().is_empty() {
-            text.push_str("\nNo durable properties.\n");
-        }
-        for property in definition.properties() {
-            text.push_str(&format!(
-                "\n{}  [{:?}, {:?}]\n  {}\n",
-                property.key(),
-                property.requirement(),
-                property.multiplicity(),
-                property.description()
+        if let Some(source) = taxonomy.derived_from() {
+            summary.push_str(&format!(
+                "\nForked from {}@{}",
+                source.id(),
+                source.version()
             ));
         }
+        let summary_rows = if content.height < 12 { 3 } else { 4 };
+        let remaining = content.height.saturating_sub(summary_rows + 2);
+        let type_rows = (remaining / 2)
+            .max(1)
+            .min(u16::try_from(taxonomy.commit_types().len().max(1)).unwrap_or(u16::MAX));
+        let [
+            summary_area,
+            types_heading,
+            type_list,
+            detail_heading,
+            detail_area,
+        ] = Layout::vertical([
+            Constraint::Length(summary_rows),
+            Constraint::Length(1),
+            Constraint::Length(type_rows),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .areas(content);
         frame.render_widget(
-            Paragraph::new(text)
-                .wrap(Wrap { trim: false })
-                .scroll((self.scroll, 0))
-                .block(
-                    Block::bordered()
-                        .border_style(frame_style())
-                        .title("Commit type"),
-                ),
-            area,
+            Paragraph::new(summary).wrap(Wrap { trim: false }),
+            summary_area,
         );
+        frame.render_widget(
+            Paragraph::new("Types").style(section_heading_style()),
+            types_heading,
+        );
+        let definitions = taxonomy.commit_types();
+        self.type_selected = self.type_selected.min(definitions.len().saturating_sub(1));
+        self.type_area = type_list;
+        if definitions.is_empty() {
+            frame.render_widget(Paragraph::new("No commit types."), type_list);
+            return;
+        }
+        let rows = definitions
+            .iter()
+            .enumerate()
+            .map(|(index, definition)| {
+                ListItem::new(format!(
+                    "{}{}  {}",
+                    if index == self.type_selected {
+                        "› "
+                    } else {
+                        "  "
+                    },
+                    definition.id(),
+                    definition.properties().len()
+                ))
+                .style(Style::default().bg(if index % 2 == 0 {
+                    JET_BLACK
+                } else {
+                    ZEBRA_BACKGROUND
+                }))
+            })
+            .collect::<Vec<_>>();
+        let mut state = ListState::default();
+        state.select(Some(self.type_selected));
+        frame.render_stateful_widget(
+            List::new(rows).highlight_style(navigation_key_style()),
+            type_list,
+            &mut state,
+        );
+        self.type_offset = state.offset();
+        let definition = &definitions[self.type_selected];
+        frame.render_widget(
+            Paragraph::new(definition.id().to_string()).style(section_heading_style()),
+            detail_heading,
+        );
+        let mut detail = format!("{}\n\nProperties", definition.description());
+        if definition.properties().is_empty() {
+            detail.push_str("\n  No durable properties.");
+        } else {
+            for property in definition.properties() {
+                detail.push_str(&format!(
+                    "\n  {}  {}",
+                    property.key(),
+                    requirement_label(property.requirement())
+                ));
+            }
+        }
+        let paragraph = Paragraph::new(detail).wrap(Wrap { trim: false });
+        let max_scroll = paragraph
+            .line_count(detail_area.width)
+            .saturating_sub(usize::from(detail_area.height));
+        self.property_scroll = self
+            .property_scroll
+            .min(u16::try_from(max_scroll).unwrap_or(u16::MAX));
+        frame.render_widget(paragraph.scroll((self.property_scroll, 0)), detail_area);
     }
 
     fn render_settings(
@@ -2246,6 +2406,60 @@ fn render_frame_divider(frame: &mut Frame<'_>, outer: Rect, y: u16) {
         .set_style(style);
 }
 
+fn pane_columns(area: Rect) -> std::rc::Rc<[Rect]> {
+    let left = (area.width.saturating_mul(38) / 100)
+        .max(26)
+        .min(area.width.saturating_sub(28));
+    Layout::horizontal([Constraint::Length(left), Constraint::Min(1)]).split(area)
+}
+
+fn project_status(session: &ConfigurationSession) -> &'static str {
+    let Some(config) = session.persisted_project_config() else {
+        return if session.project_config().is_some() {
+            "Initialization staged"
+        } else {
+            "Not initialized"
+        };
+    };
+    let Some(lock) = session.lock() else {
+        return "Lock missing";
+    };
+    if !lock.matches(config) {
+        "Stale lock"
+    } else if session.is_dirty() {
+        "Changes staged"
+    } else if session.source_error().is_some() {
+        "Source unavailable"
+    } else if session.update_available() {
+        "Update available"
+    } else {
+        "In sync"
+    }
+}
+
+fn project_guidance(status: &str) -> &'static str {
+    match status {
+        "Not initialized" => "Press i to initialize and review.",
+        "Initialization staged" => "Review and apply initialization with Ctrl+S.",
+        "Changes staged" => "Review Ctrl+S; commits still use the pinned lock.",
+        "Lock missing" => "Run gitserious init to create the missing lock.",
+        "Stale lock" | "Update available" => "Review and refresh the lock with Ctrl+S.",
+        "Source unavailable" => {
+            "Pinned commits use the lock; restore Library source before refresh."
+        }
+        _ => "",
+    }
+}
+
+const fn requirement_label(value: &PropertyRequirement) -> &'static str {
+    match value {
+        PropertyRequirement::Required => "required",
+        PropertyRequirement::Recommended => "recommended",
+        PropertyRequirement::Optional => "optional",
+        PropertyRequirement::Conditional(_) => "conditional",
+    }
+}
+
 fn split_result(
     result: Result<ConfigurationSession, String>,
 ) -> (Option<ConfigurationSession>, String) {
@@ -2318,7 +2532,7 @@ fn reorder_available(available: &mut [TaxonomyId], selected: &Option<TaxonomyId>
 mod tests {
     use std::cell::{Cell, RefCell};
 
-    use gitserious_app::{GlobalConfiguration, ProjectState, RepositoryRoot};
+    use gitserious_app::{GlobalConfiguration, ProjectLock, ProjectState, RepositoryRoot};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -2385,18 +2599,30 @@ mod tests {
     }
 
     #[test]
-    fn taxonomy_category_opens_library_and_retains_selection()
+    fn project_shows_inherited_preview_resolution_files_and_initialize()
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
+        state.library_path = Some(PathBuf::from("/library/config.toml"));
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
         let home = text(&terminal);
         assert!(!home.contains("gitserious config"));
-        assert!(home.contains("Scope"));
         assert!(home.contains("Project"));
-        assert!(home.contains("Taxonomies"));
-        assert!(!home.contains("Browse"));
+        assert!(home.contains("Library"));
+        assert!(home.contains("Commit"));
+        assert!(home.contains("Resolution"));
+        assert!(home.contains("Files"));
+        assert!(home.contains("conventional"));
+        assert!(home.contains("Not initialized"));
+        assert!(
+            state
+                .project
+                .as_ref()
+                .ok_or("missing project")?
+                .project_config()
+                .is_none()
+        );
         let buffer = terminal.backend().buffer();
         assert_eq!(buffer[(0, 0)].symbol(), "┌");
         assert_eq!(buffer[(99, 0)].symbol(), "┐");
@@ -2410,72 +2636,197 @@ mod tests {
         assert!((0..100).all(|x| buffer[(x, 29)].bg == Color::Yellow));
 
         state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.scope_selected, 1);
-        state.handle_event(key(KeyCode::Tab), &workspace);
-        assert_eq!(state.category, Category::Taxonomies);
+        assert_eq!(state.project_section, ProjectSection::Resolution);
         terminal.draw(|frame| state.render(frame))?;
-        let library = text(&terminal);
-        assert!(library.contains("Library"));
-        assert!(library.contains("Overview"));
-        assert!(library.contains("Types"));
-        assert!(library.contains("conventional"));
-        assert!(library.contains("research"));
-        assert!(library.contains("infra-ops"));
-        assert!(library.contains("Conventional Commits classification system"));
-        assert!(library.contains("Origin       built-in"));
-        assert!(library.contains("Version      1"));
-        assert!(library.contains("Types        11"));
-        assert!(library.contains("n: new | e: edit | f: fork | d: delete"));
-        assert!(!library.contains("Browse"));
-        assert!(!library.contains("Create taxonomy"));
-        assert_eq!(terminal.backend().buffer()[(12, 1)].bg, Color::Yellow);
-
+        let resolution = text(&terminal);
+        assert!(resolution.contains("/library/config.toml"));
+        assert!(resolution.contains("Project overrides"));
+        assert!(state.project_detail().contains("Current resolution"));
+        assert!(state.project_detail().contains("Pinned lock"));
         state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.browse_selected, 1);
-        state.handle_event(key(KeyCode::Tab), &workspace);
-        assert_eq!(state.scope_selected, 1);
-        state.handle_event(key(KeyCode::Tab), &workspace);
-        assert_eq!(state.browse_selected, 1);
+        assert_eq!(state.project_section, ProjectSection::Files);
+        terminal.draw(|frame| state.render(frame))?;
+        let files = text(&terminal);
+        assert!(files.contains("Project configuration"));
+        assert!(state.project_detail().contains("gitserious.toml"));
+        assert!(state.project_detail().contains("gitserious.lock"));
+        assert!(files.contains("Absent"));
         state.handle_event(key(KeyCode::Up), &workspace);
-        assert_eq!(state.browse_selected, 0);
-        state.handle_event(key(KeyCode::Right), &workspace);
-        assert_eq!(state.taxonomy_pane, TaxonomyPane::Types);
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(text(&terminal).contains("An addition or expansion of capability."));
-        state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.type_selected, 1);
+        state.handle_event(key(KeyCode::Up), &workspace);
         state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(matches!(state.screen, Screen::CommitTypeDetail(1)));
-        state.handle_event(key(KeyCode::Esc), &workspace);
         assert!(matches!(state.screen, Screen::Home));
-        assert_eq!(state.category, Category::Taxonomies);
-        assert_eq!(state.taxonomy_pane, TaxonomyPane::Types);
-        state.handle_event(key(KeyCode::Left), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.browse_selected, 1);
-        assert_eq!(state.type_selected, 0);
+        assert!(matches!(state.status, Some(Notice::Error(_))));
+        state.handle_event(key(KeyCode::Char('i')), &workspace);
+        assert!(matches!(
+            state.screen,
+            Screen::Review(ConfigurationDestination::Project)
+        ));
+        assert_eq!(workspace.saves.get(), 0);
+        state.project_section = ProjectSection::Files;
+        assert!(state.project_detail().contains("Initialization staged"));
+        assert!(state.project_detail().contains("Absent"));
         Ok(())
     }
 
     #[test]
-    fn mouse_selects_library_and_type_without_switching_nested_screen()
+    fn project_panels_distinguish_overrides_lock_drift_and_missing_sources()
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        let global = GlobalConfiguration::default();
+        let root = RepositoryRoot::new(std::env::temp_dir())?;
+        let inherited = ProjectConfig::inherited();
+        let inherited_lock = ProjectLock::capture(
+            &inherited,
+            &resolve_effective_configuration(&global, &inherited)?,
+        )?;
+        let override_config = ProjectConfig::new(1, Some(TaxonomyId::new("research")?), None)?;
+        let override_lock = ProjectLock::capture(
+            &override_config,
+            &resolve_effective_configuration(&global, &override_config)?,
+        )?;
+        state.project = Some(ConfigurationSession::open_project(
+            root.clone(),
+            global.clone(),
+            ProjectState::Initialized {
+                config: override_config.clone(),
+                lock: override_lock,
+            },
+        )?);
+        let commit = state.project_detail();
+        assert!(commit.contains("research"));
+        assert!(commit.contains("Project override"));
+        assert!(commit.contains("Library baseline\n  conventional"));
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert!(matches!(
+            state.screen,
+            Screen::Settings(ConfigurationDestination::Project)
+        ));
+        state.handle_event(key(KeyCode::Esc), &workspace);
+        state.project_section = ProjectSection::Files;
+        assert!(state.project_detail().contains("In sync"));
+
+        state
+            .project
+            .as_mut()
+            .ok_or("missing project")?
+            .configure_project(Some(TaxonomyId::new("infra-ops")?), None)?;
+        state.project_section = ProjectSection::Commit;
+        let staged = state.project_detail();
+        assert!(staged.contains("Commit taxonomy\n  research"));
+        assert!(staged.contains("Staged resolution\n  Default: infra-ops"));
+        assert!(staged.contains("Changes staged"));
+        assert!(!staged.contains("commit blocked"));
+        state.project_section = ProjectSection::Files;
+        assert!(state.project_detail().contains("Present"));
+
+        state.project = Some(ConfigurationSession::open_project(
+            root.clone(),
+            global.clone(),
+            ProjectState::ConfigOnly(override_config.clone()),
+        )?);
+        assert!(state.project_detail().contains("Lock missing"));
+        assert!(state.project_detail().contains("gitserious init"));
+
+        state.project = Some(ConfigurationSession::open_project(
+            root.clone(),
+            global.clone(),
+            ProjectState::Initialized {
+                config: override_config,
+                lock: inherited_lock.clone(),
+            },
+        )?);
+        assert!(state.project_detail().contains("Stale lock"));
+        state.project_section = ProjectSection::Commit;
+        assert!(state.project_detail().contains("commit blocked"));
+
+        let changed_global = GlobalConfiguration::new(
+            1,
+            TaxonomyId::new("research")?,
+            global.available_taxonomies().to_vec(),
+            Vec::new(),
+        )?;
+        state.project = Some(ConfigurationSession::open_project(
+            root.clone(),
+            changed_global,
+            ProjectState::Initialized {
+                config: inherited.clone(),
+                lock: inherited_lock.clone(),
+            },
+        )?);
+        assert!(state.project_detail().contains("Update available"));
+        state.project_section = ProjectSection::Commit;
+        let commit = state.project_detail();
+        assert!(commit.contains("Commit taxonomy\n  conventional"));
+        assert!(commit.contains("Library baseline\n  research"));
+        assert!(commit.contains("Update available"));
+
+        let missing = ProjectConfig::new(1, Some(TaxonomyId::new("missing")?), None)?;
+        state.project = Some(ConfigurationSession::open_project(
+            root,
+            global,
+            ProjectState::Initialized {
+                config: missing,
+                lock: inherited_lock,
+            },
+        )?);
+        state.project_section = ProjectSection::Commit;
+        assert!(state.project_detail().contains("Unresolved"));
+        assert!(
+            state
+                .project
+                .as_ref()
+                .ok_or("missing project")?
+                .source_error()
+                .is_some()
+        );
+
+        let mut authored = ConfigurationSession::open_global(GlobalConfiguration::default());
+        let team = TaxonomyId::new("team")?;
+        authored.fork_taxonomy(&TaxonomyId::new("conventional")?, team.clone())?;
+        let config = ProjectConfig::new(1, Some(team.clone()), Some(vec![team]))?;
+        let lock = ProjectLock::capture(
+            &config,
+            &resolve_effective_configuration(authored.global(), &config)?,
+        )?;
+        state.project = Some(ConfigurationSession::open_project(
+            RepositoryRoot::new(std::env::temp_dir())?,
+            GlobalConfiguration::default(),
+            ProjectState::Initialized { config, lock },
+        )?);
+        let pinned = state.project_detail();
+        assert!(pinned.contains("Commit taxonomy\n  team"));
+        assert!(pinned.contains("Source unavailable"));
+        assert!(!pinned.contains("commit blocked"));
+        Ok(())
+    }
+
+    #[test]
+    fn library_shows_inline_type_detail_and_retains_selection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        let mut terminal = Terminal::new(TestBackend::new(120, 40))?;
         terminal.draw(|frame| state.render(frame))?;
-        let taxonomies = state.tab_areas[Category::Taxonomies.index()];
-        assert_eq!(taxonomies.y, 1);
-        assert!(taxonomies.x > 0);
+        let library_tab = state.tab_areas[Category::Library.index()];
         let click = Event::Mouse(ratatui::crossterm::event::MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: taxonomies.x,
-            row: taxonomies.y,
+            column: library_tab.x,
+            row: library_tab.y,
             modifiers: KeyModifiers::NONE,
         });
         state.handle_event(click, &workspace);
-        assert_eq!(state.category, Category::Taxonomies);
+        assert_eq!(state.category, Category::Library);
         terminal.draw(|frame| state.render(frame))?;
+        let rendered = text(&terminal);
+        assert!(rendered.contains("conventional"));
+        assert!(rendered.contains("built-in"));
+        assert!(rendered.contains("v1"));
+        assert!(rendered.contains("Conventional Commits classification system"));
+        assert!(rendered.contains("Types"));
+        assert!(rendered.contains("feat"));
+        assert!(rendered.contains("Properties"));
+        assert!(rendered.contains("intent"));
         let library = state.browser_area;
         state.handle_event(
             Event::Mouse(ratatui::crossterm::event::MouseEvent {
@@ -2487,17 +2838,7 @@ mod tests {
             &workspace,
         );
         assert_eq!(state.browse_selected, 1);
-        let types = state.pane_tabs[TaxonomyPane::Types.index()];
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: types.x,
-                row: types.y,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        assert_eq!(state.taxonomy_pane, TaxonomyPane::Types);
+        assert_eq!(state.type_selected, 0);
         terminal.draw(|frame| state.render(frame))?;
         let type_area = state.type_area;
         state.handle_event(
@@ -2510,20 +2851,53 @@ mod tests {
             &workspace,
         );
         assert_eq!(state.type_selected, 1);
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(matches!(state.screen, Screen::CommitTypeDetail(1)));
-        let scope = state.tab_areas[Category::Scope.index()];
+        assert_eq!(state.library_focus, LibraryFocus::Types);
+        state.handle_event(key(KeyCode::Left), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        assert_eq!(state.browse_selected, 2);
+        assert_eq!(state.type_selected, 0);
+        state.handle_event(key(KeyCode::Tab), &workspace);
+        assert_eq!(state.category, Category::Project);
+        state.handle_event(key(KeyCode::Tab), &workspace);
+        assert_eq!(state.category, Category::Library);
+        assert_eq!(state.browse_selected, 2);
+        let project_tab = state.tab_areas[Category::Project.index()];
+        state.screen = Screen::Fork;
         state.handle_event(
             Event::Mouse(ratatui::crossterm::event::MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: scope.x,
-                row: scope.y,
+                column: project_tab.x,
+                row: project_tab.y,
                 modifiers: KeyModifiers::NONE,
             }),
             &workspace,
         );
-        assert_eq!(state.category, Category::Taxonomies);
-        assert!(matches!(state.screen, Screen::CommitTypeDetail(1)));
+        assert_eq!(state.category, Category::Library);
+        Ok(())
+    }
+
+    #[test]
+    fn compact_panels_scroll_without_changing_selection() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        state.project_section = ProjectSection::Files;
+        terminal.draw(|frame| state.render(frame))?;
+        state.handle_event(key(KeyCode::PageDown), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(state.project_scroll > 0);
+        assert_eq!(state.project_section, ProjectSection::Files);
+
+        state.category = Category::Library;
+        state.library_focus = LibraryFocus::Types;
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(state.type_area.height > 0);
+        state.handle_event(key(KeyCode::PageDown), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(state.property_scroll > 0);
+        assert_eq!(state.browse_selected, 0);
+        assert_eq!(state.type_selected, 0);
         Ok(())
     }
 
@@ -2568,7 +2942,7 @@ mod tests {
         assert_eq!(terminal.backend().buffer()[(1, 27)].symbol(), "R");
 
         state.status = None;
-        state.category = Category::Taxonomies;
+        state.category = Category::Library;
         state.global = None;
         state.global_error = "global load failed".into();
         terminal.draw(|frame| state.render(frame))?;
@@ -2592,7 +2966,7 @@ mod tests {
         assert!(text(&terminal).contains("unapplied changes"));
         assert_eq!(terminal.backend().buffer()[(83, 1)].fg, Color::Yellow);
         state.handle_event(key(KeyCode::Tab), &workspace);
-        assert_eq!(state.category, Category::Taxonomies);
+        assert_eq!(state.category, Category::Library);
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Library"));
         assert!(state.scope_dirty(ConfigurationDestination::Project));
@@ -2609,7 +2983,7 @@ mod tests {
         assert_eq!(workspace.saves.get(), 0);
         state.handle_event(key(KeyCode::Esc), &workspace);
         assert!(matches!(state.screen, Screen::Home));
-        assert_eq!(state.category, Category::Taxonomies);
+        assert_eq!(state.category, Category::Library);
         assert!(state.scope_dirty(ConfigurationDestination::Project));
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(key(KeyCode::Char('a')), &workspace);
@@ -2627,7 +3001,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
+        state.category = Category::Library;
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
         assert!(matches!(state.status, Some(Notice::Error(_))));
@@ -2670,15 +3044,15 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
+        state.category = Category::Library;
         state.global = None;
         state.global_error = "global load failed".into();
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
         let rendered = text(&terminal);
         assert!(rendered.contains("Library"));
-        assert!(rendered.contains("Overview"));
-        assert!(rendered.contains("Taxonomy library unavailable."));
+        assert!(rendered.contains("Taxonomy"));
+        assert!(rendered.contains("Taxonomy library"));
         assert!(rendered.contains("n: new | e: edit | f: fork | d: delete"));
         assert_eq!(terminal.backend().buffer()[(1, 15)].fg, Color::Red);
         state.handle_event(key(KeyCode::Char('n')), &workspace);
@@ -2697,7 +3071,7 @@ mod tests {
             .as_mut()
             .ok_or("missing project")?
             .initialize_project()?;
-        state.category = Category::Taxonomies;
+        state.category = Category::Library;
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
         assert!(matches!(
             state.screen,
@@ -2739,15 +3113,15 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(59, 17))?;
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Terminal too small"));
-        let before = state.scope_selected;
+        let before = state.project_section;
         state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.scope_selected, before);
+        assert_eq!(state.project_section, before);
         let mut short = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT - 1))?;
         short.draw(|frame| state.render(frame))?;
         assert!(text(&short).contains("Terminal too small"));
         let mut minimum = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         minimum.draw(|frame| state.render(frame))?;
-        assert!(text(&minimum).contains("Scope"));
+        assert!(text(&minimum).contains("Project"));
         let buffer = minimum.backend().buffer();
         assert_eq!(buffer[(0, 0)].symbol(), "┌");
         assert_eq!(buffer[(0, 2)].symbol(), "├");
