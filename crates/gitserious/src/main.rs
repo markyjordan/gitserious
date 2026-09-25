@@ -23,7 +23,7 @@ fn main() -> ExitCode {
     let writer = GitCommitWriter;
     // Legacy template/typeset editor construction retained in gitserious-tui/src/config/.
     // let editor = RatatuiConfigurationEditor;
-    let editor = RatatuiTaxonomyConfigurationEditor;
+    let editor = RatatuiTaxonomyConfigurationEditor::with_library_path(configuration.path());
     let commit = CommitAdapters::new(&author, &writer).with_configuration_editor(&editor);
     let mut stdout = io::stdout();
 

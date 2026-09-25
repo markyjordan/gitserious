@@ -24,7 +24,9 @@ impl TomlGlobalConfigurationStore {
     pub const fn new(directory: StorageDirectory) -> Self {
         Self { directory }
     }
-    fn path(&self) -> PathBuf {
+    /// Returns the user-library configuration file path without reading it.
+    #[must_use]
+    pub fn path(&self) -> PathBuf {
         self.directory.as_path().join("config.toml")
     }
 }
