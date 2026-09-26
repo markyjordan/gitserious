@@ -2000,7 +2000,7 @@ impl State {
                 .block(
                     Block::bordered()
                         .border_style(frame_style())
-                        .title("Library"),
+                        .title("Taxonomies"),
                 )
                 .highlight_style(navigation_key_style()),
             columns[0],
@@ -2009,16 +2009,17 @@ impl State {
         self.browser_offset = state.offset();
 
         let selected = items.get(self.browse_selected);
-        let title = selected.map_or_else(|| "Taxonomy".to_owned(), |value| value.id().to_string());
         frame.render_widget(
-            Block::bordered().border_style(frame_style()).title(title),
+            Block::bordered()
+                .border_style(frame_style())
+                .title("Details"),
             columns[1],
         );
         let content = Rect::new(
             columns[1].x.saturating_add(2),
-            columns[1].y.saturating_add(2),
+            columns[1].y.saturating_add(1),
             columns[1].width.saturating_sub(4),
-            columns[1].height.saturating_sub(3),
+            columns[1].height.saturating_sub(2),
         );
         self.type_area = Rect::default();
         let Some(taxonomy) = selected else {
@@ -2032,21 +2033,7 @@ impl State {
             );
             return;
         };
-        let origin = self
-            .global
-            .as_ref()
-            .and_then(|session| session.catalog().ok())
-            .and_then(|catalog| catalog.origin(taxonomy.id()))
-            .map_or("Unknown", |origin| match origin {
-                TaxonomyOrigin::BuiltIn => "Built-in",
-                TaxonomyOrigin::Custom => "Global",
-            });
-        let mut summary = format!(
-            "{}\n{origin} · v{} · {} types",
-            taxonomy.description(),
-            taxonomy.version(),
-            taxonomy.commit_types().len()
-        );
+        let mut summary = taxonomy.description().to_string();
         if let Some(source) = taxonomy.derived_from() {
             summary.push_str(&format!(
                 "\nForked from {}@{}",
@@ -2054,8 +2041,12 @@ impl State {
                 source.version()
             ));
         }
-        let summary_rows = if content.height < 12 { 3 } else { 4 };
-        let remaining = content.height.saturating_sub(summary_rows + 2);
+        let summary_paragraph = Paragraph::new(summary).wrap(Wrap { trim: false });
+        let summary_rows = u16::try_from(summary_paragraph.line_count(content.width))
+            .unwrap_or(u16::MAX)
+            .saturating_add(1)
+            .min(content.height.saturating_sub(6));
+        let remaining = content.height.saturating_sub(summary_rows + 3);
         let type_rows = (remaining / 2)
             .max(1)
             .min(u16::try_from(taxonomy.commit_types().len().max(1)).unwrap_or(u16::MAX));
@@ -2063,6 +2054,7 @@ impl State {
             summary_area,
             types_heading,
             type_list,
+            _list_gap,
             detail_heading,
             detail_area,
         ] = Layout::vertical([
@@ -2070,13 +2062,11 @@ impl State {
             Constraint::Length(1),
             Constraint::Length(type_rows),
             Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Min(1),
         ])
         .areas(content);
-        frame.render_widget(
-            Paragraph::new(summary).wrap(Wrap { trim: false }),
-            summary_area,
-        );
+        frame.render_widget(summary_paragraph, summary_area);
         frame.render_widget(
             Paragraph::new("Types").style(section_heading_style()),
             types_heading,
@@ -2093,14 +2083,13 @@ impl State {
             .enumerate()
             .map(|(index, definition)| {
                 ListItem::new(format!(
-                    "{}{}  {}",
+                    "{}{}",
                     if index == self.type_selected {
                         "› "
                     } else {
                         "  "
                     },
-                    definition.id(),
-                    definition.properties().len()
+                    definition.id()
                 ))
                 .style(Style::default().bg(if index % 2 == 0 {
                     JET_BLACK
@@ -2598,6 +2587,14 @@ mod tests {
             .collect()
     }
 
+    fn row_text(terminal: &Terminal<TestBackend>, x: u16, y: u16, width: u16) -> String {
+        let buffer = terminal.backend().buffer();
+        (x..x + width)
+            .map(|column| buffer[(column, y)].symbol())
+            .collect::<Vec<_>>()
+            .concat()
+    }
+
     #[test]
     fn project_shows_inherited_preview_resolution_files_and_initialize()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -2821,12 +2818,29 @@ mod tests {
         let rendered = text(&terminal);
         assert!(rendered.contains("conventional"));
         assert!(rendered.contains("built-in"));
-        assert!(rendered.contains("v1"));
+        let pane_titles = row_text(&terminal, 0, 3, 120);
+        assert!(pane_titles.contains("Taxonomies"));
+        assert!(pane_titles.contains("Details"));
+        assert!(row_text(&terminal, 0, 4, 120).contains("The Conventional"));
+        assert!(!rendered.contains("v1 · 11 types"));
         assert!(rendered.contains("Conventional Commits classification system"));
         assert!(rendered.contains("Types"));
         assert!(rendered.contains("feat"));
         assert!(rendered.contains("Properties"));
         assert!(rendered.contains("intent"));
+        let type_area = state.type_area;
+        let first_type = row_text(&terminal, type_area.x, type_area.y, type_area.width);
+        assert!(first_type.contains("› feat"));
+        assert!(!first_type.contains("feat  3"));
+        let gap = row_text(&terminal, type_area.x, type_area.bottom(), type_area.width);
+        assert!(gap.trim().is_empty());
+        let type_name = row_text(
+            &terminal,
+            type_area.x,
+            type_area.bottom() + 1,
+            type_area.width,
+        );
+        assert!(type_name.starts_with("feat"));
         let library = state.browser_area;
         state.handle_event(
             Event::Mouse(ratatui::crossterm::event::MouseEvent {
@@ -2893,6 +2907,25 @@ mod tests {
         state.library_focus = LibraryFocus::Types;
         terminal.draw(|frame| state.render(frame))?;
         assert!(state.type_area.height > 0);
+        let type_area = state.type_area;
+        let gap = row_text(&terminal, type_area.x, type_area.bottom(), type_area.width);
+        assert!(gap.trim().is_empty());
+        let type_name = row_text(
+            &terminal,
+            type_area.x,
+            type_area.bottom() + 1,
+            type_area.width,
+        );
+        assert!(type_name.starts_with("feat"));
+        assert!(
+            row_text(
+                &terminal,
+                type_area.x,
+                type_area.bottom() + 2,
+                type_area.width
+            )
+            .contains("An addition")
+        );
         state.handle_event(key(KeyCode::PageDown), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(state.property_scroll > 0);
@@ -3051,7 +3084,8 @@ mod tests {
         terminal.draw(|frame| state.render(frame))?;
         let rendered = text(&terminal);
         assert!(rendered.contains("Library"));
-        assert!(rendered.contains("Taxonomy"));
+        assert!(rendered.contains("Taxonomies"));
+        assert!(rendered.contains("Details"));
         assert!(rendered.contains("Taxonomy library"));
         assert!(rendered.contains("n: new | e: edit | f: fork | d: delete"));
         assert_eq!(terminal.backend().buffer()[(1, 15)].fg, Color::Red);
