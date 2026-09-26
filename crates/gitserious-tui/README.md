@@ -20,9 +20,10 @@ uninitialized repository offers an Initialize action that reviews the portable
 policy before creating `gitserious.toml` and `gitserious.lock`.
 
 Library lists built-in and globally authored taxonomies with visible ownership
-labels. Its inspector shows the selected taxonomy's description, provenance,
-types, and selected type's durable properties together. Left and Right change
-focus between taxonomies and types; Up and Down select within the focused list.
+labels. Its inspector shows the selected taxonomy's description, types, and
+selected type's durable properties together, plus fork lineage when present.
+Left and Right change focus between taxonomies and types; Up and Down select
+within the focused list.
 `n`, `e`, `f`, and `d` open focused create, edit, fork, and delete flows. Built-ins
 may be forked; custom taxonomies may also be edited or deleted. Fork lineage is
 informational and never updates.
