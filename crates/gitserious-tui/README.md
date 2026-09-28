@@ -19,11 +19,14 @@ the default and available set independently or inherit either field. An
 uninitialized repository offers an Initialize action that reviews the portable
 policy before creating `gitserious.toml` and `gitserious.lock`.
 
-Library lists built-in and globally authored taxonomies with visible ownership
-labels. Its inspector shows the selected taxonomy's description, types, and
-selected type's durable properties together, plus fork lineage when present.
-Left and Right change focus between taxonomies and types; Up and Down select
-within the focused list.
+Library shows boxed Taxonomies, Types, and Type Metadata panes on wide terminals.
+On compact terminals, Types and Type Metadata share the right pane. Taxonomies
+keeps built-in and global ownership labels beside names, with the selected
+taxonomy's description and optional fork lineage beneath the list. Type Metadata
+shows the selected type's description and durable properties without repeating
+its name. Left and Right change focus between the two lists; Up and Down select
+within the focused list, and Page Up and Page Down scroll metadata. The focused
+selection is yellow while the other remains visible with a subdued highlight.
 `n`, `e`, `f`, and `d` open focused create, edit, fork, and delete flows. Built-ins
 may be forked; custom taxonomies may also be edited or deleted. Fork lineage is
 informational and never updates.
