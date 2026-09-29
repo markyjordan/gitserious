@@ -1,9 +1,10 @@
 use gitserious_app::{TaxonomyCatalog, TaxonomyOrigin};
 use gitserious_core::{CommitTypeDefinition, Taxonomy};
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Cell, List, ListItem, ListState, Paragraph, Row, Table, Wrap};
 
 use super::{contains, pane_columns, requirement_label};
 use crate::theme::{
@@ -11,7 +12,6 @@ use crate::theme::{
 };
 
 const WIDE_LIBRARY_WIDTH: u16 = 96;
-const MAX_SUMMARY_ROWS: u16 = 6;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum LibraryFocus {
@@ -19,17 +19,30 @@ pub(super) enum LibraryFocus {
     Types,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BrowserRow {
+    Header,
+    Spacer,
+    Taxonomy(usize),
+    CreateNew,
+}
+
 #[derive(Debug)]
 pub(super) struct LibraryViewState {
     pub(super) focus: LibraryFocus,
     pub(super) browse_selected: usize,
+    pub(super) create_selected: bool,
     pub(super) browser_offset: usize,
+    browser_rows: Vec<BrowserRow>,
     pub(super) type_selected: usize,
     pub(super) type_offset: usize,
     pub(super) property_scroll: u16,
+    pub(super) taxonomy_scroll: u16,
     pub(super) browser_area: Rect,
     pub(super) type_area: Rect,
     pub(super) metadata_area: Rect,
+    pub(super) taxonomy_description_area: Rect,
+    pub(super) taxonomy_content_area: Rect,
     pub(super) pane_areas: [Rect; 3],
 }
 
@@ -38,62 +51,83 @@ impl Default for LibraryViewState {
         Self {
             focus: LibraryFocus::Taxonomies,
             browse_selected: 0,
+            create_selected: false,
             browser_offset: 0,
+            browser_rows: Vec::new(),
             type_selected: 0,
             type_offset: 0,
             property_scroll: 0,
+            taxonomy_scroll: 0,
             browser_area: Rect::default(),
             type_area: Rect::default(),
             metadata_area: Rect::default(),
+            taxonomy_description_area: Rect::default(),
+            taxonomy_content_area: Rect::default(),
             pane_areas: [Rect::default(); 3],
         }
     }
 }
 
-enum LibraryLayout {
-    Wide {
-        taxonomies: Rect,
-        types: Rect,
-        metadata: Rect,
-    },
-    Compact {
-        taxonomies: Rect,
-        details: Rect,
-    },
+struct LibraryLayout {
+    taxonomies: Rect,
+    taxonomy_description: Rect,
+    types: Rect,
+    details: Rect,
 }
 
 impl LibraryLayout {
-    fn new(area: Rect) -> Self {
-        if area.width >= WIDE_LIBRARY_WIDTH {
+    fn new(area: Rect, taxonomy_count: usize, type_count: usize) -> Self {
+        let (left, middle, right) = if area.width >= WIDE_LIBRARY_WIDTH {
             let usable = area.width.saturating_sub(2);
-            let taxonomy_width = usable.saturating_mul(33) / 100;
-            let type_width = usable.saturating_mul(23) / 100;
-            let taxonomies = Rect::new(area.x, area.y, taxonomy_width, area.height);
-            let types = Rect::new(
-                taxonomies.right().saturating_add(1),
+            let third = usable / 3;
+            let remainder = usable % 3;
+            let taxonomy_width = third + u16::from(remainder > 0);
+            let type_width = third + u16::from(remainder > 1);
+            let left = Rect::new(area.x, area.y, taxonomy_width, area.height);
+            let middle = Rect::new(
+                left.right().saturating_add(1),
                 area.y,
                 type_width,
                 area.height,
             );
-            let metadata = Rect::new(
-                types.right().saturating_add(1),
-                area.y,
-                usable.saturating_sub(taxonomy_width + type_width),
-                area.height,
-            );
-            Self::Wide {
-                taxonomies,
-                types,
-                metadata,
-            }
+            let right = Rect::new(middle.right().saturating_add(1), area.y, third, area.height);
+            (left, Some(middle), right)
         } else {
             let columns = pane_columns(area);
-            Self::Compact {
-                taxonomies: columns[0],
-                details: columns[1],
-            }
+            (columns[0], None, columns[1])
+        };
+        let (taxonomies, taxonomy_description) =
+            stack_column(left, taxonomy_count.saturating_add(3), 4);
+        let (types, details) = if let Some(middle) = middle {
+            (middle, right)
+        } else {
+            stack_column(right, type_count.max(1), 5)
+        };
+        Self {
+            taxonomies,
+            taxonomy_description,
+            types,
+            details,
         }
     }
+}
+
+fn stack_column(area: Rect, row_count: usize, minimum_lower_height: u16) -> (Rect, Rect) {
+    let upper_height = u16::try_from(row_count)
+        .unwrap_or(u16::MAX)
+        .saturating_add(2)
+        .min(area.height.saturating_sub(minimum_lower_height))
+        .max(3)
+        .min(area.height);
+    (
+        Rect::new(area.x, area.y, area.width, upper_height),
+        Rect::new(
+            area.x,
+            area.y.saturating_add(upper_height),
+            area.width,
+            area.height.saturating_sub(upper_height),
+        ),
+    )
 }
 
 impl LibraryViewState {
@@ -101,8 +135,19 @@ impl LibraryViewState {
         if !contains(self.browser_area, x, y) {
             return None;
         }
-        let index = self.browser_offset + usize::from(y.saturating_sub(self.browser_area.y));
-        (index < count).then_some(index)
+        let row = self.browser_offset + usize::from(y.saturating_sub(self.browser_area.y));
+        self.browser_rows.get(row).and_then(|row| match row {
+            BrowserRow::Taxonomy(index) if *index < count => Some(*index),
+            _ => None,
+        })
+    }
+
+    pub(super) fn create_at(&self, x: u16, y: u16) -> bool {
+        contains(self.browser_area, x, y)
+            && self
+                .browser_rows
+                .get(self.browser_offset + usize::from(y.saturating_sub(self.browser_area.y)))
+                == Some(&BrowserRow::CreateNew)
     }
 
     pub(super) fn type_at(&self, x: u16, y: u16, count: usize) -> Option<usize> {
@@ -114,16 +159,46 @@ impl LibraryViewState {
     }
 
     pub(super) fn select_taxonomy(&mut self, index: usize) {
+        self.create_selected = false;
         if self.browse_selected != index {
             self.browse_selected = index;
             self.type_selected = 0;
             self.type_offset = 0;
             self.property_scroll = 0;
+            self.taxonomy_scroll = 0;
         }
         self.focus = LibraryFocus::Taxonomies;
     }
 
+    pub(super) fn select_create(&mut self) {
+        self.create_selected = true;
+        self.type_selected = 0;
+        self.type_offset = 0;
+        self.property_scroll = 0;
+        self.taxonomy_scroll = 0;
+        self.focus = LibraryFocus::Taxonomies;
+    }
+
+    pub(super) fn move_taxonomy(&mut self, down: bool, count: usize, show_create: bool) {
+        if self.create_selected {
+            if !down && count > 0 {
+                self.select_taxonomy(count - 1);
+            }
+        } else if down {
+            if self.browse_selected + 1 < count {
+                self.select_taxonomy(self.browse_selected + 1);
+            } else if show_create {
+                self.select_create();
+            }
+        } else {
+            self.select_taxonomy(self.browse_selected.saturating_sub(1));
+        }
+    }
+
     pub(super) fn select_type(&mut self, index: usize) {
+        if self.create_selected {
+            return;
+        }
         if self.type_selected != index {
             self.type_selected = index;
             self.property_scroll = 0;
@@ -139,69 +214,42 @@ impl LibraryViewState {
         error: Option<&str>,
     ) {
         let items = catalog.map_or(&[][..], TaxonomyCatalog::taxonomies);
+        let show_create = catalog.is_some_and(|value| {
+            value
+                .taxonomies()
+                .iter()
+                .all(|taxonomy| value.origin(taxonomy.id()) != Some(TaxonomyOrigin::Custom))
+        });
+        if self.create_selected && !show_create {
+            self.browse_selected = items.len().saturating_sub(1);
+            self.create_selected = false;
+            self.taxonomy_scroll = 0;
+        }
         self.browse_selected = self.browse_selected.min(items.len().saturating_sub(1));
-        let selected = items.get(self.browse_selected);
+        let selected = (!self.create_selected)
+            .then(|| items.get(self.browse_selected))
+            .flatten();
         let definitions: &[CommitTypeDefinition] =
             selected.map_or(&[], |value| value.commit_types());
         self.type_selected = self.type_selected.min(definitions.len().saturating_sub(1));
 
-        match LibraryLayout::new(area) {
-            LibraryLayout::Wide {
-                taxonomies,
-                types,
-                metadata,
-            } => {
-                self.pane_areas = [taxonomies, types, metadata];
-                self.render_taxonomies(frame, taxonomies, items, catalog, error);
-                self.render_types(frame, types, definitions, true);
-                frame.render_widget(
-                    Block::bordered()
-                        .border_style(frame_style())
-                        .title("Type Metadata"),
-                    metadata,
-                );
-                self.render_metadata(
-                    frame,
-                    inset(metadata, 2),
-                    definitions.get(self.type_selected),
-                );
-            }
-            LibraryLayout::Compact {
-                taxonomies,
-                details,
-            } => {
-                self.pane_areas = [taxonomies, details, Rect::default()];
-                self.render_taxonomies(frame, taxonomies, items, catalog, error);
-                frame.render_widget(
-                    Block::bordered().border_style(frame_style()).title("Types"),
-                    details,
-                );
-                let content = inset(details, 1);
-                let available = content.height.saturating_sub(4);
-                let type_rows = (available / 2)
-                    .max(1)
-                    .min(u16::try_from(definitions.len().max(1)).unwrap_or(u16::MAX));
-                let types_area = Rect::new(content.x, content.y, content.width, type_rows);
-                self.render_types(frame, types_area, definitions, false);
-                let heading_y = types_area.bottom().saturating_add(1);
-                frame.render_widget(
-                    Paragraph::new("Type Metadata").style(section_heading_style()),
-                    Rect::new(
-                        content.x.saturating_add(1),
-                        heading_y,
-                        content.width.saturating_sub(2),
-                        1,
-                    ),
-                );
-                let metadata = Rect::new(
-                    content.x.saturating_add(1),
-                    heading_y.saturating_add(1),
-                    content.width.saturating_sub(2),
-                    content.bottom().saturating_sub(heading_y.saturating_add(1)),
-                );
-                self.render_metadata(frame, metadata, definitions.get(self.type_selected));
-            }
-        }
+        let layout = LibraryLayout::new(
+            area,
+            items.len() + usize::from(show_create),
+            definitions.len(),
+        );
+        self.pane_areas = [layout.taxonomies, layout.types, layout.details];
+        self.taxonomy_description_area = layout.taxonomy_description;
+        self.render_taxonomies(frame, layout.taxonomies, items, catalog, error, show_create);
+        self.render_taxonomy_description(frame, layout.taxonomy_description, selected);
+        self.render_types(frame, layout.types, definitions);
+        frame.render_widget(
+            Block::bordered()
+                .border_style(frame_style())
+                .title("Type Details"),
+            layout.details,
+        );
+        self.render_metadata(frame, layout.details, definitions.get(self.type_selected));
     }
 
     fn render_taxonomies(
@@ -211,6 +259,7 @@ impl LibraryViewState {
         items: &[Taxonomy],
         catalog: Option<&TaxonomyCatalog>,
         error: Option<&str>,
+        show_create: bool,
     ) {
         frame.render_widget(
             Block::bordered()
@@ -222,6 +271,7 @@ impl LibraryViewState {
         if items.is_empty() {
             self.browser_area = interior;
             self.browser_offset = 0;
+            self.browser_rows.clear();
             frame.render_widget(
                 Paragraph::new(if error.is_some() {
                     "Taxonomy library unavailable."
@@ -233,98 +283,111 @@ impl LibraryViewState {
             return;
         }
 
-        let selected = &items[self.browse_selected];
-        let summary_width = pane.width.saturating_sub(4);
-        let description =
-            Paragraph::new(selected.description().as_str()).wrap(Wrap { trim: false });
-        let description_lines =
-            u16::try_from(description.line_count(summary_width)).unwrap_or(u16::MAX);
-        let lineage = selected
-            .derived_from()
-            .map(|source| format!("Forked from {}@{}", source.id(), source.version()));
-        let lineage_paragraph = lineage
-            .as_deref()
-            .map(|text| Paragraph::new(text).wrap(Wrap { trim: false }));
-        let lineage_lines = lineage_paragraph.as_ref().map_or(0, |paragraph| {
-            u16::try_from(paragraph.line_count(summary_width)).unwrap_or(u16::MAX)
-        });
-        let available_summary_rows = MAX_SUMMARY_ROWS.min(interior.height.saturating_sub(4));
-        let lineage_rows = lineage_lines.min(available_summary_rows.saturating_sub(1));
-        let description_rows =
-            description_lines.min(available_summary_rows.saturating_sub(lineage_rows));
-        let summary_rows = description_rows + lineage_rows;
-        let list_height = u16::try_from(items.len())
-            .unwrap_or(u16::MAX)
-            .min(
-                interior
-                    .height
-                    .saturating_sub(summary_rows.saturating_add(1)),
-            )
-            .max(1);
-        let list_area = Rect::new(interior.x, interior.y, interior.width, list_height);
+        let list_area = interior;
         self.browser_area = list_area;
-        let rows = items
-            .iter()
-            .enumerate()
-            .map(|(index, taxonomy)| {
-                let origin = catalog
-                    .and_then(|value| value.origin(taxonomy.id()))
-                    .map_or("unknown", |value| match value {
-                        TaxonomyOrigin::BuiltIn => "built-in",
-                        TaxonomyOrigin::Custom => "global",
-                    });
-                let id_width = usize::from(list_area.width).saturating_sub(origin.len() + 3);
+        let mut rows = Vec::with_capacity(items.len().saturating_add(3 + usize::from(show_create)));
+        self.browser_rows.clear();
+        for (heading, origin) in [
+            ("Built-in", TaxonomyOrigin::BuiltIn),
+            ("Custom", TaxonomyOrigin::Custom),
+        ] {
+            rows.push(taxonomy_section(heading, list_area.width));
+            self.browser_rows.push(BrowserRow::Header);
+            for (index, taxonomy) in items.iter().enumerate().filter(|(_, taxonomy)| {
+                catalog.and_then(|value| value.origin(taxonomy.id())) == Some(origin)
+            }) {
+                let id_width = usize::from(list_area.width).saturating_sub(2);
                 let id = taxonomy
                     .id()
                     .to_string()
                     .chars()
                     .take(id_width)
                     .collect::<String>();
-                ListItem::new(format!(
-                    "{}{id:<id_width$} {origin}",
-                    if index == self.browse_selected {
-                        "› "
+                rows.push(
+                    ListItem::new(format!(
+                        "{}{}",
+                        if !self.create_selected && index == self.browse_selected {
+                            "› "
+                        } else {
+                            "  "
+                        },
+                        id
+                    ))
+                    .style(row_style(index)),
+                );
+                self.browser_rows.push(BrowserRow::Taxonomy(index));
+            }
+            if origin == TaxonomyOrigin::BuiltIn {
+                rows.push(ListItem::new(""));
+                self.browser_rows.push(BrowserRow::Spacer);
+            } else if show_create {
+                rows.push(
+                    ListItem::new(if self.create_selected {
+                        "› + Create New"
                     } else {
-                        "  "
-                    }
-                ))
-                .style(row_style(index))
-            })
-            .collect::<Vec<_>>();
+                        "  + Create New"
+                    })
+                    .style(row_style(items.len())),
+                );
+                self.browser_rows.push(BrowserRow::CreateNew);
+            }
+        }
         let mut state = ListState::default();
-        state.select(Some(self.browse_selected));
+        state.select(self.browser_rows.iter().position(|row| {
+            *row == if self.create_selected {
+                BrowserRow::CreateNew
+            } else {
+                BrowserRow::Taxonomy(self.browse_selected)
+            }
+        }));
         frame.render_stateful_widget(
             List::new(rows).highlight_style(selected_style(self.focus == LibraryFocus::Taxonomies)),
             list_area,
             &mut state,
         );
         self.browser_offset = state.offset();
-        if summary_rows > 0 {
-            let description_area = Rect::new(
-                pane.x.saturating_add(2),
-                list_area.bottom().saturating_add(1),
-                summary_width,
-                description_rows,
+    }
+
+    fn render_taxonomy_description(
+        &mut self,
+        frame: &mut Frame<'_>,
+        pane: Rect,
+        selected: Option<&Taxonomy>,
+    ) {
+        frame.render_widget(
+            Block::bordered()
+                .border_style(frame_style())
+                .title("Taxonomy Description"),
+            pane,
+        );
+        let content = inset(pane, 1);
+        self.taxonomy_content_area = content;
+        let Some(selected) = selected else {
+            self.taxonomy_scroll = 0;
+            frame.render_widget(
+                Paragraph::new(if self.create_selected {
+                    "n/a"
+                } else {
+                    "No taxonomy selected."
+                }),
+                content,
             );
-            frame.render_widget(description, description_area);
-            if description_lines > description_rows {
-                frame.buffer_mut()[(description_area.right() - 1, description_area.bottom() - 1)]
-                    .set_symbol("…");
-            }
-            if let Some(paragraph) = lineage_paragraph {
-                let lineage_area = Rect::new(
-                    description_area.x,
-                    description_area.bottom(),
-                    summary_width,
-                    lineage_rows,
-                );
-                frame.render_widget(paragraph, lineage_area);
-                if lineage_lines > lineage_rows {
-                    frame.buffer_mut()[(lineage_area.right() - 1, lineage_area.bottom() - 1)]
-                        .set_symbol("…");
-                }
-            }
+            return;
+        };
+        let mut summary = selected.description().to_string();
+        if let Some(source) = selected.derived_from() {
+            summary.push_str(&format!(
+                "\nForked from {}@{}",
+                source.id(),
+                source.version()
+            ));
         }
+        let paragraph = Paragraph::new(summary).wrap(Wrap { trim: false });
+        let total = u16::try_from(paragraph.line_count(content.width)).unwrap_or(u16::MAX);
+        self.taxonomy_scroll = self
+            .taxonomy_scroll
+            .min(total.saturating_sub(content.height));
+        frame.render_widget(paragraph.scroll((self.taxonomy_scroll, 0)), content);
     }
 
     fn render_types(
@@ -332,19 +395,23 @@ impl LibraryViewState {
         frame: &mut Frame<'_>,
         area: Rect,
         definitions: &[CommitTypeDefinition],
-        boxed: bool,
     ) {
-        if boxed {
-            frame.render_widget(
-                Block::bordered().border_style(frame_style()).title("Types"),
-                area,
-            );
-        }
-        let list_area = if boxed { inset(area, 1) } else { area };
+        frame.render_widget(
+            Block::bordered().border_style(frame_style()).title("Types"),
+            area,
+        );
+        let list_area = inset(area, 1);
         self.type_area = list_area;
         if definitions.is_empty() {
             self.type_offset = 0;
-            frame.render_widget(Paragraph::new("No commit types."), list_area);
+            frame.render_widget(
+                Paragraph::new(if self.create_selected {
+                    "n/a"
+                } else {
+                    "No commit types."
+                }),
+                list_area,
+            );
             return;
         }
         let rows = definitions
@@ -376,35 +443,117 @@ impl LibraryViewState {
     fn render_metadata(
         &mut self,
         frame: &mut Frame<'_>,
-        area: Rect,
+        pane: Rect,
         definition: Option<&CommitTypeDefinition>,
     ) {
+        let area = inset(pane, 1);
         self.metadata_area = area;
         let Some(definition) = definition else {
             self.property_scroll = 0;
-            frame.render_widget(Paragraph::new("No type selected."), area);
+            frame.render_widget(
+                Paragraph::new(if self.create_selected {
+                    "n/a"
+                } else {
+                    "No type selected."
+                }),
+                area,
+            );
             return;
         };
-        let mut detail = format!("{}\n\nProperties", definition.description());
-        if definition.properties().is_empty() {
-            detail.push_str("\n  No durable properties.");
-        } else {
-            for property in definition.properties() {
-                detail.push_str(&format!(
-                    "\n  {}  {}",
-                    property.key(),
-                    requirement_label(property.requirement())
-                ));
-            }
+        let description = Paragraph::new(definition.description()).wrap(Wrap { trim: false });
+        let description_rows =
+            u16::try_from(description.line_count(area.width)).unwrap_or(u16::MAX);
+        let description_end = description_rows.saturating_add(1);
+        let properties_heading = description_end.saturating_add(1);
+        let table_start = properties_heading.saturating_add(1);
+        let property_rows = u16::try_from(definition.properties().len().max(1)).unwrap_or(u16::MAX);
+        let total = table_start.saturating_add(property_rows);
+        let max_scroll = total.saturating_sub(area.height);
+        self.property_scroll = self.property_scroll.min(max_scroll);
+        let scroll = self.property_scroll;
+        if scroll == 0 {
+            frame.render_widget(
+                Paragraph::new(section_line("Description", area.width)),
+                Rect::new(area.x, area.y, area.width, 1),
+            );
         }
-        let paragraph = Paragraph::new(detail).wrap(Wrap { trim: false });
-        let max_scroll = paragraph
-            .line_count(area.width)
-            .saturating_sub(usize::from(area.height));
-        self.property_scroll = self
-            .property_scroll
-            .min(u16::try_from(max_scroll).unwrap_or(u16::MAX));
-        frame.render_widget(paragraph.scroll((self.property_scroll, 0)), area);
+        if scroll < description_end && 1 < scroll.saturating_add(area.height) {
+            let first_row = scroll.max(1);
+            let y = area.y.saturating_add(first_row.saturating_sub(scroll));
+            frame.render_widget(
+                description.scroll((first_row - 1, 0)),
+                Rect::new(
+                    area.x,
+                    y,
+                    area.width,
+                    description_end
+                        .saturating_sub(first_row)
+                        .min(area.bottom().saturating_sub(y)),
+                ),
+            );
+        }
+        if properties_heading >= scroll && properties_heading - scroll < area.height {
+            frame.render_widget(
+                Paragraph::new(section_line("Properties", area.width)),
+                Rect::new(area.x, area.y + properties_heading - scroll, area.width, 1),
+            );
+        }
+        if table_start >= scroll.saturating_add(area.height) {
+            return;
+        }
+        let table_y = area.y.saturating_add(table_start.saturating_sub(scroll));
+        let table_area = Rect::new(
+            area.x,
+            table_y,
+            area.width,
+            area.bottom().saturating_sub(table_y),
+        );
+        let skipped = usize::from(scroll.saturating_sub(table_start));
+        if definition.properties().is_empty() {
+            if skipped == 0 {
+                frame.render_widget(Paragraph::new("No durable properties."), table_area);
+            }
+            return;
+        }
+        let property_width = definition
+            .properties()
+            .iter()
+            .map(|property| property.key().as_str().chars().count())
+            .max()
+            .unwrap_or(1);
+        let requirement_width = definition
+            .properties()
+            .iter()
+            .map(|property| requirement_label(property.requirement()).len())
+            .max()
+            .unwrap_or(1);
+        let requirement_width = u16::try_from(requirement_width).unwrap_or(u16::MAX);
+        let name_width = u16::try_from(property_width).unwrap_or(u16::MAX).min(
+            area.width
+                .saturating_sub(requirement_width.saturating_add(2)),
+        );
+        let rows = definition
+            .properties()
+            .iter()
+            .skip(skipped)
+            .map(|property| {
+                Row::new(vec![
+                    Cell::from(property.key().as_str()),
+                    Cell::from(requirement_label(property.requirement())),
+                ])
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(
+            Table::new(
+                rows,
+                [
+                    Constraint::Length(name_width),
+                    Constraint::Length(requirement_width),
+                ],
+            )
+            .column_spacing(2),
+            table_area,
+        );
     }
 }
 
@@ -423,6 +572,18 @@ fn row_style(index: usize) -> Style {
     } else {
         ZEBRA_BACKGROUND
     })
+}
+
+fn taxonomy_section(title: &'static str, width: u16) -> ListItem<'static> {
+    ListItem::new(section_line(title, width))
+}
+
+fn section_line(title: &'static str, width: u16) -> Line<'static> {
+    let rule_width = usize::from(width).saturating_sub(title.len() + 1);
+    Line::from(vec![
+        Span::styled(title, section_heading_style()),
+        Span::styled(format!(" {}", "⠒".repeat(rule_width)), frame_style()),
+    ])
 }
 
 fn selected_style(active: bool) -> Style {

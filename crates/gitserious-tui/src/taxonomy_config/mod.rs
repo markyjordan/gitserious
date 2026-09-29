@@ -25,7 +25,9 @@ use crate::theme::{
     navigation_key_style, normalize_background, render_navigation_row, section_heading_style,
 };
 
+mod home_overlay;
 mod library_view;
+use home_overlay::{CommandPaletteState, HomeCommand, HomeOverlay};
 use library_view::{LibraryFocus, LibraryViewState};
 
 /// Taxonomy-first terminal configuration adapter.
@@ -367,9 +369,14 @@ struct State {
     library: LibraryViewState,
     project_section: ProjectSection,
     screen: Screen,
+    home_overlay: Option<HomeOverlay>,
     child_selected: usize,
     scroll: u16,
     project_scroll: u16,
+    form_scroll: u16,
+    form_viewport_height: u16,
+    fork_scroll: u16,
+    fork_viewport_height: u16,
     status: Option<Notice>,
     editor: Option<TaxonomyDraft>,
     editor_mode: EditorMode,
@@ -398,9 +405,14 @@ impl State {
             library: LibraryViewState::default(),
             project_section: ProjectSection::Commit,
             screen: Screen::Home,
+            home_overlay: None,
             child_selected: 0,
             scroll: 0,
             project_scroll: 0,
+            form_scroll: 0,
+            form_viewport_height: 1,
+            fork_scroll: 0,
+            fork_viewport_height: 1,
             status: None,
             editor: None,
             editor_mode: EditorMode::Create,
@@ -414,6 +426,23 @@ impl State {
     }
 
     fn handle_event(&mut self, event: Event, workspace: &dyn ConfigurationWorkspace) -> bool {
+        if matches!(&event, Event::Key(key) if key.kind == KeyEventKind::Release) {
+            return false;
+        }
+        if self.home_overlay.is_some() {
+            return self.handle_home_overlay(event, workspace);
+        }
+        if matches!(
+            &event,
+            Event::Key(_)
+                | Event::Paste(_)
+                | Event::Mouse(ratatui::crossterm::event::MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    ..
+                })
+        ) {
+            self.status = None;
+        }
         if let Event::Paste(text) = &event {
             if let Some(form) = &mut self.form {
                 let identity_locked =
@@ -459,6 +488,9 @@ impl State {
                     ) {
                         self.library.select_taxonomy(index);
                         self.status = None;
+                    } else if self.library.create_at(mouse.column, mouse.row) {
+                        self.library.select_create();
+                        self.request_global_action(PendingAction::Create);
                     }
                 } else if matches!(self.screen, Screen::Home)
                     && self.category == Category::Library
@@ -478,9 +510,6 @@ impl State {
         let Event::Key(key) = event else {
             return false;
         };
-        if key.kind == KeyEventKind::Release {
-            return false;
-        }
         if self.too_small && !matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
             return false;
         }
@@ -505,8 +534,123 @@ impl State {
         }
     }
 
+    fn handle_home_overlay(
+        &mut self,
+        event: Event,
+        workspace: &dyn ConfigurationWorkspace,
+    ) -> bool {
+        let Some(overlay) = self.home_overlay.take() else {
+            return false;
+        };
+        match overlay {
+            HomeOverlay::Palette(mut palette) => {
+                match event {
+                    Event::Key(key) => match key.code {
+                        KeyCode::Esc => {}
+                        KeyCode::Up | KeyCode::Down => {
+                            palette.move_selection(self.category, key.code == KeyCode::Down);
+                            self.home_overlay = Some(HomeOverlay::Palette(palette));
+                        }
+                        KeyCode::Backspace => {
+                            let mut query = palette.query.clone();
+                            query.pop();
+                            palette.set_query(query);
+                            self.home_overlay = Some(HomeOverlay::Palette(palette));
+                        }
+                        KeyCode::Enter => {
+                            if let Some(command) = palette.selected_command(self.category) {
+                                self.status = None;
+                                return self.dispatch_home_command(command, workspace);
+                            }
+                            self.home_overlay = Some(HomeOverlay::Palette(palette));
+                        }
+                        KeyCode::Char(character)
+                            if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+                        {
+                            let mut query = palette.query.clone();
+                            query.push(character);
+                            palette.set_query(query);
+                            self.home_overlay = Some(HomeOverlay::Palette(palette));
+                        }
+                        _ => self.home_overlay = Some(HomeOverlay::Palette(palette)),
+                    },
+                    Event::Paste(text) => {
+                        let mut query = palette.query.clone();
+                        query.extend(text.chars().filter(|character| !character.is_control()));
+                        palette.set_query(query);
+                        self.home_overlay = Some(HomeOverlay::Palette(palette));
+                    }
+                    Event::Mouse(mouse)
+                        if mouse.kind == MouseEventKind::Down(MouseButton::Left) =>
+                    {
+                        if contains(palette.list_area, mouse.column, mouse.row) {
+                            let index = palette.list_offset
+                                + usize::from(mouse.row.saturating_sub(palette.list_area.y));
+                            if index < palette.visible(self.category).len() {
+                                palette.selected = index;
+                            }
+                            self.home_overlay = Some(HomeOverlay::Palette(palette));
+                        }
+                    }
+                    _ => self.home_overlay = Some(HomeOverlay::Palette(palette)),
+                }
+                false
+            }
+            HomeOverlay::Help => {
+                if !matches!(
+                    event,
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Esc,
+                        ..
+                    })
+                ) {
+                    self.home_overlay = Some(HomeOverlay::Help);
+                }
+                false
+            }
+        }
+    }
+
+    fn dispatch_home_command(
+        &mut self,
+        command: HomeCommand,
+        workspace: &dyn ConfigurationWorkspace,
+    ) -> bool {
+        match command {
+            HomeCommand::Configure => self.request_project_action(PendingAction::EditProject),
+            HomeCommand::Initialize => {
+                self.request_project_action(PendingAction::InitializeProject);
+            }
+            HomeCommand::ReviewProject => {
+                self.request_project_action(PendingAction::ReviewProject);
+            }
+            HomeCommand::New => self.request_global_action(PendingAction::Create),
+            HomeCommand::Edit => self.request_global_action(PendingAction::Edit),
+            HomeCommand::Fork => self.request_global_action(PendingAction::Fork),
+            HomeCommand::Delete => self.request_global_action(PendingAction::Delete),
+            HomeCommand::ReviewLibrary => self.request_global_action(PendingAction::ReviewGlobal),
+            HomeCommand::SwitchTab => self.category = self.category.next(),
+            HomeCommand::Help => self.home_overlay = Some(HomeOverlay::Help),
+            HomeCommand::Quit => {
+                return self.home_key(
+                    KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+                    workspace,
+                );
+            }
+        }
+        false
+    }
+
     fn home_key(&mut self, key: KeyEvent, _workspace: &dyn ConfigurationWorkspace) -> bool {
         match key.code {
+            KeyCode::Char('/') if key.modifiers.is_empty() => {
+                self.home_overlay = Some(HomeOverlay::Palette(CommandPaletteState::default()));
+            }
+            KeyCode::Char('?')
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.home_overlay = Some(HomeOverlay::Help);
+            }
             KeyCode::Tab | KeyCode::BackTab => {
                 self.category = self.category.next();
                 self.status = None;
@@ -522,11 +666,9 @@ impl State {
             }
             KeyCode::Up | KeyCode::Down if self.library.focus == LibraryFocus::Taxonomies => {
                 let count = self.catalog().map_or(0, |items| items.len());
-                let index = match key.code {
-                    KeyCode::Up => self.library.browse_selected.saturating_sub(1),
-                    _ => (self.library.browse_selected + 1).min(count.saturating_sub(1)),
-                };
-                self.library.select_taxonomy(index);
+                let show_create = self.show_create_row();
+                self.library
+                    .move_taxonomy(key.code == KeyCode::Down, count, show_create);
                 self.status = None;
             }
             KeyCode::Up | KeyCode::Down => {
@@ -539,7 +681,9 @@ impl State {
                 };
                 self.library.select_type(index);
             }
-            KeyCode::Right if self.category == Category::Library => {
+            KeyCode::Right
+                if self.category == Category::Library && !self.library.create_selected =>
+            {
                 self.library.focus = LibraryFocus::Types;
             }
             KeyCode::Left if self.category == Category::Library => {
@@ -552,15 +696,36 @@ impl State {
                 self.project_scroll = self.project_scroll.saturating_add(8);
             }
             KeyCode::PageUp if self.category == Category::Library => {
-                self.library.property_scroll = self.library.property_scroll.saturating_sub(8);
+                if self.library.focus == LibraryFocus::Taxonomies {
+                    let page = self.library.taxonomy_content_area.height.max(1);
+                    self.library.taxonomy_scroll =
+                        self.library.taxonomy_scroll.saturating_sub(page);
+                } else {
+                    let page = self.library.metadata_area.height.max(1);
+                    self.library.property_scroll =
+                        self.library.property_scroll.saturating_sub(page);
+                }
             }
             KeyCode::PageDown if self.category == Category::Library => {
-                self.library.property_scroll = self.library.property_scroll.saturating_add(8);
+                if self.library.focus == LibraryFocus::Taxonomies {
+                    let page = self.library.taxonomy_content_area.height.max(1);
+                    self.library.taxonomy_scroll =
+                        self.library.taxonomy_scroll.saturating_add(page);
+                } else {
+                    let page = self.library.metadata_area.height.max(1);
+                    self.library.property_scroll =
+                        self.library.property_scroll.saturating_add(page);
+                }
             }
             KeyCode::Enter if self.category == Category::Project => {
                 if self.project_section == ProjectSection::Commit {
                     self.request_project_action(PendingAction::EditProject);
                 }
+            }
+            KeyCode::Enter
+                if self.category == Category::Library && self.library.create_selected =>
+            {
+                self.request_global_action(PendingAction::Create);
             }
             KeyCode::Char('i') if self.category == Category::Project => {
                 self.request_project_action(PendingAction::InitializeProject);
@@ -827,6 +992,7 @@ impl State {
             }
             KeyCode::Char('n') => {
                 self.form = Some(FormState::metadata(String::new(), String::new()));
+                self.form_scroll = 0;
                 self.screen = Screen::Form(FormKind::NewType);
             }
             KeyCode::Char('d') if self.child_selected > 0 => {
@@ -888,6 +1054,7 @@ impl State {
             KeyCode::Enter => self.open_property_form(index, self.child_selected - 1),
             KeyCode::Char('n') => {
                 self.form = Some(FormState::property(PropertyDraft::empty()));
+                self.form_scroll = 0;
                 self.screen = Screen::Form(FormKind::NewProperty(index));
             }
             KeyCode::Char('d') if self.child_selected > 0 => {
@@ -915,6 +1082,16 @@ impl State {
         };
         match key.code {
             KeyCode::Tab => form.selected = (form.selected + 1) % form.fields.len(),
+            KeyCode::PageUp => {
+                self.form_scroll = self
+                    .form_scroll
+                    .saturating_sub(self.form_viewport_height.max(1));
+            }
+            KeyCode::PageDown => {
+                self.form_scroll = self
+                    .form_scroll
+                    .saturating_add(self.form_viewport_height.max(1));
+            }
             KeyCode::BackTab => {
                 form.selected = if form.selected == 0 {
                     form.fields.len() - 1
@@ -987,6 +1164,16 @@ impl State {
 
     fn fork_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
+            KeyCode::PageUp => {
+                self.fork_scroll = self
+                    .fork_scroll
+                    .saturating_sub(self.fork_viewport_height.max(1));
+            }
+            KeyCode::PageDown => {
+                self.fork_scroll = self
+                    .fork_scroll
+                    .saturating_add(self.fork_viewport_height.max(1));
+            }
             KeyCode::Backspace => {
                 self.fork_target.pop();
             }
@@ -1226,6 +1413,7 @@ impl State {
             PendingAction::Fork => {
                 self.active_scope = ConfigurationDestination::Global;
                 self.fork_target.clear();
+                self.fork_scroll = 0;
                 self.screen = Screen::Fork;
             }
             PendingAction::Delete => {
@@ -1290,6 +1478,7 @@ impl State {
                 form.selected = 1;
             }
             self.form = Some(form);
+            self.form_scroll = 0;
             self.screen = Screen::Form(FormKind::TaxonomyMetadata);
         }
     }
@@ -1304,6 +1493,7 @@ impl State {
                 kind.id.clone(),
                 kind.description.clone(),
             ));
+            self.form_scroll = 0;
             self.screen = Screen::Form(FormKind::EditType(index));
         }
     }
@@ -1316,6 +1506,7 @@ impl State {
             .and_then(|draft| draft.properties.get(property_index))
         {
             self.form = Some(FormState::property(property.clone()));
+            self.form_scroll = 0;
             self.screen = Screen::Form(FormKind::EditProperty(type_index, property_index));
         }
     }
@@ -1473,7 +1664,22 @@ impl State {
     }
 
     fn selected_taxonomy(&self) -> Option<Taxonomy> {
+        if self.library.create_selected {
+            return None;
+        }
         self.catalog()?.get(self.library.browse_selected).cloned()
+    }
+
+    fn show_create_row(&self) -> bool {
+        self.global
+            .as_ref()
+            .and_then(|session| session.catalog().ok())
+            .is_some_and(|catalog| {
+                catalog
+                    .taxonomies()
+                    .iter()
+                    .all(|taxonomy| catalog.origin(taxonomy.id()) != Some(TaxonomyOrigin::Custom))
+            })
     }
 
     fn scope_dirty(&self, destination: ConfigurationDestination) -> bool {
@@ -1501,50 +1707,46 @@ impl State {
             normalize_background(frame, area);
             return;
         }
-        let [outer, footer] =
-            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
-        frame.render_widget(Block::bordered().border_style(frame_style()), outer);
-        let inner = Rect::new(
-            outer.x.saturating_add(1),
-            outer.y.saturating_add(1),
-            outer.width.saturating_sub(2),
-            outer.height.saturating_sub(2),
-        );
-        let [tabs, tabs_divider, body, message_divider, message] = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Length(1),
+        let [options, content, footer] = Layout::vertical([
+            Constraint::Length(3),
             Constraint::Min(1),
             Constraint::Length(1),
-            Constraint::Length(1),
         ])
-        .areas(inner);
-        self.render_tabs(frame, tabs);
-        render_frame_divider(frame, outer, tabs_divider.y);
+        .areas(area);
+        frame.render_widget(
+            Block::bordered()
+                .border_style(frame_style())
+                .title("Config Options"),
+            options,
+        );
+        self.render_tabs(
+            frame,
+            Rect::new(
+                options.x.saturating_add(1),
+                options.y.saturating_add(1),
+                options.width.saturating_sub(2),
+                1,
+            ),
+        );
+        let body = content;
         let hints = match self.screen.clone() {
             Screen::Home => {
                 if self.category == Category::Project {
                     self.render_project(frame, body);
                     vec![
-                        ("tab", "Library"),
-                        ("↑/↓", "section"),
-                        ("enter", "configure"),
-                        ("i", "initialize"),
-                        ("ctrl+s", "review"),
-                        ("pgup/dn", "scroll"),
-                        ("q", "quit"),
+                        ("tab", "switch"),
+                        ("↑/↓", "move"),
+                        ("/", "commands"),
+                        ("?", "help"),
                     ]
                 } else {
                     self.render_library(frame, body);
                     vec![
-                        ("n", "new"),
-                        ("e", "edit"),
-                        ("f", "fork"),
-                        ("d", "delete"),
-                        ("ctrl+s", "review"),
+                        ("tab", "switch"),
                         ("←/→", "focus"),
                         ("↑/↓", "move"),
-                        ("pgup/dn", "detail"),
-                        ("tab", "Project"),
+                        ("/", "commands"),
+                        ("?", "help"),
                     ]
                 }
             }
@@ -1624,8 +1826,12 @@ impl State {
                 vec![("a", "apply"), ("d", "discard"), ("esc", "cancel")]
             }
         };
-        self.render_message(frame, outer, message_divider, message);
         render_navigation_row(frame, footer, &hints);
+        if let Some(overlay) = &mut self.home_overlay {
+            overlay.render(frame, body, self.category);
+        } else {
+            self.render_notice(frame, body);
+        }
         normalize_background(frame, area);
     }
 
@@ -1664,8 +1870,7 @@ impl State {
         }
     }
 
-    fn render_message(&self, frame: &mut Frame<'_>, outer: Rect, divider: Rect, message: Rect) {
-        render_frame_divider(frame, outer, divider.y);
+    fn render_notice(&self, frame: &mut Frame<'_>, area: Rect) {
         let load_error = if matches!(self.screen, Screen::Home) {
             match self.category {
                 Category::Project => self.project.as_ref().map_or_else(
@@ -1677,18 +1882,43 @@ impl State {
         } else {
             None
         };
-        if let Some(status) = &self.status {
-            let (text, style) = match status {
-                Notice::Error(text) => (text, Style::default().fg(Color::Red)),
-                Notice::Info(text) => (text, Style::default()),
-            };
-            frame.render_widget(Paragraph::new(text.as_str()).style(style), message);
-        } else if let Some(error) = load_error {
-            frame.render_widget(
-                Paragraph::new(error).style(Style::default().fg(Color::Red)),
-                message,
-            );
-        }
+        let (message, style) = match (&self.status, load_error) {
+            (Some(Notice::Error(message)), _) => (message.clone(), Style::default().fg(Color::Red)),
+            (Some(Notice::Info(message)), _) => {
+                (message.clone(), Style::default().fg(Color::White))
+            }
+            (None, Some(message)) => (message, Style::default().fg(Color::Red)),
+            (None, None) => return,
+        };
+        let width = area.width.min(56);
+        let lines = Paragraph::new(message.as_str()).wrap(Wrap { trim: false });
+        let height = u16::try_from(lines.line_count(width.saturating_sub(2)))
+            .unwrap_or(u16::MAX)
+            .min(3)
+            .saturating_add(2)
+            .min(area.height);
+        let popup = Rect::new(
+            area.right().saturating_sub(width),
+            area.bottom().saturating_sub(height),
+            width,
+            height,
+        );
+        frame.render_widget(Clear, popup);
+        frame.render_widget(
+            Block::bordered()
+                .border_style(frame_style())
+                .style(Style::default().bg(JET_BLACK)),
+            popup,
+        );
+        frame.render_widget(
+            lines.style(style),
+            Rect::new(
+                popup.x.saturating_add(1),
+                popup.y.saturating_add(1),
+                popup.width.saturating_sub(2),
+                popup.height.saturating_sub(2),
+            ),
+        );
     }
 
     fn render_project(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -1715,35 +1945,35 @@ impl State {
         frame.render_widget(
             Paragraph::new(name).style(section_heading_style()),
             Rect::new(
-                columns[0].x + 2,
-                columns[0].y + 2,
-                columns[0].width.saturating_sub(4),
+                columns[0].x + 1,
+                columns[0].y + 1,
+                columns[0].width.saturating_sub(2),
                 1,
             ),
         );
         frame.render_widget(
             Paragraph::new(path),
             Rect::new(
-                columns[0].x + 2,
-                columns[0].y + 3,
-                columns[0].width.saturating_sub(4),
+                columns[0].x + 1,
+                columns[0].y + 2,
+                columns[0].width.saturating_sub(2),
                 1,
             ),
         );
         frame.render_widget(
             Paragraph::new("Configuration"),
             Rect::new(
-                columns[0].x + 2,
-                columns[0].y + 5,
-                columns[0].width.saturating_sub(4),
+                columns[0].x + 1,
+                columns[0].y + 4,
+                columns[0].width.saturating_sub(2),
                 1,
             ),
         );
         let nav = Rect::new(
             columns[0].x + 1,
-            columns[0].y + 6,
+            columns[0].y + 5,
             columns[0].width.saturating_sub(2),
-            columns[0].height.saturating_sub(7),
+            columns[0].height.saturating_sub(6),
         );
         self.project_area = nav;
         let rows = ProjectSection::ALL
@@ -1775,19 +2005,16 @@ impl State {
             columns[1],
         );
         let detail = Rect::new(
-            columns[1].x + 2,
-            columns[1].y + 2,
-            columns[1].width.saturating_sub(4),
-            columns[1].height.saturating_sub(3),
+            columns[1].x + 1,
+            columns[1].y + 1,
+            columns[1].width.saturating_sub(2),
+            columns[1].height.saturating_sub(2),
         );
         let text = self.project_detail();
         let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
-        let max_scroll = paragraph
-            .line_count(detail.width)
-            .saturating_sub(usize::from(detail.height));
-        self.project_scroll = self
-            .project_scroll
-            .min(u16::try_from(max_scroll).unwrap_or(u16::MAX));
+        let total_rows = u16::try_from(paragraph.line_count(detail.width)).unwrap_or(u16::MAX);
+        let max_scroll = total_rows.saturating_sub(detail.height);
+        self.project_scroll = self.project_scroll.min(max_scroll);
         frame.render_widget(paragraph.scroll((self.project_scroll, 0)), detail);
     }
 
@@ -2083,7 +2310,7 @@ impl State {
         );
     }
 
-    fn render_form(&self, frame: &mut Frame<'_>, area: Rect, kind: FormKind) {
+    fn render_form(&mut self, frame: &mut Frame<'_>, area: Rect, kind: FormKind) {
         let Some(form) = &self.form else {
             return;
         };
@@ -2117,8 +2344,15 @@ impl State {
             lines.push(Line::from(format!("Requirement  {:?}", form.requirement)));
             lines.push(Line::from(format!("Multiplicity {:?}", form.multiplicity)));
         }
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+        let width = area.width.saturating_sub(2);
+        self.form_viewport_height = area.height.saturating_sub(2);
+        let total_rows = u16::try_from(paragraph.line_count(width)).unwrap_or(u16::MAX);
+        self.form_scroll = self
+            .form_scroll
+            .min(total_rows.saturating_sub(self.form_viewport_height));
         frame.render_widget(
-            Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            paragraph.scroll((self.form_scroll, 0)).block(
                 Block::bordered()
                     .border_style(frame_style())
                     .title("Focused editor"),
@@ -2127,15 +2361,28 @@ impl State {
         );
     }
 
-    fn render_fork(&self, frame: &mut Frame<'_>, area: Rect) {
+    fn render_fork(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let source = self
             .selected_taxonomy()
             .map_or_else(String::new, |taxonomy| taxonomy.id().to_string());
-        frame.render_widget(Paragraph::new(format!("Fork taxonomy\n\nSource\n  {source}\n\nNew taxonomy id\n  {}\n\nThe fork is a snapshot; later source changes never propagate.", self.fork_target)).block(Block::bordered().border_style(frame_style())), area);
+        let paragraph = Paragraph::new(format!("Fork taxonomy\n\nSource\n  {source}\n\nNew taxonomy id\n  {}\n\nThe fork is a snapshot; later source changes never propagate.", self.fork_target))
+            .wrap(Wrap { trim: false });
+        self.fork_viewport_height = area.height.saturating_sub(2);
+        let total_rows =
+            u16::try_from(paragraph.line_count(area.width.saturating_sub(2))).unwrap_or(u16::MAX);
+        self.fork_scroll = self
+            .fork_scroll
+            .min(total_rows.saturating_sub(self.fork_viewport_height));
+        frame.render_widget(
+            paragraph
+                .scroll((self.fork_scroll, 0))
+                .block(Block::bordered().border_style(frame_style())),
+            area,
+        );
     }
 
     fn render_review(
-        &self,
+        &mut self,
         frame: &mut Frame<'_>,
         area: Rect,
         destination: ConfigurationDestination,
@@ -2144,15 +2391,17 @@ impl State {
             .session(destination)
             .and_then(|session| session.review().ok())
             .unwrap_or_else(|| "Configuration cannot be reviewed.".into());
+        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+        let viewport_height = area.height.saturating_sub(2);
+        let total_rows =
+            u16::try_from(paragraph.line_count(area.width.saturating_sub(2))).unwrap_or(u16::MAX);
+        self.scroll = self.scroll.min(total_rows.saturating_sub(viewport_height));
         frame.render_widget(
-            Paragraph::new(text)
-                .wrap(Wrap { trim: false })
-                .scroll((self.scroll, 0))
-                .block(
-                    Block::bordered()
-                        .border_style(frame_style())
-                        .title("Review changes — Enter to apply"),
-                ),
+            paragraph.scroll((self.scroll, 0)).block(
+                Block::bordered()
+                    .border_style(frame_style())
+                    .title("Review changes — Enter to apply"),
+            ),
             area,
         );
     }
@@ -2183,19 +2432,6 @@ impl State {
             ),
         );
     }
-}
-
-fn render_frame_divider(frame: &mut Frame<'_>, outer: Rect, y: u16) {
-    let style = frame_style();
-    frame.buffer_mut()[(outer.x, y)]
-        .set_symbol("├")
-        .set_style(style);
-    for x in outer.x.saturating_add(1)..outer.right().saturating_sub(1) {
-        frame.buffer_mut()[(x, y)].set_symbol("─").set_style(style);
-    }
-    frame.buffer_mut()[(outer.right().saturating_sub(1), y)]
-        .set_symbol("┤")
-        .set_style(style);
 }
 
 fn pane_columns(area: Rect) -> std::rc::Rc<[Rect]> {
@@ -2424,11 +2660,26 @@ mod tests {
                 .is_none()
         );
         let buffer = terminal.backend().buffer();
+        assert!(row_text(&terminal, 0, 0, 100).contains("Config Options"));
         assert_eq!(buffer[(0, 0)].symbol(), "┌");
         assert_eq!(buffer[(99, 0)].symbol(), "┐");
-        assert_eq!(buffer[(0, 2)].symbol(), "├");
+        assert_eq!(buffer[(0, 2)].symbol(), "└");
         assert_eq!(buffer[(1, 2)].symbol(), "─");
-        assert_eq!(buffer[(99, 2)].symbol(), "┤");
+        assert_eq!(buffer[(99, 2)].symbol(), "┘");
+        assert_eq!(buffer[(0, 3)].symbol(), "┌");
+        assert_eq!(buffer[(99, 3)].symbol(), "┐");
+        assert_ne!(buffer[(1, 4)].symbol(), " ");
+        assert_eq!(buffer[(1, 4)].fg, Color::Yellow);
+        let project_columns = pane_columns(Rect::new(0, 3, 100, 26));
+        assert!(
+            row_text(
+                &terminal,
+                project_columns[1].x + 1,
+                project_columns[1].y + 1,
+                project_columns[1].width - 2,
+            )
+            .starts_with("Commit taxonomy")
+        );
         assert_eq!(buffer[(2, 1)].bg, Color::Yellow);
         assert_eq!(buffer[(0, 28)].symbol(), "└");
         assert_eq!(buffer[(0, 29)].symbol(), "t");
@@ -2619,27 +2870,61 @@ mod tests {
         );
         terminal.draw(|frame| state.render(frame))?;
         let [taxonomies, types, metadata] = state.library.pane_areas;
+        assert_eq!(taxonomies.x, 0);
         assert_eq!(taxonomies.right() + 1, types.x);
         assert_eq!(types.right() + 1, metadata.x);
+        assert_eq!(metadata.right(), 120);
+        assert!(taxonomies.width.abs_diff(types.width) <= 1);
+        assert!(types.width.abs_diff(metadata.width) <= 1);
+        assert!(taxonomies.width.abs_diff(metadata.width) <= 1);
         let titles = row_text(&terminal, 0, taxonomies.y, 120);
-        for title in ["Taxonomies", "Types", "Type Metadata"] {
+        for title in ["Taxonomies", "Types", "Type Details"] {
             assert!(titles.contains(title));
         }
-        let taxonomy_area = state.library.browser_area;
-        let type_area = state.library.type_area;
-        let summary_gap = row_text(
-            &terminal,
-            taxonomies.x + 2,
-            taxonomy_area.bottom(),
-            taxonomies.width - 4,
-        );
-        assert!(summary_gap.trim().is_empty());
+        let taxonomy_description = state.library.taxonomy_description_area;
+        assert_eq!(taxonomies.bottom(), taxonomy_description.y);
         assert!(
             row_text(
                 &terminal,
-                taxonomies.x + 2,
-                taxonomy_area.bottom() + 1,
-                taxonomies.width - 4,
+                taxonomy_description.x,
+                taxonomy_description.y,
+                taxonomy_description.width,
+            )
+            .contains("Taxonomy Description")
+        );
+        let taxonomy_area = state.library.browser_area;
+        let type_area = state.library.type_area;
+        let built_in = row_text(
+            &terminal,
+            taxonomy_area.x,
+            taxonomy_area.y,
+            taxonomy_area.width,
+        );
+        let spacer = row_text(
+            &terminal,
+            taxonomy_area.x,
+            taxonomy_area.y + 4,
+            taxonomy_area.width,
+        );
+        let custom = row_text(
+            &terminal,
+            taxonomy_area.x,
+            taxonomy_area.y + 5,
+            taxonomy_area.width,
+        );
+        assert!(built_in.contains("Built-in") && built_in.contains('⠒'));
+        assert!(spacer.trim().is_empty());
+        assert!(custom.contains("Custom") && custom.contains('⠒'));
+        assert_eq!(
+            terminal.backend().buffer()[(taxonomy_area.right() - 1, taxonomy_area.y)].symbol(),
+            "⠒"
+        );
+        assert!(
+            row_text(
+                &terminal,
+                taxonomy_description.x + 1,
+                taxonomy_description.y + 1,
+                taxonomy_description.width - 2,
             )
             .contains("The Conventional")
         );
@@ -2652,11 +2937,64 @@ mod tests {
             state.library.metadata_area.y,
             state.library.metadata_area.width,
         );
-        assert!(first_metadata.starts_with("An addition"));
-        assert!(!first_metadata.starts_with("feat"));
-        assert!(text(&terminal).contains("Properties"));
+        assert!(first_metadata.contains("Description") && first_metadata.contains('⠒'));
+        assert_eq!(state.library.metadata_area.x, metadata.x + 1);
         assert_eq!(
-            terminal.backend().buffer()[(taxonomy_area.x + 1, taxonomy_area.y)].bg,
+            terminal.backend().buffer()[(taxonomy_description.x + 1, taxonomy_description.y + 1)]
+                .symbol(),
+            "T"
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(
+                state.library.metadata_area.right() - 1,
+                state.library.metadata_area.y
+            )]
+                .symbol(),
+            "⠒"
+        );
+        assert!(
+            row_text(
+                &terminal,
+                state.library.metadata_area.x,
+                state.library.metadata_area.y + 1,
+                state.library.metadata_area.width,
+            )
+            .starts_with("An addition")
+        );
+        let properties_y = (state.library.metadata_area.y..state.library.metadata_area.bottom())
+            .find(|&y| {
+                row_text(
+                    &terminal,
+                    state.library.metadata_area.x,
+                    y,
+                    state.library.metadata_area.width,
+                )
+                .contains("Properties")
+            })
+            .ok_or("missing properties heading")?;
+        assert_eq!(
+            terminal.backend().buffer()[(state.library.metadata_area.right() - 1, properties_y)]
+                .symbol(),
+            "⠒"
+        );
+        let required = row_text(
+            &terminal,
+            state.library.metadata_area.x,
+            properties_y + 1,
+            state.library.metadata_area.width,
+        );
+        let conditional = row_text(
+            &terminal,
+            state.library.metadata_area.x,
+            properties_y + 3,
+            state.library.metadata_area.width,
+        );
+        assert_eq!(
+            required.find("required").ok_or("missing requirement")?,
+            conditional.find("conditional").ok_or("missing condition")?
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(taxonomy_area.x + 1, taxonomy_area.y + 1)].bg,
             Color::Yellow
         );
         assert_ne!(
@@ -2667,7 +3005,7 @@ mod tests {
         state.handle_event(key(KeyCode::Right), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert_ne!(
-            terminal.backend().buffer()[(taxonomy_area.x + 1, taxonomy_area.y)].bg,
+            terminal.backend().buffer()[(taxonomy_area.x + 1, taxonomy_area.y + 1)].bg,
             Color::Yellow
         );
         assert_eq!(
@@ -2689,7 +3027,17 @@ mod tests {
             Event::Mouse(ratatui::crossterm::event::MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: taxonomy_area.x,
-                row: taxonomy_area.y + 1,
+                row: taxonomy_area.y + 2,
+                modifiers: KeyModifiers::NONE,
+            }),
+            &workspace,
+        );
+        assert_eq!(state.library.browse_selected, 1);
+        state.handle_event(
+            Event::Mouse(ratatui::crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: taxonomy_area.x,
+                row: taxonomy_area.y + 5,
                 modifiers: KeyModifiers::NONE,
             }),
             &workspace,
@@ -2701,8 +3049,8 @@ mod tests {
         state.handle_event(
             Event::Mouse(ratatui::crossterm::event::MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: taxonomy_area.x,
-                row: state.library.browser_area.bottom() + 1,
+                column: taxonomy_description.x + 2,
+                row: taxonomy_description.y + 1,
                 modifiers: KeyModifiers::NONE,
             }),
             &workspace,
@@ -2735,18 +3083,23 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        state.project_section = ProjectSection::Files;
+        state.project_section = ProjectSection::Resolution;
         terminal.draw(|frame| state.render(frame))?;
         state.handle_event(key(KeyCode::PageDown), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(state.project_scroll > 0);
-        assert_eq!(state.project_section, ProjectSection::Files);
+        assert_eq!(state.project_section, ProjectSection::Resolution);
 
         state.category = Category::Library;
         state.library.focus = LibraryFocus::Types;
         terminal.draw(|frame| state.render(frame))?;
         assert!(state.library.type_area.height > 0);
-        assert_eq!(state.library.pane_areas[2], Rect::default());
+        let [_, types, details] = state.library.pane_areas;
+        assert_eq!(types.bottom(), details.y);
+        assert_eq!(
+            state.library.pane_areas[0].bottom(),
+            state.library.taxonomy_description_area.y
+        );
         let type_area = state.library.type_area;
         let taxonomy_area = state.library.browser_area;
         assert_eq!(
@@ -2754,18 +3107,11 @@ mod tests {
             Color::Yellow
         );
         assert_ne!(
-            terminal.backend().buffer()[(taxonomy_area.x + 1, taxonomy_area.y)].bg,
+            terminal.backend().buffer()[(taxonomy_area.x + 1, taxonomy_area.y + 1)].bg,
             Color::Yellow
         );
-        let gap = row_text(&terminal, type_area.x, type_area.bottom(), type_area.width);
-        assert!(gap.trim().is_empty());
-        let metadata_heading = row_text(
-            &terminal,
-            type_area.x,
-            type_area.bottom() + 1,
-            type_area.width,
-        );
-        assert!(metadata_heading.contains("Type Metadata"));
+        let detail_heading = row_text(&terminal, details.x, details.y, details.width);
+        assert!(detail_heading.contains("Type Details"));
         assert!(
             row_text(
                 &terminal,
@@ -2773,11 +3119,30 @@ mod tests {
                 state.library.metadata_area.y,
                 state.library.metadata_area.width
             )
+            .contains("Description")
+        );
+        assert!(
+            row_text(
+                &terminal,
+                state.library.metadata_area.x,
+                state.library.metadata_area.y + 1,
+                state.library.metadata_area.width,
+            )
             .contains("An addition")
         );
         state.handle_event(key(KeyCode::PageDown), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(state.library.property_scroll > 0);
+        assert!(text(&terminal).contains("Properties"));
+        assert!(
+            row_text(
+                &terminal,
+                state.library.metadata_area.x,
+                state.library.metadata_area.y + 2,
+                state.library.metadata_area.width,
+            )
+            .contains("intent")
+        );
         assert_eq!(state.library.browse_selected, 0);
         assert_eq!(state.library.type_selected, 0);
         Ok(())
@@ -2789,24 +3154,48 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
-        let mut compact = Terminal::new(TestBackend::new(97, 30))?;
+        let mut compact = Terminal::new(TestBackend::new(95, 30))?;
         compact.draw(|frame| state.render(frame))?;
-        assert_eq!(state.library.pane_areas[2], Rect::default());
-        assert!(text(&compact).contains("Type Metadata"));
+        assert_eq!(
+            state.library.pane_areas[1].bottom(),
+            state.library.pane_areas[2].y
+        );
+        assert!(text(&compact).contains("Type Details"));
 
-        let mut wide = Terminal::new(TestBackend::new(98, 30))?;
+        let mut wide = Terminal::new(TestBackend::new(96, 30))?;
         wide.draw(|frame| state.render(frame))?;
         let [taxonomies, types, metadata] = state.library.pane_areas;
         assert_eq!(taxonomies.right() + 1, types.x);
         assert_eq!(types.right() + 1, metadata.x);
-        assert_eq!(metadata.right(), 97);
-        assert!(text(&wide).contains("Type Metadata"));
+        assert_eq!(metadata.right(), 96);
+        assert!(taxonomies.width.abs_diff(types.width) <= 1);
+        assert!(types.width.abs_diff(metadata.width) <= 1);
+        assert!(text(&wide).contains("Type Details"));
         Ok(())
     }
 
     #[test]
-    fn library_summary_truncates_description_but_retains_fork_lineage()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn compact_details_align_property_columns() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        let mut terminal = Terminal::new(TestBackend::new(80, 35))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let details = state.library.pane_areas[2];
+        assert_eq!(state.library.pane_areas[1].bottom(), details.y);
+        assert!(row_text(&terminal, details.x, details.y, details.width).contains("Type Details"));
+        let area = state.library.metadata_area;
+        let required = row_text(&terminal, area.x, area.y + 4, area.width);
+        let conditional = row_text(&terminal, area.x, area.y + 6, area.width);
+        assert_eq!(
+            required.find("required").ok_or("missing requirement")?,
+            conditional.find("conditional").ok_or("missing condition")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn taxonomy_description_scrolls_to_fork_lineage() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
@@ -2827,14 +3216,12 @@ mod tests {
         state.library.browse_selected = 3;
         let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        let pane = state.library.pane_areas[0];
-        let summary_y = state.library.browser_area.bottom() + 1;
-        let summary = (summary_y..summary_y + 6)
-            .map(|y| row_text(&terminal, pane.x + 2, y, pane.width - 4))
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(summary.contains('…'));
-        assert!(summary.contains("Forked from conventional@1"));
+        for _ in 0..3 {
+            state.handle_event(key(KeyCode::PageDown), &workspace);
+            terminal.draw(|frame| state.render(frame))?;
+        }
+        assert!(state.library.taxonomy_scroll > 0);
+        assert!(text(&terminal).contains("Forked from conventional@1"));
         Ok(())
     }
 
@@ -2860,6 +3247,385 @@ mod tests {
         let list = state.library.browser_area;
         let offset = state.library.browser_offset;
         assert!(offset > 0);
+        let (row, expected) = (list.y..list.bottom())
+            .find_map(|row| {
+                state
+                    .library
+                    .taxonomy_at(list.x, row, state.catalog().map_or(0, |items| items.len()))
+                    .map(|index| (row, index))
+            })
+            .ok_or("no visible taxonomy")?;
+        state.handle_event(
+            Event::Mouse(ratatui::crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: list.x,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }),
+            &workspace,
+        );
+        assert_eq!(state.library.browse_selected, expected);
+        assert_eq!(state.library.focus, LibraryFocus::Taxonomies);
+        Ok(())
+    }
+
+    #[test]
+    fn taxonomy_selection_skips_section_spacer_and_headings()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state
+            .global
+            .as_mut()
+            .ok_or("missing global")?
+            .fork_taxonomy(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let list = state.library.browser_area;
+        assert!(
+            row_text(&terminal, list.x, list.y + 4, list.width)
+                .trim()
+                .is_empty()
+        );
+        assert!(row_text(&terminal, list.x, list.y + 5, list.width).contains("Custom"));
+        assert!(row_text(&terminal, list.x, list.y + 6, list.width).contains("team"));
+        state.library.select_taxonomy(2);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        assert_eq!(state.library.browse_selected, 3);
+        state.handle_event(key(KeyCode::Up), &workspace);
+        assert_eq!(state.library.browse_selected, 2);
+        for row in [list.y + 4, list.y + 5] {
+            state.handle_event(
+                Event::Mouse(ratatui::crossterm::event::MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: list.x,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                }),
+                &workspace,
+            );
+            assert_eq!(state.library.browse_selected, 2);
+        }
+        state.handle_event(
+            Event::Mouse(ratatui::crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: list.x,
+                row: list.y + 6,
+                modifiers: KeyModifiers::NONE,
+            }),
+            &workspace,
+        );
+        assert_eq!(state.library.browse_selected, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn empty_custom_action_is_selectable_and_disappears_after_creation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let list = state.library.browser_area;
+        assert!(row_text(&terminal, list.x, list.y + 6, list.width).contains("+ Create New"));
+        state.library.select_taxonomy(2);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        assert!(state.library.create_selected);
+        state.handle_event(key(KeyCode::Right), &workspace);
+        assert_eq!(state.library.focus, LibraryFocus::Taxonomies);
+        state.handle_event(key(KeyCode::Left), &workspace);
+        assert_eq!(state.library.focus, LibraryFocus::Taxonomies);
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(!row_text(&terminal, list.x, list.y + 3, list.width).contains('›'));
+        assert!(row_text(&terminal, list.x, list.y + 6, list.width).contains("› + Create New"));
+        assert!(text(&terminal).contains("n/a"));
+        state.handle_event(key(KeyCode::Up), &workspace);
+        assert!(!state.library.create_selected);
+        assert_eq!(state.library.browse_selected, 2);
+        state.handle_event(key(KeyCode::Right), &workspace);
+        assert_eq!(state.library.focus, LibraryFocus::Types);
+        state.handle_event(key(KeyCode::Left), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert!(matches!(
+            state.screen,
+            Screen::TaxonomyEditor(EditorMode::Create)
+        ));
+        assert_eq!(workspace.saves.get(), 0);
+        state.handle_event(key(KeyCode::Esc), &workspace);
+        assert!(matches!(state.screen, Screen::Home));
+        assert!(state.library.create_selected);
+        state
+            .global
+            .as_mut()
+            .ok_or("missing global")?
+            .fork_taxonomy(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(!state.library.create_selected);
+        assert_eq!(state.library.browse_selected, 3);
+        assert!(!text(&terminal).contains("+ Create New"));
+        Ok(())
+    }
+
+    #[test]
+    fn empty_custom_action_click_uses_dirty_scope_guard() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state
+            .project
+            .as_mut()
+            .ok_or("missing project")?
+            .initialize_project()?;
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let list = state.library.browser_area;
+        state.handle_event(
+            Event::Mouse(ratatui::crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: list.x,
+                row: list.y + 6,
+                modifiers: KeyModifiers::NONE,
+            }),
+            &workspace,
+        );
+        assert!(state.library.create_selected);
+        assert!(matches!(
+            state.screen,
+            Screen::ScopeChange(PendingAction::Create)
+        ));
+        assert_eq!(workspace.saves.get(), 0);
+        state.handle_event(key(KeyCode::Esc), &workspace);
+        assert!(matches!(state.screen, Screen::Home));
+        assert!(state.library.create_selected);
+        Ok(())
+    }
+
+    #[test]
+    fn home_palette_filters_commands_and_routes_through_existing_actions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(
+            row_text(&terminal, 0, 29, 100)
+                .contains("tab: switch | ←/→: focus | ↑/↓: move | /: commands | ?: help")
+        );
+        state.handle_event(key(KeyCode::Char('/')), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(text(&terminal).contains("Commands"));
+        assert!(text(&terminal).contains("╔"));
+        let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
+            return Err("palette missing".into());
+        };
+        let palette_list = palette.list_area;
+        let search_top = palette_list.y - 3;
+        assert_eq!(
+            terminal.backend().buffer()[(palette_list.x - 1, search_top)].symbol(),
+            "┌"
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(palette_list.right(), search_top)].symbol(),
+            "┐"
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(palette_list.x, search_top + 1)].symbol(),
+            "/"
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(palette_list.right() - 1, palette_list.y)].symbol(),
+            "n"
+        );
+        state.handle_event(Event::Paste("fork".into()), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
+            return Err("palette missing".into());
+        };
+        assert_eq!(palette.visible(state.category), vec![HomeCommand::Fork]);
+        assert_eq!(
+            terminal.backend().buffer()[(palette.list_area.right() - 1, palette.list_area.y)]
+                .symbol(),
+            "f"
+        );
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert!(matches!(state.screen, Screen::Fork));
+        assert!(state.home_overlay.is_none());
+        assert_eq!(workspace.saves.get(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn palette_blocks_underlying_keys_and_reports_unavailable_actions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state.handle_event(key(KeyCode::Char('/')), &workspace);
+        state.handle_event(Event::Paste("edit".into()), &workspace);
+        state.handle_event(key(KeyCode::Char('n')), &workspace);
+        let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
+            return Err("palette missing".into());
+        };
+        assert_eq!(palette.query, "editn");
+        assert!(matches!(state.screen, Screen::Home));
+        state.handle_event(key(KeyCode::Backspace), &workspace);
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert!(matches!(state.screen, Screen::Home));
+        assert!(matches!(state.status, Some(Notice::Error(_))));
+        assert!(state.home_overlay.is_none());
+        assert_eq!(workspace.saves.get(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn project_palette_and_help_keep_the_review_boundary() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        state.handle_event(key(KeyCode::Char('?')), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(text(&terminal).contains("Initialize project"));
+        let help = centered_rect(58, 12, Rect::new(0, 3, 100, 26));
+        let content_x = help.x + 2;
+        let content_width = help.width - 4;
+        let switch_row = row_text(&terminal, content_x, help.y + 2, content_width);
+        let review_row = row_text(&terminal, content_x, help.y + 6, content_width);
+        assert!(switch_row.starts_with("Switch Project / Library"));
+        assert!(switch_row.ends_with("tab"));
+        assert!(review_row.starts_with("Review changes"));
+        assert!(review_row.ends_with("ctrl+s"));
+        assert!(text(&terminal).contains("[esc] close"));
+        assert!(row_text(&terminal, 0, 29, 100).contains("/: commands | ?: help"));
+        state.handle_event(key(KeyCode::Char('n')), &workspace);
+        assert!(matches!(state.home_overlay, Some(HomeOverlay::Help)));
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert!(matches!(state.home_overlay, Some(HomeOverlay::Help)));
+        state.handle_event(key(KeyCode::Char('?')), &workspace);
+        assert!(matches!(state.home_overlay, Some(HomeOverlay::Help)));
+        state.handle_event(key(KeyCode::Esc), &workspace);
+        assert!(state.home_overlay.is_none());
+        state.handle_event(key(KeyCode::Char('/')), &workspace);
+        state.handle_event(Event::Paste("initialize".into()), &workspace);
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert!(matches!(
+            state.screen,
+            Screen::Review(ConfigurationDestination::Project)
+        ));
+        assert_eq!(workspace.saves.get(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn library_help_aligns_shortcuts_and_closes_only_with_escape()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        state.handle_event(key(KeyCode::Char('?')), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        let help = centered_rect(58, 12, Rect::new(0, 3, MINIMUM_WIDTH, MINIMUM_HEIGHT - 4));
+        let content_x = help.x + 2;
+        let content_width = help.width - 4;
+        let switch_row = row_text(&terminal, content_x, help.y + 2, content_width);
+        let edit_row = row_text(&terminal, content_x, help.y + 6, content_width);
+        assert!(switch_row.starts_with("Switch Project / Library"));
+        assert!(switch_row.ends_with("tab"));
+        assert!(edit_row.starts_with("New / edit / fork / delete"));
+        assert!(edit_row.ends_with("n/e/f/d"));
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        state.handle_event(
+            Event::Mouse(ratatui::crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            }),
+            &workspace,
+        );
+        assert!(matches!(state.home_overlay, Some(HomeOverlay::Help)));
+        state.handle_event(key(KeyCode::Esc), &workspace);
+        assert!(state.home_overlay.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn palette_library_actions_respect_dirty_project_confirmation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state
+            .project
+            .as_mut()
+            .ok_or("missing project")?
+            .initialize_project()?;
+        state.category = Category::Library;
+        state.handle_event(key(KeyCode::Char('/')), &workspace);
+        state.handle_event(Event::Paste("new".into()), &workspace);
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert!(matches!(
+            state.screen,
+            Screen::ScopeChange(PendingAction::Create)
+        ));
+        assert_eq!(workspace.saves.get(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn command_popup_fits_the_minimum_and_blocks_underlying_mouse_targets()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(row_text(&terminal, 0, 17, MINIMUM_WIDTH).ends_with("?: help"));
+        let project_tab = state.tab_areas[Category::Project.index()];
+        state.handle_event(key(KeyCode::Char('/')), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(text(&terminal).contains("Commands"));
+        assert!(text(&terminal).contains("╔"));
+        assert!(text(&terminal).contains("Search"));
+        assert!(text(&terminal).contains("▌"));
+        let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
+            return Err("palette missing".into());
+        };
+        assert_eq!(palette.list_area.height, 7);
+        assert_eq!(
+            terminal.backend().buffer()[(palette.list_area.x - 1, palette.list_area.y - 3)]
+                .symbol(),
+            "┌"
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(palette.list_area.right(), palette.list_area.y - 3)]
+                .symbol(),
+            "┐"
+        );
+        for _ in 0..7 {
+            state.handle_event(key(KeyCode::Down), &workspace);
+        }
+        terminal.draw(|frame| state.render(frame))?;
+        let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
+            return Err("palette missing".into());
+        };
+        assert_eq!(palette.selected, 7);
+        assert_eq!(palette.list_offset, 1);
+        assert!(
+            row_text(
+                &terminal,
+                palette.list_area.x,
+                palette.list_area.bottom() - 1,
+                palette.list_area.width
+            )
+            .contains("Quit")
+        );
+        let list = palette.list_area;
         state.handle_event(
             Event::Mouse(ratatui::crossterm::event::MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -2869,36 +3635,102 @@ mod tests {
             }),
             &workspace,
         );
-        assert_eq!(state.library.browse_selected, offset);
-        assert_eq!(state.library.focus, LibraryFocus::Taxonomies);
+        let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
+            return Err("palette missing".into());
+        };
+        assert_eq!(palette.selected, 1);
+        state.handle_event(
+            Event::Mouse(ratatui::crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: project_tab.x,
+                row: project_tab.y,
+                modifiers: KeyModifiers::NONE,
+            }),
+            &workspace,
+        );
+        assert!(state.home_overlay.is_none());
+        assert_eq!(state.category, Category::Library);
         Ok(())
     }
 
     #[test]
-    fn framed_message_row_distinguishes_errors_and_info() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn form_fork_and_review_text_still_scroll() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        state.form = Some(FormState::metadata(
+            "team".into(),
+            "Long description. ".repeat(90),
+        ));
+        state.screen = Screen::Form(FormKind::TaxonomyMetadata);
+        terminal.draw(|frame| state.render(frame))?;
+        state.handle_event(key(KeyCode::PageDown), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(state.form_scroll > 0);
+
+        state.category = Category::Library;
+        state.screen = Screen::Fork;
+        state.fork_target = "very-long-name-".repeat(70);
+        terminal.draw(|frame| state.render(frame))?;
+        state.handle_event(key(KeyCode::PageDown), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(state.fork_scroll > 0);
+
+        state
+            .global
+            .as_mut()
+            .ok_or("missing global")?
+            .fork_taxonomy(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
+        for index in 0..40 {
+            state
+                .global
+                .as_mut()
+                .ok_or("missing global")?
+                .fork_taxonomy(
+                    &TaxonomyId::new("conventional")?,
+                    TaxonomyId::new(format!("more-{index}"))?,
+                )?;
+        }
+        let session = state.global.as_mut().ok_or("missing global")?;
+        let available = session
+            .catalog()?
+            .taxonomies()
+            .iter()
+            .map(|taxonomy| taxonomy.id().clone())
+            .collect();
+        session.configure_global(TaxonomyId::new("conventional")?, available)?;
+        state.active_scope = ConfigurationDestination::Global;
+        state.open_review();
+        terminal.draw(|frame| state.render(frame))?;
+        state.handle_event(key(KeyCode::Down), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(state.scroll > 0);
+        Ok(())
+    }
+
+    #[test]
+    fn overlay_notices_replace_the_message_row() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         state.status = Some(Notice::Error("Invalid selection".into()));
         terminal.draw(|frame| state.render(frame))?;
-        let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, 26)].symbol(), "├");
-        assert_eq!(buffer[(99, 26)].symbol(), "┤");
-        assert_eq!(buffer[(1, 27)].fg, Color::Red);
-        assert_eq!(buffer[(1, 27)].symbol(), "I");
+        assert_eq!(terminal.backend().buffer()[(0, 26)].symbol(), "│");
+        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, Color::Red);
+        assert!(text(&terminal).contains("Invalid selection"));
+
         state.status = Some(Notice::Info("Configuration applied.".into()));
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(1, 27)].fg, Color::White);
+        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, Color::White);
         assert!(text(&terminal).contains("Configuration applied."));
-        state.status = None;
+        state.handle_event(key(KeyCode::Down), &workspace);
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(1, 27)].symbol(), " ");
+        assert!(!text(&terminal).contains("Configuration applied."));
         Ok(())
     }
 
     #[test]
-    fn selected_load_failure_uses_message_row_below_transient_notices()
+    fn load_errors_remain_visible_beneath_transient_notices()
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
@@ -2906,21 +3738,20 @@ mod tests {
         state.project = None;
         state.project_error = "project load failed".into();
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(1, 27)].fg, Color::Red);
-        assert_eq!(terminal.backend().buffer()[(1, 27)].symbol(), "p");
+        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, Color::Red);
 
         state.status = Some(Notice::Info("Review pending".into()));
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(1, 27)].fg, Color::White);
-        assert_eq!(terminal.backend().buffer()[(1, 27)].symbol(), "R");
+        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, Color::White);
+        assert!(text(&terminal).contains("Review pending"));
 
         state.status = None;
         state.category = Category::Library;
         state.global = None;
         state.global_error = "global load failed".into();
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(1, 27)].fg, Color::Red);
-        assert_eq!(terminal.backend().buffer()[(1, 27)].symbol(), "g");
+        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, Color::Red);
+        assert!(text(&terminal).contains("global load failed"));
         Ok(())
     }
 
@@ -2993,6 +3824,14 @@ mod tests {
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Forked from"));
         assert!(text(&terminal).contains("conventional@1"));
+        let list = state.library.browser_area;
+        assert!(
+            row_text(&terminal, list.x, list.y + 4, list.width)
+                .trim()
+                .is_empty()
+        );
+        assert!(row_text(&terminal, list.x, list.y + 5, list.width).contains("Custom"));
+        assert!(row_text(&terminal, list.x, list.y + 6, list.width).contains("team"));
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(matches!(
             state.screen,
@@ -3025,12 +3864,12 @@ mod tests {
         let rendered = text(&terminal);
         assert!(rendered.contains("Library"));
         assert!(rendered.contains("Taxonomies"));
-        assert!(rendered.contains("Type Metadata"));
+        assert!(rendered.contains("Details"));
         assert!(rendered.contains("Taxonomy library"));
         assert!(rendered.contains("No commit types."));
         assert!(rendered.contains("No type selected."));
-        assert!(rendered.contains("n: new | e: edit | f: fork | d: delete"));
-        assert_eq!(terminal.backend().buffer()[(1, 15)].fg, Color::Red);
+        assert!(rendered.contains("/: commands | ?: help"));
+        assert!(rendered.contains("global load failed"));
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
         assert!(matches!(state.status, Some(Notice::Error(_))));
@@ -3100,7 +3939,7 @@ mod tests {
         assert!(text(&minimum).contains("Project"));
         let buffer = minimum.backend().buffer();
         assert_eq!(buffer[(0, 0)].symbol(), "┌");
-        assert_eq!(buffer[(0, 2)].symbol(), "├");
+        assert_eq!(buffer[(0, 2)].symbol(), "└");
         assert_eq!(buffer[(0, 16)].symbol(), "└");
         Ok(())
     }
