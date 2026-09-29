@@ -3083,12 +3083,12 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        state.project_section = ProjectSection::Files;
+        state.project_section = ProjectSection::Resolution;
         terminal.draw(|frame| state.render(frame))?;
         state.handle_event(key(KeyCode::PageDown), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(state.project_scroll > 0);
-        assert_eq!(state.project_section, ProjectSection::Files);
+        assert_eq!(state.project_section, ProjectSection::Resolution);
 
         state.category = Category::Library;
         state.library.focus = LibraryFocus::Types;
