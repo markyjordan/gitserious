@@ -58,10 +58,8 @@ notices appear briefly over the content; source-load errors remain visible while
 unavailable. Existing user-level default and availability settings remain the
 read-only inheritance baseline in Project.
 
-Scrollable config panes show a dark track and yellow thumb at the right edge
-only when their content exceeds the visible height. This includes Library and
-Project details and lists, plus editor, fork, and review flows. Page Up and Page
-Down scroll long form and fork text; Review retains its Up and Down scrolling.
+Page Up and Page Down scroll long form and fork text; Review retains its Up and
+Down scrolling. Lists keep their selected row in view as content grows.
 
 The interface shares the commit TUI's true-black canvas, dark Unicode frames,
 yellow active rows and navigation strip, zebra tables, mouse targets, bracketed

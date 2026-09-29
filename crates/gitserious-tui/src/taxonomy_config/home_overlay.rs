@@ -4,7 +4,6 @@ use ratatui::style::Style;
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph};
 
 use super::Category;
-use super::scrollbar::render_overflow_scrollbar;
 use crate::theme::{
     JET_BLACK, centered_rect, frame_style, navigation_key_style, section_heading_style,
 };
@@ -218,13 +217,6 @@ fn render_palette(
         &mut list_state,
     );
     state.list_offset = list_state.offset();
-    render_overflow_scrollbar(
-        frame,
-        popup,
-        u16::try_from(visible.len()).unwrap_or(u16::MAX),
-        list_area.height,
-        u16::try_from(state.list_offset).unwrap_or(u16::MAX),
-    );
     frame.render_widget(
         Paragraph::new("[↑/↓] select  [enter] run  [esc] close").centered(),
         Rect::new(

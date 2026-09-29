@@ -27,10 +27,8 @@ use crate::theme::{
 
 mod home_overlay;
 mod library_view;
-mod scrollbar;
 use home_overlay::{CommandPaletteState, HomeCommand, HomeOverlay};
 use library_view::{LibraryFocus, LibraryViewState};
-use scrollbar::render_overflow_scrollbar;
 
 /// Taxonomy-first terminal configuration adapter.
 #[derive(Clone, Debug, Default)]
@@ -2018,13 +2016,6 @@ impl State {
         let max_scroll = total_rows.saturating_sub(detail.height);
         self.project_scroll = self.project_scroll.min(max_scroll);
         frame.render_widget(paragraph.scroll((self.project_scroll, 0)), detail);
-        render_overflow_scrollbar(
-            frame,
-            columns[1],
-            total_rows,
-            detail.height,
-            self.project_scroll,
-        );
     }
 
     fn project_detail(&self) -> String {
@@ -2236,7 +2227,6 @@ impl State {
             Paragraph::new(inheritance).style(section_heading_style()),
             parts[0],
         );
-        let total_rows = u16::try_from(rows.len()).unwrap_or(u16::MAX);
         frame.render_stateful_widget(
             List::new(rows)
                 .block(
@@ -2250,13 +2240,6 @@ impl State {
                 .highlight_style(navigation_key_style()),
             parts[1],
             &mut state,
-        );
-        render_overflow_scrollbar(
-            frame,
-            parts[1],
-            total_rows,
-            parts[1].height.saturating_sub(2),
-            u16::try_from(state.offset()).unwrap_or(u16::MAX),
         );
     }
 
@@ -2278,7 +2261,6 @@ impl State {
         }));
         let mut state = ListState::default();
         state.select(Some(self.child_selected));
-        let total_rows = u16::try_from(rows.len()).unwrap_or(u16::MAX);
         frame.render_stateful_widget(
             List::new(rows)
                 .block(
@@ -2292,13 +2274,6 @@ impl State {
                 .highlight_style(navigation_key_style()),
             area,
             &mut state,
-        );
-        render_overflow_scrollbar(
-            frame,
-            area,
-            total_rows,
-            area.height.saturating_sub(2),
-            u16::try_from(state.offset()).unwrap_or(u16::MAX),
         );
     }
 
@@ -2322,7 +2297,6 @@ impl State {
         }));
         let mut state = ListState::default();
         state.select(Some(self.child_selected));
-        let total_rows = u16::try_from(rows.len()).unwrap_or(u16::MAX);
         frame.render_stateful_widget(
             List::new(rows)
                 .block(
@@ -2333,13 +2307,6 @@ impl State {
                 .highlight_style(navigation_key_style()),
             area,
             &mut state,
-        );
-        render_overflow_scrollbar(
-            frame,
-            area,
-            total_rows,
-            area.height.saturating_sub(2),
-            u16::try_from(state.offset()).unwrap_or(u16::MAX),
         );
     }
 
@@ -2392,13 +2359,6 @@ impl State {
             ),
             area,
         );
-        render_overflow_scrollbar(
-            frame,
-            area,
-            total_rows,
-            self.form_viewport_height,
-            self.form_scroll,
-        );
     }
 
     fn render_fork(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -2418,13 +2378,6 @@ impl State {
                 .scroll((self.fork_scroll, 0))
                 .block(Block::bordered().border_style(frame_style())),
             area,
-        );
-        render_overflow_scrollbar(
-            frame,
-            area,
-            total_rows,
-            self.fork_viewport_height,
-            self.fork_scroll,
         );
     }
 
@@ -2451,7 +2404,6 @@ impl State {
             ),
             area,
         );
-        render_overflow_scrollbar(frame, area, total_rows, viewport_height, self.scroll);
     }
 
     fn render_confirmation(
@@ -2680,12 +2632,6 @@ mod tests {
             .map(|column| buffer[(column, y)].symbol())
             .collect::<Vec<_>>()
             .concat()
-    }
-
-    fn scrollbar_rows(terminal: &Terminal<TestBackend>, pane: Rect) -> Vec<u16> {
-        (pane.y + 1..pane.bottom().saturating_sub(1))
-            .filter(|&y| terminal.backend().buffer()[(pane.right() - 1, y)].symbol() == "█")
-            .collect()
     }
 
     #[test]
@@ -3139,13 +3085,6 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         state.project_section = ProjectSection::Files;
         terminal.draw(|frame| state.render(frame))?;
-        let project_columns = pane_columns(Rect::new(
-            0,
-            3,
-            MINIMUM_WIDTH,
-            MINIMUM_HEIGHT.saturating_sub(4),
-        ));
-        assert!(!scrollbar_rows(&terminal, project_columns[1]).is_empty());
         state.handle_event(key(KeyCode::PageDown), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(state.project_scroll > 0);
@@ -3156,8 +3095,6 @@ mod tests {
         terminal.draw(|frame| state.render(frame))?;
         assert!(state.library.type_area.height > 0);
         let [_, types, details] = state.library.pane_areas;
-        assert!(!scrollbar_rows(&terminal, types).is_empty());
-        assert!(!scrollbar_rows(&terminal, details).is_empty());
         assert_eq!(types.bottom(), details.y);
         assert_eq!(
             state.library.pane_areas[0].bottom(),
@@ -3279,11 +3216,6 @@ mod tests {
         state.library.browse_selected = 3;
         let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        let pane = state.library.taxonomy_description_area;
-        assert_eq!(
-            terminal.backend().buffer()[(pane.right() - 1, pane.y + 1)].symbol(),
-            "█"
-        );
         for _ in 0..3 {
             state.handle_event(key(KeyCode::PageDown), &workspace);
             terminal.draw(|frame| state.render(frame))?;
@@ -3315,7 +3247,6 @@ mod tests {
         let list = state.library.browser_area;
         let offset = state.library.browser_offset;
         assert!(offset > 0);
-        assert!(!scrollbar_rows(&terminal, state.library.pane_areas[0]).is_empty());
         let (row, expected) = (list.y..list.bottom())
             .find_map(|row| {
                 state
@@ -3723,63 +3654,16 @@ mod tests {
     }
 
     #[test]
-    fn child_lists_show_scrollbars_when_selection_overflows()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        for index in 0..12 {
-            state
-                .global
-                .as_mut()
-                .ok_or("missing global")?
-                .fork_taxonomy(
-                    &TaxonomyId::new("conventional")?,
-                    TaxonomyId::new(format!("team-{index}"))?,
-                )?;
-        }
-        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        let body = Rect::new(0, 3, MINIMUM_WIDTH, MINIMUM_HEIGHT - 4);
-        state.open_settings(ConfigurationDestination::Global);
-        terminal.draw(|frame| state.render(frame))?;
-        let settings_area = Rect::new(body.x, body.y + 2, body.width, body.height - 2);
-        assert!(!scrollbar_rows(&terminal, settings_area).is_empty());
-
-        let original = state.selected_taxonomy().ok_or("missing taxonomy")?;
-        let mut draft = TaxonomyDraft::from_taxonomy(&original);
-        let extra_type = draft.types[0].clone();
-        draft.types.extend([extra_type.clone(), extra_type]);
-        state.editor = Some(draft);
-        state.child_selected = 13;
-        state.screen = Screen::TaxonomyEditor(EditorMode::Edit);
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(!scrollbar_rows(&terminal, body).is_empty());
-
-        let draft = state.editor.as_mut().ok_or("missing editor")?;
-        let extra_property = draft.types[0].properties[0].clone();
-        draft.types[0]
-            .properties
-            .extend((0..13).map(|_| extra_property.clone()));
-        state.child_selected = 14;
-        state.screen = Screen::TypeEditor(0);
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(!scrollbar_rows(&terminal, body).is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn form_fork_and_review_text_scroll_with_visible_thumbs()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn form_fork_and_review_text_still_scroll() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        let body = Rect::new(0, 3, MINIMUM_WIDTH, MINIMUM_HEIGHT - 4);
         state.form = Some(FormState::metadata(
             "team".into(),
             "Long description. ".repeat(90),
         ));
         state.screen = Screen::Form(FormKind::TaxonomyMetadata);
         terminal.draw(|frame| state.render(frame))?;
-        assert!(!scrollbar_rows(&terminal, body).is_empty());
         state.handle_event(key(KeyCode::PageDown), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(state.form_scroll > 0);
@@ -3788,7 +3672,6 @@ mod tests {
         state.screen = Screen::Fork;
         state.fork_target = "very-long-name-".repeat(70);
         terminal.draw(|frame| state.render(frame))?;
-        assert!(!scrollbar_rows(&terminal, body).is_empty());
         state.handle_event(key(KeyCode::PageDown), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(state.fork_scroll > 0);
@@ -3819,7 +3702,6 @@ mod tests {
         state.active_scope = ConfigurationDestination::Global;
         state.open_review();
         terminal.draw(|frame| state.render(frame))?;
-        assert!(!scrollbar_rows(&terminal, body).is_empty());
         state.handle_event(key(KeyCode::Down), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(state.scroll > 0);

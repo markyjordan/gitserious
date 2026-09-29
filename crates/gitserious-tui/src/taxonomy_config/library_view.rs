@@ -6,7 +6,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Cell, List, ListItem, ListState, Paragraph, Row, Table, Wrap};
 
-use super::scrollbar::render_overflow_scrollbar;
 use super::{contains, pane_columns, requirement_label};
 use crate::theme::{
     JET_BLACK, ZEBRA_BACKGROUND, frame_style, navigation_key_style, section_heading_style,
@@ -347,13 +346,6 @@ impl LibraryViewState {
             &mut state,
         );
         self.browser_offset = state.offset();
-        render_overflow_scrollbar(
-            frame,
-            pane,
-            u16::try_from(self.browser_rows.len()).unwrap_or(u16::MAX),
-            list_area.height,
-            u16::try_from(self.browser_offset).unwrap_or(u16::MAX),
-        );
     }
 
     fn render_taxonomy_description(
@@ -396,7 +388,6 @@ impl LibraryViewState {
             .taxonomy_scroll
             .min(total.saturating_sub(content.height));
         frame.render_widget(paragraph.scroll((self.taxonomy_scroll, 0)), content);
-        render_overflow_scrollbar(frame, pane, total, content.height, self.taxonomy_scroll);
     }
 
     fn render_types(
@@ -447,13 +438,6 @@ impl LibraryViewState {
             &mut state,
         );
         self.type_offset = state.offset();
-        render_overflow_scrollbar(
-            frame,
-            area,
-            u16::try_from(definitions.len()).unwrap_or(u16::MAX),
-            list_area.height,
-            u16::try_from(self.type_offset).unwrap_or(u16::MAX),
-        );
     }
 
     fn render_metadata(
@@ -486,7 +470,6 @@ impl LibraryViewState {
         let total = table_start.saturating_add(property_rows);
         let max_scroll = total.saturating_sub(area.height);
         self.property_scroll = self.property_scroll.min(max_scroll);
-        render_overflow_scrollbar(frame, pane, total, area.height, self.property_scroll);
         let scroll = self.property_scroll;
         if scroll == 0 {
             frame.render_widget(
