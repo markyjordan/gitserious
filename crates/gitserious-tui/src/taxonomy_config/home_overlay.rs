@@ -23,6 +23,31 @@ pub(super) enum HomeCommand {
     Quit,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum CreateCommand {
+    AddType,
+    ValidateAndStage,
+}
+
+impl CreateCommand {
+    fn label(self) -> &'static str {
+        match self {
+            Self::AddType => "Add type",
+            Self::ValidateAndStage => "Validate and stage taxonomy",
+        }
+    }
+
+    fn shortcut(self) -> &'static str {
+        match self {
+            Self::AddType => "ctrl+n",
+            Self::ValidateAndStage => "",
+        }
+    }
+}
+
+const CREATE_COMMANDS: &[CreateCommand] =
+    &[CreateCommand::AddType, CreateCommand::ValidateAndStage];
+
 impl HomeCommand {
     fn label(self, category: Category) -> &'static str {
         match self {
@@ -112,8 +137,33 @@ impl CommandPaletteState {
         self.visible(category).get(self.selected).copied()
     }
 
+    pub(super) fn visible_create(&self) -> Vec<CreateCommand> {
+        let query = self.query.to_ascii_lowercase();
+        CREATE_COMMANDS
+            .iter()
+            .copied()
+            .filter(|command| {
+                command.label().to_ascii_lowercase().contains(&query)
+                    || command.shortcut().contains(&query)
+            })
+            .collect()
+    }
+
+    pub(super) fn selected_create_command(&self) -> Option<CreateCommand> {
+        self.visible_create().get(self.selected).copied()
+    }
+
     pub(super) fn move_selection(&mut self, category: Category, down: bool) {
         let last = self.visible(category).len().saturating_sub(1);
+        self.selected = if down {
+            self.selected.saturating_add(1).min(last)
+        } else {
+            self.selected.saturating_sub(1)
+        };
+    }
+
+    pub(super) fn move_create_selection(&mut self, down: bool) {
+        let last = self.visible_create().len().saturating_sub(1);
         self.selected = if down {
             self.selected.saturating_add(1).min(last)
         } else {
@@ -131,13 +181,29 @@ impl CommandPaletteState {
 #[derive(Debug)]
 pub(super) enum HomeOverlay {
     Palette(CommandPaletteState),
+    CreatePalette(CommandPaletteState),
     Help,
 }
 
 impl HomeOverlay {
     pub(super) fn render(&mut self, frame: &mut Frame<'_>, area: Rect, category: Category) {
         match self {
-            Self::Palette(state) => render_palette(frame, area, category, state),
+            Self::Palette(state) => {
+                let entries = state
+                    .visible(category)
+                    .iter()
+                    .map(|command| (command.label(category), command.shortcut()))
+                    .collect();
+                render_palette(frame, area, state, entries);
+            }
+            Self::CreatePalette(state) => {
+                let entries = state
+                    .visible_create()
+                    .iter()
+                    .map(|command| (command.label(), command.shortcut()))
+                    .collect();
+                render_palette(frame, area, state, entries);
+            }
             Self::Help => render_help(frame, area, category),
         }
     }
@@ -153,10 +219,9 @@ fn popup_block() -> Block<'static> {
 fn render_palette(
     frame: &mut Frame<'_>,
     area: Rect,
-    category: Category,
     state: &mut CommandPaletteState,
+    visible: Vec<(&'static str, &'static str)>,
 ) {
-    let visible = state.visible(category);
     let height = u16::try_from(visible.len().max(1))
         .unwrap_or(u16::MAX)
         .saturating_add(7)
@@ -197,9 +262,7 @@ fn render_palette(
     } else {
         visible
             .iter()
-            .map(|command| {
-                let label = command.label(category);
-                let shortcut = command.shortcut();
+            .map(|(label, shortcut)| {
                 let gap = usize::from(list_area.width)
                     .saturating_sub(label.chars().count() + shortcut.len());
                 ListItem::new(format!("{label}{}{shortcut}", " ".repeat(gap)))
