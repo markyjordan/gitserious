@@ -261,9 +261,11 @@ impl LibraryViewState {
         error: Option<&str>,
         show_create: bool,
     ) {
+        let style = focus_frame_style(self.focus == LibraryFocus::Taxonomies);
         frame.render_widget(
             Block::bordered()
-                .border_style(frame_style())
+                .border_style(style)
+                .title_style(style)
                 .title("Taxonomies"),
             pane,
         );
@@ -323,9 +325,9 @@ impl LibraryViewState {
             } else if show_create {
                 rows.push(
                     ListItem::new(if self.create_selected {
-                        "› + Create New"
+                        "› + create taxonomy"
                     } else {
-                        "  + Create New"
+                        "  + create taxonomy"
                     })
                     .style(row_style(items.len())),
                 );
@@ -396,8 +398,12 @@ impl LibraryViewState {
         area: Rect,
         definitions: &[CommitTypeDefinition],
     ) {
+        let style = focus_frame_style(self.focus == LibraryFocus::Types);
         frame.render_widget(
-            Block::bordered().border_style(frame_style()).title("Types"),
+            Block::bordered()
+                .border_style(style)
+                .title_style(style)
+                .title("Types"),
             area,
         );
         let list_area = inset(area, 1);
@@ -594,5 +600,13 @@ fn selected_style(active: bool) -> Style {
             .fg(Color::White)
             .bg(Color::Rgb(40, 40, 40))
             .add_modifier(Modifier::BOLD)
+    }
+}
+
+fn focus_frame_style(active: bool) -> Style {
+    if active {
+        Style::default().fg(Color::Yellow)
+    } else {
+        frame_style()
     }
 }

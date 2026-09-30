@@ -25,19 +25,33 @@ policy before creating `gitserious.toml` and `gitserious.lock`.
 Library groups built-in and custom taxonomies beneath ruled headings with a
 nonselectable blank row between sections. A separate Taxonomy Description box
 sits below the list and shows the selected description and optional fork
-lineage. An empty Custom section offers a selectable `+ Create New` action;
-Enter or a click starts the same reviewed create flow as `n`. The action is
-replaced by custom taxonomy rows once one exists. While it is selected,
-Taxonomy Description, Types, and Type Details show `n/a`, and focus stays on
-Taxonomies. Wide terminals use three evenly spaced columns for Taxonomies,
+lineage. An empty Custom section offers `+ create taxonomy`. Enter or a click
+starts the reviewed create flow used by `n`. Once a custom taxonomy exists,
+its rows replace the action. While the action is selected, Taxonomy
+Description, Types, and Type Details show `n/a`, and focus stays on Taxonomies.
+Wide terminals use three evenly spaced columns for Taxonomies,
 Types, and Type Details; compact terminals stack Types and Type Details in the
 right column.
+Create Taxonomy opens with editable Name and Description fields. Name is the
+lowercase, hyphenated taxonomy ID. Tab moves between the fields and the Types
+list; Alt+Enter inserts a description newline, and Alt+/ inserts a literal
+slash. The `/` palette offers Add type and Validate and stage taxonomy. A
+taxonomy needs at least one type before it can be staged. The type form still
+uses `ctrl+s` to complete that type. Staging returns to Library, where `/` then
+Review changes opens the existing review and apply flow.
+Edit Taxonomy retains its Metadata and type list.
+In the Create flow, Config Options disappears immediately and returns after
+the header settles back on Library. Project fades and moves away while Library
+moves left into `[Library] / create taxonomy`; leaving reverses the motion.
+Name, Description, and Types are standalone full-width widgets. The Library
+breadcrumb returns from the main Create view; in a child editor it confirms
+before discarding the whole draft.
 Type Details has ruled Description and Properties headings, followed by a
 two-column properties table with left-aligned values. Left and Right change
 focus between the two lists; Up and Down select within the focused list. Page Up
 and Page Down scroll Taxonomy Description when Taxonomies has focus and Type
-Details when Types has focus. The focused selection is yellow while the other
-remains visible with a subdued highlight.
+Details when Types has focus. The focused list's border and title are yellow;
+its selected row is yellow while the other list retains a subdued selection.
 The Library command bar shows tab switching, focus, movement, `/` commands,
 and `?` help. The searchable command popup lists New, Edit, Fork, Delete,
 Review, Switch, Help, and Quit, with shortcuts aligned at the right edge.
