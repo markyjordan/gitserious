@@ -5,6 +5,8 @@
 Bare `gitserious config` opens Project and Library tabs in a standalone Config
 Options box. Project and Library widgets align with its outer edges and begin
 directly below it, without an enclosing frame.
+The selected tab uses yellow text on black with a yellow segment in the lower
+border beneath its label. The label and underline both switch tabs when clicked.
 Project shows the repository's pinned commit taxonomy and available set when
 its lock is valid, or a labeled inherited preview when commit authoring is
 blocked. Its Commit section opens the focused Project override editor;
@@ -32,10 +34,16 @@ Description, Types, and Type Details show `n/a`, and focus stays on Taxonomies.
 Wide terminals use three evenly spaced columns for Taxonomies,
 Types, and Type Details; compact terminals stack Types and Type Details in the
 right column.
-Create Taxonomy opens with editable Name and Description fields. Name is the
-lowercase, hyphenated taxonomy ID. Tab moves between the fields and the Types
-list; Alt+Enter inserts a description newline, and Alt+/ inserts a literal
-slash. The `/` palette offers Add type and Validate and stage taxonomy. A
+Create Taxonomy has one Taxonomy frame with ruled Name and Description sections,
+followed by a Types list. Name is the single-line, lowercase, hyphenated taxonomy
+ID; Description is multiline. One visible text cursor starts at the beginning of
+Name. Left and Right move within text. Up and Down move through Description and
+cross between Name, Description, and Types; Tab and Shift+Tab jump between those
+sections. Each text section keeps its cursor position while away. Backspace,
+Delete, and paste edit at the cursor. Enter advances or opens the selected type;
+Alt+Enter inserts a Description newline, and Alt+/ inserts a literal slash.
+Clicks in Taxonomy text do not move its cursor; Types remains mouse selectable.
+The `/` palette offers Add type and Validate and stage taxonomy. A
 taxonomy needs at least one type before it can be staged. The type form still
 uses `ctrl+s` to complete that type. Staging returns to Library, where `/` then
 Review changes opens the existing review and apply flow.
@@ -43,8 +51,9 @@ Edit Taxonomy retains its Metadata and type list.
 In the Create flow, Config Options disappears immediately and returns after
 the header settles back on Library. Project fades and moves away while Library
 moves left into `[Library] / create taxonomy`; leaving reverses the motion.
-Name, Description, and Types are standalone full-width widgets. The Library
-breadcrumb returns from the main Create view; in a child editor it confirms
+The Taxonomy and Types widgets span the content width with one blank row between
+them. The Library breadcrumb uses the same moving yellow underline. Its label
+and underline return from the main Create view; in a child editor they confirm
 before discarding the whole draft.
 Type Details has ruled Description and Properties headings, followed by a
 two-column properties table with left-aligned values. Left and Right change

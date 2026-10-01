@@ -17,10 +17,11 @@ use ratatui::crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use tachyonfx::{EffectTimer, Interpolatable, Interpolation};
+use tui_textarea::{CursorMove, CursorRenderMode, TextArea, WrapMode};
 
 use crate::theme::{
     JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, ZEBRA_BACKGROUND, centered_rect, frame_style,
@@ -233,6 +234,30 @@ struct HeaderAnimation {
     timer: EffectTimer,
 }
 
+struct CreateTextEditors {
+    name: TextArea<'static>,
+    description: TextArea<'static>,
+}
+
+impl CreateTextEditors {
+    fn new() -> Self {
+        let mut name = TextArea::new(vec![String::new()]);
+        let mut description = TextArea::new(vec![String::new()]);
+        for area in [&mut name, &mut description] {
+            area.set_style(Style::default().fg(Color::White).bg(JET_BLACK));
+            area.set_cursor_line_style(Style::default());
+            area.set_cursor_render_mode(CursorRenderMode::Hidden);
+        }
+        description.set_wrap_mode(WrapMode::WordOrGlyph);
+        Self { name, description }
+    }
+
+    fn sync_draft(&self, draft: &mut TaxonomyDraft) {
+        draft.id = self.name.lines().join("\n");
+        draft.description = self.description.lines().join("\n");
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FormKind {
     TaxonomyMetadata,
@@ -424,9 +449,9 @@ struct State {
     home_overlay: Option<HomeOverlay>,
     child_selected: usize,
     create_focus: CreateFocus,
-    create_areas: [Rect; 3],
+    create_areas: [Rect; 2],
+    create_text: Option<CreateTextEditors>,
     create_type_offset: usize,
-    create_description_scroll: u16,
     scroll: u16,
     project_scroll: u16,
     form_scroll: u16,
@@ -467,9 +492,9 @@ impl State {
             home_overlay: None,
             child_selected: 0,
             create_focus: CreateFocus::Name,
-            create_areas: [Rect::default(); 3],
+            create_areas: [Rect::default(); 2],
+            create_text: None,
             create_type_offset: 0,
-            create_description_scroll: 0,
             scroll: 0,
             project_scroll: 0,
             form_scroll: 0,
@@ -532,10 +557,11 @@ impl State {
 
     fn leave_create_taxonomy(&mut self) {
         self.editor = None;
+        self.create_text = None;
         self.form = None;
         self.screen = Screen::Home;
         self.category = Category::Library;
-        self.create_areas = [Rect::default(); 3];
+        self.create_areas = [Rect::default(); 2];
         self.breadcrumb_area = Rect::default();
         self.start_header_transition(0.0);
     }
@@ -587,12 +613,18 @@ impl State {
                     field.push_str(text);
                 }
             } else if matches!(self.screen, Screen::TaxonomyEditor(EditorMode::Create)) {
-                if let Some(editor) = &mut self.editor {
+                if let Some(editors) = &mut self.create_text {
                     match self.create_focus {
-                        CreateFocus::Name => editor.id.push_str(text),
+                        CreateFocus::Name if !text.contains(['\n', '\r']) => {
+                            editors.name.insert_str(text);
+                        }
+                        CreateFocus::Name => {
+                            self.status = Some(Notice::Error(
+                                "Name accepts one line; paste was not inserted.".into(),
+                            ));
+                        }
                         CreateFocus::Description => {
-                            editor.description.push_str(text);
-                            self.create_description_scroll = u16::MAX;
+                            editors.description.insert_str(text);
                         }
                         CreateFocus::Types => {}
                     }
@@ -660,30 +692,23 @@ impl State {
                 {
                     self.library.select_type(index);
                 } else if matches!(self.screen, Screen::TaxonomyEditor(EditorMode::Create)) {
-                    if contains(self.create_areas[0], mouse.column, mouse.row) {
-                        self.create_focus = CreateFocus::Name;
-                    } else if contains(self.create_areas[1], mouse.column, mouse.row) {
-                        self.create_focus = CreateFocus::Description;
-                        self.create_description_scroll = u16::MAX;
-                    } else {
-                        let pane = self.create_areas[2];
-                        let list = Rect::new(
-                            pane.x.saturating_add(1),
-                            pane.y.saturating_add(1),
-                            pane.width.saturating_sub(2),
-                            pane.height.saturating_sub(2),
-                        );
-                        if contains(list, mouse.column, mouse.row) {
-                            self.create_focus = CreateFocus::Types;
-                            let index = self.create_type_offset
-                                + usize::from(mouse.row.saturating_sub(list.y));
-                            let count = self
-                                .editor
-                                .as_ref()
-                                .map_or(1, |draft| draft.types.len() + 1);
-                            if index < count {
-                                self.child_selected = index;
-                            }
+                    let pane = self.create_areas[1];
+                    let list = Rect::new(
+                        pane.x.saturating_add(1),
+                        pane.y.saturating_add(1),
+                        pane.width.saturating_sub(2),
+                        pane.height.saturating_sub(2),
+                    );
+                    if contains(list, mouse.column, mouse.row) {
+                        self.create_focus = CreateFocus::Types;
+                        let index =
+                            self.create_type_offset + usize::from(mouse.row.saturating_sub(list.y));
+                        let count = self
+                            .editor
+                            .as_ref()
+                            .map_or(1, |draft| draft.types.len() + 1);
+                        if index < count {
+                            self.child_selected = index;
                         }
                     }
                 }
@@ -1246,9 +1271,8 @@ impl State {
                 if key.modifiers.contains(KeyModifiers::ALT)
                     && self.create_focus == CreateFocus::Description =>
             {
-                if let Some(editor) = &mut self.editor {
-                    editor.description.push('/');
-                    self.create_description_scroll = u16::MAX;
+                if let Some(editors) = &mut self.create_text {
+                    editors.description.insert_char('/');
                 }
             }
             KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1259,18 +1283,8 @@ impl State {
                     "Press / for Validate and stage taxonomy.".into(),
                 ));
             }
-            KeyCode::Tab => {
-                self.create_focus = self.create_focus.next();
-                if self.create_focus == CreateFocus::Description {
-                    self.create_description_scroll = u16::MAX;
-                }
-            }
-            KeyCode::BackTab => {
-                self.create_focus = self.create_focus.previous();
-                if self.create_focus == CreateFocus::Description {
-                    self.create_description_scroll = u16::MAX;
-                }
-            }
+            KeyCode::Tab => self.create_focus = self.create_focus.next(),
+            KeyCode::BackTab => self.create_focus = self.create_focus.previous(),
             KeyCode::Up
                 if self.create_focus == CreateFocus::Types
                     && key.modifiers.contains(KeyModifiers::ALT)
@@ -1297,30 +1311,54 @@ impl State {
                 }
             }
             KeyCode::Up if self.create_focus == CreateFocus::Types => {
-                self.child_selected = self.child_selected.saturating_sub(1);
+                if self.child_selected == 0 {
+                    self.create_focus = CreateFocus::Description;
+                } else {
+                    self.child_selected -= 1;
+                }
             }
             KeyCode::Down if self.create_focus == CreateFocus::Types => {
                 self.child_selected = (self.child_selected + 1).min(count.saturating_sub(1));
             }
-            KeyCode::PageUp if self.create_focus == CreateFocus::Description => {
-                self.create_description_scroll = self.create_description_scroll.saturating_sub(3);
+            KeyCode::Up if self.create_focus == CreateFocus::Description => {
+                if let Some(editors) = &mut self.create_text {
+                    let before = editors.description.cursor();
+                    editors.description.move_cursor(CursorMove::Up);
+                    if editors.description.cursor() == before {
+                        self.create_focus = CreateFocus::Name;
+                    }
+                }
             }
-            KeyCode::PageDown if self.create_focus == CreateFocus::Description => {
-                self.create_description_scroll = self.create_description_scroll.saturating_add(3);
+            KeyCode::Down if self.create_focus == CreateFocus::Description => {
+                if let Some(editors) = &mut self.create_text {
+                    let before = editors.description.cursor();
+                    editors.description.move_cursor(CursorMove::Down);
+                    if editors.description.cursor() == before {
+                        self.create_focus = CreateFocus::Types;
+                    }
+                }
+            }
+            KeyCode::Down if self.create_focus == CreateFocus::Name => {
+                self.create_focus = CreateFocus::Description;
+            }
+            KeyCode::PageUp | KeyCode::PageDown
+                if self.create_focus == CreateFocus::Description =>
+            {
+                if let Some(editors) = &mut self.create_text {
+                    editors.description.input(key);
+                }
             }
             KeyCode::Enter
                 if self.create_focus == CreateFocus::Description
                     && key.modifiers.contains(KeyModifiers::ALT) =>
             {
-                if let Some(editor) = &mut self.editor {
-                    editor.description.push('\n');
-                    self.create_description_scroll = u16::MAX;
+                if let Some(editors) = &mut self.create_text {
+                    editors.description.insert_newline();
                 }
             }
             KeyCode::Enter if key.modifiers.is_empty() => match self.create_focus {
                 CreateFocus::Name => {
                     self.create_focus = CreateFocus::Description;
-                    self.create_description_scroll = u16::MAX;
                 }
                 CreateFocus::Description => self.create_focus = CreateFocus::Types,
                 CreateFocus::Types if self.child_selected == 0 => self.open_new_type_form(),
@@ -1345,33 +1383,16 @@ impl State {
                     self.child_selected = self.child_selected.saturating_sub(1);
                 }
             }
-            KeyCode::Backspace => {
-                if let Some(editor) = &mut self.editor {
-                    match self.create_focus {
-                        CreateFocus::Name => {
-                            editor.id.pop();
-                        }
-                        CreateFocus::Description => {
-                            editor.description.pop();
-                            self.create_description_scroll = u16::MAX;
-                        }
-                        CreateFocus::Types => {}
-                    }
-                }
-            }
-            KeyCode::Char(character)
-                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            KeyCode::Backspace | KeyCode::Delete | KeyCode::Left | KeyCode::Right
+                if self.create_focus != CreateFocus::Types =>
             {
-                if let Some(editor) = &mut self.editor {
-                    match self.create_focus {
-                        CreateFocus::Name => editor.id.push(character),
-                        CreateFocus::Description => {
-                            editor.description.push(character);
-                            self.create_description_scroll = u16::MAX;
-                        }
-                        CreateFocus::Types => {}
-                    }
-                }
+                self.create_text_input(key)
+            }
+            KeyCode::Char(_)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && self.create_focus != CreateFocus::Types =>
+            {
+                self.create_text_input(key)
             }
             KeyCode::Esc => {
                 self.leave_create_taxonomy();
@@ -1379,6 +1400,20 @@ impl State {
             _ => {}
         }
         false
+    }
+
+    fn create_text_input(&mut self, key: KeyEvent) {
+        if let Some(editors) = &mut self.create_text {
+            match self.create_focus {
+                CreateFocus::Name => {
+                    editors.name.input(key);
+                }
+                CreateFocus::Description => {
+                    editors.description.input(key);
+                }
+                CreateFocus::Types => {}
+            }
+        }
     }
 
     fn type_editor_key(&mut self, key: KeyEvent, index: usize) -> bool {
@@ -1770,11 +1805,11 @@ impl State {
             PendingAction::Create => {
                 self.active_scope = ConfigurationDestination::Global;
                 self.editor = Some(TaxonomyDraft::empty());
+                self.create_text = Some(CreateTextEditors::new());
                 self.editor_mode = EditorMode::Create;
                 self.child_selected = 0;
                 self.create_focus = CreateFocus::Name;
                 self.create_type_offset = 0;
-                self.create_description_scroll = 0;
                 self.screen = Screen::TaxonomyEditor(EditorMode::Create);
                 self.start_header_transition(1.0);
             }
@@ -1981,6 +2016,11 @@ impl State {
     }
 
     fn stage_editor(&mut self, mode: EditorMode) {
+        if mode == EditorMode::Create
+            && let (Some(editors), Some(draft)) = (&self.create_text, &mut self.editor)
+        {
+            editors.sync_draft(draft);
+        }
         let Some(draft) = &self.editor else {
             return;
         };
@@ -2283,8 +2323,23 @@ impl State {
             area,
             library_start.lerp(&leading, progress),
             " Library ",
-            navigation_key_style(),
+            Style::default().fg(Color::Yellow),
         );
+        let library_x = library_start.lerp(&leading, progress);
+        render_header_underline(frame, area, library_x, "Library");
+        if self.creating_taxonomy()
+            && let Ok(x) = u16::try_from(library_x)
+            && x < area.right()
+        {
+            self.breadcrumb_area = Rect::new(
+                x,
+                area.y,
+                u16::try_from(library_width)
+                    .unwrap_or(0)
+                    .min(area.right() - x),
+                2,
+            );
+        }
         let mut used_right = library_start
             .lerp(&leading, progress)
             .saturating_add(library_width);
@@ -2296,12 +2351,6 @@ impl State {
                 used_right,
                 suffix,
                 Style::default().fg(Color::White),
-            );
-            self.breadcrumb_area = Rect::new(
-                u16::try_from(leading).unwrap_or(area.x),
-                area.y,
-                u16::try_from(library_width).unwrap_or(0),
-                1,
             );
             used_right = used_right
                 .saturating_add(i32::try_from(Line::from(suffix).width()).unwrap_or(i32::MAX));
@@ -2321,14 +2370,20 @@ impl State {
             let width = u16::try_from(Line::from(label).width())
                 .unwrap_or(u16::MAX)
                 .saturating_add(2);
-            let tab = Rect::new(x, area.y, width.min(area.right().saturating_sub(x)), 1);
+            let tab = Rect::new(x, area.y, width.min(area.right().saturating_sub(x)), 2);
             self.tab_areas[category.index()] = tab;
             let style = if category == self.category {
-                navigation_key_style()
+                Style::default().fg(Color::Yellow)
             } else {
                 Style::default()
             };
-            frame.render_widget(Paragraph::new(format!(" {label} ")).style(style), tab);
+            frame.render_widget(
+                Paragraph::new(format!(" {label} ")).style(style),
+                Rect::new(tab.x, tab.y, tab.width, 1),
+            );
+            if category == self.category {
+                render_header_underline(frame, area, i32::from(x), label);
+            }
             x = x.saturating_add(width).saturating_add(1);
         }
         self.render_dirty_indicator(frame, area, x);
@@ -2767,64 +2822,50 @@ impl State {
         let Some(editor) = &self.editor else {
             return;
         };
-        let [name, _, description, _, types] = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Length(1),
-            Constraint::Length(5),
+        let taxonomy_height = ((area.height.saturating_sub(1) * 2) / 3)
+            .max(9)
+            .min(area.height.saturating_sub(5));
+        let [taxonomy, _, types] = Layout::vertical([
+            Constraint::Length(taxonomy_height),
             Constraint::Length(1),
             Constraint::Min(4),
         ])
         .areas(area);
-        self.create_areas = [name, description, types];
-
-        let name_focused = self.create_focus == CreateFocus::Name;
-        let name_input = format!("{}{}", editor.id, if name_focused { "▌" } else { "" });
-        let name_offset = u16::try_from(
-            name_input
-                .chars()
-                .count()
-                .saturating_sub(usize::from(name.width.saturating_sub(2))),
-        )
-        .unwrap_or(u16::MAX);
+        self.create_areas = [taxonomy, types];
         frame.render_widget(
-            Paragraph::new(name_input).scroll((0, name_offset)).block(
-                Block::bordered()
-                    .title("Name")
-                    .border_style(if name_focused {
-                        Style::default().fg(Color::Yellow)
-                    } else {
-                        frame_style()
-                    }),
-            ),
-            name,
+            Block::bordered()
+                .title("Taxonomy")
+                .border_style(frame_style()),
+            taxonomy,
         );
-
-        let description_focused = self.create_focus == CreateFocus::Description;
-        let description_input = format!(
-            "{}{}",
-            editor.description,
-            if description_focused { "▌" } else { "" }
+        let inner_x = taxonomy.x.saturating_add(1);
+        let inner_width = taxonomy.width.saturating_sub(2);
+        let name_heading = Rect::new(inner_x, taxonomy.y + 1, inner_width, 1);
+        let name_area = Rect::new(inner_x, taxonomy.y + 2, inner_width, 1);
+        let description_heading = Rect::new(inner_x, taxonomy.y + 3, inner_width, 1);
+        let description_area = Rect::new(
+            inner_x,
+            taxonomy.y + 4,
+            inner_width,
+            taxonomy.height.saturating_sub(5),
         );
-        let paragraph = Paragraph::new(description_input).wrap(Wrap { trim: false });
-        let description_height = description.height.saturating_sub(2);
-        let description_rows =
-            u16::try_from(paragraph.line_count(description.width.saturating_sub(2)))
-                .unwrap_or(u16::MAX);
-        self.create_description_scroll = self
-            .create_description_scroll
-            .min(description_rows.saturating_sub(description_height));
-        frame.render_widget(
-            paragraph.scroll((self.create_description_scroll, 0)).block(
-                Block::bordered()
-                    .title("Description")
-                    .border_style(if description_focused {
-                        Style::default().fg(Color::Yellow)
-                    } else {
-                        frame_style()
-                    }),
-            ),
-            description,
-        );
+        render_taxonomy_heading(frame, name_heading, "Name");
+        render_taxonomy_heading(frame, description_heading, "Description");
+        if let Some(editors) = &mut self.create_text {
+            frame.render_widget(&editors.name, name_area);
+            frame.render_widget(&editors.description, description_area);
+            let (editor, cursor_area) = match self.create_focus {
+                CreateFocus::Name => (&editors.name, name_area),
+                CreateFocus::Description => (&editors.description, description_area),
+                CreateFocus::Types => (&editors.name, Rect::default()),
+            };
+            if let Some(cursor) = editor.rendered_cursor_position()
+                && contains(cursor_area, cursor.x, cursor.y)
+            {
+                frame.buffer_mut()[(cursor.x, cursor.y)]
+                    .set_style(Style::default().add_modifier(Modifier::REVERSED));
+            }
+        }
 
         let types_focused = self.create_focus == CreateFocus::Types;
         let mut rows = vec![ListItem::new(
@@ -2852,9 +2893,7 @@ impl State {
             state.select(Some(self.child_selected.min(rows.len().saturating_sub(1))));
         }
         frame.render_stateful_widget(
-            List::new(rows)
-                .block(Block::bordered().border_style(frame_style()).title("Types"))
-                .highlight_style(navigation_key_style()),
+            List::new(rows).block(Block::bordered().border_style(frame_style()).title("Types")),
             types,
             &mut state,
         );
@@ -3099,6 +3138,33 @@ fn render_clipped_header_text(frame: &mut Frame<'_>, area: Rect, x: i32, text: &
     }
 }
 
+fn render_header_underline(frame: &mut Frame<'_>, area: Rect, label_x: i32, label: &str) {
+    for offset in 0..label.chars().count() {
+        let x = label_x
+            .saturating_add(1)
+            .saturating_add(i32::try_from(offset).unwrap_or(i32::MAX));
+        if let Ok(column) = u16::try_from(x)
+            && column >= area.x
+            && column < area.right()
+        {
+            frame.buffer_mut()[(column, area.y + 1)]
+                .set_symbol("─")
+                .set_fg(Color::Yellow);
+        }
+    }
+}
+
+fn render_taxonomy_heading(frame: &mut Frame<'_>, area: Rect, title: &str) {
+    let rule_width = usize::from(area.width).saturating_sub(title.len() + 1);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(title.to_owned(), section_heading_style()),
+            Span::styled(format!(" {}", "⠒".repeat(rule_width)), frame_style()),
+        ])),
+        area,
+    );
+}
+
 fn parent_screen(kind: FormKind, mode: EditorMode) -> Screen {
     match kind {
         FormKind::TaxonomyMetadata | FormKind::NewType => Screen::TaxonomyEditor(mode),
@@ -3233,7 +3299,11 @@ mod tests {
     }
 
     fn header_library_x(terminal: &Terminal<TestBackend>, width: u16) -> Option<u16> {
-        (0..width).find(|&x| terminal.backend().buffer()[(x, 1)].bg == Color::Yellow)
+        row_text(terminal, 0, 1, width)
+            .chars()
+            .position(|character| character == 'L')
+            .and_then(|x| u16::try_from(x).ok())
+            .map(|x| x.saturating_sub(1))
     }
 
     #[test]
@@ -3282,7 +3352,9 @@ mod tests {
             )
             .starts_with("Commit taxonomy")
         );
-        assert_eq!(buffer[(2, 1)].bg, Color::Yellow);
+        assert_eq!(buffer[(2, 1)].fg, Color::Yellow);
+        assert_eq!(buffer[(2, 1)].bg, JET_BLACK);
+        assert_eq!(buffer[(3, 2)].fg, Color::Yellow);
         assert_eq!(buffer[(0, 28)].symbol(), "└");
         assert_eq!(buffer[(0, 29)].symbol(), "t");
         assert_eq!(buffer[(3, 29)].symbol(), ":");
@@ -4005,9 +4077,23 @@ mod tests {
         state.handle_event(key(KeyCode::Tab), &workspace);
         state.handle_event(Event::Paste("Team changes".into()), &workspace);
         assert_eq!(state.create_focus, CreateFocus::Description);
-        assert_eq!(state.editor.as_ref().ok_or("missing draft")?.id, "team");
         assert_eq!(
-            state.editor.as_ref().ok_or("missing draft")?.description,
+            state
+                .create_text
+                .as_ref()
+                .ok_or("missing text")?
+                .name
+                .lines(),
+            &["team"]
+        );
+        assert_eq!(
+            state
+                .create_text
+                .as_ref()
+                .ok_or("missing text")?
+                .description
+                .lines()
+                .join("\n"),
             "Team changes"
         );
         state.handle_event(
@@ -4015,7 +4101,13 @@ mod tests {
             &workspace,
         );
         assert_eq!(
-            state.editor.as_ref().ok_or("missing draft")?.description,
+            state
+                .create_text
+                .as_ref()
+                .ok_or("missing text")?
+                .description
+                .lines()
+                .join("\n"),
             "Team changes/"
         );
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
@@ -4064,6 +4156,15 @@ mod tests {
         assert!(matches!(state.screen, Screen::Home));
         assert!(state.header_animating());
         assert!(state.scope_dirty(ConfigurationDestination::Global));
+        let staged = state
+            .global
+            .as_ref()
+            .ok_or("missing global")?
+            .catalog()?
+            .find(&TaxonomyId::new("team")?)
+            .cloned()
+            .ok_or("missing staged taxonomy")?;
+        assert_eq!(staged.description().to_string(), "Team changes/");
         assert_eq!(workspace.saves.get(), 0);
         Ok(())
     }
@@ -4077,21 +4178,243 @@ mod tests {
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
-        let description = state.create_areas[1];
+        let taxonomy = state.create_areas[0];
         state.handle_event(
             Event::Mouse(ratatui::crossterm::event::MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: description.x + 1,
-                row: description.y + 1,
+                column: taxonomy.x + 1,
+                row: taxonomy.y + 4,
                 modifiers: KeyModifiers::NONE,
             }),
             &workspace,
         );
-        assert_eq!(state.create_focus, CreateFocus::Description);
+        assert_eq!(state.create_focus, CreateFocus::Name);
         state.handle_event(Event::Paste("A description".into()), &workspace);
+        assert_eq!(
+            state
+                .create_text
+                .as_ref()
+                .ok_or("missing text")?
+                .name
+                .lines(),
+            &["A description"]
+        );
         state.handle_event(key(KeyCode::Esc), &workspace);
         assert!(matches!(state.screen, Screen::Home));
         assert!(state.editor.is_none());
+        assert_eq!(workspace.saves.get(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn create_taxonomy_cursor_edits_and_crosses_sections() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state.handle_event(key(KeyCode::Char('n')), &workspace);
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let taxonomy = state.create_areas[0];
+        assert_eq!(
+            terminal.backend().buffer()[(taxonomy.x, taxonomy.y + 1)].fg,
+            Color::DarkGray
+        );
+        assert!(
+            (taxonomy.x + 1..taxonomy.right() - 1)
+                .all(|x| terminal.backend().buffer()[(x, taxonomy.y + 2)].bg == JET_BLACK)
+        );
+        assert!(
+            terminal.backend().buffer()[(taxonomy.x + 1, taxonomy.y + 2)]
+                .modifier
+                .contains(Modifier::REVERSED)
+        );
+        assert!(
+            row_text(
+                &terminal,
+                taxonomy.x + 1,
+                taxonomy.y + 1,
+                taxonomy.width - 2
+            )
+            .contains("Name ⠒")
+        );
+        assert!(
+            row_text(
+                &terminal,
+                taxonomy.x + 1,
+                taxonomy.y + 3,
+                taxonomy.width - 2
+            )
+            .contains("Description ⠒")
+        );
+
+        state.handle_event(Event::Paste("team".into()), &workspace);
+        state.handle_event(key(KeyCode::Left), &workspace);
+        state.handle_event(key(KeyCode::Left), &workspace);
+        state.handle_event(Event::Paste("X".into()), &workspace);
+        assert_eq!(
+            state
+                .create_text
+                .as_ref()
+                .ok_or("missing text")?
+                .name
+                .lines(),
+            &["teXam"]
+        );
+        state.handle_event(key(KeyCode::Backspace), &workspace);
+        state.handle_event(key(KeyCode::Delete), &workspace);
+        assert_eq!(
+            state
+                .create_text
+                .as_ref()
+                .ok_or("missing text")?
+                .name
+                .lines(),
+            &["tem"]
+        );
+        state.handle_event(key(KeyCode::Down), &workspace);
+        assert_eq!(state.create_focus, CreateFocus::Description);
+        state.handle_event(
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
+            &workspace,
+        );
+        state.handle_event(Event::Paste("second".into()), &workspace);
+        state.handle_event(key(KeyCode::Up), &workspace);
+        state.handle_event(Event::Paste("first".into()), &workspace);
+        assert_eq!(
+            state
+                .create_text
+                .as_ref()
+                .ok_or("missing text")?
+                .description
+                .lines()
+                .join("\n"),
+            "first\nsecond"
+        );
+        state.handle_event(key(KeyCode::Down), &workspace);
+        let cursor = state
+            .create_text
+            .as_ref()
+            .ok_or("missing text")?
+            .description
+            .cursor();
+        state.handle_event(key(KeyCode::Down), &workspace);
+        assert_eq!(state.create_focus, CreateFocus::Types);
+        state.handle_event(key(KeyCode::Up), &workspace);
+        assert_eq!(state.create_focus, CreateFocus::Description);
+        assert_eq!(
+            state
+                .create_text
+                .as_ref()
+                .ok_or("missing text")?
+                .description
+                .cursor(),
+            cursor
+        );
+        state.handle_event(
+            Event::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)),
+            &workspace,
+        );
+        assert_eq!(state.create_focus, CreateFocus::Name);
+        assert_eq!(
+            state
+                .create_text
+                .as_ref()
+                .ok_or("missing text")?
+                .name
+                .cursor()
+                .1,
+            2
+        );
+        terminal.draw(|frame| state.render(frame))?;
+        let reversed = (taxonomy.y..taxonomy.bottom())
+            .flat_map(|y| (taxonomy.x..taxonomy.right()).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                terminal.backend().buffer()[(x, y)]
+                    .modifier
+                    .contains(Modifier::REVERSED)
+            })
+            .count();
+        assert_eq!(reversed, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn create_description_scrolls_with_cursor_at_minimum_and_wide_sizes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state.handle_event(key(KeyCode::Char('n')), &workspace);
+        state.handle_event(key(KeyCode::Tab), &workspace);
+        state.handle_event(
+            Event::Paste(
+                (0..20)
+                    .map(|n| format!("line {n}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            &workspace,
+        );
+        for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+            terminal.draw(|frame| state.render(frame))?;
+            let taxonomy = state.create_areas[0];
+            assert!(
+                (taxonomy.y + 4..taxonomy.bottom() - 1)
+                    .any(|y| row_text(&terminal, 0, y, width).contains("line 19"))
+            );
+            assert!(row_text(&terminal, 0, taxonomy.y + 3, width).contains("Description ⠒"));
+            assert_eq!(
+                state
+                    .create_text
+                    .as_ref()
+                    .ok_or("missing text")?
+                    .description
+                    .cursor()
+                    .0,
+                19
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn create_taxonomy_stages_from_wide_layout_and_types_remain_mouse_selectable()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state.handle_event(key(KeyCode::Char('n')), &workspace);
+        let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
+        terminal.draw(|frame| state.render(frame))?;
+        state.handle_event(Event::Paste("team".into()), &workspace);
+        state.handle_event(key(KeyCode::Tab), &workspace);
+        state.handle_event(Event::Paste("Team changes".into()), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
+        state.handle_event(Event::Paste("feat".into()), &workspace);
+        state.handle_event(key(KeyCode::Tab), &workspace);
+        state.handle_event(Event::Paste("Feature".into()), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        let types = state.create_areas[1];
+        state.child_selected = 0;
+        state.handle_event(
+            Event::Mouse(ratatui::crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: types.x + 2,
+                row: types.y + 2,
+                modifiers: KeyModifiers::NONE,
+            }),
+            &workspace,
+        );
+        assert_eq!(state.create_focus, CreateFocus::Types);
+        assert_eq!(state.child_selected, 1);
+        state.handle_event(key(KeyCode::Char('/')), &workspace);
+        state.handle_event(Event::Paste("stage".into()), &workspace);
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert!(matches!(state.screen, Screen::Home));
+        assert!(state.scope_dirty(ConfigurationDestination::Global));
         assert_eq!(workspace.saves.get(), 0);
         Ok(())
     }
@@ -4110,20 +4433,18 @@ mod tests {
         assert!(row_text(&terminal, 0, 1, MINIMUM_WIDTH).contains("Project"));
         let initial_x = header_library_x(&terminal, MINIMUM_WIDTH).ok_or("missing Library")?;
 
-        let [name, description, types] = state.create_areas;
-        for pane in [name, description, types] {
+        let [taxonomy, types] = state.create_areas;
+        for pane in [taxonomy, types] {
             assert_eq!(pane.x, 0);
             assert_eq!(pane.width, MINIMUM_WIDTH);
         }
-        assert_eq!(name.height, 3);
-        assert_eq!(description.height, 5);
+        assert_eq!(taxonomy.height, 9);
         assert_eq!(types.height, 4);
-        assert_eq!(description.y, name.bottom() + 1);
-        assert_eq!(types.y, description.bottom() + 1);
+        assert_eq!(types.y, taxonomy.bottom() + 1);
         assert_eq!(types.bottom(), MINIMUM_HEIGHT - 1);
-        assert_eq!(terminal.backend().buffer()[(0, name.y)].symbol(), "┌");
+        assert_eq!(terminal.backend().buffer()[(0, taxonomy.y)].symbol(), "┌");
         assert_eq!(
-            terminal.backend().buffer()[(0, name.bottom())].symbol(),
+            terminal.backend().buffer()[(0, taxonomy.bottom())].symbol(),
             " "
         );
 
@@ -4195,6 +4516,75 @@ mod tests {
     }
 
     #[test]
+    fn tabs_and_moving_breadcrumb_use_yellow_text_and_clickable_underlines()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let project = state.tab_areas[Category::Project.index()];
+        for x in project.x + 1..project.x + 8 {
+            let label = &terminal.backend().buffer()[(x, 1)];
+            let underline = &terminal.backend().buffer()[(x, 2)];
+            assert_eq!(label.fg, Color::Yellow);
+            assert_eq!(label.bg, JET_BLACK);
+            assert_eq!(underline.fg, Color::Yellow);
+            assert_eq!(underline.symbol(), "─");
+        }
+        assert_eq!(
+            terminal.backend().buffer()[(project.right(), 2)].fg,
+            Color::DarkGray
+        );
+        let library = state.tab_areas[Category::Library.index()];
+        state.handle_event(
+            Event::Mouse(ratatui::crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: library.x + 2,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            }),
+            &workspace,
+        );
+        assert_eq!(state.category, Category::Library);
+        terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(
+            terminal.backend().buffer()[(library.x + 1, 2)].fg,
+            Color::Yellow
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(project.x + 1, 2)].fg,
+            Color::DarkGray
+        );
+        state.handle_event(key(KeyCode::Char('n')), &workspace);
+        state.advance_header(StdDuration::from_millis(120));
+        terminal.draw(|frame| state.render(frame))?;
+        let breadcrumb = state.breadcrumb_area;
+        assert_eq!(
+            terminal.backend().buffer()[(breadcrumb.x + 1, 1)].fg,
+            Color::Yellow
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(breadcrumb.x + 1, 2)].fg,
+            Color::Yellow
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(breadcrumb.x + 1, 1)].bg,
+            JET_BLACK
+        );
+        state.handle_event(
+            Event::Mouse(ratatui::crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: breadcrumb.x + 2,
+                row: breadcrumb.y + 1,
+                modifiers: KeyModifiers::NONE,
+            }),
+            &workspace,
+        );
+        assert!(matches!(state.screen, Screen::Home));
+        Ok(())
+    }
+
+    #[test]
     fn create_header_persists_in_child_and_breadcrumb_confirms_discard()
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
@@ -4258,9 +4648,9 @@ mod tests {
         let progress = state.header_progress;
         let mut wide = Terminal::new(TestBackend::new(120, 30))?;
         wide.draw(|frame| state.render(frame))?;
-        let [name, description, types] = state.create_areas;
+        let [taxonomy, types] = state.create_areas;
         assert!(
-            [name, description, types]
+            [taxonomy, types]
                 .into_iter()
                 .all(|pane| pane.x == 0 && pane.width == 120)
         );
