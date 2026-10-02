@@ -2,13 +2,12 @@ use gitserious_app::{TaxonomyCatalog, TaxonomyOrigin};
 use gitserious_core::{CommitTypeDefinition, Taxonomy};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Cell, List, ListItem, ListState, Paragraph, Row, Table, Wrap};
 
 use super::{contains, pane_columns, requirement_label};
 use crate::theme::{
-    JET_BLACK, ZEBRA_BACKGROUND, frame_style, navigation_key_style, section_heading_style,
+    focus_frame_style, frame_style, row_style, section_heading_style, selected_style,
 };
 
 const WIDE_LIBRARY_WIDTH: u16 = 96;
@@ -572,14 +571,6 @@ fn inset(area: Rect, horizontal: u16) -> Rect {
     )
 }
 
-fn row_style(index: usize) -> Style {
-    Style::default().bg(if index.is_multiple_of(2) {
-        JET_BLACK
-    } else {
-        ZEBRA_BACKGROUND
-    })
-}
-
 fn taxonomy_section(title: &'static str, width: u16) -> ListItem<'static> {
     ListItem::new(section_line(title, width))
 }
@@ -590,23 +581,4 @@ fn section_line(title: &'static str, width: u16) -> Line<'static> {
         Span::styled(title, section_heading_style()),
         Span::styled(format!(" {}", "⠒".repeat(rule_width)), frame_style()),
     ])
-}
-
-fn selected_style(active: bool) -> Style {
-    if active {
-        navigation_key_style()
-    } else {
-        Style::default()
-            .fg(Color::White)
-            .bg(Color::Rgb(40, 40, 40))
-            .add_modifier(Modifier::BOLD)
-    }
-}
-
-fn focus_frame_style(active: bool) -> Style {
-    if active {
-        Style::default().fg(Color::Yellow)
-    } else {
-        frame_style()
-    }
 }

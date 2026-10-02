@@ -475,6 +475,7 @@ dependencies = [
  "ratatui",
  "tachyonfx",
  "tui-textarea-2",
+ "unicode-segmentation",
 ]
 
 [[package]]

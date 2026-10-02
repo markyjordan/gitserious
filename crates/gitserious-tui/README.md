@@ -35,35 +35,50 @@ Wide terminals use three evenly spaced columns for Taxonomies,
 Types, and Type Details; compact terminals stack Types and Type Details in the
 right column.
 Create Taxonomy has one Taxonomy frame with ruled Name and Description sections,
-followed by a Types list. Name is the single-line, lowercase, hyphenated taxonomy
-ID; Description is multiline. One visible text cursor starts at the beginning of
-Name. Left and Right move within text. Up and Down move through Description and
-cross between Name, Description, and Types; Tab and Shift+Tab jump between those
-sections. Each text section keeps its cursor position while away. Backspace,
-Delete, and paste edit at the cursor. Enter advances or opens the selected type;
-Alt+Enter inserts a Description newline, and Alt+/ inserts a literal slash.
+followed by a Types list. Section headings are bold white; the active widget's
+border and title are yellow. Name is the single-line, lowercase, hyphenated
+taxonomy ID; Description is multiline. One visible text cursor starts at the
+beginning of Name. Left and Right move within text. Up and Down move through
+Description and cross between Name, Description, and Types. Each text section
+keeps its cursor position while away. Backspace, Delete, and paste edit at the
+cursor. Enter advances or opens the selected type; Alt+Enter inserts a
+Description newline, and Alt+/ inserts a literal slash.
+Name and Description share an 80-visible-character limit, including Description
+newlines. The bottom-right Taxonomy border shows the combined count; oversized
+pastes insert only the portion that fits.
 Clicks in Taxonomy text do not move its cursor; Types remains mouse selectable.
-The `/` palette offers Add type and Validate and stage taxonomy. A
+The `/` palette offers `add type` and `validate and stage taxonomy`. A
 taxonomy needs at least one type before it can be staged. The type form still
 uses `ctrl+s` to complete that type. Staging returns to Library, where `/` then
-Review changes opens the existing review and apply flow.
+`review changes` opens the existing review and apply flow.
+Fork uses this same editor, populated with the selected taxonomy's name,
+description, types, schema versions, and properties. The breadcrumb reads
+`Library / fork taxonomy`. Rename the fork to an unused ID before staging.
+Copied text is preserved in full, and Fork allows temporary totals above 80
+while editing; validation alerts on an unchanged name or a total above 80.
+Staging creates a snapshot at version 1 with lineage pointing to the selected
+source ID and version. Source changes never propagate to the fork.
 Edit Taxonomy retains its Metadata and type list.
 In the Create flow, Config Options disappears immediately and returns after
 the header settles back on Library. Project fades and moves away while Library
 moves left into `[Library] / create taxonomy`; leaving reverses the motion.
-The Taxonomy and Types widgets span the content width with one blank row between
-them. The Library breadcrumb uses the same moving yellow underline. Its label
-and underline return from the main Create view; in a child editor they confirm
-before discarding the whole draft.
+The Taxonomy and Types widgets span the content width with no gap. Taxonomy
+stays seven rows tall, with two Description input rows beneath its heading;
+Types uses the remaining space. The Library breadcrumb uses the same moving
+yellow underline. Its label and underline return from the main Create or Fork
+view; in a child editor they confirm before discarding the whole draft.
 Type Details has ruled Description and Properties headings, followed by a
 two-column properties table with left-aligned values. Left and Right change
 focus between the two lists; Up and Down select within the focused list. Page Up
 and Page Down scroll Taxonomy Description when Taxonomies has focus and Type
 Details when Types has focus. The focused list's border and title are yellow;
 its selected row is yellow while the other list retains a subdued selection.
-The Library command bar shows tab switching, focus, movement, `/` commands,
-and `?` help. The searchable command popup lists New, Edit, Fork, Delete,
-Review, Switch, Help, and Quit, with shortcuts aligned at the right edge.
+The Project and Library command bars show `m: menu`, which cycles between them.
+The `/` key opens commands; clicking a tab also switches views. Command bar
+hints use spaces rather than pipe separators. Library commands use lowercase
+labels: `create taxonomy`, `edit taxonomy`, `fork taxonomy`, `delete taxonomy`,
+`review changes`, `switch to project`, `help`, and `quit`. Shortcuts align at the
+right edge, including `m` beside the switch command.
 Project has its own command list. A bordered Search field shows the `/` prompt
 and input cursor above the results. Arrow keys select a filtered command and
 Enter runs it; Esc closes the popup. Existing direct shortcuts such as `n`,
@@ -81,8 +96,9 @@ notices appear briefly over the content; source-load errors remain visible while
 unavailable. Existing user-level default and availability settings remain the
 read-only inheritance baseline in Project.
 
-Page Up and Page Down scroll long form and fork text; Review retains its Up and
-Down scrolling. Lists keep their selected row in view as content grows.
+Page Up and Page Down scroll long forms and the focused Description; Review
+retains its Up and Down scrolling. Lists keep their selected row in view as
+content grows.
 
 The interface shares the commit TUI's true-black canvas, dark Unicode frames,
 yellow active rows and navigation strip, zebra tables, mouse targets, bracketed

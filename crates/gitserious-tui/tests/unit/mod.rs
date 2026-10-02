@@ -1699,7 +1699,8 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     assert!(!buffer[authored].modifier.contains(Modifier::UNDERLINED));
 
     let footer = row_text(&buffer, 100, 31);
-    assert!(footer.contains("↑/↓: move | esc: back | ctrl+s: review"));
+    assert!(footer.contains("↑/↓: move  esc: back  ctrl+s: review"));
+    assert!(!footer.contains('|'));
     assert!(!footer.contains("col 6/80"));
     assert!(!footer.contains('▌'));
     assert!(!footer.contains("Ctrl"));
@@ -1719,7 +1720,8 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     let mut picker = AuthoringSession::new(built_in_commit_types(), None);
     let buffer = rendered_buffer(&mut picker, 100, 24)?;
     let footer = row_text(&buffer, 100, 23);
-    assert!(footer.contains("tab: switch | ↑/↓: move | enter: select | esc/q: cancel"));
+    assert!(footer.contains("tab: switch  ↑/↓: move  enter: select  esc/q: cancel"));
+    assert!(!footer.contains('|'));
     assert!(!footer.contains("/j"));
     assert!(!footer.contains("/k"));
     assert!(!footer.contains("Home/End"));
@@ -1727,7 +1729,8 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     let mut review = valid_feat_session();
     let buffer = rendered_buffer(&mut review, 100, 24)?;
     let footer = row_text(&buffer, 100, 23);
-    assert!(footer.contains("enter: commit | esc: edit | ↑/↓: scroll | q/ctrl+c: cancel"));
+    assert!(footer.contains("enter: commit  esc: edit  ↑/↓: scroll  q/ctrl+c: cancel"));
+    assert!(!footer.contains('|'));
     assert!(!footer.contains("Ctrl"));
     assert!(!footer.contains('·'));
     Ok(())
