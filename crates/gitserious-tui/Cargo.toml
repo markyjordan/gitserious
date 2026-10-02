@@ -15,6 +15,7 @@ gitserious-core = { workspace = true }
 ratatui = { workspace = true, features = ["unstable-rendered-line-info"] }
 tachyonfx = { workspace = true }
 tui-textarea = { workspace = true }
+unicode-segmentation = { workspace = true }
 
 [lints]
 workspace = true

@@ -24,11 +24,38 @@ pub(crate) fn navigation_key_style() -> Style {
     navigation_style().add_modifier(Modifier::BOLD)
 }
 
+pub(crate) fn row_style(index: usize) -> Style {
+    Style::default().bg(if index.is_multiple_of(2) {
+        JET_BLACK
+    } else {
+        ZEBRA_BACKGROUND
+    })
+}
+
+pub(crate) fn selected_style(active: bool) -> Style {
+    if active {
+        navigation_key_style()
+    } else {
+        Style::default()
+            .fg(Color::White)
+            .bg(Color::Rgb(40, 40, 40))
+            .add_modifier(Modifier::BOLD)
+    }
+}
+
+pub(crate) fn focus_frame_style(active: bool) -> Style {
+    if active {
+        Style::default().fg(Color::Yellow)
+    } else {
+        frame_style()
+    }
+}
+
 pub(crate) fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &[(&str, &str)]) {
     let mut spans = Vec::with_capacity(hints.len().saturating_mul(3));
     for (index, (key, action)) in hints.iter().copied().enumerate() {
         if index > 0 {
-            spans.push(Span::raw(" | "));
+            spans.push(Span::raw("  "));
         }
         spans.push(Span::styled(key, navigation_key_style()));
         spans.push(Span::raw(": "));
@@ -57,5 +84,31 @@ pub(crate) fn normalize_background(frame: &mut Frame<'_>, area: Rect) {
                 cell.set_bg(JET_BLACK);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_navigation_row;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn shared_navigation_row_separates_authoring_hints_without_pipes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut terminal = Terminal::new(TestBackend::new(100, 1))?;
+        terminal.draw(|frame| {
+            let area = frame.area();
+            render_navigation_row(
+                frame,
+                area,
+                &[("tab", "switch"), ("↑/↓", "move"), ("enter", "select")],
+            );
+        })?;
+        let row = (0..100)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+            .collect::<String>();
+        assert!(row.starts_with("tab: switch  ↑/↓: move  enter: select"));
+        assert!(!row.contains('|'));
+        Ok(())
     }
 }

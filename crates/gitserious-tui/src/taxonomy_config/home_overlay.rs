@@ -32,8 +32,8 @@ pub(super) enum CreateCommand {
 impl CreateCommand {
     fn label(self) -> &'static str {
         match self {
-            Self::AddType => "Add type",
-            Self::ValidateAndStage => "Validate and stage taxonomy",
+            Self::AddType => "add type",
+            Self::ValidateAndStage => "validate and stage taxonomy",
         }
     }
 
@@ -50,6 +50,19 @@ const CREATE_COMMANDS: &[CreateCommand] =
 
 impl HomeCommand {
     fn label(self, category: Category) -> &'static str {
+        if category == Category::Library {
+            return match self {
+                Self::New => "create taxonomy",
+                Self::Edit => "edit taxonomy",
+                Self::Fork => "fork taxonomy",
+                Self::Delete => "delete taxonomy",
+                Self::ReviewLibrary => "review changes",
+                Self::SwitchTab => "switch to project",
+                Self::Help => "help",
+                Self::Quit => "quit",
+                _ => unreachable!("Project commands are not shown in Library"),
+            };
+        }
         match self {
             Self::Configure => "Configure project",
             Self::Initialize => "Initialize project",
@@ -76,7 +89,7 @@ impl HomeCommand {
             Self::Edit => "e",
             Self::Fork => "f",
             Self::Delete => "d",
-            Self::SwitchTab => "tab",
+            Self::SwitchTab => "m",
             Self::Help => "?",
             Self::Quit => "q",
         }
@@ -294,23 +307,23 @@ fn render_palette(
 fn render_help(frame: &mut Frame<'_>, area: Rect, category: Category) {
     let rows: &[(&str, &str)] = match category {
         Category::Project => &[
-            ("Switch Project / Library", "tab"),
+            ("Switch Project / Library", "m/click"),
             ("Move between sections", "↑/↓"),
             ("Configure project", "enter"),
             ("Initialize project", "i"),
             ("Review changes", "ctrl+s"),
             ("Scroll details", "pgup/pgdn"),
-            ("Search commands", "/"),
+            ("Open commands", "/"),
             ("Quit", "esc/q"),
         ],
         Category::Library => &[
-            ("Switch Project / Library", "tab"),
+            ("Switch Project / Library", "m/click"),
             ("Focus taxonomy or type", "←/→"),
             ("Move selection", "↑/↓"),
             ("Scroll details", "pgup/pgdn"),
             ("New / edit / fork / delete", "n/e/f/d"),
             ("Review changes", "ctrl+s"),
-            ("Search commands", "/"),
+            ("Open commands", "/"),
             ("Quit", "esc/q"),
         ],
     };
