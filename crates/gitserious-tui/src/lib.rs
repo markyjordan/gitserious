@@ -12,6 +12,7 @@
 )]
 
 mod author;
+mod confirmation;
 // Legacy template/typeset configuration TUI retained in src/config/.
 // mod config;
 mod taxonomy_config;
