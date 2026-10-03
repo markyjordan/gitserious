@@ -1593,7 +1593,7 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
     assert_eq!(buffer[(top_left.0, top_left.1 + 8)].symbol(), "╚");
     assert_eq!(buffer[(top_left.0 + 57, top_left.1 + 8)].symbol(), "╝");
     let buttons = review
-        .confirmation_buttons
+        .discard_dialog.buttons
         .ok_or("missing button hitboxes")?;
     for area in [buttons.discard, buttons.keep_editing] {
         assert!((area.x..area.right()).all(|x| buffer[(x, area.y)].bg == Color::Yellow));
@@ -1621,7 +1621,7 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
     press(&mut review, KeyCode::Char('q'));
     let _ = rendered_buffer(&mut review, 100, 24)?;
     let buttons = review
-        .confirmation_buttons
+        .discard_dialog.buttons
         .ok_or("missing rerendered hitboxes")?;
     assert_eq!(
         review.handle_event(left_click(buttons.discard.x, buttons.discard.y)),

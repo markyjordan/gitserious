@@ -1,3 +1,4 @@
+use crate::confirmation::{DiscardChoice, DiscardDialog};
 use gitserious_app::{CommitAuthoringContext, CommitDraftAuthorOutcome, CommitTaxonomy};
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
@@ -1035,12 +1036,6 @@ pub(crate) struct ReviewState {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ConfirmationButtons {
-    pub(crate) discard: Rect,
-    pub(crate) keep_editing: Rect,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum TypeCatalogKind {
     #[default]
     Conventional,
@@ -1065,7 +1060,7 @@ pub(crate) struct AuthoringSession<'a> {
     pub(crate) composer: ComposerState,
     pub(crate) review: Option<ReviewState>,
     pub(crate) confirmation: ConfirmationAction,
-    pub(crate) confirmation_buttons: Option<ConfirmationButtons>,
+    pub(crate) discard_dialog: DiscardDialog,
     pub(crate) catalog_tabs: Vec<CatalogTab>,
     confirmation_resume: ResumeStage,
     pub(crate) too_small: bool,
@@ -1093,7 +1088,7 @@ impl<'a> AuthoringSession<'a> {
             composer: ComposerState::new(&definitions[selected_type]),
             review: None,
             confirmation: ConfirmationAction::Cancel,
-            confirmation_buttons: None,
+            discard_dialog: DiscardDialog::default(),
             catalog_tabs: Vec::new(),
             confirmation_resume: ResumeStage::Compose,
             too_small: false,
@@ -1187,6 +1182,12 @@ impl<'a> AuthoringSession<'a> {
     }
 
     pub(crate) fn handle_event(&mut self, event: Event) -> Option<CommitDraftAuthorOutcome> {
+        if self.stage == Stage::Confirm {
+            return self.handle_confirmation_event(event);
+        }
+        if matches!(event, Event::Resize(_, _)) {
+            self.discard_dialog.invalidate();
+        }
         if self.too_small {
             return self.handle_too_small(&event);
         }
@@ -1242,14 +1243,7 @@ impl<'a> AuthoringSession<'a> {
             return None;
         }
         if self.stage == Stage::Confirm {
-            let buttons = self.confirmation_buttons?;
-            if contains(buttons.discard, mouse.column, mouse.row) {
-                return self.confirm_discard();
-            }
-            if contains(buttons.keep_editing, mouse.column, mouse.row) {
-                self.resume_after_confirmation();
-            }
-            return None;
+            return self.handle_confirmation_event(Event::Mouse(mouse));
         }
         if self.stage == Stage::SelectType
             && let Some(tab) = self
@@ -1490,18 +1484,21 @@ impl<'a> AuthoringSession<'a> {
     }
 
     fn handle_confirmation_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
-        match key.code {
-            KeyCode::Char('y') => self.confirm_discard(),
-            KeyCode::Char('n') | KeyCode::Esc | KeyCode::Enter => {
+        self.handle_confirmation_event(Event::Key(key))
+    }
+
+    fn handle_confirmation_event(&mut self, event: Event) -> Option<CommitDraftAuthorOutcome> {
+        match self.discard_dialog.handle_event(&event)? {
+            DiscardChoice::Discard => self.confirm_discard(),
+            DiscardChoice::KeepEditing => {
                 self.resume_after_confirmation();
                 None
             }
-            _ => None,
         }
     }
 
     fn confirm_discard(&mut self) -> Option<CommitDraftAuthorOutcome> {
-        self.confirmation_buttons = None;
+        self.discard_dialog.invalidate();
         match self.confirmation {
             ConfirmationAction::Cancel => Some(CommitDraftAuthorOutcome::Cancelled),
             ConfirmationAction::ChangeType => {
@@ -1514,7 +1511,7 @@ impl<'a> AuthoringSession<'a> {
     }
 
     fn resume_after_confirmation(&mut self) {
-        self.confirmation_buttons = None;
+        self.discard_dialog.invalidate();
         self.stage = match self.confirmation_resume {
             ResumeStage::Compose => Stage::Compose,
             ResumeStage::Review => Stage::Review,
@@ -1539,7 +1536,7 @@ impl<'a> AuthoringSession<'a> {
         }
         self.confirmation = action;
         self.confirmation_resume = resume;
-        self.confirmation_buttons = None;
+        self.discard_dialog.invalidate();
         self.stage = Stage::Confirm;
         None
     }
@@ -1551,4 +1548,94 @@ fn contains(area: Rect, column: u16, row: u16) -> bool {
 
 fn control(key: KeyEvent, character: char) -> bool {
     key.code == KeyCode::Char(character) && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
+#[cfg(test)]
+mod confirmation_tests {
+    use super::super::render;
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn key(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+    fn click(area: Rect) -> Event {
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x + 1,
+            row: area.y,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    #[test]
+    fn shared_commit_dialog_keeps_compose_and_review_state_and_can_cancel_by_mouse()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (width, height) in [(60, 18), (100, 24)] {
+            for resume in [ResumeStage::Compose, ResumeStage::Review] {
+                let mut session =
+                    AuthoringSession::new(gitserious_core::built_in_commit_types(), Some(0));
+                session.composer.editor.insert_str("draft");
+                let text = session.composer.editor.lines().to_vec();
+                let cursor = session.composer.editor.cursor();
+                session.request_confirmation(ConfirmationAction::Cancel, resume);
+                let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+                terminal.draw(|frame| render::render(frame, &mut session))?;
+                let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
+                session.handle_event(click(Rect::new(0, 0, 1, 1)));
+                session.handle_event(Event::Paste("ignored".into()));
+                assert_eq!(session.stage, Stage::Confirm);
+                session.handle_event(click(buttons.keep_editing));
+                assert_eq!(
+                    session.stage,
+                    match resume {
+                        ResumeStage::Compose => Stage::Compose,
+                        ResumeStage::Review => Stage::Review,
+                    }
+                );
+                assert_eq!(session.composer.editor.lines(), text);
+                assert_eq!(session.composer.editor.cursor(), cursor);
+                assert!(session.discard_dialog.buttons.is_none());
+                session.request_confirmation(ConfirmationAction::Cancel, resume);
+                terminal.draw(|frame| render::render(frame, &mut session))?;
+                let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
+                session.handle_event(Event::Resize(30, 7));
+                assert!(session.discard_dialog.buttons.is_none());
+                assert!(session.handle_event(click(buttons.discard)).is_none());
+                assert_eq!(session.stage, Stage::Confirm);
+                session.handle_event(key(KeyCode::Enter));
+                session.request_confirmation(ConfirmationAction::Cancel, resume);
+                terminal.draw(|frame| render::render(frame, &mut session))?;
+                let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
+                assert!(matches!(
+                    session.handle_event(click(buttons.discard)),
+                    Some(CommitDraftAuthorOutcome::Cancelled)
+                ));
+                assert!(session.discard_dialog.buttons.is_none());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shared_commit_dialog_preserves_change_type_behavior()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut session = AuthoringSession::new(gitserious_core::built_in_commit_types(), None);
+        session.handle_event(key(KeyCode::Enter));
+        session.handle_event(Event::Paste("draft".into()));
+        session.handle_event(key(KeyCode::Esc));
+        assert_eq!(session.stage, Stage::Confirm);
+        assert_eq!(session.confirmation, ConfirmationAction::ChangeType);
+        session.handle_event(key(KeyCode::Esc));
+        assert_eq!(session.stage, Stage::Compose);
+        assert!(session.composer.dirty());
+        session.handle_event(key(KeyCode::Esc));
+        let mut terminal = Terminal::new(TestBackend::new(100, 24))?;
+        terminal.draw(|frame| render::render(frame, &mut session))?;
+        let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
+        assert!(session.handle_event(click(buttons.discard)).is_none());
+        assert_eq!(session.stage, Stage::SelectType);
+        assert!(!session.composer.dirty());
+        Ok(())
+    }
 }
