@@ -1,0 +1,42 @@
+---
+description: Maintainer owns agent commits and topic branches
+alwaysApply: true
+---
+
+# Maintainer git identity
+
+The solo maintainer is the responsible party for every commit and PR in this
+repo, even when an agent writes the diff.
+
+## Commit author
+
+Before any `git commit`, set author and committer to the maintainer. Do not
+leave Cloud Agent defaults (`Cursor Agent` / `cursoragent@cursor.com`) on
+commits that will be pushed.
+
+```bash
+export GIT_AUTHOR_NAME="markyjordan"
+export GIT_AUTHOR_EMAIL="37360049+markyjordan@users.noreply.github.com"
+export GIT_COMMITTER_NAME="markyjordan"
+export GIT_COMMITTER_EMAIL="37360049+markyjordan@users.noreply.github.com"
+```
+
+Repo-local `git config user.name` / `user.email` to the same values is fine for
+a long session. Prefer the env exports when a managed global config would
+otherwise win.
+
+After committing, confirm with `git log -1 --format='%an <%ae>'`. If it is not
+`markyjordan <37360049+markyjordan@users.noreply.github.com>`, amend only when
+the commit is unpushed or the user explicitly allows rewrite.
+
+## Topic branches
+
+Use `marky/<type>/<slug>` for every PR head (examples: `marky/feat/...`,
+`marky/fix/...`, `marky/chore/...`). Match `<type>` to the Conventional Commit
+type of the change.
+
+Do not open or push PR heads named `cursor/...`. If a Cloud Agent run template
+defaults to `cursor/...`, create or retarget onto `marky/<type>/<slug>` instead
+and use the PR tool's branch-prefix override when required.
+
+Never push directly to `dev`, `main`, or `release/*`.
