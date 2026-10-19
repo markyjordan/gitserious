@@ -1,0 +1,25 @@
+---
+description: gitserious defaults for the global worktree-refresh skill
+alwaysApply: true
+---
+
+# Worktree refresh defaults (gitserious)
+
+This repo uses the personal global skill `worktree-refresh`, not a project skill.
+
+After a topic PR merges into `origin/dev`, run that skill before the next sibling
+worktree. Use these defaults unless the user overrides them:
+
+```bash
+export WORKTREE_INTEGRATION="/Users/marky/Documents/Chia/marky++/projects/oss/cli/gitserious-DEV"
+export WORKTREE_BASE_BRANCH="dev"
+export WORKTREE_PRESERVE=".gitserious,gitserious.toml,gitserious.lock"
+```
+
+Example:
+
+```bash
+bash ~/.cursor/skills/worktree-refresh/scripts/refresh-worktree.sh \
+  /Users/marky/Documents/Chia/marky++/projects/oss/cli/gitserious-feat \
+  marky/feat/<name>
+```
