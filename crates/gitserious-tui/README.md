@@ -36,8 +36,17 @@ Types, and Type Details; compact terminals stack Types and Type Details in the
 right column.
 Create Taxonomy has one Taxonomy frame with ruled Name and Description sections,
 followed by a Types list. Section headings are bold white; the active widget's
-border and title are yellow. Name is the single-line, lowercase, hyphenated
-taxonomy ID; Description is multiline. One visible text cursor starts at the
+border and title are yellow. Name is a single line; Description is multiline.
+Type Name as you would say it. `Team Changes` saves as the ID `team-changes`:
+ASCII letters become lowercase, apostrophes are removed, and each run of
+spaces, ASCII punctuation and symbols, or common dashes, quotes, and bullets
+becomes one hyphen. Name keeps the text as typed. While that text differs from
+its ID, the right end of the Name heading shows `saves as team-changes`. A
+name with no ID form shows `start with a letter` or `use letters a-z` there
+instead, and staging stops with a message that names the problem, such as a
+leading digit or a character outside a-z like `é` or an emoji. A paste with
+line breaks into Name inserts one space for each run of breaks. One visible
+text cursor starts at the
 beginning of Name. Left and Right move within text. Up and Down move through
 Description and cross between Name, Description, and Types. Each text section
 keeps its cursor position while away. Backspace, Delete, and paste edit at the
@@ -47,14 +56,19 @@ Name and Description share an 80-visible-character limit, including Description
 newlines. The bottom-right Taxonomy border shows the combined count; oversized
 pastes insert only the portion that fits.
 Clicks in Taxonomy text do not move its cursor; Types remains mouse selectable.
-The `/` palette offers `add type` and `validate and stage taxonomy`. A
-taxonomy needs at least one type before it can be staged. Staging returns to
-Library, where `/` then `review changes` opens the existing review and apply flow.
+`ctrl+n` adds a type and `ctrl+s` stages the taxonomy from any section. The
+`/` palette offers the same actions as `add type` and
+`validate and stage taxonomy`. A taxonomy needs at least one type before it
+can be staged. Staging returns to Library with a notice that names the staged
+ID, such as `Staged taxonomy "team-changes"`. From Library, `ctrl+s` or `/`
+then `review changes` opens the existing review and apply flow.
 Fork uses this same editor, populated with the selected taxonomy's name,
 description, types, schema versions, and properties. The breadcrumb reads
-`Library / fork taxonomy`. Rename the fork to an unused ID before staging.
-Copied text is preserved in full, and Fork allows temporary totals above 80
-while editing; validation alerts on an unchanged name or a total above 80.
+`Library / fork taxonomy`. Rename the fork to an unused ID before staging. A
+name that saves as the source ID, such as `Conventional` for `conventional`,
+counts as unchanged. Copied text is preserved in full, and Fork allows
+temporary totals above 80 while editing; staging stops with a message on an
+unchanged name or a total above 80.
 Staging creates a snapshot at version 1 with lineage pointing to the selected
 source ID and version. Source changes never propagate to the fork.
 Edit Taxonomy retains its Metadata and type list.
@@ -68,6 +82,8 @@ yellow underline. Its label and underline return from the main Create or Fork
 view; in a child editor they confirm before discarding the whole draft.
 Adding or editing a type in Create, Fork, or Edit Taxonomy opens an eight-row
 Type frame with Name, Description, and an independent `used/80` counter.
+Type and property Name, and Condition name, save and preview their IDs the
+same way as the taxonomy Name.
 Properties sits directly beneath it with a `+ add property` selector and
 separate name, description, and policy columns. The active frame is yellow;
 white ruled headings, arrow navigation, text editing, and mouse selection work
@@ -90,9 +106,13 @@ keep the active heading and input visible while the frame and counter stay
 fixed. Unused space below a compact frame stays empty.
 
 `ctrl+s` completes a Property into the local Type draft, then completes the
-Type into the taxonomy draft. Type and property names must be unique within
-their parent. Types may have no properties. Adding properties does not require
-the Type's text fields to be complete yet. New text uses hard input limits;
+Type into the taxonomy draft. A completed item shows its saved ID in the list
+and when reopened. Type and property IDs must be unique within their parent,
+so `Foo Bar` and `foo-bar` collide. Completing or staging removes leading and
+trailing whitespace, including trailing blank lines, from an edited
+description or condition rationale; untouched copied text is kept exactly.
+Types may have no properties. Adding properties does not require the Type's
+text fields to be complete yet. New text uses hard input limits;
 copied text is preserved without truncation and must fit its limit when that
 item is completed. Untouched copied properties keep their original data.
 Esc returns immediately when clean, or confirms discarding only that child

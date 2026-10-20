@@ -40,7 +40,7 @@ impl CreateCommand {
     fn shortcut(self) -> &'static str {
         match self {
             Self::AddType => "ctrl+n",
-            Self::ValidateAndStage => "",
+            Self::ValidateAndStage => "ctrl+s",
         }
     }
 }

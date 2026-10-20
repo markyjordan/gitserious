@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -7,6 +9,7 @@ use ratatui::text::Span;
 use ratatui::widgets::{Block, Cell, Paragraph, Row, Table, TableState, Widget};
 use tui_textarea::{CursorMove, CursorRenderMode, TextArea, WrapMode};
 
+use super::naming::{NameField, edited_prose, name_error, name_heading_line, single_line};
 use super::{
     ConditionId, CreateFocus, CreateTextEditors, PropertyCondition, PropertyDraft,
     PropertyMultiplicity, PropertyRequirement, TypeDraft, contains, render_counter,
@@ -61,9 +64,11 @@ impl TypeEditorState {
         if self.text.used() > TYPE_LIMIT {
             return Err("Type name and description are limited to 80 characters.".into());
         }
-        let candidate = self.current();
-        candidate.build()?;
-        Ok(candidate)
+        let mut candidate = self.current();
+        candidate.description = edited_prose(candidate.description, &self.initial.description);
+        candidate
+            .build()
+            .map(|definition| TypeDraft::from(&definition))
     }
 
     fn current(&self) -> TypeDraft {
@@ -335,27 +340,34 @@ impl PropertyEditorState {
         if self.text.used() > PROPERTY_LIMIT {
             return Err("Property name and description are limited to 100 characters.".into());
         }
+        let (_, loaded_description, _, _, loaded_rationale) = &self.initial;
         let requirement = match self.policy {
             Policy::Required => PropertyRequirement::Required,
             Policy::Recommended => PropertyRequirement::Recommended,
             Policy::Optional => PropertyRequirement::Optional,
-            Policy::Conditional => PropertyRequirement::Conditional(
-                PropertyCondition::new(
-                    ConditionId::new(self.condition_name.lines().join("\n"))
-                        .map_err(|error| format!("Condition name: {error}"))?,
+            Policy::Conditional => {
+                let name = self.condition_name.lines().join("\n");
+                let id = ConditionId::from_label(&name)
+                    .map_err(|error| name_error(NameField::Condition, &name, &error))?;
+                let rationale = edited_prose(
                     self.condition_rationale.lines().join("\n"),
+                    loaded_rationale,
+                );
+                PropertyRequirement::Conditional(
+                    PropertyCondition::new(id, rationale)
+                        .map_err(|error| format!("Condition rationale: {error}"))?,
                 )
-                .map_err(|error| format!("Condition rationale: {error}"))?,
-            ),
+            }
         };
         let candidate = PropertyDraft {
             key: self.text.name.lines().join("\n"),
-            description: self.text.description.lines().join("\n"),
+            description: edited_prose(self.text.description.lines().join("\n"), loaded_description),
             requirement,
             multiplicity: self.multiplicity,
         };
-        candidate.build()?;
-        Ok(candidate)
+        candidate
+            .build()
+            .map(|definition| PropertyDraft::from(&definition))
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -384,11 +396,8 @@ impl PropertyEditorState {
                 "Property",
                 PROPERTY_LIMIT,
             ),
-            PropertyFocus::ConditionName if text.contains(['\n', '\r']) => ChildAction::Error(
-                "Condition name accepts one line; paste was not inserted.".into(),
-            ),
             PropertyFocus::ConditionName => {
-                self.condition_name.insert_str(text);
+                self.condition_name.insert_str(single_line(text));
                 ChildAction::Continue
             }
             PropertyFocus::ConditionRationale => {
@@ -554,7 +563,13 @@ impl PropertyEditorState {
         for cell in &mut content.content {
             cell.set_style(Style::default().fg(Color::White).bg(JET_BLACK));
         }
-        for (y, label) in [(0, "Name"), (3, "Description"), (6, "Policy")] {
+        Paragraph::new(name_heading_line(
+            "Name",
+            &self.text.name.lines().join("\n"),
+            width,
+        ))
+        .render(Rect::new(0, 0, width, 1), &mut content);
+        for (y, label) in [(3, "Description"), (6, "Policy")] {
             Paragraph::new(taxonomy_heading_line(label, width))
                 .render(Rect::new(0, y, width, 1), &mut content);
         }
@@ -585,10 +600,14 @@ impl PropertyEditorState {
         Paragraph::new(Span::styled(policy, policy_style))
             .render(Rect::new(0, 7, width, 1), &mut content);
         if self.policy == Policy::Conditional {
-            for (y, label) in [(9, "Condition name"), (12, "Condition rationale")] {
-                Paragraph::new(taxonomy_heading_line(label, width))
-                    .render(Rect::new(0, y, width, 1), &mut content);
-            }
+            Paragraph::new(name_heading_line(
+                "Condition name",
+                &self.condition_name.lines().join("\n"),
+                width,
+            ))
+            .render(Rect::new(0, 9, width, 1), &mut content);
+            Paragraph::new(taxonomy_heading_line("Condition rationale", width))
+                .render(Rect::new(0, 12, width, 1), &mut content);
             render_property_input(
                 &mut content,
                 &self.condition_name,
@@ -647,10 +666,12 @@ fn paste_metadata(
     owner: &str,
     limit: usize,
 ) -> ChildAction {
-    if focus == CreateFocus::Name && value.contains(['\n', '\r']) {
-        return ChildAction::Error("Name accepts one line; paste was not inserted.".into());
-    }
-    if text.paste(focus, value) {
+    let value = if focus == CreateFocus::Name {
+        single_line(value)
+    } else {
+        Cow::Borrowed(value)
+    };
+    if text.paste(focus, &value) {
         limit_error(owner, limit)
     } else {
         ChildAction::Continue
@@ -933,6 +954,26 @@ mod tests {
         draw_compact(&mut property, &mut compact)?;
         assert_eq!(property.viewport_top, 3);
         assert_eq!(property.candidate()?, draft);
+        Ok(())
+    }
+    #[test]
+    fn loaded_prose_stays_byte_for_byte_and_edited_prose_is_trimmed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let draft = TypeDraft {
+            id: "feat".into(),
+            description: " Padded feature \n".into(),
+            schema_version: 2,
+            properties: Vec::new(),
+        };
+        let mut copied = TypeEditorState::new(Some(0), draft.clone());
+        assert_eq!(copied.candidate()?, draft);
+        copied.focus = CreateFocus::Description;
+        copied.text.description.select_all();
+        copied.paste(" Edited feature \n\n");
+        assert_eq!(copied.candidate()?.description, "Edited feature");
+        copied.text.description.select_all();
+        copied.paste(" \n ");
+        assert!(copied.candidate().is_err());
         Ok(())
     }
 }
