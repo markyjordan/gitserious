@@ -12,3 +12,7 @@
 </p>
 
 ---
+
+Configure taxonomy policy with the [configuration how-to](docs/product/configuration.md).
+Bare `gitserious config` opens the TUI. `gitserious config list` and
+`gitserious config show <taxonomy>` stay read-only for inspection.

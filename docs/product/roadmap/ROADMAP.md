@@ -186,18 +186,24 @@ must not imply that supplying prose proves an experiment or operation succeeded.
 
 - [ ] All three built-in taxonomies resolve through the generic catalog; every type
   has a schema and Conventional definitions remain unchanged.
-- [ ] Custom global definitions support complete authoring, taxonomy forks,
+- [x] Custom global definitions support complete authoring, taxonomy forks,
   default/availability selection, and safe deletion.
+  (Availability selection from Library closed in PR #87. Authoring, forks, and
+  safe deletion were already on `dev` before that stack.)
 - [ ] Invalid references, cancellation, concurrent edits,
   and persistence failures preserve stored state.
-- [ ] Project locks contain portable schemas; stale policy blocks commits with
+- [x] Project locks contain portable schemas; stale policy blocks commits with
   actionable repair output, including in linked worktrees.
+  (Init refuses a differing lock in PR #89. Process and storage proofs, including
+  a linked worktree stale lock, landed in PR #90.)
 - [ ] Commits using all three built-ins and a custom taxonomy use the selected
   schema, including overlapping type identifiers.
 - [ ] Temporary selection leaves project files unchanged and does not depend on
   later edits to global configuration.
-- [ ] Required, recommended, optional, conditional, and repeatable properties
+- [x] Required, recommended, optional, conditional, and repeatable properties
   behave consistently, including custom label collisions and long names.
+  (Property multiplicity authoring landed in PR #88. Requirement and multiplicity
+  labels in `config show` landed in PR #90.)
 - [ ] Git receives exactly the reviewed message, including provenance and
   breaking-change content; cancellation creates no commit.
 - [ ] Fresh-install walkthroughs cover first commit, taxonomy switching, and
@@ -206,8 +212,10 @@ must not imply that supplying prose proves an experiment or operation succeeded.
   workspace crates in dependency-ordered packaging/publication.
 - [ ] Existing native targets pass release verification: Linux x64, macOS Intel,
   macOS Apple Silicon, and Windows x64.
-- [ ] README, architecture/configuration docs, changelog, and release guidance
+- [x] README, architecture/configuration docs, changelog, and release guidance
   describe the delivered behavior rather than the earlier scaffold.
+  (Taxonomy-first how-to in `docs/product/configuration.md`, README link, and
+  changelog note land with this documentation change.)
 
 Use the established `dev -> main -> release/0.1` process, mandatory release dry
 run, and existing publication approvals. Release mechanics are specified in

@@ -76,6 +76,8 @@ terminal is too small.
 
 ### Documentation and verification
 
+Delivered. See `docs/product/configuration.md` and the root README link.
+
 ```text
 docs(config): document taxonomy-first project policy
 

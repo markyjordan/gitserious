@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Document taxonomy-first `gitserious config` for global libraries, project
+  overrides, portable locks, and the Project repair path after a library change.
+- Open Global default and available settings from Library (`configure global` / `c`).
+- Author property multiplicity (`single` / `multiple`) in the configuration TUI.
+- Refuse `gitserious init` when the project lock differs from the current library.
+  Refresh through Project review instead.
+- Print human requirement and multiplicity labels from `gitserious config show`.
+- Restore taxonomy process and storage proofs for list, show, init, stale locks,
+  and linked worktrees.
 - Scaffolding pass for public v0.1.0 launch.
 
 ## [0.1.0] - TBD
