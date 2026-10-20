@@ -116,6 +116,105 @@ fn validate_and_box(value: String) -> Result<Box<str>, IdentifierError> {
     Ok(value.into_boxed_str())
 }
 
+/// Why typed text has no identifier form.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LabelError {
+    /// No ASCII letter or digit remains.
+    Empty,
+    /// The formatted text starts with a digit, such as "2fa".
+    StartsWithDigit {
+        /// The formatted text that would otherwise be the identifier.
+        formatted: Box<str>,
+    },
+    /// A character that is not an ASCII letter or digit, an apostrophe, or a
+    /// separator, such as 'é', '変', or an emoji.
+    Unsupported {
+        /// The first unsupported character in the typed text.
+        character: char,
+    },
+}
+
+impl Display for LabelError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("label has no ASCII letters or digits"),
+            Self::StartsWithDigit { formatted } => {
+                write!(formatter, "label {formatted:?} must start with a letter")
+            }
+            Self::Unsupported { character } => {
+                write!(formatter, "label uses unsupported character {character:?}")
+            }
+        }
+    }
+}
+
+impl Error for LabelError {}
+
+/// Formats typed text as a lowercase ASCII kebab identifier.
+///
+/// ASCII letters are lowercased, ASCII digits are kept, and the apostrophes
+/// U+0027, U+2019, and U+02BC are deleted so "user's guide" becomes
+/// `users-guide`. Separators are ASCII punctuation and symbols, every
+/// [`char::is_whitespace`] character, hyphens and dashes U+2010 to U+2015,
+/// the quotes U+2018, U+201C, U+201D, and U+201E, the guillemets U+00AB,
+/// U+00BB, U+2039, and U+203A, the ellipsis U+2026, the middle dot U+00B7,
+/// and the bullet U+2022. Each run of separators becomes one hyphen and edge
+/// separators are dropped. Every other character, including non-ASCII
+/// letters, combining marks, invisible format characters, and emoji, is
+/// rejected at its first occurrence rather than dropped, so no part of the
+/// typed text disappears silently.
+///
+/// Every `Ok` value passes the strict identifier constructors, every strictly
+/// valid identifier is returned unchanged, and the function is idempotent.
+///
+/// # Errors
+///
+/// Returns [`LabelError`] when the text has no letter or digit, formats to
+/// text that starts with a digit, or contains an unsupported character.
+pub fn normalize_identifier(label: &str) -> Result<String, LabelError> {
+    let mut formatted = String::with_capacity(label.len());
+    let mut separated = false;
+    for character in label.chars() {
+        match character {
+            'a'..='z' | 'A'..='Z' | '0'..='9' => {
+                if separated && !formatted.is_empty() {
+                    formatted.push('-');
+                }
+                separated = false;
+                formatted.push(character.to_ascii_lowercase());
+            }
+            '\'' | '\u{2019}' | '\u{02BC}' => {}
+            _ if is_label_separator(character) => separated = true,
+            _ => return Err(LabelError::Unsupported { character }),
+        }
+    }
+    match formatted.as_bytes().first() {
+        None => Err(LabelError::Empty),
+        Some(first) if first.is_ascii_digit() => Err(LabelError::StartsWithDigit {
+            formatted: formatted.into_boxed_str(),
+        }),
+        Some(_) => Ok(formatted),
+    }
+}
+
+fn is_label_separator(character: char) -> bool {
+    character.is_ascii_punctuation()
+        || character.is_whitespace()
+        || matches!(
+            character,
+            '\u{2010}'..='\u{2015}'
+                | '\u{2018}'
+                | '\u{201C}'..='\u{201E}'
+                | '\u{00AB}'
+                | '\u{00BB}'
+                | '\u{2039}'
+                | '\u{203A}'
+                | '\u{2026}'
+                | '\u{00B7}'
+                | '\u{2022}'
+        )
+}
+
 macro_rules! define_identifier {
     ($name:ident, $description:literal) => {
         #[doc = $description]
@@ -137,6 +236,25 @@ macro_rules! define_identifier {
             #[must_use]
             pub fn as_str(&self) -> &str {
                 &self.0
+            }
+
+            /// Creates an identifier from typed text by formatting it with
+            /// [`normalize_identifier`]. Stored and wire data use `new`.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`LabelError`] when the text has no identifier form.
+            #[allow(
+                dead_code,
+                reason = "crate-private identifiers have no typed-text editor"
+            )]
+            pub fn from_label(label: &str) -> Result<Self, LabelError> {
+                let value = normalize_identifier(label)?;
+                debug_assert!(
+                    validate_identifier(&value).is_ok(),
+                    "formatted label {value:?} is not a valid identifier"
+                );
+                Ok(Self(value.into_boxed_str()))
             }
 
             pub(crate) fn from_trusted(value: &'static str) -> Self {
@@ -221,7 +339,11 @@ mod tests {
     use std::collections::{BTreeSet, HashSet};
     use std::error::Error;
 
-    use super::{CommitTypeId, ConditionId, IdentifierErrorKind, PropertyKey};
+    use super::{
+        CommitTypeId, ConditionId, IdentifierErrorKind, LabelError, PropertyKey, TaxonomyId,
+        normalize_identifier,
+    };
+    use crate::{PropertyRequirement, built_in_taxonomies};
 
     #[test]
     fn accepts_lowercase_ascii_kebab_identifiers() -> Result<(), Box<dyn Error>> {
@@ -333,5 +455,213 @@ mod tests {
             let source: &dyn Error = &error;
             assert!(source.source().is_none());
         }
+    }
+
+    #[test]
+    fn formats_typed_labels_as_kebab_identifiers() {
+        let cases = [
+            ("two words", "two-words"),
+            ("Team Changes", "team-changes"),
+            ("team_changes", "team-changes"),
+            ("Team", "team"),
+            ("  lead--trail- ", "lead-trail"),
+            ("a.b/c:d", "a-b-c-d"),
+            ("a+b", "a-b"),
+            ("user's guide", "users-guide"),
+            ("user\u{2019}s guide", "users-guide"),
+            ("GitHub", "github"),
+            ("v2 API", "v2-api"),
+            ("feat\n", "feat"),
+            ("line one\r\nline two", "line-one-line-two"),
+            ("pre\u{2013}release", "pre-release"),
+            ("no\u{a0}break", "no-break"),
+            (
+                "\u{201C}quoted\u{201D} \u{2022} item\u{2026}",
+                "quoted-item",
+            ),
+            ("already-kebab", "already-kebab"),
+        ];
+
+        for (label, expected) in cases {
+            assert_eq!(
+                normalize_identifier(label).as_deref(),
+                Ok(expected),
+                "{label:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn reports_why_a_label_has_no_identifier_form() {
+        let cases = [
+            ("", LabelError::Empty),
+            ("   ", LabelError::Empty),
+            ("---", LabelError::Empty),
+            ("'", LabelError::Empty),
+            (
+                "2fa",
+                LabelError::StartsWithDigit {
+                    formatted: "2fa".into(),
+                },
+            ),
+            (
+                " 9 lives",
+                LabelError::StartsWithDigit {
+                    formatted: "9-lives".into(),
+                },
+            ),
+            ("Café", LabelError::Unsupported { character: 'é' }),
+            (
+                "e\u{301}clair",
+                LabelError::Unsupported {
+                    character: '\u{301}',
+                },
+            ),
+            ("Δ coverage", LabelError::Unsupported { character: 'Δ' }),
+            ("変更", LabelError::Unsupported { character: '変' }),
+            (
+                "x\u{663}",
+                LabelError::Unsupported {
+                    character: '\u{663}',
+                },
+            ),
+            (
+                "e\u{1DC4}",
+                LabelError::Unsupported {
+                    character: '\u{1DC4}',
+                },
+            ),
+            (
+                "v\u{20D7}",
+                LabelError::Unsupported {
+                    character: '\u{20D7}',
+                },
+            ),
+            (
+                "text\u{FE0E}",
+                LabelError::Unsupported {
+                    character: '\u{FE0E}',
+                },
+            ),
+            (
+                "co\u{AD}op",
+                LabelError::Unsupported {
+                    character: '\u{AD}',
+                },
+            ),
+            (
+                "a\u{200D}b",
+                LabelError::Unsupported {
+                    character: '\u{200D}',
+                },
+            ),
+            (
+                "\u{1F680} launch",
+                LabelError::Unsupported {
+                    character: '\u{1F680}',
+                },
+            ),
+        ];
+
+        for (label, expected) in cases {
+            assert_eq!(normalize_identifier(label), Err(expected), "{label:?}");
+        }
+    }
+
+    #[test]
+    fn every_label_from_a_small_alphabet_formats_to_its_predicted_result() {
+        const SEPARATORS: [char; 4] = ['-', ' ', '_', '\n'];
+        const UNSUPPORTED: [char; 3] = ['é', 'Δ', '\u{AD}'];
+        const ALPHABET: [char; 11] = ['a', 'Z', '7', '\'', '-', ' ', '_', '\n', 'é', 'Δ', '\u{AD}'];
+
+        let mut labels = vec![String::new()];
+        let mut frontier = vec![String::new()];
+        for _ in 0..4 {
+            frontier = frontier
+                .iter()
+                .flat_map(|prefix| {
+                    ALPHABET.iter().map(move |character| {
+                        let mut label = prefix.clone();
+                        label.push(*character);
+                        label
+                    })
+                })
+                .collect();
+            labels.extend(frontier.iter().cloned());
+        }
+        assert_eq!(labels.len(), 16_105);
+
+        for label in &labels {
+            let expected = if let Some(character) = label.chars().find(|c| UNSUPPORTED.contains(c))
+            {
+                Err(LabelError::Unsupported { character })
+            } else {
+                let formatted = label
+                    .replace('\'', "")
+                    .to_ascii_lowercase()
+                    .split(SEPARATORS)
+                    .filter(|word| !word.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("-");
+                if formatted.is_empty() {
+                    Err(LabelError::Empty)
+                } else if formatted.starts_with('7') {
+                    Err(LabelError::StartsWithDigit {
+                        formatted: formatted.into_boxed_str(),
+                    })
+                } else {
+                    Ok(formatted)
+                }
+            };
+            let result = normalize_identifier(label);
+            assert_eq!(result, expected, "{label:?}");
+            assert_eq!(
+                TaxonomyId::from_label(label).map(|id| id.as_str().to_owned()),
+                result,
+                "{label:?}"
+            );
+            if let Ok(formatted) = result {
+                assert!(CommitTypeId::new(formatted.as_str()).is_ok(), "{label:?}");
+                assert_eq!(normalize_identifier(&formatted), Ok(formatted.clone()));
+                if CommitTypeId::new(label.as_str()).is_ok() {
+                    assert_eq!(formatted, *label);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn formatting_leaves_valid_identifiers_unchanged() -> Result<(), Box<dyn Error>> {
+        let mut identifiers = vec![
+            "a".to_owned(),
+            "fix2".to_owned(),
+            "x0-y9-z".to_owned(),
+            "workflow-permissions-change".to_owned(),
+        ];
+        for taxonomy in built_in_taxonomies() {
+            identifiers.push(taxonomy.id().to_string());
+            for kind in taxonomy.commit_types() {
+                identifiers.push(kind.id().to_string());
+                for property in kind.properties() {
+                    identifiers.push(property.key().to_string());
+                    if let PropertyRequirement::Conditional(condition) = property.requirement() {
+                        identifiers.push(condition.id().to_string());
+                    }
+                }
+            }
+        }
+
+        for identifier in &identifiers {
+            assert_eq!(normalize_identifier(identifier)?, *identifier);
+            assert_eq!(
+                TaxonomyId::from_label(identifier)?,
+                TaxonomyId::new(identifier.as_str())?
+            );
+            assert_eq!(
+                ConditionId::from_label(identifier)?,
+                ConditionId::new(identifier.as_str())?
+            );
+        }
+        Ok(())
     }
 }

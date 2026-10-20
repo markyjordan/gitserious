@@ -63,7 +63,8 @@ pub use description::{Description, DescriptionError};
 pub use fingerprint::{Fingerprint, FingerprintError};
 pub(crate) use identifier::{ChangeTypeId, TemplateId, TypesetId};
 pub use identifier::{
-    CommitTypeId, ConditionId, IdentifierError, IdentifierErrorKind, PropertyKey, TaxonomyId,
+    CommitTypeId, ConditionId, IdentifierError, IdentifierErrorKind, LabelError, PropertyKey,
+    TaxonomyId, normalize_identifier,
 };
 pub use property::{
     PropertyCondition, PropertyConditionError, PropertyDefinition, PropertyDefinitionError,
