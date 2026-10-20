@@ -37,9 +37,11 @@ use crate::theme::{
 mod child_editor;
 mod home_overlay;
 mod library_view;
+mod naming;
 use child_editor::{ChildAction, PropertyEditorState, TypeEditorState};
 use home_overlay::{CommandPaletteState, CreateCommand, HomeCommand, HomeOverlay};
 use library_view::{LibraryFocus, LibraryViewState};
+use naming::{NameField, edited_prose, name_error, name_heading_line, single_line};
 
 /// Taxonomy-first terminal configuration adapter.
 #[derive(Clone, Debug, Default)]
@@ -379,7 +381,8 @@ impl TaxonomyDraft {
     }
 
     fn build(&self, mode: EditorMode) -> Result<Taxonomy, String> {
-        let id = TaxonomyId::new(&self.id).map_err(|error| error.to_string())?;
+        let id = TaxonomyId::from_label(&self.id)
+            .map_err(|error| name_error(NameField::Taxonomy, &self.id, &error))?;
         let description = Description::new(&self.description).map_err(|error| error.to_string())?;
         let version = match mode {
             EditorMode::Create => TaxonomyVersion::V1,
@@ -398,7 +401,8 @@ impl TaxonomyDraft {
 
 impl TypeDraft {
     fn build(&self) -> Result<CommitTypeDefinition, String> {
-        let id = CommitTypeId::new(&self.id).map_err(|error| error.to_string())?;
+        let id = CommitTypeId::from_label(&self.id)
+            .map_err(|error| name_error(NameField::Type, &self.id, &error))?;
         let version = SchemaVersion::new(self.schema_version).map_err(|error| error.to_string())?;
         let properties = self
             .properties
@@ -421,7 +425,8 @@ impl PropertyDraft {
     }
 
     fn build(&self) -> Result<PropertyDefinition, String> {
-        let key = PropertyKey::new(&self.key).map_err(|error| error.to_string())?;
+        let key = PropertyKey::from_label(&self.key)
+            .map_err(|error| name_error(NameField::Property, &self.key, &error))?;
         PropertyDefinition::new(
             key,
             self.description.clone(),
@@ -722,23 +727,13 @@ impl State {
             } else if matches!(self.screen, Screen::TaxonomyEditor(EditorMode::Create))
                 && let Some(editors) = &mut self.create_text
             {
-                match self.create_focus {
-                    CreateFocus::Name if !text.contains(['\n', '\r']) => {
-                        if editors.paste(CreateFocus::Name, text) {
-                            self.status = Some(Notice::Info(CREATE_TEXT_LIMIT_NOTICE.into()));
-                        }
-                    }
-                    CreateFocus::Name => {
-                        self.status = Some(Notice::Error(
-                            "Name accepts one line; paste was not inserted.".into(),
-                        ));
-                    }
-                    CreateFocus::Description => {
-                        if editors.paste(CreateFocus::Description, text) {
-                            self.status = Some(Notice::Info(CREATE_TEXT_LIMIT_NOTICE.into()));
-                        }
-                    }
-                    CreateFocus::Types => {}
+                let text = match self.create_focus {
+                    CreateFocus::Name => single_line(text),
+                    CreateFocus::Description => text.into(),
+                    CreateFocus::Types => return false,
+                };
+                if editors.paste(self.create_focus, &text) {
+                    self.status = Some(Notice::Info(CREATE_TEXT_LIMIT_NOTICE.into()));
                 }
             }
             return false;
@@ -2003,7 +1998,7 @@ impl State {
             .any(|(index, kind)| Some(index) != target && kind.id == candidate.id)
         {
             return Err(format!(
-                "Type {:?} already exists in this taxonomy.",
+                "A type named \"{}\" already exists in this taxonomy.",
                 candidate.id
             ));
         }
@@ -2037,7 +2032,7 @@ impl State {
             .any(|(index, property)| Some(index) != target && property.key == candidate.key)
         {
             return Err(format!(
-                "Property {:?} already exists in this type.",
+                "A property named \"{}\" already exists in this type.",
                 candidate.key
             ));
         }
@@ -2079,32 +2074,43 @@ impl State {
         if mode == EditorMode::Create
             && let (Some(editors), Some(draft)) = (&self.create_text, &mut self.editor)
         {
-            if self
-                .fork_source
-                .as_ref()
-                .is_some_and(|source| editors.name.lines().join("\n") == source.id().as_str())
-            {
-                self.status = Some(Notice::Error(
-                    "Choose a new taxonomy name before staging the fork.".into(),
-                ));
-                return;
-            }
             if editors.used() > CREATE_TEXT_LIMIT {
                 self.status = Some(Notice::Error(CREATE_TEXT_LIMIT_NOTICE.into()));
                 return;
             }
             editors.sync_draft(draft);
         }
-        let Some(draft) = &self.editor else {
+        let Some(mut candidate) = self.editor.clone() else {
             return;
         };
-        let result = draft.build(mode).and_then(|taxonomy| {
+        if let Some(initial) = &self.initial_editor {
+            candidate.description = edited_prose(
+                std::mem::take(&mut candidate.description),
+                &initial.description,
+            );
+        }
+        let result = candidate.build(mode).and_then(|taxonomy| {
+            if self
+                .fork_source
+                .as_ref()
+                .is_some_and(|source| source.id() == taxonomy.id())
+            {
+                return Err("Choose a new taxonomy name before staging the fork.".into());
+            }
+            let id = taxonomy.id().clone();
             let session = self
                 .global
                 .as_mut()
                 .ok_or("global configuration unavailable".to_owned())?;
             match mode {
-                EditorMode::Create => session.create_taxonomy(taxonomy),
+                EditorMode::Create => {
+                    if session.catalog()?.find(&id).is_some() {
+                        return Err(format!(
+                            "A taxonomy named \"{id}\" already exists in the Library."
+                        ));
+                    }
+                    session.create_taxonomy(taxonomy)
+                }
                 EditorMode::Edit => {
                     let original = session
                         .catalog()?
@@ -2119,13 +2125,14 @@ impl State {
                     .and_then(|revised| session.update_taxonomy(revised))
                 }
             }
+            .map(|()| id)
         });
         match result {
-            Ok(()) => {
+            Ok(id) => {
                 self.leave_create_taxonomy();
-                self.status = Some(Notice::Info(
-                    "Taxonomy change staged. Ctrl+S reviews before applying.".into(),
-                ));
+                self.status = Some(Notice::Info(format!(
+                    "Staged taxonomy \"{id}\". Ctrl+S reviews before applying."
+                )));
             }
             Err(error) => self.status = Some(Notice::Error(error)),
         }
@@ -3238,7 +3245,14 @@ fn render_metadata_frame(
     );
     let x = area.x + 1;
     let width = area.width.saturating_sub(2);
-    render_taxonomy_heading(frame, Rect::new(x, area.y + 1, width, 1), "Name");
+    frame.render_widget(
+        Paragraph::new(name_heading_line(
+            "Name",
+            &text.name.lines().join("\n"),
+            width,
+        )),
+        Rect::new(x, area.y + 1, width, 1),
+    );
     render_text_area(
         frame,
         &text.name,
@@ -4749,14 +4763,21 @@ mod tests {
         let source = state.selected_taxonomy().ok_or("missing source")?;
         state.handle_event(key(KeyCode::Char('f')), &workspace);
         state.advance_header(StdDuration::from_millis(240));
-        rename_creation(&mut state, &workspace, "research")?;
+        rename_creation(&mut state, &workspace, "Research")?;
         stage_creation(&mut state, &workspace);
         assert!(
-            matches!(state.status, Some(Notice::Error(ref message)) if message.contains("already exists"))
+            matches!(state.status, Some(Notice::Error(ref message)) if message == "A taxonomy named \"research\" already exists in the Library.")
         );
-        rename_creation(&mut state, &workspace, "Invalid")?;
+        rename_creation(&mut state, &workspace, &source.id().as_str().to_uppercase())?;
         stage_creation(&mut state, &workspace);
-        assert!(matches!(state.status, Some(Notice::Error(_))));
+        assert!(
+            matches!(state.status, Some(Notice::Error(ref message)) if message.contains("new taxonomy name"))
+        );
+        rename_creation(&mut state, &workspace, "2fa")?;
+        stage_creation(&mut state, &workspace);
+        assert!(
+            matches!(state.status, Some(Notice::Error(ref message)) if message == "Taxonomy name must start with a letter: \"2fa\".")
+        );
         rename_creation(&mut state, &workspace, "team")?;
 
         state.handle_event(key(KeyCode::Down), &workspace);
@@ -6610,6 +6631,276 @@ mod tests {
             &["team"]
         );
         assert_eq!(workspace.saves.get(), 0);
+        Ok(())
+    }
+
+    fn heading_row(terminal: &Terminal<TestBackend>, heading: &str) -> Option<String> {
+        let area = terminal.backend().buffer().area;
+        (0..area.height)
+            .map(|y| row_text(terminal, 0, y, area.width))
+            .find(|row| row.contains(&format!("{heading} ⠒")))
+    }
+
+    fn error_text(state: &State) -> Option<&str> {
+        match &state.status {
+            Some(Notice::Error(message)) => Some(message),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn create_name_heading_previews_the_saved_identifier_without_rewriting_the_name()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state.handle_event(key(KeyCode::Char('n')), &workspace);
+        let long = "Release Notes ".repeat(5);
+        let long_note = format!(
+            "saves as {}",
+            "release-notes-".repeat(5).trim_end_matches('-')
+        );
+        for (name, compact, wide) in [
+            (
+                "Team Changes",
+                "saves as team-changes",
+                "saves as team-changes",
+            ),
+            ("2fa", "start with a letter", "start with a letter"),
+            ("Café", "use letters a-z", "use letters a-z"),
+            ("!!!", "use letters a-z", "use letters a-z"),
+            (
+                long.as_str(),
+                "saves as release-notes-release-notes-release-notes…",
+                long_note.as_str(),
+            ),
+            ("team-changes", "", ""),
+            ("", "", ""),
+        ] {
+            rename_creation(&mut state, &workspace, name)?;
+            assert_eq!(state.status.as_ref().map(|_| ()), None);
+            for (width, height, note) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT, compact), (120, 30, wide)]
+            {
+                let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+                terminal.draw(|frame| state.render(frame))?;
+                let heading = heading_row(&terminal, "Name").ok_or("missing Name heading")?;
+                assert_eq!(heading.chars().count(), usize::from(width));
+                if note.is_empty() {
+                    assert!(heading.ends_with("⠒│"), "{name:?}: {heading:?}");
+                } else {
+                    assert!(
+                        heading.ends_with(&format!(" {note}│")),
+                        "{name:?}: {heading:?}"
+                    );
+                }
+            }
+            assert_eq!(
+                state
+                    .create_text
+                    .as_ref()
+                    .ok_or("missing text")?
+                    .name
+                    .lines(),
+                &[name.to_owned()]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn child_names_complete_as_identifiers_and_report_plain_errors()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state.handle_event(key(KeyCode::Char('n')), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
+        state.handle_event(Event::Paste("Breaking\nChange".into()), &workspace);
+        assert!(state.status.is_none());
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let heading = heading_row(&terminal, "Name").ok_or("missing Name heading")?;
+        assert!(
+            heading.ends_with(" saves as breaking-change│"),
+            "{heading:?}"
+        );
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(
+            Event::Paste("  Changes that break callers.  \n\n".into()),
+            &workspace,
+        );
+
+        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
+        state.handle_event(Event::Paste("two words".into()), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(Event::Paste("Why it matters \n".into()), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(key(KeyCode::Right), &workspace);
+        state.handle_event(key(KeyCode::Right), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(Event::Paste("Behavior\r\nChanged".into()), &workspace);
+        assert!(state.status.is_none());
+        for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+            terminal.draw(|frame| state.render(frame))?;
+            let heading =
+                heading_row(&terminal, "Condition name").ok_or("missing condition heading")?;
+            assert!(
+                heading.ends_with(" saves as behavior-changed│"),
+                "{heading:?}"
+            );
+            if height > MINIMUM_HEIGHT {
+                let heading = heading_row(&terminal, "Name").ok_or("missing Name heading")?;
+                assert!(heading.ends_with(" saves as two-words│"), "{heading:?}");
+            }
+        }
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(Event::Paste("\nWhen callers break.\n\n".into()), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        assert!(state.status.is_none());
+        assert!(matches!(state.screen, Screen::TypeEditor));
+        let property = &state
+            .type_editor
+            .as_ref()
+            .ok_or("missing type")?
+            .draft
+            .properties[0];
+        assert_eq!(property.key, "two-words");
+        assert_eq!(property.description, "Why it matters");
+        let PropertyRequirement::Conditional(condition) = &property.requirement else {
+            return Err("missing condition".into());
+        };
+        assert_eq!(condition.id().as_str(), "behavior-changed");
+        assert_eq!(condition.rationale(), "When callers break.");
+
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        assert!(state.status.is_none());
+        let types = &state.editor.as_ref().ok_or("missing taxonomy")?.types;
+        assert_eq!(types.len(), 1);
+        assert_eq!(types[0].id, "breaking-change");
+        assert_eq!(types[0].description, "Changes that break callers.");
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(text(&terminal).contains("breaking-change"));
+
+        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
+        state.handle_event(Event::Paste("BREAKING change".into()), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(Event::Paste("Duplicate".into()), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        assert_eq!(
+            error_text(&state),
+            Some("A type named \"breaking-change\" already exists in this taxonomy.")
+        );
+        assert!(matches!(state.screen, Screen::TypeEditor));
+        assert_eq!(
+            state.editor.as_ref().ok_or("missing taxonomy")?.types.len(),
+            1
+        );
+
+        for (name, message) in [
+            ("2fa", "Type name must start with a letter: \"2fa\"."),
+            (
+                "Café",
+                "Type name can't use \"é\". Use letters a-z and digits.",
+            ),
+            ("!!!", "Type name needs a letter."),
+            ("   ", "Type name is required."),
+        ] {
+            let editor = state.type_editor.as_mut().ok_or("missing type")?;
+            editor.focus = CreateFocus::Name;
+            editor.text.name.select_all();
+            state.handle_event(Event::Paste(name.into()), &workspace);
+            state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+            assert_eq!(error_text(&state), Some(message));
+            assert!(matches!(state.screen, Screen::TypeEditor));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn staging_trims_edited_prose_and_names_the_staged_identifier()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state.handle_event(key(KeyCode::Char('n')), &workspace);
+        state.handle_event(Event::Paste("Team Changes".into()), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(Event::Paste(" \n ".into()), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
+        state.handle_event(Event::Paste("feat".into()), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(Event::Paste("Feature".into()), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        stage_creation(&mut state, &workspace);
+        assert_eq!(
+            error_text(&state),
+            Some("description must contain non-whitespace text")
+        );
+        assert!(matches!(
+            state.screen,
+            Screen::TaxonomyEditor(EditorMode::Create)
+        ));
+
+        state.create_focus = CreateFocus::Description;
+        state
+            .create_text
+            .as_mut()
+            .ok_or("missing text")?
+            .description
+            .select_all();
+        state.handle_event(Event::Paste("  Team changes \n\n".into()), &workspace);
+        stage_creation(&mut state, &workspace);
+        assert!(matches!(state.screen, Screen::Home));
+        assert!(matches!(
+            state.status,
+            Some(Notice::Info(ref message))
+                if message == "Staged taxonomy \"team-changes\". Ctrl+S reviews before applying."
+        ));
+        let staged = state
+            .global
+            .as_ref()
+            .ok_or("missing global")?
+            .catalog()?
+            .find(&TaxonomyId::new("team-changes")?)
+            .cloned()
+            .ok_or("missing staged taxonomy")?;
+        assert_eq!(staged.description().as_str(), "Team changes");
+        assert_eq!(staged.commit_types()[0].id().as_str(), "feat");
+        Ok(())
+    }
+
+    #[test]
+    fn failed_staging_keeps_the_edited_description_as_typed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (workspace, source) = child_editor_workspace()?;
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state.library.select_taxonomy(3);
+        state.handle_event(key(KeyCode::Char('e')), &workspace);
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        for _ in source.description().as_str().chars() {
+            state.handle_event(key(KeyCode::Backspace), &workspace);
+        }
+        state.handle_event(Event::Paste("  Edited notes \n".into()), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(key(KeyCode::Char('d')), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        assert_eq!(
+            error_text(&state),
+            Some("taxonomy must contain at least one commit type")
+        );
+        assert!(matches!(
+            state.screen,
+            Screen::TaxonomyEditor(EditorMode::Edit)
+        ));
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert_eq!(
+            state.form.as_ref().ok_or("missing form")?.fields[1],
+            "  Edited notes \n"
+        );
         Ok(())
     }
 }
