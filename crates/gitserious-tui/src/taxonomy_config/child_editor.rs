@@ -247,6 +247,7 @@ pub(super) enum PropertyFocus {
     Name,
     Description,
     Policy,
+    Multiplicity,
     ConditionName,
     ConditionRationale,
 }
@@ -280,6 +281,13 @@ impl Policy {
     }
 }
 
+fn multiplicity_label(value: PropertyMultiplicity) -> &'static str {
+    match value {
+        PropertyMultiplicity::Single => "single",
+        PropertyMultiplicity::Multiple => "multiple",
+    }
+}
+
 pub(super) struct PropertyEditorState {
     pub target: Option<usize>,
     pub text: CreateTextEditors,
@@ -289,7 +297,9 @@ pub(super) struct PropertyEditorState {
     policy: Policy,
     multiplicity: PropertyMultiplicity,
     viewport_top: u16,
-    initial: (String, String, Policy, String, String),
+    policy_hit: Rect,
+    multiplicity_hit: Rect,
+    initial: (String, String, Policy, PropertyMultiplicity, String, String),
 }
 
 impl PropertyEditorState {
@@ -327,7 +337,16 @@ impl PropertyEditorState {
             policy,
             multiplicity: draft.multiplicity,
             viewport_top: 0,
-            initial: (draft.key, draft.description, policy, name, rationale),
+            policy_hit: Rect::default(),
+            multiplicity_hit: Rect::default(),
+            initial: (
+                draft.key,
+                draft.description,
+                policy,
+                draft.multiplicity,
+                name,
+                rationale,
+            ),
         }
     }
 
@@ -363,9 +382,18 @@ impl PropertyEditorState {
             self.text.name.lines().join("\n"),
             self.text.description.lines().join("\n"),
             self.policy,
+            self.multiplicity,
             self.condition_name.lines().join("\n"),
             self.condition_rationale.lines().join("\n"),
         ) != self.initial
+    }
+
+    pub fn click(&mut self, column: u16, row: u16) {
+        if contains(self.multiplicity_hit, column, row) {
+            self.focus = PropertyFocus::Multiplicity;
+        } else if contains(self.policy_hit, column, row) {
+            self.focus = PropertyFocus::Policy;
+        }
     }
 
     pub fn paste(&mut self, text: &str) -> ChildAction {
@@ -395,7 +423,7 @@ impl PropertyEditorState {
                 self.condition_rationale.insert_str(text);
                 ChildAction::Continue
             }
-            PropertyFocus::Policy => ChildAction::Continue,
+            PropertyFocus::Policy | PropertyFocus::Multiplicity => ChildAction::Continue,
         }
     }
 
@@ -409,6 +437,12 @@ impl PropertyEditorState {
         match key.code {
             KeyCode::Left | KeyCode::Right if self.focus == PropertyFocus::Policy => {
                 self.policy = self.policy.next(key.code == KeyCode::Right)
+            }
+            KeyCode::Left | KeyCode::Right if self.focus == PropertyFocus::Multiplicity => {
+                self.multiplicity = match self.multiplicity {
+                    PropertyMultiplicity::Single => PropertyMultiplicity::Multiple,
+                    PropertyMultiplicity::Multiple => PropertyMultiplicity::Single,
+                }
             }
             KeyCode::Enter
                 if key.modifiers.contains(KeyModifiers::ALT)
@@ -454,7 +488,8 @@ impl PropertyEditorState {
         self.focus = match self.focus {
             PropertyFocus::Name => PropertyFocus::Description,
             PropertyFocus::Description => PropertyFocus::Policy,
-            PropertyFocus::Policy if self.policy == Policy::Conditional => {
+            PropertyFocus::Policy => PropertyFocus::Multiplicity,
+            PropertyFocus::Multiplicity if self.policy == Policy::Conditional => {
                 PropertyFocus::ConditionName
             }
             PropertyFocus::ConditionName => PropertyFocus::ConditionRationale,
@@ -481,14 +516,16 @@ impl PropertyEditorState {
                 }
             }
             PropertyFocus::Policy if !down => self.focus = PropertyFocus::Description,
-            PropertyFocus::Policy if self.policy == Policy::Conditional => {
+            PropertyFocus::Policy => self.focus = PropertyFocus::Multiplicity,
+            PropertyFocus::Multiplicity if !down => self.focus = PropertyFocus::Policy,
+            PropertyFocus::Multiplicity if down && self.policy == Policy::Conditional => {
                 self.focus = PropertyFocus::ConditionName
             }
             PropertyFocus::ConditionName => {
                 self.focus = if down {
                     PropertyFocus::ConditionRationale
                 } else {
-                    PropertyFocus::Policy
+                    PropertyFocus::Multiplicity
                 }
             }
             PropertyFocus::ConditionRationale if !down => {
@@ -511,9 +548,9 @@ impl PropertyEditorState {
             area,
         );
         let desired_height: u16 = if self.policy == Policy::Conditional {
-            17
+            20
         } else {
-            11
+            14
         };
         let pane = Rect::new(area.x, area.y, area.width, desired_height.min(area.height));
         let style = focus_frame_style(true);
@@ -527,6 +564,8 @@ impl PropertyEditorState {
         let width = pane.width.saturating_sub(2);
         let viewport_height = pane.height.saturating_sub(2);
         if width == 0 || viewport_height == 0 {
+            self.policy_hit = Rect::default();
+            self.multiplicity_hit = Rect::default();
             return;
         }
         let content_height = desired_height - 2;
@@ -534,8 +573,9 @@ impl PropertyEditorState {
             PropertyFocus::Name => (0, 1),
             PropertyFocus::Description => (3, 5),
             PropertyFocus::Policy => (6, 7),
-            PropertyFocus::ConditionName => (9, 10),
-            PropertyFocus::ConditionRationale => (12, 14),
+            PropertyFocus::Multiplicity => (9, 10),
+            PropertyFocus::ConditionName => (12, 13),
+            PropertyFocus::ConditionRationale => (15, 17),
         };
         self.viewport_top = self
             .viewport_top
@@ -549,12 +589,19 @@ impl PropertyEditorState {
         self.viewport_top = self
             .viewport_top
             .min(content_height.saturating_sub(viewport_height));
+        self.policy_hit = visible_rows(pane, self.viewport_top, 6, 8);
+        self.multiplicity_hit = visible_rows(pane, self.viewport_top, 9, 11);
 
         let mut content = Buffer::empty(Rect::new(0, 0, width, content_height));
         for cell in &mut content.content {
             cell.set_style(Style::default().fg(Color::White).bg(JET_BLACK));
         }
-        for (y, label) in [(0, "Name"), (3, "Description"), (6, "Policy")] {
+        for (y, label) in [
+            (0, "Name"),
+            (3, "Description"),
+            (6, "Policy"),
+            (9, "Multiplicity"),
+        ] {
             Paragraph::new(taxonomy_heading_line(label, width))
                 .render(Rect::new(0, y, width, 1), &mut content);
         }
@@ -570,35 +617,35 @@ impl PropertyEditorState {
             Rect::new(0, 4, width, 2),
             self.focus == PropertyFocus::Description,
         );
-        let policy_style = if self.focus == PropertyFocus::Policy {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::REVERSED)
-        } else {
-            Style::default().fg(Color::White)
-        };
-        let policy = if self.focus == PropertyFocus::Policy {
-            format!("‹ {} ›", self.policy.label())
-        } else {
-            self.policy.label().to_owned()
-        };
-        Paragraph::new(Span::styled(policy, policy_style))
-            .render(Rect::new(0, 7, width, 1), &mut content);
+        render_choice(
+            &mut content,
+            7,
+            width,
+            self.policy.label(),
+            self.focus == PropertyFocus::Policy,
+        );
+        render_choice(
+            &mut content,
+            10,
+            width,
+            multiplicity_label(self.multiplicity),
+            self.focus == PropertyFocus::Multiplicity,
+        );
         if self.policy == Policy::Conditional {
-            for (y, label) in [(9, "Condition name"), (12, "Condition rationale")] {
+            for (y, label) in [(12, "Condition name"), (15, "Condition rationale")] {
                 Paragraph::new(taxonomy_heading_line(label, width))
                     .render(Rect::new(0, y, width, 1), &mut content);
             }
             render_property_input(
                 &mut content,
                 &self.condition_name,
-                Rect::new(0, 10, width, 1),
+                Rect::new(0, 13, width, 1),
                 self.focus == PropertyFocus::ConditionName,
             );
             render_property_input(
                 &mut content,
                 &self.condition_rationale,
-                Rect::new(0, 13, width, 2),
+                Rect::new(0, 16, width, 2),
                 self.focus == PropertyFocus::ConditionRationale,
             );
         }
@@ -610,6 +657,37 @@ impl PropertyEditorState {
         }
         render_counter(frame, pane, self.text.used(), PROPERTY_LIMIT);
     }
+}
+
+fn render_choice(buffer: &mut Buffer, y: u16, width: u16, label: &str, focused: bool) {
+    let style = if focused {
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::REVERSED)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    let text = if focused {
+        format!("‹ {label} ›")
+    } else {
+        label.to_owned()
+    };
+    Paragraph::new(Span::styled(text, style)).render(Rect::new(0, y, width, 1), buffer);
+}
+
+fn visible_rows(pane: Rect, viewport_top: u16, start: u16, end: u16) -> Rect {
+    let viewport_height = pane.height.saturating_sub(2);
+    let visible_start = start.max(viewport_top);
+    let visible_end = end.min(viewport_top.saturating_add(viewport_height));
+    if visible_start >= visible_end || pane.width < 3 {
+        return Rect::default();
+    }
+    Rect::new(
+        pane.x + 1,
+        pane.y + 1 + visible_start - viewport_top,
+        pane.width - 2,
+        visible_end - visible_start,
+    )
 }
 
 fn render_property_input(buffer: &mut Buffer, text: &TextArea<'_>, area: Rect, focused: bool) {
@@ -733,6 +811,7 @@ mod tests {
         property.key(key(KeyCode::Right));
         assert!(property.candidate().is_err());
         property.key(key(KeyCode::Enter));
+        property.key(key(KeyCode::Enter));
         property.paste("behavior-changed");
         assert!(property.candidate().is_err());
         property.key(key(KeyCode::Enter));
@@ -793,22 +872,23 @@ mod tests {
                 let area = frame.area();
                 property.render(frame, area);
             })?;
-            let pane_height = height.min(17);
+            let pane_height = height.min(20);
             let buffer = terminal.backend().buffer();
             let row = |y| {
                 (1..width - 1)
                     .map(|x| buffer[(x, y)].symbol())
                     .collect::<String>()
             };
-            assert_eq!(property.viewport_top, if height < 17 { 3 } else { 0 });
+            assert_eq!(property.viewport_top, if height < 20 { 6 } else { 0 });
             assert_eq!(buffer[(0, 0)].fg, Color::Yellow);
             assert_eq!(buffer[(0, pane_height - 1)].symbol(), "└");
             for (offset, label) in [
                 (1_u16, "Name"),
                 (4, "Description"),
                 (7, "Policy"),
-                (10, "Condition name"),
-                (13, "Condition rationale"),
+                (10, "Multiplicity"),
+                (13, "Condition name"),
+                (16, "Condition rationale"),
             ] {
                 if let Some(y) = offset.checked_sub(property.viewport_top)
                     && y > 0
@@ -818,7 +898,7 @@ mod tests {
                     assert!(row(y).starts_with(label));
                 }
             }
-            for offset in [9, 12] {
+            for offset in [9, 12, 15] {
                 let y = offset - property.viewport_top;
                 assert!(row(y).trim().is_empty());
             }
@@ -837,8 +917,8 @@ mod tests {
                 .ok_or("missing cursor")?;
             let visible_cursor = (1 + cursor.x, 1 + cursor.y - property.viewport_top);
             assert!(
-                visible_cursor.1 >= 14 - property.viewport_top
-                    && visible_cursor.1 <= 15 - property.viewport_top
+                visible_cursor.1 >= 17 - property.viewport_top
+                    && visible_cursor.1 <= 18 - property.viewport_top
             );
             assert!(buffer[visible_cursor].modifier.contains(Modifier::REVERSED));
             assert_eq!(property.condition_rationale.cursor(), data_cursor);
@@ -874,6 +954,7 @@ mod tests {
             PropertyFocus::Name,
             PropertyFocus::Description,
             PropertyFocus::Policy,
+            PropertyFocus::Multiplicity,
             PropertyFocus::ConditionName,
             PropertyFocus::ConditionRationale,
         ] {
@@ -881,13 +962,13 @@ mod tests {
             draw_compact(&mut property, &mut compact)?;
             assert_eq!(
                 property.viewport_top,
-                if focus == PropertyFocus::ConditionRationale {
-                    3
-                } else {
-                    0
+                match focus {
+                    PropertyFocus::ConditionName => 2,
+                    PropertyFocus::ConditionRationale => 6,
+                    _ => 0,
                 }
             );
-            if focus != PropertyFocus::Policy {
+            if !matches!(focus, PropertyFocus::Policy | PropertyFocus::Multiplicity) {
                 let positions = compact
                     .backend()
                     .buffer()
@@ -907,32 +988,131 @@ mod tests {
         let data_cursor = property.condition_rationale.cursor();
         property.key(key(KeyCode::Up));
         property.key(key(KeyCode::Up));
+        assert_eq!(property.focus, PropertyFocus::Multiplicity);
+        property.key(key(KeyCode::Up));
         assert_eq!(property.focus, PropertyFocus::Policy);
         property.key(key(KeyCode::Right));
         assert_eq!(property.policy, Policy::Required);
         draw_compact(&mut property, &mut compact)?;
         assert_eq!(property.viewport_top, 0);
-        assert_eq!(compact.backend().buffer()[(0, 13)].symbol(), "└");
-        for y in 14..18 {
+        assert_eq!(compact.backend().buffer()[(0, 16)].symbol(), "└");
+        for y in 17..18 {
             assert!((0..60).all(|x| compact.backend().buffer()[(x, y)].symbol() == " "));
         }
         property.key(key(KeyCode::Right));
         assert_eq!(property.policy, Policy::Recommended);
         draw_compact(&mut property, &mut compact)?;
-        assert_eq!(compact.backend().buffer()[(0, 13)].symbol(), "└");
+        assert_eq!(compact.backend().buffer()[(0, 16)].symbol(), "└");
         property.key(key(KeyCode::Right));
         property.key(key(KeyCode::Down));
         property.key(key(KeyCode::Down));
+        property.key(key(KeyCode::Down));
         draw_compact(&mut property, &mut compact)?;
-        assert_eq!(property.viewport_top, 3);
+        assert_eq!(property.viewport_top, 6);
         let mut wide = Terminal::new(TestBackend::new(120, 30))?;
         wide.draw(|frame| property.render(frame, Rect::new(0, 3, 120, 26)))?;
         assert_eq!(property.viewport_top, 0);
-        assert_eq!(wide.backend().buffer()[(0, 19)].symbol(), "└");
+        assert_eq!(wide.backend().buffer()[(0, 22)].symbol(), "└");
         assert_eq!(property.condition_rationale.cursor(), data_cursor);
         draw_compact(&mut property, &mut compact)?;
-        assert_eq!(property.viewport_top, 3);
+        assert_eq!(property.viewport_top, 6);
         assert_eq!(property.candidate()?, draft);
         Ok(())
+    }
+
+    #[test]
+    fn multiplicity_toggles_and_round_trips_on_new_and_copied_properties()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut property = PropertyEditorState::new(
+            Some(0),
+            PropertyDraft {
+                key: "scope".into(),
+                description: "What is in scope".into(),
+                requirement: PropertyRequirement::Required,
+                multiplicity: PropertyMultiplicity::Single,
+            },
+        );
+        assert!(!property.is_dirty());
+        assert_eq!(
+            property.candidate()?.multiplicity,
+            PropertyMultiplicity::Single
+        );
+        property.key(key(KeyCode::Down));
+        property.key(key(KeyCode::Down));
+        property.key(key(KeyCode::Down));
+        assert_eq!(property.focus, PropertyFocus::Multiplicity);
+        assert!(!property.is_dirty());
+        let mut terminal = Terminal::new(TestBackend::new(60, 16))?;
+        terminal.draw(|frame| property.render(frame, frame.area()))?;
+        let focused = frame_text(&terminal);
+        assert!(focused.contains("Multiplicity"));
+        assert!(focused.contains("‹ single ›"));
+        property.key(key(KeyCode::Right));
+        assert!(property.is_dirty());
+        assert_eq!(
+            property.candidate()?.multiplicity,
+            PropertyMultiplicity::Multiple
+        );
+        property.key(key(KeyCode::Left));
+        assert!(!property.is_dirty());
+        assert_eq!(
+            property.candidate()?.multiplicity,
+            PropertyMultiplicity::Single
+        );
+        property.key(key(KeyCode::Right));
+        terminal.draw(|frame| property.render(frame, frame.area()))?;
+        assert!(frame_text(&terminal).contains("‹ multiple ›"));
+        property.focus = PropertyFocus::Name;
+        terminal.draw(|frame| property.render(frame, frame.area()))?;
+        let resting = frame_text(&terminal);
+        assert!(resting.contains("multiple"));
+        assert!(!resting.contains('‹'));
+
+        let mut copied = PropertyEditorState::new(
+            Some(0),
+            PropertyDraft {
+                key: "notes".into(),
+                description: "Existing notes".into(),
+                requirement: PropertyRequirement::Optional,
+                multiplicity: PropertyMultiplicity::Multiple,
+            },
+        );
+        assert_eq!(
+            copied.candidate()?.multiplicity,
+            PropertyMultiplicity::Multiple
+        );
+        for _ in 0..3 {
+            copied.key(key(KeyCode::Down));
+        }
+        assert_eq!(copied.focus, PropertyFocus::Multiplicity);
+        let mut copied_terminal = Terminal::new(TestBackend::new(40, 8))?;
+        copied_terminal.draw(|frame| copied.render(frame, frame.area()))?;
+        let multiplicity_row = (0..8)
+            .find(|y| frame_row(&copied_terminal, *y).contains("Multiplicity"))
+            .ok_or("missing multiplicity heading")?;
+        copied.focus = PropertyFocus::Name;
+        copied.click(2, multiplicity_row);
+        assert_eq!(copied.focus, PropertyFocus::Multiplicity);
+        copied.key(key(KeyCode::Left));
+        assert!(copied.is_dirty());
+        let candidate = copied.candidate()?;
+        assert_eq!(candidate.multiplicity, PropertyMultiplicity::Single);
+        assert_eq!(candidate.requirement, PropertyRequirement::Optional);
+        Ok(())
+    }
+
+    fn frame_text(terminal: &Terminal<TestBackend>) -> String {
+        let height = terminal.backend().buffer().area.height;
+        (0..height)
+            .map(|y| frame_row(terminal, y))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn frame_row(terminal: &Terminal<TestBackend>, y: u16) -> String {
+        let width = terminal.backend().buffer().area.width;
+        (0..width)
+            .map(|column| terminal.backend().buffer()[(column, y)].symbol())
+            .collect()
     }
 }

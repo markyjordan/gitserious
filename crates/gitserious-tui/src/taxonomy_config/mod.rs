@@ -820,6 +820,10 @@ impl State {
                             editor.selected = index;
                         }
                     }
+                } else if matches!(self.screen, Screen::PropertyEditor)
+                    && let Some(editor) = &mut self.property_editor
+                {
+                    editor.click(mouse.column, mouse.row);
                 } else if matches!(self.screen, Screen::TaxonomyEditor(EditorMode::Create)) {
                     let pane = self.create_areas[1];
                     let list = Rect::new(
@@ -2305,7 +2309,7 @@ impl State {
                 vec![
                     ("esc", "back"),
                     ("↑/↓", "move"),
-                    ("←/→", "policy"),
+                    ("←/→", "choice"),
                     ("ctrl+s", "complete"),
                 ]
             }
@@ -6272,6 +6276,99 @@ mod tests {
                 assert_eq!(catalog.find(source.id()), Some(&source));
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn multiple_property_survives_stage_and_apply() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state.handle_event(key(KeyCode::Char('n')), &workspace);
+        state.handle_event(Event::Paste("team".into()), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(Event::Paste("Team changes".into()), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
+        state.handle_event(Event::Paste("feat".into()), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(Event::Paste("Feature".into()), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
+        state.handle_event(Event::Paste("scope".into()), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(Event::Paste("What is in scope".into()), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        assert_eq!(
+            state
+                .property_editor
+                .as_ref()
+                .ok_or("missing property")?
+                .focus,
+            child_editor::PropertyFocus::Multiplicity
+        );
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(text(&terminal).contains("Multiplicity"));
+        assert!(text(&terminal).contains("‹ single ›"));
+        let area = terminal.backend().buffer().area;
+        let (column, row) = (0..area.height)
+            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+            .find(|&(x, y)| terminal.backend().buffer()[(x, y)].symbol() == "‹")
+            .ok_or("missing multiplicity choice")?;
+        state
+            .property_editor
+            .as_mut()
+            .ok_or("missing property")?
+            .focus = child_editor::PropertyFocus::Name;
+        state.handle_event(
+            Event::Mouse(ratatui::crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }),
+            &workspace,
+        );
+        assert_eq!(
+            state
+                .property_editor
+                .as_ref()
+                .ok_or("missing property")?
+                .focus,
+            child_editor::PropertyFocus::Multiplicity
+        );
+        state.handle_event(key(KeyCode::Right), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(text(&terminal).contains("‹ multiple ›"));
+        state.handle_event(key(KeyCode::Esc), &workspace);
+        assert!(matches!(state.screen, Screen::ConfirmDiscardChild(_)));
+        state.handle_event(key(KeyCode::Char('n')), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        stage_creation(&mut state, &workspace);
+        assert!(matches!(state.screen, Screen::Home));
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        assert!(matches!(
+            state.screen,
+            Screen::Review(ConfigurationDestination::Global)
+        ));
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert_eq!(workspace.saves.get(), 1);
+        let stored = workspace
+            .global
+            .borrow()
+            .catalog()?
+            .find(&TaxonomyId::new("team")?)
+            .cloned()
+            .ok_or("missing applied taxonomy")?;
+        let property = &stored
+            .commit_types()
+            .last()
+            .ok_or("missing type")?
+            .properties()[0];
+        assert_eq!(property.key().as_str(), "scope");
+        assert_eq!(property.multiplicity(), PropertyMultiplicity::Multiple);
+        assert_eq!(*property.requirement(), PropertyRequirement::Required);
         Ok(())
     }
 

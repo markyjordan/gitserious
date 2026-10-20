@@ -80,19 +80,22 @@ as they do in the Taxonomy view. Text-area clicks do not move the cursor.
 The breadcrumb adds `add type` or `edit type`, then `add property` or
 `edit property` while that child is open.
 
-The Property frame contains Name, Description, and Policy, with a `used/100`
-counter for Name and Description. New properties default to required policy
-and a single value. Left and Right on Policy choose required, recommended,
-or conditional. Conditional policy exposes Condition name and Condition
-rationale; both are required and excluded from the counter. Existing Optional
-policy, multiplicity, condition metadata, and schema versions are preserved
-when copied items are edited. Choosing another policy explicitly replaces
-Optional. Alt+Enter inserts a Description or Condition rationale newline.
-Required and recommended Property views use an 11-row frame. Conditional
-uses 17 rows, with a blank row after Policy and after Condition name, and two
-Condition rationale input rows. On shorter terminals, the sections scroll to
-keep the active heading and input visible while the frame and counter stay
-fixed. Unused space below a compact frame stays empty.
+The Property frame contains Name, Description, Policy, and Multiplicity, with
+a `used/100` counter for Name and Description. New properties default to required
+policy and a single value. Left and Right on Policy choose required,
+recommended, or conditional. Left and Right on Multiplicity choose single or
+multiple. Conditional policy exposes Condition name and Condition rationale;
+both are required and excluded from the counter. Existing Optional policy,
+condition metadata, and schema versions are preserved when copied items are
+edited. Copied multiplicity stays until Left or Right changes it. Choosing
+another policy explicitly replaces Optional. Alt+Enter inserts a Description
+or Condition rationale newline. Required and recommended Property views use a
+14-row frame. Conditional uses 20 rows, with a blank row after Policy, after
+Multiplicity, and after Condition name, and two Condition rationale input
+rows. On shorter terminals, the sections scroll to keep the active heading
+and input visible while the frame and counter stay fixed. Unused space below
+a compact frame stays empty. Clicking Policy or Multiplicity moves focus
+there. Text-area clicks do not move the cursor.
 
 `ctrl+s` completes a Property into the local Type draft, then completes the
 Type into the taxonomy draft. Type and property names must be unique within
