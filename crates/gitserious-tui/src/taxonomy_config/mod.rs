@@ -1402,9 +1402,7 @@ impl State {
                 self.open_new_type_form();
             }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.status = Some(Notice::Info(
-                    "Press / for validate and stage taxonomy.".into(),
-                ));
+                self.stage_editor(EditorMode::Create);
             }
             KeyCode::Up
                 if self.create_focus == CreateFocus::Types
@@ -2266,8 +2264,8 @@ impl State {
                 if mode == EditorMode::Create {
                     vec![
                         ("esc", "back"),
-                        ("↑/↓", "move"),
                         ("enter", "next/open"),
+                        ("ctrl+s", "stage"),
                         ("/", "commands"),
                     ]
                 } else {
@@ -4229,7 +4227,7 @@ mod tests {
         );
         assert!(
             row_text(&terminal, 0, MINIMUM_HEIGHT - 1, MINIMUM_WIDTH)
-                .starts_with("esc: back  ↑/↓: move  enter: next/open  /: commands")
+                .starts_with("esc: back  enter: next/open  ctrl+s: stage  /: commands")
         );
         state.advance_header(StdDuration::from_millis(240));
         terminal.draw(|frame| state.render(frame))?;
@@ -4273,6 +4271,7 @@ mod tests {
             "Team changes/"
         );
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        assert!(matches!(state.status, Some(Notice::Error(_))));
         assert!(matches!(
             state.screen,
             Screen::TaxonomyEditor(EditorMode::Create)
@@ -4343,7 +4342,7 @@ mod tests {
         let taxonomy = state.create_areas[0];
         assert!(
             row_text(&terminal, 0, MINIMUM_HEIGHT - 1, MINIMUM_WIDTH)
-                .starts_with("esc: back  ↑/↓: move  enter: next/open  /: commands")
+                .starts_with("esc: back  enter: next/open  ctrl+s: stage  /: commands")
         );
         assert!(!row_text(&terminal, 0, MINIMUM_HEIGHT - 1, MINIMUM_WIDTH).contains('|'));
         state.handle_event(key(KeyCode::Tab), &workspace);
@@ -5483,7 +5482,15 @@ mod tests {
             state.handle_event(key(KeyCode::Char('/')), &workspace);
             terminal.draw(|frame| state.render(frame))?;
             assert!(text(&terminal).contains("add type"));
-            assert!(text(&terminal).contains("validate and stage taxonomy"));
+            let Some(HomeOverlay::CreatePalette(palette)) = &state.home_overlay else {
+                return Err("missing create palette".into());
+            };
+            let list = palette.list_area;
+            let stage_row = (list.y..list.bottom())
+                .map(|y| row_text(&terminal, list.x, y, list.width))
+                .find(|row| row.starts_with("validate and stage taxonomy"))
+                .ok_or("missing stage command")?;
+            assert!(stage_row.ends_with("ctrl+s"), "{stage_row:?}");
         }
         Ok(())
     }
@@ -6901,6 +6908,85 @@ mod tests {
             state.form.as_ref().ok_or("missing form")?.fields[1],
             "  Edited notes \n"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn natural_names_create_and_stage_a_taxonomy_with_ctrl_s_at_every_level()
+    -> Result<(), Box<dyn std::error::Error>> {
+        fn send(state: &mut State, workspace: &Workspace, event: Event) {
+            state.handle_event(event, workspace);
+            assert_eq!(error_text(state), None);
+        }
+        fn type_text(state: &mut State, workspace: &Workspace, text: &str) {
+            for character in text.chars() {
+                send(state, workspace, key(KeyCode::Char(character)));
+            }
+        }
+        fn assert_preview(
+            state: &mut State,
+            heading: &str,
+            note: &str,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
+                let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+                terminal.draw(|frame| state.render(frame))?;
+                let row = heading_row(&terminal, heading).ok_or("missing heading")?;
+                assert!(row.ends_with(&format!(" {note}│")), "{row:?}");
+            }
+            Ok(())
+        }
+
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        send(&mut state, &workspace, key(KeyCode::Char('n')));
+        type_text(&mut state, &workspace, "Team Changes");
+        assert_preview(&mut state, "Name", "saves as team-changes")?;
+        send(&mut state, &workspace, key(KeyCode::Enter));
+        type_text(&mut state, &workspace, "Changes our team ships");
+
+        send(&mut state, &workspace, ctrl(KeyCode::Char('n')));
+        type_text(&mut state, &workspace, "Breaking change");
+        assert_preview(&mut state, "Name", "saves as breaking-change")?;
+        send(&mut state, &workspace, key(KeyCode::Enter));
+        type_text(&mut state, &workspace, "Changes that break callers");
+
+        send(&mut state, &workspace, ctrl(KeyCode::Char('n')));
+        type_text(&mut state, &workspace, "two words");
+        assert_preview(&mut state, "Name", "saves as two-words")?;
+        send(&mut state, &workspace, key(KeyCode::Enter));
+        type_text(&mut state, &workspace, "What the change breaks");
+
+        send(&mut state, &workspace, ctrl(KeyCode::Char('s')));
+        assert!(matches!(state.screen, Screen::TypeEditor));
+        send(&mut state, &workspace, ctrl(KeyCode::Char('s')));
+        assert!(matches!(
+            state.screen,
+            Screen::TaxonomyEditor(EditorMode::Create)
+        ));
+        send(&mut state, &workspace, ctrl(KeyCode::Char('s')));
+        assert!(matches!(state.screen, Screen::Home));
+        assert!(matches!(
+            state.status,
+            Some(Notice::Info(ref message))
+                if message == "Staged taxonomy \"team-changes\". Ctrl+S reviews before applying."
+        ));
+        let staged = state
+            .global
+            .as_ref()
+            .ok_or("missing global")?
+            .catalog()?
+            .find(&TaxonomyId::new("team-changes")?)
+            .cloned()
+            .ok_or("missing staged taxonomy")?;
+        let [kind] = staged.commit_types() else {
+            return Err("expected one type".into());
+        };
+        assert_eq!(kind.id().as_str(), "breaking-change");
+        assert_eq!(kind.properties().len(), 1);
+        assert_eq!(kind.properties()[0].key().as_str(), "two-words");
+        assert_eq!(workspace.saves.get(), 0);
         Ok(())
     }
 }
