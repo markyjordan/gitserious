@@ -5607,7 +5607,7 @@ mod tests {
         assert!(edit_row.starts_with("New / edit / fork / delete"));
         assert!(edit_row.ends_with("n/e/f/d"));
         assert!(configure_row.starts_with("Configure global"));
-        assert!(configure_row.ends_with("c"));
+        assert!(configure_row.ends_with('c'));
         state.handle_event(key(KeyCode::Enter), &workspace);
         state.handle_event(
             Event::Mouse(ratatui::crossterm::event::MouseEvent {
