@@ -24,6 +24,11 @@ the default and available set independently or inherit either field. An
 uninitialized repository offers an Initialize action that reviews the portable
 policy before creating `gitserious.toml` and `gitserious.lock`.
 
+From Library, `c` or the `configure global` command opens those Global default
+and available settings. Space toggles availability and Enter sets the default.
+`ctrl+s` stages the edit for review, and Enter on review applies it. Creating
+a taxonomy leaves the available set unchanged.
+
 Library groups built-in and custom taxonomies beneath ruled headings with a
 nonselectable blank row between sections. A separate Taxonomy Description box
 sits below the list and shows the selected description and optional fork
@@ -117,12 +122,13 @@ The Project and Library command bars show `m: menu`, which cycles between them.
 The `/` key opens commands; clicking a tab also switches views. Command bar
 hints use spaces rather than pipe separators. Library commands use lowercase
 labels: `create taxonomy`, `edit taxonomy`, `fork taxonomy`, `delete taxonomy`,
-`review changes`, `switch to project`, `help`, and `quit`. Shortcuts align at the
-right edge, including `m` beside the switch command.
+`configure global`, `review changes`, `switch to project`, `help`, and `quit`.
+Shortcuts align at the right edge, including `m` beside the switch command and
+`c` beside configure global.
 Project has its own command list. A bordered Search field shows the `/` prompt
 and input cursor above the results. Arrow keys select a filtered command and
 Enter runs it; Esc closes the popup. Existing direct shortcuts such as `n`,
-`e`, `f`, `d`, and `ctrl+s` still work. Built-ins may be forked; custom taxonomies
+`e`, `f`, `d`, `c`, and `ctrl+s` still work. Built-ins may be forked; custom taxonomies
 may also be edited or deleted. Fork lineage is informational and never updates.
 The contextual Help popup aligns actions on the left and keys on the right;
 Esc closes it. Both popups show their bottom hints as `[key] action`.

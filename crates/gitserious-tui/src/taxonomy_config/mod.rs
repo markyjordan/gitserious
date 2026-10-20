@@ -174,6 +174,7 @@ impl ProjectSection {
 #[derive(Clone, Copy, Debug)]
 enum PendingAction {
     EditProject,
+    EditGlobal,
     InitializeProject,
     ReviewProject,
     Create,
@@ -988,7 +989,13 @@ impl State {
         workspace: &dyn ConfigurationWorkspace,
     ) -> bool {
         match command {
-            HomeCommand::Configure => self.request_project_action(PendingAction::EditProject),
+            HomeCommand::Configure => {
+                if self.category == Category::Library {
+                    self.request_global_action(PendingAction::EditGlobal);
+                } else {
+                    self.request_project_action(PendingAction::EditProject);
+                }
+            }
             HomeCommand::Initialize => {
                 self.request_project_action(PendingAction::InitializeProject);
             }
@@ -1120,6 +1127,11 @@ impl State {
                 if self.category == Category::Library && key.modifiers.is_empty() =>
             {
                 self.request_global_action(PendingAction::Delete);
+            }
+            KeyCode::Char('c')
+                if self.category == Category::Library && key.modifiers.is_empty() =>
+            {
+                self.request_global_action(PendingAction::EditGlobal);
             }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.category == Category::Library {
@@ -1784,8 +1796,10 @@ impl State {
             self.status = Some(Notice::Error(error));
             return;
         }
-        if !matches!(action, PendingAction::Create | PendingAction::ReviewGlobal)
-            && self.selected_taxonomy().is_none()
+        if !matches!(
+            action,
+            PendingAction::Create | PendingAction::ReviewGlobal | PendingAction::EditGlobal
+        ) && self.selected_taxonomy().is_none()
         {
             self.status = Some(Notice::Error("select a taxonomy".into()));
             return;
@@ -1820,6 +1834,10 @@ impl State {
             PendingAction::EditProject => {
                 self.active_scope = ConfigurationDestination::Project;
                 self.open_settings(ConfigurationDestination::Project);
+            }
+            PendingAction::EditGlobal => {
+                self.active_scope = ConfigurationDestination::Global;
+                self.open_settings(ConfigurationDestination::Global);
             }
             PendingAction::InitializeProject => {
                 self.active_scope = ConfigurationDestination::Project;
@@ -5420,7 +5438,7 @@ mod tests {
             };
             assert_eq!(
                 terminal.backend().buffer()
-                    [(palette.list_area.right() - 1, palette.list_area.y + 5)]
+                    [(palette.list_area.right() - 1, palette.list_area.y + 6)]
                     .symbol(),
                 "m"
             );
@@ -5578,15 +5596,18 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         state.handle_event(key(KeyCode::Char('?')), &workspace);
         terminal.draw(|frame| state.render(frame))?;
-        let help = centered_rect(58, 12, Rect::new(0, 3, MINIMUM_WIDTH, MINIMUM_HEIGHT - 4));
+        let help = centered_rect(58, 13, Rect::new(0, 3, MINIMUM_WIDTH, MINIMUM_HEIGHT - 4));
         let content_x = help.x + 2;
         let content_width = help.width - 4;
         let switch_row = row_text(&terminal, content_x, help.y + 2, content_width);
         let edit_row = row_text(&terminal, content_x, help.y + 6, content_width);
+        let configure_row = row_text(&terminal, content_x, help.y + 7, content_width);
         assert!(switch_row.starts_with("Switch Project / Library"));
         assert!(switch_row.ends_with("m/click"));
         assert!(edit_row.starts_with("New / edit / fork / delete"));
         assert!(edit_row.ends_with("n/e/f/d"));
+        assert!(configure_row.starts_with("Configure global"));
+        assert!(configure_row.ends_with("c"));
         state.handle_event(key(KeyCode::Enter), &workspace);
         state.handle_event(
             Event::Mouse(ratatui::crossterm::event::MouseEvent {
@@ -5600,6 +5621,99 @@ mod tests {
         assert!(matches!(state.home_overlay, Some(HomeOverlay::Help)));
         state.handle_event(key(KeyCode::Esc), &workspace);
         assert!(state.home_overlay.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn library_configure_opens_global_settings_and_stages_review()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut project = State::new(&workspace);
+        project
+            .project
+            .as_mut()
+            .ok_or("missing project")?
+            .initialize_project()?;
+        project.handle_event(key(KeyCode::Char('/')), &workspace);
+        project.handle_event(Event::Paste("configure".into()), &workspace);
+        project.handle_event(key(KeyCode::Enter), &workspace);
+        assert!(matches!(
+            project.screen,
+            Screen::Settings(ConfigurationDestination::Project)
+        ));
+        assert_eq!(project.active_scope, ConfigurationDestination::Project);
+        project.handle_event(key(KeyCode::Esc), &workspace);
+        project.handle_event(key(KeyCode::Char('c')), &workspace);
+        assert!(matches!(project.screen, Screen::Home));
+
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        for _ in 0..3 {
+            state.handle_event(key(KeyCode::Down), &workspace);
+        }
+        assert!(state.library.create_selected);
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert!(matches!(
+            state.screen,
+            Screen::TaxonomyEditor(EditorMode::Create)
+        ));
+        state.handle_event(key(KeyCode::Esc), &workspace);
+        assert!(matches!(state.screen, Screen::Home));
+
+        state.handle_event(key(KeyCode::Char('c')), &workspace);
+        assert!(matches!(
+            state.screen,
+            Screen::Settings(ConfigurationDestination::Global)
+        ));
+        assert_eq!(state.active_scope, ConfigurationDestination::Global);
+        state.handle_event(key(KeyCode::Esc), &workspace);
+
+        state.handle_event(key(KeyCode::Char('/')), &workspace);
+        state.handle_event(Event::Paste("configure".into()), &workspace);
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert!(matches!(
+            state.screen,
+            Screen::Settings(ConfigurationDestination::Global)
+        ));
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(key(KeyCode::Char(' ')), &workspace);
+        let draft = state.settings.as_ref().ok_or("missing settings")?;
+        assert_eq!(draft.default.as_str(), "conventional");
+        assert!(!draft.available.iter().any(|id| id.as_str() == "research"));
+        assert!(draft.available.iter().any(|id| id.as_str() == "infra-ops"));
+
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        assert!(matches!(state.screen, Screen::Home));
+        assert_eq!(workspace.saves.get(), 0);
+        let staged = state.global.as_ref().ok_or("missing global")?;
+        assert!(staged.is_dirty());
+        assert_eq!(staged.global().default_taxonomy().as_str(), "conventional");
+        assert!(
+            !staged
+                .global()
+                .available_taxonomies()
+                .iter()
+                .any(|id| id.as_str() == "research")
+        );
+        assert!(
+            workspace
+                .global
+                .borrow()
+                .global()
+                .available_taxonomies()
+                .iter()
+                .any(|id| id.as_str() == "research")
+        );
+
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        assert!(matches!(
+            state.screen,
+            Screen::Review(ConfigurationDestination::Global)
+        ));
+        assert_eq!(workspace.saves.get(), 0);
+        let review = state.global.as_ref().ok_or("missing global")?.review()?;
+        assert!(review.contains("infra-ops"));
+        assert!(!review.contains("research"));
         Ok(())
     }
 
@@ -5655,15 +5769,15 @@ mod tests {
                 .symbol(),
             "┐"
         );
-        for _ in 0..7 {
+        for _ in 0..8 {
             state.handle_event(key(KeyCode::Down), &workspace);
         }
         terminal.draw(|frame| state.render(frame))?;
         let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
             return Err("palette missing".into());
         };
-        assert_eq!(palette.selected, 7);
-        assert_eq!(palette.list_offset, 1);
+        assert_eq!(palette.selected, 8);
+        assert_eq!(palette.list_offset, 2);
         assert!(
             row_text(
                 &terminal,
@@ -5686,7 +5800,7 @@ mod tests {
         let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
             return Err("palette missing".into());
         };
-        assert_eq!(palette.selected, 1);
+        assert_eq!(palette.selected, 2);
         state.handle_event(
             Event::Mouse(ratatui::crossterm::event::MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),

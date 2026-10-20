@@ -52,6 +52,7 @@ impl HomeCommand {
     fn label(self, category: Category) -> &'static str {
         if category == Category::Library {
             return match self {
+                Self::Configure => "configure global",
                 Self::New => "create taxonomy",
                 Self::Edit => "edit taxonomy",
                 Self::Fork => "fork taxonomy",
@@ -60,7 +61,9 @@ impl HomeCommand {
                 Self::SwitchTab => "switch to project",
                 Self::Help => "help",
                 Self::Quit => "quit",
-                _ => unreachable!("Project commands are not shown in Library"),
+                Self::Initialize | Self::ReviewProject => {
+                    unreachable!("Project commands are not shown in Library")
+                }
             };
         }
         match self {
@@ -80,9 +83,12 @@ impl HomeCommand {
         }
     }
 
-    fn shortcut(self) -> &'static str {
+    fn shortcut(self, category: Category) -> &'static str {
         match self {
-            Self::Configure => "enter",
+            Self::Configure => match category {
+                Category::Library => "c",
+                Category::Project => "enter",
+            },
             Self::Initialize => "i",
             Self::ReviewProject | Self::ReviewLibrary => "ctrl+s",
             Self::New => "n",
@@ -109,6 +115,7 @@ const LIBRARY_COMMANDS: &[HomeCommand] = &[
     HomeCommand::Edit,
     HomeCommand::Fork,
     HomeCommand::Delete,
+    HomeCommand::Configure,
     HomeCommand::ReviewLibrary,
     HomeCommand::SwitchTab,
     HomeCommand::Help,
@@ -141,7 +148,7 @@ impl CommandPaletteState {
                     .label(category)
                     .to_ascii_lowercase()
                     .contains(&query)
-                    || command.shortcut().contains(&query)
+                    || command.shortcut(category).contains(&query)
             })
             .collect()
     }
@@ -205,7 +212,7 @@ impl HomeOverlay {
                 let entries = state
                     .visible(category)
                     .iter()
-                    .map(|command| (command.label(category), command.shortcut()))
+                    .map(|command| (command.label(category), command.shortcut(category)))
                     .collect();
                 render_palette(frame, area, state, entries);
             }
@@ -322,12 +329,17 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, category: Category) {
             ("Move selection", "↑/↓"),
             ("Scroll details", "pgup/pgdn"),
             ("New / edit / fork / delete", "n/e/f/d"),
+            ("Configure global", "c"),
             ("Review changes", "ctrl+s"),
             ("Open commands", "/"),
             ("Quit", "esc/q"),
         ],
     };
-    let popup = centered_rect(58, 12.min(area.height), area);
+    let height = u16::try_from(rows.len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(4)
+        .min(area.height);
+    let popup = centered_rect(58, height, area);
     frame.render_widget(Clear, popup);
     frame.render_widget(popup_block(), popup);
     let content_x = popup.x.saturating_add(2);
