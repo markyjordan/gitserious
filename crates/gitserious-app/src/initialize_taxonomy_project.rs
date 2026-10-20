@@ -53,6 +53,7 @@ pub enum InitializeProjectError<LocatorError, StoreError> {
     Store(StoreError),
     Configuration(ConfigurationError),
     OrphanLock,
+    StaleLock,
 }
 
 impl<L: Display, S: Display> Display for InitializeProjectError<L, S> {
@@ -63,6 +64,9 @@ impl<L: Display, S: Display> Display for InitializeProjectError<L, S> {
             Self::Configuration(error) => Display::fmt(error, formatter),
             Self::OrphanLock => formatter.write_str(
                 "gitserious.lock exists without gitserious.toml; restore or remove the orphan lock",
+            ),
+            Self::StaleLock => formatter.write_str(
+                "project lock differs from the current library; run `gitserious config`, open Project, and review Apply/Refresh",
             ),
         }
     }
@@ -123,12 +127,7 @@ where
         (InitStatus::AlreadyInitialized, Some(existing)) if existing == expected => {
             InitStatus::AlreadyInitialized
         }
-        (InitStatus::AlreadyInitialized, Some(existing)) => {
-            store
-                .replace_lock(&root, &existing, &expected)
-                .map_err(InitializeProjectError::Store)?;
-            InitStatus::LockRefreshed
-        }
+        (InitStatus::AlreadyInitialized, Some(_)) => return Err(InitializeProjectError::StaleLock),
         _ => return Err(InitializeProjectError::OrphanLock),
     };
     let selected = expected.default_taxonomy();

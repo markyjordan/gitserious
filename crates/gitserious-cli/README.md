@@ -19,3 +19,8 @@ gitserious commit [--taxonomy <taxonomy>] [--type <type>]
 
 Configuration mutations belong to the reviewed TUI. The list and show commands
 remain read-only for scripts and inspection.
+
+`gitserious init` creates `gitserious.toml` and `gitserious.lock`. It also
+creates a missing lock beside an existing config. When a library change would
+capture a different lock, init leaves the existing files unchanged. The error
+tells you to run `gitserious config`, open Project, and review Apply/Refresh.
