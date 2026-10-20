@@ -12,7 +12,10 @@ use gitserious_app::{
     RepositoryLocator, RepositoryRoot, TaxonomyOrigin, create_commit_with_taxonomy,
     edit_configuration, initialize_project,
 };
-use gitserious_core::{CommitMessage, CommitTypeDefinition, CommitTypeId, Taxonomy, TaxonomyId};
+use gitserious_core::{
+    CommitMessage, CommitTypeDefinition, CommitTypeId, PropertyMultiplicity, PropertyRequirement,
+    Taxonomy, TaxonomyId,
+};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -360,14 +363,34 @@ fn render_taxonomy(taxonomy: &Taxonomy) -> String {
         ));
         for property in definition.properties() {
             output.push_str(&format!(
-                "  {}\t{:?}\t{:?}\n",
+                "  {}\t{}\t{}",
                 property.key(),
-                property.requirement(),
-                property.multiplicity()
+                requirement_label(property.requirement()),
+                multiplicity_label(property.multiplicity())
             ));
+            if let PropertyRequirement::Conditional(condition) = property.requirement() {
+                output.push_str(&format!("\t{}\t{}", condition.id(), condition.rationale()));
+            }
+            output.push('\n');
         }
     }
     output
+}
+
+const fn requirement_label(requirement: &PropertyRequirement) -> &'static str {
+    match requirement {
+        PropertyRequirement::Required => "required",
+        PropertyRequirement::Recommended => "recommended",
+        PropertyRequirement::Optional => "optional",
+        PropertyRequirement::Conditional(_) => "conditional",
+    }
+}
+
+const fn multiplicity_label(multiplicity: PropertyMultiplicity) -> &'static str {
+    match multiplicity {
+        PropertyMultiplicity::Single => "single",
+        PropertyMultiplicity::Multiple => "multiple",
+    }
 }
 
 fn write_commit_output(
