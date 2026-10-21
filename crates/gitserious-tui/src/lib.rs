@@ -13,6 +13,7 @@
 
 mod author;
 mod confirmation;
+mod navigation;
 mod runtime;
 mod taxonomy_config;
 mod theme;
