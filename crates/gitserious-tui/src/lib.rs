@@ -13,15 +13,12 @@
 
 mod author;
 mod confirmation;
-// Legacy template/typeset configuration TUI retained in src/config/.
-// mod config;
 mod taxonomy_config;
 mod theme;
 
 pub use author::{RatatuiCommitDraftAuthor, RatatuiCommitDraftAuthorError};
 pub use taxonomy_config::RatatuiTaxonomyConfigurationEditor;
 
-// Legacy template-oriented TUI tests remain in tests/unit/.
-// #[cfg(test)]
-// #[path = "../tests/unit/mod.rs"]
-// mod tests;
+#[cfg(test)]
+#[path = "../tests/unit/mod.rs"]
+mod tests;
