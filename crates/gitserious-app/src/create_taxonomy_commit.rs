@@ -85,6 +85,10 @@ pub enum CreateCommitError<LocatorError, StoreError, AuthorError, WriterError> {
 pub type CreateCommitResult<LocatorError, StoreError, AuthorError, WriterError> =
     Result<CommitOutcome, CreateCommitError<LocatorError, StoreError, AuthorError, WriterError>>;
 
+/// Policy snapshot preparation with the same typed errors as commit creation.
+pub type CommitPreparationResult<L, S, A, W> =
+    Result<(crate::RepositoryRoot, CommitAuthoringContext), CreateCommitError<L, S, A, W>>;
+
 impl<L: Display, S: Display, A: Display, W: Display> Display for CreateCommitError<L, S, A, W> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -175,6 +179,40 @@ where
     A: CommitDraftAuthor + ?Sized,
     W: CommitWriter + ?Sized,
 {
+    let (root, context) = prepare_commit_with_taxonomy::<L, S, A::Error, W::Error>(
+        locator,
+        store,
+        start,
+        requested_taxonomy,
+        requested_type,
+    )?;
+    let authored = match author
+        .author_with_context(&context)
+        .map_err(CreateCommitError::Author)?
+    {
+        CommitAuthoringOutcome::Authored(authored) => authored,
+        CommitAuthoringOutcome::Cancelled => return Ok(CommitOutcome::Cancelled),
+    };
+    let reviewed =
+        validate_reviewed_commit::<L::Error, S::Error, A::Error, W::Error>(&context, &authored)?;
+    let output = writer
+        .commit(&root, &reviewed)
+        .map_err(CreateCommitError::Writer)?;
+    Ok(CommitOutcome::Created(output))
+}
+
+/// Loads persisted project policy without opening a UI or writing to Git.
+pub fn prepare_commit_with_taxonomy<L, S, A, W>(
+    locator: &L,
+    store: &S,
+    start: &Path,
+    requested_taxonomy: Option<&TaxonomyId>,
+    requested_type: Option<&CommitTypeId>,
+) -> CommitPreparationResult<L::Error, S::Error, A, W>
+where
+    L: RepositoryLocator + ?Sized,
+    S: ProjectStateStore + ?Sized,
+{
     let root = locator
         .locate(start)
         .map_err(CreateCommitError::Repository)?;
@@ -208,17 +246,18 @@ where
                 .collect(),
         })?;
     if let Some(requested) = requested_type {
-        find_definition(taxonomy.commit_types(), requested)?;
+        find_definition::<L::Error, S::Error, A, W>(taxonomy.commit_types(), requested)?;
     }
     let context = CommitAuthoringContext::new(lock.taxonomies().to_vec(), selected, requested_type)
         .map_err(CreateCommitError::InvalidContext)?;
-    let authored = match author
-        .author_with_context(&context)
-        .map_err(CreateCommitError::Author)?
-    {
-        CommitAuthoringOutcome::Authored(authored) => authored,
-        CommitAuthoringOutcome::Cancelled => return Ok(CommitOutcome::Cancelled),
-    };
+    Ok((root, context))
+}
+
+/// Checks that the bytes approved in review exactly match the captured policy.
+pub fn validate_reviewed_commit<L, S, A, W>(
+    context: &CommitAuthoringContext,
+    authored: &crate::AuthoredCommit,
+) -> Result<gitserious_core::CommitMessage, CreateCommitError<L, S, A, W>> {
     let taxonomy = context.find_taxonomy(authored.taxonomy()).ok_or_else(|| {
         CreateCommitError::UnknownTaxonomy {
             requested: authored.taxonomy().clone(),
@@ -243,7 +282,7 @@ where
             });
         }
     }
-    find_definition(taxonomy.definitions(), authored.draft().commit_type())?;
+    find_definition::<L, S, A, W>(taxonomy.definitions(), authored.draft().commit_type())?;
     let message = taxonomy
         .render(authored.draft())
         .map_err(CreateCommitError::InvalidDraft)?;
@@ -253,10 +292,7 @@ where
     if reviewed != &message {
         return Err(CreateCommitError::ReviewedMessageMismatch);
     }
-    let output = writer
-        .commit(&root, reviewed)
-        .map_err(CreateCommitError::Writer)?;
-    Ok(CommitOutcome::Created(output))
+    Ok(reviewed.clone())
 }
 
 fn find_definition<'a, L, S, A, W>(

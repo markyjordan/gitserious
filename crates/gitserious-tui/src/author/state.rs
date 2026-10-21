@@ -1062,8 +1062,17 @@ pub(crate) struct AuthoringSession<'a> {
     pub(crate) confirmation: ConfirmationAction,
     pub(crate) discard_dialog: DiscardDialog,
     pub(crate) catalog_tabs: Vec<CatalogTab>,
+    pub(crate) commit_breadcrumb: Rect,
     confirmation_resume: ResumeStage,
     pub(crate) too_small: bool,
+}
+
+/// Owned editor state retained when Git rejects a reviewed commit.
+pub(crate) struct AuthoringCheckpoint {
+    composer: ComposerState,
+    type_catalog: TypeCatalogKind,
+    selected_type: usize,
+    review: ReviewState,
 }
 
 impl<'a> AuthoringSession<'a> {
@@ -1090,8 +1099,50 @@ impl<'a> AuthoringSession<'a> {
             confirmation: ConfirmationAction::Cancel,
             discard_dialog: DiscardDialog::default(),
             catalog_tabs: Vec::new(),
+            commit_breadcrumb: Rect::default(),
             confirmation_resume: ResumeStage::Compose,
             too_small: false,
+        }
+    }
+
+    pub(crate) fn checkpoint(
+        self,
+        authored: &gitserious_app::AuthoredCommit,
+        message: CommitMessage,
+    ) -> AuthoringCheckpoint {
+        AuthoringCheckpoint {
+            composer: self.composer,
+            type_catalog: self.type_catalog,
+            selected_type: self.selected_type,
+            review: ReviewState {
+                draft: authored.draft().clone(),
+                message,
+                scroll: 0,
+                scrollable: false,
+            },
+        }
+    }
+
+    pub(crate) fn resume(
+        context: &'a CommitAuthoringContext,
+        checkpoint: AuthoringCheckpoint,
+    ) -> Self {
+        let mut session = Self::with_context(context);
+        session.select_type_catalog(checkpoint.type_catalog);
+        session.selected_type = checkpoint.selected_type;
+        session.composer = checkpoint.composer;
+        session.review = Some(checkpoint.review);
+        session.stage = Stage::Review;
+        session
+    }
+
+    pub(crate) fn request_cancel(&mut self) -> Option<CommitDraftAuthorOutcome> {
+        match self.visible_stage() {
+            Stage::SelectType => Some(CommitDraftAuthorOutcome::Cancelled),
+            Stage::Compose => {
+                self.request_confirmation(ConfirmationAction::Cancel, ResumeStage::Compose)
+            }
+            _ => self.request_confirmation(ConfirmationAction::Cancel, ResumeStage::Review),
         }
     }
 
@@ -1141,13 +1192,15 @@ impl<'a> AuthoringSession<'a> {
         }
     }
 
-    fn cycle_type_catalog(&mut self) {
+    fn cycle_type_catalog(&mut self, reverse: bool) {
         let catalogs = self.available_type_catalogs();
         let current = catalogs
             .iter()
             .position(|kind| *kind == self.type_catalog)
             .unwrap_or(0);
-        self.select_type_catalog(catalogs[(current + 1) % catalogs.len()]);
+        self.select_type_catalog(
+            catalogs[(current + if reverse { catalogs.len() - 1 } else { 1 }) % catalogs.len()],
+        );
     }
 
     fn select_type_catalog(&mut self, kind: TypeCatalogKind) {
@@ -1193,6 +1246,13 @@ impl<'a> AuthoringSession<'a> {
         }
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => self.handle_key(key),
+            Event::Mouse(mouse)
+                if self.stage != Stage::Confirm
+                    && mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                    && contains(self.commit_breadcrumb, mouse.column, mouse.row) =>
+            {
+                self.request_cancel()
+            }
             Event::Mouse(mouse) => self.handle_mouse(mouse),
             Event::Paste(text) if self.stage == Stage::Compose => {
                 let definition = self.definition().clone();
@@ -1277,7 +1337,9 @@ impl<'a> AuthoringSession<'a> {
             KeyCode::Down => {
                 self.selected_type = (self.selected_type + 1) % self.definitions.len();
             }
-            KeyCode::Tab => self.cycle_type_catalog(),
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.cycle_type_catalog(key.code == KeyCode::BackTab)
+            }
             KeyCode::Enter => {
                 self.composer = ComposerState::new(self.definition());
                 self.stage = Stage::Compose;
@@ -1636,6 +1698,202 @@ mod confirmation_tests {
         assert!(session.handle_event(click(buttons.discard)).is_none());
         assert_eq!(session.stage, Stage::SelectType);
         assert!(!session.composer.dirty());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gitserious_core::{
+        CommitTypeId, Description, SchemaVersion, Taxonomy, TaxonomyId, TaxonomyVersion,
+    };
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn context() -> Result<CommitAuthoringContext, Box<dyn std::error::Error>> {
+        let taxonomy = Taxonomy::new(
+            TaxonomyId::new("notes")?,
+            TaxonomyVersion::V1,
+            Description::new("Notes")?,
+            None,
+            vec![CommitTypeDefinition::new(
+                SchemaVersion::V1,
+                CommitTypeId::new("note")?,
+                "Record a note",
+                Vec::new(),
+            )?],
+        )?;
+        Ok(CommitAuthoringContext::new(
+            vec![taxonomy],
+            &TaxonomyId::new("notes")?,
+            None,
+        )?)
+    }
+
+    #[test]
+    fn failed_submission_checkpoint_preserves_editor_and_exact_review_bytes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let context = context()?;
+        let mut session = AuthoringSession::with_context(&context);
+        session.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+        session.composer.editor.move_cursor(CursorMove::Jump(5, 0));
+        session.handle_event(Event::Paste("Preserve this message".into()));
+        let original_lines = session.composer.editor.lines().to_vec();
+        session.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('s'),
+            KeyModifiers::CONTROL,
+        )));
+        assert_eq!(session.stage, Stage::Review);
+        let expected = session
+            .review
+            .as_ref()
+            .ok_or("missing review")?
+            .message
+            .clone();
+        let Some(CommitDraftAuthorOutcome::Authored(draft)) = session.handle_event(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )) else {
+            return Err("submission did not return authored draft".into());
+        };
+        let authored = gitserious_app::AuthoredCommit::reviewed(
+            context.initial_taxonomy().id().clone(),
+            draft,
+            expected.clone(),
+        );
+        let checkpoint = session.checkpoint(&authored, expected.clone());
+        let mut resumed = AuthoringSession::resume(&context, checkpoint);
+        assert_eq!(resumed.stage, Stage::Review);
+        assert_eq!(resumed.composer.editor.lines(), original_lines);
+        assert_eq!(
+            resumed
+                .review
+                .as_ref()
+                .ok_or("missing resumed review")?
+                .message,
+            expected
+        );
+        assert!(resumed.request_cancel().is_none());
+        assert_eq!(resumed.stage, Stage::Confirm);
+        resumed.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('n'),
+            KeyModifiers::NONE,
+        )));
+        assert_eq!(resumed.stage, Stage::Review);
+        Ok(())
+    }
+
+    #[test]
+    fn breadcrumb_parent_remains_clickable_and_active_step_visible_when_narrow()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let context = context()?;
+        let mut session = AuthoringSession::with_context(&context);
+        let draft = CommitDraft::new(
+            CommitTypeId::new("note")?,
+            None,
+            CommitSubject::new("review this")?,
+            Vec::new(),
+        )?;
+        let message = context.initial_taxonomy().render(&draft)?;
+        session.composer.editor.move_cursor(CursorMove::Jump(5, 0));
+        session.composer.editor.insert_str("review this");
+        session.review = Some(ReviewState {
+            draft,
+            message,
+            scroll: 0,
+            scrollable: false,
+        });
+        session.stage = Stage::Review;
+        let mut terminal = Terminal::new(TestBackend::new(60, 18))?;
+        terminal.draw(|frame| super::super::render::render(frame, &mut session))?;
+        let row: String = (0..60)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+            .collect();
+        assert!(row.starts_with("Commit / "));
+        assert!(!row.contains("[Commit]"));
+        assert!(row.contains("review and submit"));
+        let parent = session.commit_breadcrumb;
+        session.handle_event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: parent.x,
+            row: parent.y,
+            modifiers: KeyModifiers::NONE,
+        }));
+        assert_eq!(session.stage, Stage::Confirm);
+        Ok(())
+    }
+    #[test]
+    fn taxonomy_picker_cycles_forward_and_backward_with_wrapping()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first = context()?.initial_taxonomy().taxonomy().clone();
+        let second = Taxonomy::new(
+            TaxonomyId::new("second")?,
+            TaxonomyVersion::V1,
+            Description::new("Second")?,
+            None,
+            first.commit_types().to_vec(),
+        )?;
+        let third = Taxonomy::new(
+            TaxonomyId::new("third")?,
+            TaxonomyVersion::V1,
+            Description::new("Third")?,
+            None,
+            first.commit_types().to_vec(),
+        )?;
+        let context = CommitAuthoringContext::new(
+            vec![first, second, third],
+            &TaxonomyId::new("notes")?,
+            None,
+        )?;
+        let mut session = AuthoringSession::with_context(&context);
+        session.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::BackTab,
+            KeyModifiers::SHIFT,
+        )));
+        assert_eq!(
+            session.taxonomy.ok_or("missing taxonomy")?.id().as_str(),
+            "third"
+        );
+        session.handle_event(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert_eq!(
+            session.taxonomy.ok_or("missing taxonomy")?.id().as_str(),
+            "notes"
+        );
+        session.handle_event(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert_eq!(
+            session.taxonomy.ok_or("missing taxonomy")?.id().as_str(),
+            "second"
+        );
+        session.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::BackTab,
+            KeyModifiers::SHIFT,
+        )));
+        assert_eq!(
+            session.taxonomy.ok_or("missing taxonomy")?.id().as_str(),
+            "notes"
+        );
+        let selected = CommitTypeId::new("note")?;
+        let preselected = CommitAuthoringContext::new(
+            context
+                .taxonomies()
+                .iter()
+                .map(|taxonomy| taxonomy.taxonomy().clone())
+                .collect(),
+            &TaxonomyId::new("notes")?,
+            Some(&selected),
+        )?;
+        let mut session = AuthoringSession::with_context(&preselected);
+        session.stage = Stage::SelectType;
+        session.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::BackTab,
+            KeyModifiers::SHIFT,
+        )));
+        assert_eq!(
+            session.taxonomy.ok_or("missing taxonomy")?.id().as_str(),
+            "notes"
+        );
         Ok(())
     }
 }

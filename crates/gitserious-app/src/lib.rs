@@ -30,7 +30,9 @@ mod list_commit_types;
 // mod project_state_store;
 mod create_taxonomy_commit;
 mod initialize_taxonomy_project;
+mod interactive;
 mod repository_locator;
+mod repository_status;
 mod resolve_global_paths;
 mod storage_directory;
 mod taxonomy_authoring_context;
@@ -47,8 +49,9 @@ pub use taxonomy_authoring_context::{
 };
 // Legacy catalog/CRUD/editor exports intentionally disabled.
 pub use create_taxonomy_commit::{
-    CommitOutcome, CommitPolicyError, CreateCommitError, CreateCommitResult, create_commit,
-    create_commit_with_taxonomy,
+    CommitOutcome, CommitPolicyError, CommitPreparationResult, CreateCommitError,
+    CreateCommitResult, create_commit, create_commit_with_taxonomy, prepare_commit_with_taxonomy,
+    validate_reviewed_commit,
 };
 pub use directory_creator::DirectoryCreator;
 pub use ensure_storage_directory::ensure_storage_directory;
@@ -74,3 +77,8 @@ pub use taxonomy_policy::{
     resolve_effective_configuration,
 };
 pub use taxonomy_ports::{GlobalConfigurationStore, ProjectStateStore};
+
+pub use interactive::{
+    HelpPage, InteractiveEntry, InteractiveUi, InteractiveWorkspace, run_interactive,
+};
+pub use repository_status::{BranchState, RepositoryStatus, RepositoryStatusReader, StatusEntry};

@@ -444,14 +444,16 @@ fn assert_stage_header(
     session: &mut AuthoringSession<'_>,
     width: u16,
     height: u16,
-    title: &str,
     step: &str,
 ) -> Result<(), Box<dyn Error>> {
     let buffer = rendered_buffer(session, width, height)?;
-    assert_eq!(find_ascii(&buffer, width, height, title), Some((0, 0)));
-    let position = find_ascii(&buffer, width, height, step).ok_or("missing step counter")?;
+    assert_eq!(
+        find_ascii(&buffer, width, height, "Commit / "),
+        Some((0, 0))
+    );
+    let position = find_ascii(&buffer, width, height, step).ok_or("missing active step")?;
     assert_eq!(position.1, 0);
-    assert!(position.0 >= width.saturating_sub(8));
+    assert_eq!(buffer[position].bg, Color::Yellow);
     assert!((0..width).all(|column| !matches!(buffer[(column, 0)].symbol(), "─" | "┌" | "┐")));
     Ok(())
 }
@@ -1484,7 +1486,7 @@ fn review_cancellation_confirmation_can_resume_without_losing_the_preview()
 fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn Error>> {
     let mut picker = AuthoringSession::new(built_in_commit_types(), None);
     let text = rendered(&mut picker, 100, 24)?;
-    assert!(text.contains("Select commit type"));
+    assert!(text.contains("select taxonomy and type"));
     assert!(!text.contains("gitserious commit"));
     assert!(!text.contains("Choose the semantic contract for this commit."));
     assert!(!text.contains("Commit types"));
@@ -1495,7 +1497,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     );
     assert!(text.contains("enter: select"));
     assert!(text.contains("tab: switch"));
-    assert_stage_header(&mut picker, 100, 24, "Select commit type", "Step 1/3")?;
+    assert_stage_header(&mut picker, 100, 24, "select taxonomy and type")?;
     let picker_buffer = rendered_buffer(&mut picker, 100, 24)?;
     assert_eq!(picker_buffer[(0, 1)].symbol(), "┌");
     assert_eq!(picker_buffer[(99, 1)].symbol(), "┐");
@@ -1519,7 +1521,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
         .editor
         .move_cursor(CursorMove::Jump(19, 0));
     let text = rendered(&mut composer, 120, 32)?;
-    assert!(text.contains("Compose commit message"));
+    assert!(text.contains("compose message"));
     assert!(text.contains("Type: custom"));
     assert!(!text.contains("Keymap:"));
     assert!(text.contains("○  description"));
@@ -1530,7 +1532,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(!text.contains("ctrl+t"));
     assert!(!text.contains("Complete every required field before review."));
     assert!(!text.contains("repeatable"));
-    assert_stage_header(&mut composer, 120, 32, "Compose commit message", "Step 2/3")?;
+    assert_stage_header(&mut composer, 120, 32, "compose message")?;
     let composer_buffer = rendered_buffer(&mut composer, 120, 32)?;
     assert_eq!(composer_buffer[(0, 2)].symbol(), "┌");
     assert_eq!(composer_buffer[(119, 2)].symbol(), "┐");
@@ -1545,11 +1547,11 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
 
     let mut review = valid_feat_session();
     let text = rendered(&mut review, 100, 24)?;
-    assert!(text.contains("Review and commit"));
+    assert!(text.contains("review and submit"));
     assert!(!text.contains("Review the exact canonical message before Git creates the commit."));
     assert!(text.contains("feat: compose durable message"));
     assert!(text.contains("enter: commit"));
-    assert_stage_header(&mut review, 100, 24, "Review and commit", "Step 3/3")?;
+    assert_stage_header(&mut review, 100, 24, "review and submit")?;
     let review_buffer = rendered_buffer(&mut review, 100, 24)?;
     assert_eq!(
         find_ascii(&review_buffer, 100, 24, "feat: compose durable message"),
@@ -1580,8 +1582,7 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
     assert!(text.contains("Discard this draft and cancel"));
     assert!(text.contains("y: discard"));
     assert!(text.contains("enter/esc/n: keep editing"));
-    assert!(text.contains("Review and commit"));
-    assert!(text.contains("Step 3/3"));
+    assert!(text.contains("review and submit"));
     let buffer = rendered_buffer(&mut review, 100, 24)?;
     assert_bold_yellow_heading(&buffer, 100, 24, "Discard Message")?;
     let top_left = find_symbol(&buffer, 100, 24, "╔").ok_or("missing popup frame")?;
@@ -1708,8 +1709,8 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     assert_eq!(status, (90, 29));
     assert_eq!(status.0 + u16::try_from("col 6/80".len())?, 98);
     assert_eq!(buffer[status].bg, JET_BLACK);
-    let key = find_ascii(&buffer, 100, 32, "ctrl+s").ok_or("missing key hint")?;
-    let action = find_ascii(&buffer, 100, 32, "review").ok_or("missing action hint")?;
+    let key = find_ascii(&buffer, 100, 32, "ctrl+s: review").ok_or("missing key hint")?;
+    let action = (key.0 + 8, key.1);
     assert!(buffer[key].modifier.contains(Modifier::BOLD));
     assert!(!buffer[action].modifier.contains(Modifier::BOLD));
     assert_eq!(buffer[key].bg, Color::Yellow);

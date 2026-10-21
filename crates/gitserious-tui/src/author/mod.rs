@@ -11,10 +11,7 @@ use gitserious_app::{
 };
 use gitserious_core::CommitTypeDefinition;
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture},
-    execute,
-};
+use ratatui::crossterm::event;
 
 use self::state::AuthoringSession;
 
@@ -32,7 +29,7 @@ impl CommitDraftAuthor for RatatuiCommitDraftAuthor {
         if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
             return Err(RatatuiCommitDraftAuthorError::NotTerminal);
         }
-        ratatui::run(|terminal| run_author_with_context(terminal, context))
+        crate::runtime::run(|terminal| run_author_with_context(terminal, context))
             .map_err(RatatuiCommitDraftAuthorError::Terminal)
     }
 
@@ -56,7 +53,7 @@ impl CommitDraftAuthor for RatatuiCommitDraftAuthor {
             return Err(RatatuiCommitDraftAuthorError::NotTerminal);
         }
 
-        ratatui::run(|terminal| run_author(terminal, definitions, preselected_index))
+        crate::runtime::run(|terminal| run_author(terminal, definitions, preselected_index))
             .map_err(RatatuiCommitDraftAuthorError::Terminal)
     }
 }
@@ -105,7 +102,6 @@ fn run_author(
     definitions: &[CommitTypeDefinition],
     preselected_index: Option<usize>,
 ) -> io::Result<CommitDraftAuthorOutcome> {
-    let _mouse_capture = MouseCaptureGuard::enable()?;
     let mut session = AuthoringSession::new(definitions, preselected_index);
     loop {
         terminal.draw(|frame| render::render(frame, &mut session))?;
@@ -120,7 +116,6 @@ fn run_author_with_context(
     terminal: &mut DefaultTerminal,
     context: &CommitAuthoringContext,
 ) -> io::Result<CommitAuthoringOutcome> {
-    let _mouse_capture = MouseCaptureGuard::enable()?;
     let mut session = AuthoringSession::with_context(context);
     loop {
         terminal.draw(|frame| render::render(frame, &mut session))?;
@@ -146,17 +141,36 @@ fn run_author_with_context(
     }
 }
 
-struct MouseCaptureGuard;
-
-impl MouseCaptureGuard {
-    fn enable() -> io::Result<Self> {
-        execute!(io::stdout(), EnableMouseCapture)?;
-        Ok(Self)
+/// Author within the already initialized shell terminal and retain an owned review checkpoint.
+pub(crate) fn embedded_author(
+    terminal: &mut DefaultTerminal,
+    context: &CommitAuthoringContext,
+    checkpoint: Option<state::AuthoringCheckpoint>,
+) -> io::Result<Option<(AuthoredCommit, state::AuthoringCheckpoint)>> {
+    let mut session = checkpoint.map_or_else(
+        || AuthoringSession::with_context(context),
+        |checkpoint| AuthoringSession::resume(context, checkpoint),
+    );
+    loop {
+        terminal.draw(|frame| render::render(frame, &mut session))?;
+        match session.handle_event(event::read()?) {
+            Some(CommitDraftAuthorOutcome::Cancelled) => return Ok(None),
+            Some(CommitDraftAuthorOutcome::Authored(draft)) => {
+                let message = session
+                    .approved_message
+                    .clone()
+                    .ok_or_else(|| io::Error::other("approved message is missing"))?;
+                let taxonomy = session
+                    .taxonomy
+                    .ok_or_else(|| io::Error::other("selected taxonomy is missing"))?;
+                let authored =
+                    AuthoredCommit::reviewed(taxonomy.id().clone(), draft, message.clone());
+                let checkpoint = session.checkpoint(&authored, message);
+                return Ok(Some((authored, checkpoint)));
+            }
+            None => {}
+        }
     }
 }
 
-impl Drop for MouseCaptureGuard {
-    fn drop(&mut self) {
-        let _ = execute!(io::stdout(), DisableMouseCapture);
-    }
-}
+pub(crate) use state::AuthoringCheckpoint;

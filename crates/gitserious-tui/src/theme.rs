@@ -51,18 +51,48 @@ pub(crate) fn focus_frame_style(active: bool) -> Style {
     }
 }
 
-pub(crate) fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &[(&str, &str)]) {
+/// Shared hint text for popup controls, without imposing colors.
+pub(crate) fn command_hints(hints: &[(&str, &str)]) -> Line<'static> {
+    let regular = Style::default().remove_modifier(Modifier::BOLD);
+    let mut spans = Vec::with_capacity(hints.len().saturating_mul(3));
+    for (index, (key, action)) in hints.iter().copied().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled("  ", regular));
+        }
+        spans.push(Span::styled(
+            format!("[{key}]"),
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(format!(" {action}"), regular));
+    }
+    Line::from(spans)
+}
+
+fn footer_hints(hints: &[(&str, &str)]) -> Line<'static> {
     let mut spans = Vec::with_capacity(hints.len().saturating_mul(3));
     for (index, (key, action)) in hints.iter().copied().enumerate() {
         if index > 0 {
             spans.push(Span::raw("  "));
         }
-        spans.push(Span::styled(key, navigation_key_style()));
+        spans.push(Span::styled(key.to_owned(), navigation_key_style()));
         spans.push(Span::raw(": "));
-        spans.push(Span::raw(action));
+        spans.push(Span::raw(action.to_owned()));
+    }
+    Line::from(spans)
+}
+
+pub(crate) fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &[(&str, &str)]) {
+    let mut visible = hints.to_vec();
+    // Keep the switch and command hints readable on compact terminals. Arrow controls
+    // are also documented in contextual Help and can be omitted from a crowded footer.
+    for key in ["↑/↓", "←/→"] {
+        if footer_hints(&visible).width() <= usize::from(area.width) {
+            break;
+        }
+        visible.retain(|(hint, _)| *hint != key);
     }
     frame.render_widget(
-        Paragraph::new(Line::from(spans)).style(navigation_style()),
+        Paragraph::new(footer_hints(&visible)).style(navigation_style()),
         area,
     );
 }
@@ -89,7 +119,7 @@ pub(crate) fn normalize_background(frame: &mut Frame<'_>, area: Rect) {
 
 #[cfg(test)]
 mod tests {
-    use super::render_navigation_row;
+    use super::*;
     use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
@@ -109,6 +139,52 @@ mod tests {
             .collect::<String>();
         assert!(row.starts_with("tab: switch  ↑/↓: move  enter: select"));
         assert!(!row.contains('|'));
+        Ok(())
+    }
+
+    #[test]
+    fn crowded_footer_drops_arrow_hints_before_switch_and_commands()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut terminal = Terminal::new(TestBackend::new(40, 1))?;
+        terminal.draw(|frame| {
+            render_navigation_row(
+                frame,
+                frame.area(),
+                &[
+                    ("tab/shift+tab", "switch"),
+                    ("↑/↓", "move"),
+                    ("←/→", "tree"),
+                    ("/", "commands"),
+                ],
+            )
+        })?;
+        let row = (0..40)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+            .collect::<String>();
+        assert!(row.starts_with("tab/shift+tab: switch  /: commands"));
+        Ok(())
+    }
+
+    #[test]
+    fn popup_hint_actions_override_inherited_bold_without_changing_colors()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut terminal = Terminal::new(TestBackend::new(20, 1))?;
+        terminal.draw(|frame| {
+            frame.render_widget(
+                Paragraph::new(command_hints(&[("esc", "close")])).style(
+                    Style::default()
+                        .fg(Color::White)
+                        .bg(JET_BLACK)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                frame.area(),
+            )
+        })?;
+        let buffer = terminal.backend().buffer();
+        assert!(buffer[(0, 0)].modifier.contains(Modifier::BOLD));
+        assert!(!buffer[(6, 0)].modifier.contains(Modifier::BOLD));
+        assert_eq!(buffer[(6, 0)].fg, Color::White);
+        assert_eq!(buffer[(6, 0)].bg, JET_BLACK);
         Ok(())
     }
 }

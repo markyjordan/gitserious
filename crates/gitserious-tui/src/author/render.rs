@@ -89,6 +89,7 @@ struct CursorStatus {
 pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) {
     let area = frame.area();
     session.discard_dialog.invalidate();
+    session.commit_breadcrumb = Rect::default();
     session.catalog_tabs.clear();
     frame.render_widget(Block::default().style(Style::default().bg(JET_BLACK)), area);
     let minimum_height = if session.visible_stage() == Stage::Compose {
@@ -138,7 +139,7 @@ fn normalize_background(frame: &mut Frame<'_>, area: Rect) {
 
 fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
     let shell = stage_shell(area, 1);
-    render_stage_header(frame, shell.header, "Select commit type", 1);
+    session.commit_breadcrumb = render_stage_header(frame, shell.header, 1);
     frame.render_widget(Block::bordered().border_style(frame_style()), shell.frame);
     let inner = Rect::new(
         shell.frame.x.saturating_add(1),
@@ -202,7 +203,7 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
         frame,
         shell.navigation,
         &[
-            ("tab", "switch"),
+            ("tab/shift+tab", "switch"),
             ("↑/↓", "move"),
             ("enter", "select"),
             ("esc/q", "cancel"),
@@ -246,7 +247,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     let shell = stage_shell(area, 2);
     let header =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(shell.header);
-    render_stage_header(frame, header[0], "Compose commit message", 2);
+    session.commit_breadcrumb = render_stage_header(frame, header[0], 2);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::raw("Type: "),
@@ -905,7 +906,7 @@ fn subject_context_fits(editor: &TextArea<'_>, viewport_height: u16) -> bool {
 
 fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
     let shell = stage_shell(area, 1);
-    render_stage_header(frame, shell.header, "Review and commit", 3);
+    session.commit_breadcrumb = render_stage_header(frame, shell.header, 3);
     frame.render_widget(Block::bordered().border_style(frame_style()), shell.frame);
     let inner = Rect::new(
         shell.frame.x.saturating_add(1),
@@ -1196,22 +1197,8 @@ fn text_button_width(label: &str) -> u16 {
         .saturating_add(2)
 }
 
-fn render_stage_header(frame: &mut Frame<'_>, area: Rect, title: &'static str, step: u8) {
-    let columns = Layout::horizontal([Constraint::Min(0), Constraint::Length(8)]).split(area);
-    frame.render_widget(
-        Paragraph::new(title).style(Style::default().add_modifier(Modifier::BOLD)),
-        columns[0],
-    );
-    frame.render_widget(
-        Paragraph::new(format!("Step {step}/3"))
-            .right_aligned()
-            .style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        columns[1],
-    );
+fn render_stage_header(frame: &mut Frame<'_>, area: Rect, step: usize) -> Rect {
+    crate::navigation::commit_breadcrumb(frame, area, step - 1)
 }
 
 fn navigation_key_style() -> Style {

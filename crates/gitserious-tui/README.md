@@ -1,5 +1,46 @@
 # gitserious-tui
 
+## Unified interactive shell
+
+Bare `gitserious` opens Home with centered Home, Commit, Config, and Help root
+choices. Home centers the package version inside a full-width bordered
+content block directly beneath the navigation frame. Command footers show
+`key: action` hints; popups show `[key] action`. Crowded footers drop arrow
+hints first. Tab advances and Shift+Tab reverses through root sections. Bare
+invocation without terminal streams prints help. Home, Library, and Help work
+outside a repository.
+
+`gitserious config` opens the shell inside Config. The root row stays visible
+above the configuration Menu and its Project and Library widgets, described
+under Configuration. From the Project or Library browser, Tab and Shift+Tab
+switch root sections, Esc returns to Home, and `q` quits; the config footer adds
+`tab/shift+tab: switch`. Every other key, including `/` and `?`, reaches the
+configuration interface. Config selections and unapplied changes survive
+section visits. Leaving Config through the root row while a Create, Fork, or
+Edit Taxonomy editor is open behaves like its Library breadcrumb: an unchanged
+draft closes, and a changed one opens the discard dialog before navigation
+continues. The config palette's `quit` and the root `q` share one shell discard
+confirmation for pending changes.
+
+The Commit overview shows repository/branch identity and directory trees for
+Staged, Unstaged, and Untracked changes. Partially staged files appear in both
+applicable groups. Up/Down selects rows; Left/Right collapses or expands folders.
+`r` refreshes and Enter starts authoring when staged changes and valid persisted
+project policy exist. Conflicts block authoring. These actions are also available
+through `/`. Stage changes using Git; the overview never modifies the index.
+
+Shell authoring reuses the existing picker, composer, and review. Its header is
+`Commit / select taxonomy and type / compose message / review and submit`,
+with the active step highlighted. The parent is clickable and protects dirty
+drafts. Submission restores the terminal while Git runs, then returns to a
+refreshed overview with the result; `o` opens a scrollable full result. A
+rejected commit retains its reviewed message and composer; Enter resumes review. `c` starts a new commit. Quit asks
+before discarding a retained review. Direct `gitserious commit` still opens
+authoring immediately and exits with the existing Git result.
+
+Help supplies man-style Overview, Config, Commit, Init, and Keyboard
+Navigation pages; Left/Right changes pages and Up/Down/Page Up/Page Down scrolls.
+
 ## Configuration
 
 Bare `gitserious config` lists Project and Library in a Menu column on the
@@ -168,12 +209,15 @@ content grows.
 The interface shares the commit TUI's true-black canvas, dark Unicode frames,
 yellow active rows and navigation strip, zebra tables, mouse targets, bracketed
 paste, and an 18-row minimum height. Configuration needs at least 66 columns.
+Inside the shell, taxonomy editors need 21 rows so the root row and the
+editor's pane heights both fit; resizing smaller keeps the draft and its
+discard protection.
 
 ## Commit authoring
 
 `gitserious commit --taxonomy <TAXONOMY>` selects one taxonomy from the portable
 project lock for that commit. `--type` preselects a type within it. With no
-taxonomy option, authoring starts from the pinned project default. Picker tabs
+taxonomy option, authoring starts from the pinned project default. Picker tabs support Tab/Shift+Tab to switch forward/backward and
 show taxonomy identities and never mutate project policy.
 
 The composer retains the established schema-document interaction: immutable
