@@ -4,7 +4,7 @@ use gitserious_app::{CommitDraftAuthor, CommitDraftAuthorOutcome};
 use gitserious_core::{
     COMMIT_MESSAGE_WIDTH, CommitTypeDefinition, CommitTypeId, ConditionId, PropertyCondition,
     PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, SchemaVersion,
-    built_in_commit_types, render_commit_message,
+    built_in_commit_types, built_in_taxonomies, render_commit_message,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -90,22 +90,18 @@ fn conditional_decisions_block_contradictions_and_survive_review() -> Result<(),
 }
 
 #[test]
-fn template_picker_switches_schema_and_confirms_discard() -> Result<(), Box<dyn Error>> {
-    let catalog = gitserious_app::built_in_effective_catalog()?;
-    let ids = ["default", "ml-research", "infra-ops"]
-        .map(gitserious_core::TemplateId::new)
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
-    let schemas = ids
+fn taxonomy_picker_switches_schema_and_confirms_discard() -> Result<(), Box<dyn Error>> {
+    let taxonomies = built_in_taxonomies();
+    let ids = taxonomies
         .iter()
-        .map(|id| catalog.resolve(id))
-        .collect::<Result<Vec<_>, _>>()?;
-    let context = gitserious_app::CommitAuthoringContext::new(schemas, &ids[0], None)?;
+        .map(|taxonomy| taxonomy.id().clone())
+        .collect::<Vec<_>>();
+    let context = gitserious_app::CommitAuthoringContext::new(taxonomies.to_vec(), &ids[0], None)?;
     let mut session = AuthoringSession::with_context(&context);
-    assert!(rendered(&mut session, 100, 32)?.contains("ml-research"));
+    assert!(rendered(&mut session, 100, 32)?.contains("research"));
     press(&mut session, KeyCode::Tab);
-    assert_eq!(session.template.ok_or("missing template")?.id(), &ids[1]);
-    assert_eq!(session.definitions, context.templates()[1].definitions());
+    assert_eq!(session.taxonomy.ok_or("missing taxonomy")?.id(), &ids[1]);
+    assert_eq!(session.definitions, context.taxonomies()[1].definitions());
     press(&mut session, KeyCode::Enter);
     press(&mut session, KeyCode::Char('x'));
     let edited = session.composer.editor.lines().to_vec();
@@ -117,20 +113,20 @@ fn template_picker_switches_schema_and_confirms_discard() -> Result<(), Box<dyn 
     press(&mut session, KeyCode::Char('y'));
     assert_eq!(session.stage, Stage::SelectType);
     press(&mut session, KeyCode::Tab);
-    assert_eq!(session.template.ok_or("missing template")?.id(), &ids[2]);
+    assert_eq!(session.taxonomy.ok_or("missing taxonomy")?.id(), &ids[2]);
     assert!(!session.composer.dirty());
     press(&mut session, KeyCode::Tab);
-    assert_eq!(session.template.ok_or("missing template")?.id(), &ids[0]);
+    assert_eq!(session.taxonomy.ok_or("missing taxonomy")?.id(), &ids[0]);
     Ok(())
 }
 
 #[test]
 fn context_review_includes_provenance_and_returns_the_latest_approved_bytes()
 -> Result<(), Box<dyn Error>> {
-    let id = gitserious_core::TemplateId::new("default")?;
-    let catalog = gitserious_app::built_in_effective_catalog()?;
+    let taxonomy = built_in_taxonomies()[0].clone();
+    let id = taxonomy.id().clone();
     let context = gitserious_app::CommitAuthoringContext::new(
-        vec![catalog.resolve(&id)?],
+        vec![taxonomy],
         &id,
         Some(&CommitTypeId::new("feat")?),
     )?;
@@ -140,13 +136,13 @@ fn context_review_includes_provenance_and_returns_the_latest_approved_bytes()
     let review = session.review.as_ref().ok_or("review missing")?;
     assert_eq!(
         review.message,
-        context.initial_template().render(&review.draft)?
+        context.initial_taxonomy().render(&review.draft)?
     );
     assert!(
         review
             .message
             .as_str()
-            .contains("Gitserious-Template: default@1\n")
+            .contains("Gitserious-Taxonomy: conventional@1\n")
     );
     let frame = rendered(&mut session, 100, 32)?;
     assert!(frame.contains("Gitserious-Schema:"));
@@ -1593,7 +1589,8 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
     assert_eq!(buffer[(top_left.0, top_left.1 + 8)].symbol(), "╚");
     assert_eq!(buffer[(top_left.0 + 57, top_left.1 + 8)].symbol(), "╝");
     let buttons = review
-        .discard_dialog.buttons
+        .discard_dialog
+        .buttons
         .ok_or("missing button hitboxes")?;
     for area in [buttons.discard, buttons.keep_editing] {
         assert!((area.x..area.right()).all(|x| buffer[(x, area.y)].bg == Color::Yellow));
@@ -1621,7 +1618,8 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
     press(&mut review, KeyCode::Char('q'));
     let _ = rendered_buffer(&mut review, 100, 24)?;
     let buttons = review
-        .discard_dialog.buttons
+        .discard_dialog
+        .buttons
         .ok_or("missing rerendered hitboxes")?;
     assert_eq!(
         review.handle_event(left_click(buttons.discard.x, buttons.discard.y)),
