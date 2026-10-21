@@ -31,6 +31,7 @@ mod list_commit_types;
 mod create_taxonomy_commit;
 mod initialize_taxonomy_project;
 mod repository_locator;
+mod repository_status;
 mod resolve_global_paths;
 mod storage_directory;
 mod taxonomy_authoring_context;
@@ -75,3 +76,5 @@ pub use taxonomy_policy::{
     resolve_effective_configuration,
 };
 pub use taxonomy_ports::{GlobalConfigurationStore, ProjectStateStore};
+
+pub use repository_status::{BranchState, RepositoryStatus, RepositoryStatusReader, StatusEntry};

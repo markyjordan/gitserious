@@ -6,6 +6,7 @@
 mod directory;
 mod git;
 mod git_commit;
+mod git_status;
 mod global;
 // Legacy template/typeset persistence retained in global_configuration.rs.
 // mod global_configuration;
@@ -27,3 +28,5 @@ pub use taxonomy_project::{ProjectStateError, TomlProjectStateStore};
 // #[cfg(test)]
 // #[path = "../tests/unit/mod.rs"]
 // mod tests;
+
+pub use git_status::GitRepositoryStatusReader;
