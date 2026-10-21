@@ -529,7 +529,7 @@ pub fn interactive_help() -> Vec<HelpPage> {
         ),
     ];
     let descriptions = [
-        "Bare gitserious opens Home. Config configures repository policy and your taxonomy library. Commit previews Git changes before authoring a durable message. Lore is planned for v0.3.0.",
+        "Bare gitserious opens Home. Commit previews Git changes before authoring a durable message. Config configures repository policy and your taxonomy library.",
         "Bare gitserious config opens Config. Project controls repository overrides and its portable lock. Library owns taxonomies. Changes remain unapplied until review and Apply.",
         "gitserious commit authors directly from persisted project policy. --taxonomy chooses an available taxonomy for this commit; --type preselects a type. Only Git's staged index is committed. Stage changes with Git before using Start commit in the shell.",
         "gitserious init initializes repository-local gitserious.toml and gitserious.lock. --taxonomy selects an installed taxonomy for fresh policy.",

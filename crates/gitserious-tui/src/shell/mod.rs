@@ -26,7 +26,7 @@ use crate::theme::{
 use commit_view::CommitView;
 use home_logo::{HomeLogo, render_home_logo, resolve_dev_theme};
 
-/// Unified Home, Config, Commit, Lore, and Help terminal adapter.
+/// Unified Home, Commit, Config, and Help terminal adapter.
 #[derive(Clone, Debug, Default)]
 pub struct RatatuiInteractiveUi {
     library_path: Option<PathBuf>,
@@ -88,25 +88,17 @@ impl InteractiveUi for RatatuiInteractiveUi {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Section {
     Home,
-    Config,
     Commit,
-    Lore,
+    Config,
     Help,
 }
 impl Section {
-    const ALL: [Self; 5] = [
-        Self::Home,
-        Self::Config,
-        Self::Commit,
-        Self::Lore,
-        Self::Help,
-    ];
+    const ALL: [Self; 4] = [Self::Home, Self::Commit, Self::Config, Self::Help];
     fn label(self) -> &'static str {
         match self {
             Self::Home => "Home",
             Self::Config => "Config",
             Self::Commit => "Commit",
-            Self::Lore => "Lore",
             Self::Help => "Help",
         }
     }
@@ -117,7 +109,8 @@ impl Section {
             .unwrap_or(0)
     }
     fn next(self, reverse: bool) -> Self {
-        Self::ALL[(self.index() + if reverse { 4 } else { 1 }) % 5]
+        let count = Self::ALL.len();
+        Self::ALL[(self.index() + if reverse { count - 1 } else { 1 }) % count]
     }
 }
 
@@ -156,7 +149,7 @@ struct Shell {
     overlay: Option<Overlay>,
     help_page: usize,
     help_scroll: u16,
-    root_areas: [Rect; 5],
+    root_areas: [Rect; Section::ALL.len()],
     too_small: bool,
 }
 
@@ -180,7 +173,7 @@ impl Shell {
             overlay: None,
             help_page: 0,
             help_scroll: 0,
-            root_areas: [Rect::default(); 5],
+            root_areas: [Rect::default(); Section::ALL.len()],
             too_small: false,
         }
     }
@@ -537,7 +530,7 @@ impl Shell {
     fn render(&mut self, frame: &mut Frame<'_>, help: &[HelpPage]) {
         let area = frame.area();
         self.too_small = area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT;
-        self.root_areas = [Rect::default(); 5];
+        self.root_areas = [Rect::default(); Section::ALL.len()];
         frame.render_widget(
             Block::default().style(Style::default().fg(Color::White).bg(JET_BLACK)),
             area,
@@ -563,9 +556,11 @@ impl Shell {
                         frame.render_widget(block, content);
                         let version = format!("gitserious v{}", env!("CARGO_PKG_VERSION"));
                         render_home_logo(frame, inner, &self.home_logo, &version);
-                    },
-                    Section::Commit => self.commit.render(frame, content, self.pending_author.is_some()),
-                    Section::Lore => frame.render_widget(Paragraph::new("Lore will help recover historical context from Git history through indexing and queries.\n\nPlanned for v0.3.0.").wrap(Wrap { trim: false }), Block::bordered().inner(content)),
+                    }
+                    Section::Commit => {
+                        self.commit
+                            .render(frame, content, self.pending_author.is_some())
+                    }
                     Section::Help => self.render_help(frame, content, help),
                     Section::Config => {}
                 }
@@ -822,6 +817,9 @@ mod tests {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Home, &services, None);
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
+        assert_eq!(shell.section, Section::Commit);
+        assert!(shell.commit.blocker.is_some());
+        shell.handle_event(key(KeyCode::Tab), &services, &[]);
         assert_eq!(shell.section, Section::Config);
         assert!(!shell.animating());
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
@@ -832,9 +830,11 @@ mod tests {
         shell.handle_event(key(KeyCode::Down), &services, &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(rendered(&terminal).contains("Taxonomies"));
-        shell.handle_event(key(KeyCode::Tab), &services, &[]);
+        shell.handle_event(key(KeyCode::BackTab), &services, &[]);
         assert_eq!(shell.section, Section::Commit);
-        assert!(shell.commit.blocker.is_some());
+        shell.handle_event(key(KeyCode::Tab), &services, &[]);
+        shell.handle_event(key(KeyCode::Tab), &services, &[]);
+        assert_eq!(shell.section, Section::Help);
         shell.handle_event(key(KeyCode::BackTab), &services, &[]);
         assert_eq!(shell.section, Section::Config);
         terminal.draw(|frame| shell.render(frame, &[]))?;
@@ -901,8 +901,8 @@ mod tests {
         shell.request(Action::Select(Section::Help), &services);
         shell.execute(Action::Select(Section::Config), &services);
         assert!(shell.config.editing_taxonomy());
-        shell.request(Action::Select(Section::Lore), &services);
-        assert_eq!(shell.section, Section::Lore);
+        shell.request(Action::Select(Section::Commit), &services);
+        assert_eq!(shell.section, Section::Commit);
         assert!(!shell.config.editing_taxonomy());
     }
 
@@ -931,14 +931,14 @@ mod tests {
         shell.handle_event(key(KeyCode::Tab), &services, &help);
         assert_eq!(shell.section, Section::Home);
         shell.handle_event(key(KeyCode::Char('/')), &services, &help);
-        shell.handle_event(Event::Paste("lore".into()), &services, &help);
+        shell.handle_event(Event::Paste("open commit".into()), &services, &help);
         shell.handle_event(key(KeyCode::Tab), &services, &help);
         assert_eq!(shell.section, Section::Home);
         shell.handle_event(key(KeyCode::Enter), &services, &help);
-        assert_eq!(shell.section, Section::Lore);
+        assert_eq!(shell.section, Section::Commit);
         let mut terminal = Terminal::new(TestBackend::new(66, 18))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
-        assert!(rendered(&terminal).contains("v0.3.0"));
+        assert!(rendered(&terminal).contains("Staged (0)"));
         terminal.backend_mut().resize(40, 10);
         terminal.resize(Rect::new(0, 0, 40, 10))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
@@ -956,7 +956,6 @@ mod tests {
         assert!(shell.config.overview());
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.section, Section::Home);
-        shell.handle_event(key(KeyCode::Tab), &services, &[]);
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
         assert_eq!(shell.section, Section::Commit);
         assert!(shell.config.dirty());
@@ -1021,17 +1020,19 @@ mod tests {
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let original = shell.root_areas;
         let left = original[0].x;
-        let right = original[4].right();
+        let right = original[Section::Help.index()].right();
         assert!(i32::from(left) - i32::from(100 - right) <= 1);
         assert!(i32::from(100 - right) - i32::from(left) <= 1);
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
+        shell.handle_event(key(KeyCode::Tab), &services, &[]);
+        assert_eq!(shell.section, Section::Config);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert_eq!(shell.root_areas, original);
         assert!(!shell.animating());
         let header: String = (0..100)
             .map(|x| terminal.backend().buffer()[(x, 1)].symbol())
             .collect();
-        assert!(header.contains("Home   Config   Commit   Lore   Help"));
+        assert!(header.contains("Home   Commit   Config   Help"));
         assert!(!header.contains('['));
         assert!(rendered(&terminal).contains("Menu"));
         let config = shell.root_areas[Section::Config.index()];
