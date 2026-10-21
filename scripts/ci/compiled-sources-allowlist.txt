@@ -4,7 +4,6 @@
 crates/gitserious-app/tests/commit_provenance.rs
 crates/gitserious-app/tests/commit.rs
 crates/gitserious-app/tests/configuration.rs
-crates/gitserious-app/tests/init.rs
 crates/gitserious-app/tests/project_configuration.rs
 crates/gitserious-app/tests/support/commit_templates.rs
 crates/gitserious-app/tests/support/configuration_session.rs
