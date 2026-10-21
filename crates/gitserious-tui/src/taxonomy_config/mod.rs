@@ -62,8 +62,7 @@ impl ConfigurationEditor for RatatuiTaxonomyConfigurationEditor {
         if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
             return Err("configuration editing requires an interactive terminal".into());
         }
-        ratatui::run(|terminal| {
-            let _guard = TerminalGuard::enable()?;
+        crate::runtime::run(|terminal| {
             let mut state = State::new(workspace);
             state.library_path.clone_from(&self.library_path);
             loop {
@@ -74,29 +73,6 @@ impl ConfigurationEditor for RatatuiTaxonomyConfigurationEditor {
             }
         })
         .map_err(|error| format!("configuration editing failed: {error}"))
-    }
-}
-
-struct TerminalGuard;
-
-impl TerminalGuard {
-    fn enable() -> io::Result<Self> {
-        ratatui::crossterm::execute!(
-            io::stdout(),
-            event::EnableMouseCapture,
-            event::EnableBracketedPaste
-        )?;
-        Ok(Self)
-    }
-}
-
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
-        let _ = ratatui::crossterm::execute!(
-            io::stdout(),
-            event::DisableBracketedPaste,
-            event::DisableMouseCapture
-        );
     }
 }
 
