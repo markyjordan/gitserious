@@ -4,11 +4,14 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use gitserious_app::{GlobalConfiguration, GlobalConfigurationStore, StorageDirectory};
+use gitserious_app::{
+    DirectoryCreator, GlobalConfiguration, GlobalConfigurationStore, StorageDirectory,
+};
 use gitserious_core::TaxonomyId;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
+use crate::LocalDirectoryCreator;
 use crate::taxonomy_wire::{
     TaxonomyWire, configuration_error, legacy_shape, taxonomy_from_wire, taxonomy_to_wire,
 };
@@ -48,13 +51,13 @@ impl GlobalConfigurationStore for TomlGlobalConfigurationStore {
         if &observed != expected {
             return Err(GlobalConfigurationError::ConcurrentChange(path));
         }
-        fs::create_dir_all(self.directory.as_path()).map_err(|source| {
-            GlobalConfigurationError::Io {
+        LocalDirectoryCreator
+            .ensure(&self.directory)
+            .map_err(|source| GlobalConfigurationError::Io {
                 operation: "create directory",
                 path: self.directory.as_path().to_path_buf(),
                 source,
-            }
-        })?;
+            })?;
         reject_unsafe_existing(&path)?;
         let contents = render_configuration(replacement)?;
         let mut temporary = NamedTempFile::new_in(self.directory.as_path()).map_err(|source| {
