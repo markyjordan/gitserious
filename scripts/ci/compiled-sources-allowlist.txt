@@ -1,7 +1,3 @@
 # Rust files left out of the build when this check landed. Each entry is
 # ported or deleted under https://github.com/markyjordan/gitserious/issues/97;
 # check-compiled-sources.sh fails on new offenders and on stale entries.
-crates/gitserious-core/tests/commit_provenance.rs
-crates/gitserious-core/tests/domain_bundles.rs
-crates/gitserious-core/tests/draft_responses.rs
-crates/gitserious-core/tests/taxonomy_configuration.rs
