@@ -45,11 +45,7 @@ impl ProjectStateStore for TomlProjectStateStore {
 
     fn ensure_local_state(&self, root: &RepositoryRoot) -> Result<(), Self::Error> {
         let directory = root.as_path().join(LOCAL_STATE_DIRECTORY);
-        fs::create_dir_all(&directory).map_err(|source| ProjectStateError::Io {
-            operation: "create directory",
-            path: directory.clone(),
-            source,
-        })?;
+        ensure_directory(&directory)?;
         let ignore = directory.join(".gitignore");
         if !regular_file_exists(&ignore)? {
             fs::write(&ignore, LOCAL_IGNORE_CONTENTS).map_err(|source| ProjectStateError::Io {
@@ -152,6 +148,25 @@ fn ensure_expected(
         ));
     }
     Ok(())
+}
+
+fn ensure_directory(path: &Path) -> Result<(), ProjectStateError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => Ok(()),
+        Ok(_) => Err(ProjectStateError::UnsafePath(path.to_path_buf())),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir(path).map_err(|source| ProjectStateError::Io {
+                operation: "create directory",
+                path: path.to_path_buf(),
+                source,
+            })
+        }
+        Err(source) => Err(ProjectStateError::Io {
+            operation: "inspect",
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 fn regular_file_exists(path: &Path) -> Result<bool, ProjectStateError> {
@@ -385,7 +400,7 @@ impl Display for ProjectStateError {
             ),
             Self::UnsafePath(path) => write!(
                 formatter,
-                "project policy path is not a regular file: {}",
+                "refusing project policy path that is a symlink or the wrong file type: {}",
                 path.display()
             ),
             Self::Io {
