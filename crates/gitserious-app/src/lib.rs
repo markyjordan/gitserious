@@ -47,8 +47,9 @@ pub use taxonomy_authoring_context::{
 };
 // Legacy catalog/CRUD/editor exports intentionally disabled.
 pub use create_taxonomy_commit::{
-    CommitOutcome, CommitPolicyError, CreateCommitError, CreateCommitResult, create_commit,
-    create_commit_with_taxonomy,
+    CommitOutcome, CommitPolicyError, CommitPreparationResult, CreateCommitError,
+    CreateCommitResult, create_commit, create_commit_with_taxonomy, prepare_commit_with_taxonomy,
+    validate_reviewed_commit,
 };
 pub use directory_creator::DirectoryCreator;
 pub use ensure_storage_directory::ensure_storage_directory;
