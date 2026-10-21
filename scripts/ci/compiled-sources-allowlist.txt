@@ -15,7 +15,6 @@ crates/gitserious-core/tests/commit_provenance.rs
 crates/gitserious-core/tests/domain_bundles.rs
 crates/gitserious-core/tests/draft_responses.rs
 crates/gitserious-core/tests/taxonomy_configuration.rs
-crates/gitserious-fs/tests/global_configuration.rs
 crates/gitserious/tests/commit.rs
 crates/gitserious/tests/config.rs
 crates/gitserious/tests/init.rs
