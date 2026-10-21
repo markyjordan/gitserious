@@ -24,9 +24,8 @@ pub use global::{GlobalPathError, SystemGlobalPathResolver};
 pub use taxonomy_global::{GlobalConfigurationError, TomlGlobalConfigurationStore};
 pub use taxonomy_project::{ProjectStateError, TomlProjectStateStore};
 
-// Legacy filesystem unit-test registration retained for manual verification.
-// #[cfg(test)]
-// #[path = "../tests/unit/mod.rs"]
-// mod tests;
+#[cfg(test)]
+#[path = "../tests/unit/mod.rs"]
+mod tests;
 
 pub use git_status::GitRepositoryStatusReader;
