@@ -359,11 +359,11 @@ where
     })
 }
 
-struct Workspace<'a, L: ?Sized, S: ?Sized, G: ?Sized> {
-    locator: &'a L,
-    project: &'a S,
-    global: &'a G,
-    start: &'a Path,
+pub(crate) struct Workspace<'a, L: ?Sized, S: ?Sized, G: ?Sized> {
+    pub(crate) locator: &'a L,
+    pub(crate) project: &'a S,
+    pub(crate) global: &'a G,
+    pub(crate) start: &'a Path,
 }
 
 impl<L, S, G> ConfigurationWorkspace for Workspace<'_, L, S, G>

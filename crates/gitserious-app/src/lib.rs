@@ -30,6 +30,7 @@ mod list_commit_types;
 // mod project_state_store;
 mod create_taxonomy_commit;
 mod initialize_taxonomy_project;
+mod interactive;
 mod repository_locator;
 mod repository_status;
 mod resolve_global_paths;
@@ -77,4 +78,7 @@ pub use taxonomy_policy::{
 };
 pub use taxonomy_ports::{GlobalConfigurationStore, ProjectStateStore};
 
+pub use interactive::{
+    HelpPage, InteractiveEntry, InteractiveUi, InteractiveWorkspace, run_interactive,
+};
 pub use repository_status::{BranchState, RepositoryStatus, RepositoryStatusReader, StatusEntry};
