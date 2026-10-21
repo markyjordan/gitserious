@@ -1067,6 +1067,14 @@ pub(crate) struct AuthoringSession<'a> {
     pub(crate) too_small: bool,
 }
 
+/// Owned editor state retained when Git rejects a reviewed commit.
+pub(crate) struct AuthoringCheckpoint {
+    composer: ComposerState,
+    type_catalog: TypeCatalogKind,
+    selected_type: usize,
+    review: ReviewState,
+}
+
 impl<'a> AuthoringSession<'a> {
     pub(crate) fn new(
         definitions: &'a [CommitTypeDefinition],
@@ -1095,6 +1103,37 @@ impl<'a> AuthoringSession<'a> {
             confirmation_resume: ResumeStage::Compose,
             too_small: false,
         }
+    }
+
+    pub(crate) fn checkpoint(
+        self,
+        authored: &gitserious_app::AuthoredCommit,
+        message: CommitMessage,
+    ) -> AuthoringCheckpoint {
+        AuthoringCheckpoint {
+            composer: self.composer,
+            type_catalog: self.type_catalog,
+            selected_type: self.selected_type,
+            review: ReviewState {
+                draft: authored.draft().clone(),
+                message,
+                scroll: 0,
+                scrollable: false,
+            },
+        }
+    }
+
+    pub(crate) fn resume(
+        context: &'a CommitAuthoringContext,
+        checkpoint: AuthoringCheckpoint,
+    ) -> Self {
+        let mut session = Self::with_context(context);
+        session.select_type_catalog(checkpoint.type_catalog);
+        session.selected_type = checkpoint.selected_type;
+        session.composer = checkpoint.composer;
+        session.review = Some(checkpoint.review);
+        session.stage = Stage::Review;
+        session
     }
 
     pub(crate) fn request_cancel(&mut self) -> Option<CommitDraftAuthorOutcome> {
@@ -1689,6 +1728,61 @@ mod tests {
             &TaxonomyId::new("notes")?,
             None,
         )?)
+    }
+
+    #[test]
+    fn failed_submission_checkpoint_preserves_editor_and_exact_review_bytes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let context = context()?;
+        let mut session = AuthoringSession::with_context(&context);
+        session.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+        session.composer.editor.move_cursor(CursorMove::Jump(5, 0));
+        session.handle_event(Event::Paste("Preserve this message".into()));
+        let original_lines = session.composer.editor.lines().to_vec();
+        session.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('s'),
+            KeyModifiers::CONTROL,
+        )));
+        assert_eq!(session.stage, Stage::Review);
+        let expected = session
+            .review
+            .as_ref()
+            .ok_or("missing review")?
+            .message
+            .clone();
+        let Some(CommitDraftAuthorOutcome::Authored(draft)) = session.handle_event(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )) else {
+            return Err("submission did not return authored draft".into());
+        };
+        let authored = gitserious_app::AuthoredCommit::reviewed(
+            context.initial_taxonomy().id().clone(),
+            draft,
+            expected.clone(),
+        );
+        let checkpoint = session.checkpoint(&authored, expected.clone());
+        let mut resumed = AuthoringSession::resume(&context, checkpoint);
+        assert_eq!(resumed.stage, Stage::Review);
+        assert_eq!(resumed.composer.editor.lines(), original_lines);
+        assert_eq!(
+            resumed
+                .review
+                .as_ref()
+                .ok_or("missing resumed review")?
+                .message,
+            expected
+        );
+        assert!(resumed.request_cancel().is_none());
+        assert_eq!(resumed.stage, Stage::Confirm);
+        resumed.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('n'),
+            KeyModifiers::NONE,
+        )));
+        assert_eq!(resumed.stage, Stage::Review);
+        Ok(())
     }
 
     #[test]

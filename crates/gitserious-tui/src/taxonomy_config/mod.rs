@@ -76,6 +76,67 @@ impl ConfigurationEditor for RatatuiTaxonomyConfigurationEditor {
     }
 }
 
+/// Configuration content hosted by the unified shell's terminal runtime.
+pub(crate) struct ConfigView {
+    state: State,
+}
+
+impl ConfigView {
+    pub(crate) fn new(
+        workspace: &dyn ConfigurationWorkspace,
+        library_path: Option<PathBuf>,
+    ) -> Self {
+        let mut state = State::new(workspace);
+        state.embedded = true;
+        state.library_path = library_path;
+        Self { state }
+    }
+
+    pub(crate) fn render(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        self.state.render_at(frame, area);
+    }
+
+    /// Returns true when the configuration content requests that the shell quit.
+    pub(crate) fn handle_event(
+        &mut self,
+        event: Event,
+        workspace: &dyn ConfigurationWorkspace,
+    ) -> bool {
+        self.state.handle_event(event, workspace)
+    }
+
+    /// The Project or Library browser is showing without a popup.
+    pub(crate) fn overview(&self) -> bool {
+        matches!(self.state.screen, Screen::Home) && self.state.home_overlay.is_none()
+    }
+
+    pub(crate) fn modal(&self) -> bool {
+        self.state.home_overlay.is_some() || self.confirming_discard()
+    }
+
+    pub(crate) fn editing_taxonomy(&self) -> bool {
+        self.state.creating_taxonomy()
+    }
+
+    pub(crate) fn confirming_discard(&self) -> bool {
+        matches!(
+            self.state.screen,
+            Screen::ConfirmDiscardCreate(_) | Screen::ConfirmDiscardChild(_)
+        )
+    }
+
+    pub(crate) fn dirty(&self) -> bool {
+        self.state.any_dirty() || self.state.editor.is_some() || self.state.settings.is_some()
+    }
+
+    /// Leaves a taxonomy editor the way its Library breadcrumb does. Returns false while
+    /// the discard confirmation is open.
+    pub(crate) fn request_leave_editor(&mut self) -> bool {
+        self.state.request_leave_editor();
+        !self.state.creating_taxonomy()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Category {
     Project,
@@ -424,6 +485,7 @@ struct SettingsDraft {
 }
 
 struct State {
+    embedded: bool,
     library_path: Option<PathBuf>,
     global: Option<ConfigurationSession>,
     global_error: String,
@@ -468,6 +530,7 @@ impl State {
         let (global, global_error) = split_result(global_result);
         let (project, project_error) = split_result(project_result);
         Self {
+            embedded: false,
             library_path: None,
             global,
             global_error,
@@ -584,6 +647,14 @@ impl State {
         }
     }
 
+    fn request_leave_editor(&mut self) {
+        if matches!(self.screen, Screen::TaxonomyEditor(_)) {
+            self.request_taxonomy_back();
+        } else {
+            self.open_discard(Screen::ConfirmDiscardCreate(Box::new(self.screen.clone())));
+        }
+    }
+
     fn handle_discard_event(&mut self, event: Event) -> bool {
         let Some(choice) = self.discard_dialog.handle_event(&event) else {
             return false;
@@ -675,13 +746,7 @@ impl State {
                 if self.creating_taxonomy()
                     && contains(self.breadcrumb_area, mouse.column, mouse.row)
                 {
-                    if matches!(self.screen, Screen::TaxonomyEditor(_)) {
-                        self.request_taxonomy_back();
-                    } else {
-                        self.open_discard(Screen::ConfirmDiscardCreate(Box::new(
-                            self.screen.clone(),
-                        )));
-                    }
+                    self.request_leave_editor();
                 } else if matches!(self.screen, Screen::Home)
                     && let Some(category) = Category::ALL.into_iter().find(|category| {
                         contains(self.tab_areas[category.index()], mouse.column, mouse.row)
@@ -932,6 +997,10 @@ impl State {
             HomeCommand::SwitchTab => self.category = self.category.next(),
             HomeCommand::Help => self.home_overlay = Some(HomeOverlay::Help),
             HomeCommand::Quit => {
+                // The shell confirms every pending draft once, including a retained commit review.
+                if self.embedded {
+                    return true;
+                }
                 return self.home_key(
                     KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
                     workspace,
@@ -2144,13 +2213,20 @@ impl State {
     }
 
     fn render(&mut self, frame: &mut Frame<'_>) {
-        let area = frame.area();
+        self.render_at(frame, frame.area());
+    }
+
+    fn render_at(&mut self, frame: &mut Frame<'_>, area: Rect) {
         self.discard_dialog.invalidate();
         frame.render_widget(
             Block::default().style(Style::default().bg(JET_BLACK).fg(Color::White)),
             area,
         );
-        self.too_small = area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT;
+        let terminal = frame.area();
+        // Embedded browsing fits beneath the shell header; taxonomy editors keep their full height.
+        self.too_small = terminal.width < MINIMUM_WIDTH
+            || terminal.height < MINIMUM_HEIGHT
+            || (self.creating_taxonomy() && area.height < MINIMUM_HEIGHT);
         if self.too_small {
             self.breadcrumb_area = Rect::default();
             self.tab_areas = [Rect::default(); 2];
@@ -2191,12 +2267,16 @@ impl State {
                 } else {
                     self.render_library(frame, body);
                 }
-                vec![
+                let mut hints = vec![
                     ("←/→", "focus"),
                     ("↑/↓", "move"),
                     ("/", "commands"),
                     ("?", "help"),
-                ]
+                ];
+                if self.embedded {
+                    hints.insert(0, ("tab/shift+tab", "switch"));
+                }
+                hints
             }
             Screen::Settings(destination) => {
                 self.render_settings(frame, body, destination);
