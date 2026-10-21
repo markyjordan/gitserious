@@ -223,7 +223,7 @@ under the existing release posture. Hypothesis evaluation is not a release gate.
 - Build MCP v2 in a v0.1 patch release.
 - Iterate on the Conventional taxonomy after the initial release.
 
-## v0.2
+## v0.3.0
 
 Deliver Lore indexing and query capabilities for recovering historical context.
 Use evaluation findings to guide retrieval work and avoid assuming richer
@@ -233,5 +233,5 @@ messages necessarily improve downstream reasoning.
 
 AST parsing, repository graph representation, and history/structure integration
 remain later work. They are not prerequisites for v0.1 or commitments that every
-such feature will ship in v0.2. Revisit other deferred surfaces using product
+such feature will ship in v0.3.0. Revisit other deferred surfaces using product
 experience and evaluation evidence.

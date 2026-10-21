@@ -10,6 +10,7 @@ It owns CLI parsing, command dispatch, and user-facing output coordination.
 The taxonomy-first public surface is:
 
 ```text
+gitserious
 gitserious config
 gitserious config list
 gitserious config show <taxonomy>
@@ -19,3 +20,7 @@ gitserious commit [--taxonomy <taxonomy>] [--type <type>]
 
 Configuration mutations belong to the reviewed TUI. The list and show commands
 remain read-only for scripts and inspection.
+
+Bare `gitserious` opens the unified Home TUI in a terminal and prints help when
+redirected. Bare `config` enters the shell at Config; `commit` still enters
+authoring directly. The shell Help pages receive CLI-owned presentation data.
