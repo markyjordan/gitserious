@@ -14,8 +14,19 @@ if [[ ! -f Cargo.lock ]]; then
 fi
 
 run_check() {
+  local messages
   "$CARGO" metadata --locked --no-deps --format-version 1 >/dev/null
-  "$CARGO" check --locked --workspace --all-targets --all-features
+  messages="$(mktemp)"
+  "$CARGO" check --locked --workspace --all-targets --all-features \
+    --message-format=json-render-diagnostics >"$messages"
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+      # Unix-only modules such as platform/xdg.rs never compile here.
+      echo "Skipping the compiled-sources check on Windows."
+      ;;
+    *) bash scripts/ci/check-compiled-sources.sh "$messages" ;;
+  esac
+  rm -f "$messages"
 }
 
 run_fmt() {
