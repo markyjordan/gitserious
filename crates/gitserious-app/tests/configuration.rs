@@ -465,3 +465,29 @@ fn global_store_failures_are_reported_and_leave_the_library_unchanged() {
     assert_eq!(error, "global store failed");
     assert_eq!(*store.current.borrow(), GlobalConfiguration::default());
 }
+
+#[test]
+fn recreating_an_original_identity_cannot_reset_its_version() -> Result<(), Box<dyn Error>> {
+    let original = custom("team");
+    let revised = revised_taxonomy(
+        &original,
+        original.description().clone(),
+        original.commit_types().to_vec(),
+    )?;
+    let mut session = ConfigurationSession::open_global(library(vec![revised.clone()])?);
+    session.delete_taxonomy(&id("team"))?;
+    let deleted = session.global().clone();
+
+    let recreated = session
+        .create_taxonomy(original)
+        .expect_err("recreating team reset it to version 1");
+    let forked = session
+        .fork_taxonomy(&id("research"), id("team"))
+        .expect_err("forking into team reset it to version 1");
+
+    assert!(recreated.contains("version 2"), "{recreated}");
+    assert!(forked.contains("version 2"), "{forked}");
+    assert_eq!(session.global(), &deleted);
+    assert_eq!(session.catalog()?.find(&id("team")), None);
+    Ok(())
+}
