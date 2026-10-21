@@ -1,6 +1,5 @@
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
-use std::time::{Duration as StdDuration, Instant};
 
 use crate::confirmation::{DiscardChoice, DiscardDialog};
 use gitserious_app::{
@@ -24,7 +23,6 @@ use ratatui::widgets::{
     Block, BorderType, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState,
     Wrap,
 };
-use tachyonfx::{EffectTimer, Interpolatable, Interpolation};
 use tui_textarea::{CursorMove, CursorRenderMode, TextArea, WrapMode};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -68,23 +66,10 @@ impl ConfigurationEditor for RatatuiTaxonomyConfigurationEditor {
             let _guard = TerminalGuard::enable()?;
             let mut state = State::new(workspace);
             state.library_path.clone_from(&self.library_path);
-            let mut last_frame = Instant::now();
             loop {
-                let now = Instant::now();
-                state.advance_header(now.duration_since(last_frame));
-                last_frame = now;
                 terminal.draw(|frame| state.render(frame))?;
-                if state.header_animating() {
-                    if event::poll(StdDuration::from_millis(16))?
-                        && state.handle_event(event::read()?, workspace)
-                    {
-                        return Ok::<_, io::Error>(());
-                    }
-                } else {
-                    if state.handle_event(event::read()?, workspace) {
-                        return Ok::<_, io::Error>(());
-                    }
-                    last_frame = Instant::now();
+                if state.handle_event(event::read()?, workspace) {
+                    return Ok::<_, io::Error>(());
                 }
             }
         })
@@ -144,6 +129,12 @@ impl Category {
             Self::Library => Self::Project,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HomeFocus {
+    Menu,
+    Content,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -219,19 +210,14 @@ enum Screen {
     ConfirmDiscardChild(Box<Screen>),
 }
 
-const HEADER_ANIMATION_MS: u32 = 240;
+const MENU_WIDTH: u16 = 12;
+const BREADCRUMB_HEIGHT: u16 = 3;
 const CREATE_TEXT_LIMIT: usize = 80;
 const CREATE_TEXT_LIMIT_NOTICE: &str =
     "Taxonomy name and description are limited to 80 characters.";
 const CREATE_TYPES_MARKER_WIDTH: u16 = 1;
 const CREATE_TYPES_COLUMN_SPACING: u16 = 2;
 const CREATE_TYPES_ADD_LABEL: &str = "+ add type";
-
-struct HeaderAnimation {
-    from: f32,
-    to: f32,
-    timer: EffectTimer,
-}
 
 struct CreateTextEditors {
     name: TextArea<'static>,
@@ -469,11 +455,10 @@ struct State {
     project_error: String,
     active_scope: ConfigurationDestination,
     category: Category,
+    home_focus: HomeFocus,
     library: LibraryViewState,
     project_section: ProjectSection,
     screen: Screen,
-    header_progress: f32,
-    header_animation: Option<HeaderAnimation>,
     breadcrumb_area: Rect,
     home_overlay: Option<HomeOverlay>,
     child_selected: usize,
@@ -514,11 +499,10 @@ impl State {
             project_error,
             active_scope: ConfigurationDestination::Project,
             category: Category::Project,
+            home_focus: HomeFocus::Menu,
             library: LibraryViewState::default(),
             project_section: ProjectSection::Commit,
             screen: Screen::Home,
-            header_progress: 0.0,
-            header_animation: None,
             breadcrumb_area: Rect::default(),
             home_overlay: None,
             child_selected: 0,
@@ -544,36 +528,6 @@ impl State {
             project_area: Rect::default(),
             tab_areas: [Rect::default(); 2],
         }
-    }
-
-    fn header_animating(&self) -> bool {
-        self.header_animation.is_some()
-    }
-
-    fn advance_header(&mut self, elapsed: StdDuration) {
-        let Some(animation) = &mut self.header_animation else {
-            return;
-        };
-        animation.timer.process(elapsed.into());
-        self.header_progress = animation.from.lerp(&animation.to, animation.timer.alpha());
-        if animation.timer.done() {
-            self.header_progress = animation.to;
-            self.header_animation = None;
-        }
-    }
-
-    fn start_header_transition(&mut self, to: f32) {
-        if (self.header_progress - to).abs() < f32::EPSILON {
-            self.header_progress = to;
-            self.header_animation = None;
-        } else {
-            self.header_animation = Some(HeaderAnimation {
-                from: self.header_progress,
-                to,
-                timer: EffectTimer::from_ms(HEADER_ANIMATION_MS, Interpolation::SineInOut),
-            });
-        }
-        self.breadcrumb_area = Rect::default();
     }
 
     fn creating_taxonomy(&self) -> bool {
@@ -628,7 +582,6 @@ impl State {
         self.category = Category::Library;
         self.create_areas = [Rect::default(); 2];
         self.breadcrumb_area = Rect::default();
-        self.start_header_transition(0.0);
     }
 
     fn taxonomy_is_dirty(&self) -> bool {
@@ -758,6 +711,7 @@ impl State {
                         contains(self.tab_areas[category.index()], mouse.column, mouse.row)
                     })
                 {
+                    self.home_focus = HomeFocus::Menu;
                     if self.category != category {
                         self.category = category;
                         self.status = None;
@@ -768,6 +722,7 @@ impl State {
                 {
                     let index = usize::from(mouse.row.saturating_sub(self.project_area.y));
                     if let Some(section) = ProjectSection::ALL.get(index) {
+                        self.home_focus = HomeFocus::Content;
                         self.project_section = *section;
                         self.project_scroll = 0;
                     }
@@ -780,9 +735,11 @@ impl State {
                         mouse.row,
                         self.catalog().map_or(0, |items| items.len()),
                     ) {
+                        self.home_focus = HomeFocus::Content;
                         self.library.select_taxonomy(index);
                         self.status = None;
                     } else if self.library.create_at(mouse.column, mouse.row) {
+                        self.home_focus = HomeFocus::Content;
                         self.library.select_create();
                         self.request_global_action(PendingAction::Create);
                     }
@@ -796,6 +753,7 @@ impl State {
                             .map_or(0, |taxonomy| taxonomy.commit_types().len()),
                     )
                 {
+                    self.home_focus = HomeFocus::Content;
                     self.library.select_type(index);
                 } else if matches!(self.screen, Screen::TypeEditor)
                     && let Some(editor) = &mut self.type_editor
@@ -1012,14 +970,32 @@ impl State {
             KeyCode::Char('/') if key.modifiers.is_empty() => {
                 self.home_overlay = Some(HomeOverlay::Palette(CommandPaletteState::default()));
             }
-            KeyCode::Char('m') if key.modifiers.is_empty() => {
-                self.category = self.category.next();
-                self.status = None;
-            }
             KeyCode::Char('?')
                 if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
             {
                 self.home_overlay = Some(HomeOverlay::Help);
+            }
+            KeyCode::Up | KeyCode::Down if self.home_focus == HomeFocus::Menu => {
+                let category = if key.code == KeyCode::Up {
+                    Category::Project
+                } else {
+                    Category::Library
+                };
+                if self.category != category {
+                    self.category = category;
+                    self.status = None;
+                }
+            }
+            KeyCode::Right if self.home_focus == HomeFocus::Menu => {
+                self.home_focus = HomeFocus::Content;
+                self.library.focus = LibraryFocus::Taxonomies;
+            }
+            KeyCode::Left
+                if self.home_focus == HomeFocus::Menu
+                    || self.category == Category::Project
+                    || self.library.focus == LibraryFocus::Taxonomies =>
+            {
+                self.home_focus = HomeFocus::Menu;
             }
             KeyCode::Up | KeyCode::Down if self.category == Category::Project => {
                 let index = self.project_section.index();
@@ -1873,7 +1849,6 @@ impl State {
         self.create_focus = CreateFocus::Name;
         self.create_type_offset = 0;
         self.screen = Screen::TaxonomyEditor(EditorMode::Create);
-        self.start_header_transition(1.0);
     }
 
     fn open_review(&mut self) {
@@ -1925,7 +1900,6 @@ impl State {
         self.editor_mode = EditorMode::Edit;
         self.child_selected = 0;
         self.screen = Screen::TaxonomyEditor(EditorMode::Edit);
-        self.start_header_transition(1.0);
     }
 
     fn open_taxonomy_metadata(&mut self, mode: EditorMode) {
@@ -2219,34 +2193,34 @@ impl State {
             normalize_background(frame, area);
             return;
         }
-        let [options, content, footer] = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Min(1),
-            Constraint::Length(1),
-        ])
-        .areas(area);
-        self.render_config_header(frame, options);
-        let body = content;
+        let [main, footer] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+        let [menu, content] =
+            Layout::horizontal([Constraint::Length(MENU_WIDTH), Constraint::Min(1)]).areas(main);
+        self.render_menu(frame, menu);
+        let body = if self.creating_taxonomy() {
+            let [breadcrumb, body] =
+                Layout::vertical([Constraint::Length(BREADCRUMB_HEIGHT), Constraint::Min(1)])
+                    .areas(content);
+            self.render_breadcrumb(frame, breadcrumb);
+            body
+        } else {
+            self.breadcrumb_area = Rect::default();
+            content
+        };
         let hints = match self.screen.clone() {
             Screen::Home => {
                 if self.category == Category::Project {
                     self.render_project(frame, body);
-                    vec![
-                        ("m", "menu"),
-                        ("↑/↓", "move"),
-                        ("/", "commands"),
-                        ("?", "help"),
-                    ]
                 } else {
                     self.render_library(frame, body);
-                    vec![
-                        ("m", "menu"),
-                        ("←/→", "focus"),
-                        ("↑/↓", "move"),
-                        ("/", "commands"),
-                        ("?", "help"),
-                    ]
                 }
+                vec![
+                    ("←/→", "focus"),
+                    ("↑/↓", "move"),
+                    ("/", "commands"),
+                    ("?", "help"),
+                ]
             }
             Screen::Settings(destination) => {
                 self.render_settings(frame, body, destination);
@@ -2345,34 +2319,86 @@ impl State {
         };
         render_navigation_row(frame, footer, &hints);
         if let Some(overlay) = &mut self.home_overlay {
-            overlay.render(frame, body, self.category);
+            overlay.render(frame, main, self.category);
         } else {
             self.render_notice(frame, body);
         }
         normalize_background(frame, area);
     }
 
-    fn render_config_header(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let mut block = Block::bordered().border_style(frame_style());
-        if !self.creating_taxonomy()
-            && !self.header_animating()
-            && self.header_progress <= f32::EPSILON
-        {
-            block = block.title("Config Options");
+    fn render_menu(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        self.tab_areas = [Rect::default(); 2];
+        let home = matches!(self.screen, Screen::Home);
+        let style = focus_frame_style(home && self.home_focus == HomeFocus::Menu);
+        frame.render_widget(
+            Block::bordered()
+                .border_style(style)
+                .title_style(style)
+                .title("Menu"),
+            area,
+        );
+        let border = area.right().saturating_sub(1);
+        for category in Category::ALL {
+            let y = area
+                .y
+                .saturating_add(1)
+                .saturating_add(u16::try_from(category.index()).unwrap_or(u16::MAX));
+            if y >= area.bottom().saturating_sub(1) {
+                break;
+            }
+            let row = Rect::new(area.x.saturating_add(1), y, area.width.saturating_sub(2), 1);
+            let selected = category == self.category;
+            frame.render_widget(
+                Paragraph::new(format!(" {}", category.label())).style(if selected {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                }),
+                row,
+            );
+            if selected && border > area.x {
+                frame.buffer_mut()[(border, y)]
+                    .set_symbol("┃")
+                    .set_fg(Color::Yellow);
+            }
+            if home {
+                self.tab_areas[category.index()] = row;
+            }
         }
-        frame.render_widget(block, area);
+        if self.any_dirty() && area.height > 5 {
+            frame.render_widget(
+                Paragraph::new(" unapplied\n changes").style(section_heading_style()),
+                Rect::new(
+                    area.x.saturating_add(1),
+                    area.bottom().saturating_sub(3),
+                    area.width.saturating_sub(2),
+                    2,
+                ),
+            );
+        }
+    }
+
+    fn render_breadcrumb(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        frame.render_widget(Block::bordered().border_style(frame_style()), area);
         let row = Rect::new(
             area.x.saturating_add(1),
             area.y.saturating_add(1),
             area.width.saturating_sub(2),
             1,
         );
-        if self.header_animating() || self.header_progress > 0.0 {
-            self.render_transition_header(frame, row);
-        } else {
-            self.breadcrumb_area = Rect::default();
-            self.render_tabs(frame, row);
-        }
+        let label = Category::Library.label();
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(format!(" {label}"), Style::default().fg(Color::Yellow)),
+                Span::raw(self.editor_breadcrumb()),
+            ])),
+            row,
+        );
+        render_header_underline(frame, row, i32::from(row.x), label);
+        let width = u16::try_from(Line::from(label).width())
+            .unwrap_or(u16::MAX)
+            .saturating_add(2);
+        self.breadcrumb_area = Rect::new(row.x, row.y, width.min(row.width), 2);
     }
 
     fn render_editor_background(&mut self, frame: &mut Frame<'_>, area: Rect, screen: &Screen) {
@@ -2403,117 +2429,6 @@ impl State {
             _ => return,
         };
         self.discard_dialog.render(frame, area, title, message);
-    }
-
-    fn render_transition_header(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        self.tab_areas = [Rect::default(); 2];
-        self.breadcrumb_area = Rect::default();
-        let project_width = i32::try_from(Line::from("Project").width())
-            .unwrap_or(i32::MAX)
-            .saturating_add(2);
-        let library_width = i32::try_from(Line::from("Library").width())
-            .unwrap_or(i32::MAX)
-            .saturating_add(2);
-        let leading = i32::from(area.x).saturating_add(1);
-        let project_end = leading.saturating_sub(project_width).saturating_sub(1);
-        let library_start = leading.saturating_add(project_width).saturating_add(1);
-        let progress = self.header_progress.clamp(0.0, 1.0);
-        if progress < 1.0 {
-            render_clipped_header_text(
-                frame,
-                area,
-                leading.lerp(&project_end, progress),
-                " Project ",
-                Style::default().fg(Color::White.lerp(&JET_BLACK, progress)),
-            );
-        }
-        render_clipped_header_text(
-            frame,
-            area,
-            library_start.lerp(&leading, progress),
-            " Library ",
-            Style::default().fg(Color::Yellow),
-        );
-        let library_x = library_start.lerp(&leading, progress);
-        render_header_underline(frame, area, library_x, "Library");
-        if self.creating_taxonomy()
-            && let Ok(x) = u16::try_from(library_x)
-            && x < area.right()
-        {
-            self.breadcrumb_area = Rect::new(
-                x,
-                area.y,
-                u16::try_from(library_width)
-                    .unwrap_or(0)
-                    .min(area.right() - x),
-                2,
-            );
-        }
-        let mut used_right = library_start
-            .lerp(&leading, progress)
-            .saturating_add(library_width);
-        if self.creating_taxonomy() && !self.header_animating() && progress >= 1.0 {
-            let suffix = self.editor_breadcrumb();
-            render_clipped_header_text(
-                frame,
-                area,
-                used_right,
-                &suffix,
-                Style::default().fg(Color::White),
-            );
-            used_right = used_right
-                .saturating_add(i32::try_from(Line::from(suffix).width()).unwrap_or(i32::MAX));
-        }
-        self.render_dirty_indicator(
-            frame,
-            area,
-            u16::try_from(used_right).unwrap_or(area.right()),
-        );
-    }
-
-    fn render_tabs(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        self.tab_areas = [Rect::default(); 2];
-        let mut x = area.x.saturating_add(1);
-        for category in Category::ALL {
-            let label = category.label();
-            let width = u16::try_from(Line::from(label).width())
-                .unwrap_or(u16::MAX)
-                .saturating_add(2);
-            let tab = Rect::new(x, area.y, width.min(area.right().saturating_sub(x)), 2);
-            self.tab_areas[category.index()] = tab;
-            let style = if category == self.category {
-                Style::default().fg(Color::Yellow)
-            } else {
-                Style::default()
-            };
-            frame.render_widget(
-                Paragraph::new(format!(" {label} ")).style(style),
-                Rect::new(tab.x, tab.y, tab.width, 1),
-            );
-            if category == self.category {
-                render_header_underline(frame, area, i32::from(x), label);
-            }
-            x = x.saturating_add(width).saturating_add(1);
-        }
-        self.render_dirty_indicator(frame, area, x);
-    }
-
-    fn render_dirty_indicator(&self, frame: &mut Frame<'_>, area: Rect, used_right: u16) {
-        let dirty = if self.any_dirty() {
-            "unapplied changes"
-        } else {
-            ""
-        };
-        if !dirty.is_empty() {
-            let width = u16::try_from(Line::from(dirty).width()).unwrap_or(u16::MAX);
-            if used_right.saturating_add(width) < area.right() {
-                let indicator = Rect::new(area.right().saturating_sub(width), area.y, width, 1);
-                frame.render_widget(
-                    Paragraph::new(dirty).style(section_heading_style()),
-                    indicator,
-                );
-            }
-        }
     }
 
     fn render_notice(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -2569,9 +2484,12 @@ impl State {
 
     fn render_project(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let columns = pane_columns(area);
+        let focused = self.home_focus == HomeFocus::Content;
+        let style = focus_frame_style(focused);
         frame.render_widget(
             Block::bordered()
-                .border_style(frame_style())
+                .border_style(style)
+                .title_style(style)
                 .title("Project"),
             columns[0],
         );
@@ -2639,7 +2557,7 @@ impl State {
         let mut state = ListState::default();
         state.select(Some(self.project_section.index()));
         frame.render_stateful_widget(
-            List::new(rows).highlight_style(navigation_key_style()),
+            List::new(rows).highlight_style(selected_style(focused)),
             nav,
             &mut state,
         );
@@ -2805,8 +2723,9 @@ impl State {
             .as_ref()
             .and_then(|session| session.catalog().ok());
         let error = self.catalog_error();
+        let focused = self.home_focus == HomeFocus::Content;
         self.library
-            .render(frame, area, catalog.as_ref(), error.as_deref());
+            .render(frame, area, catalog.as_ref(), error.as_deref(), focused);
     }
 
     fn render_settings(
@@ -3154,20 +3073,6 @@ fn contains(area: Rect, x: u16, y: u16) -> bool {
     x >= area.x && x < area.right() && y >= area.y && y < area.bottom()
 }
 
-fn render_clipped_header_text(frame: &mut Frame<'_>, area: Rect, x: i32, text: &str, style: Style) {
-    for (offset, character) in text.chars().enumerate() {
-        let position = x.saturating_add(i32::try_from(offset).unwrap_or(i32::MAX));
-        if position >= i32::from(area.x)
-            && position < i32::from(area.right())
-            && let Ok(column) = u16::try_from(position)
-        {
-            frame.buffer_mut()[(column, area.y)]
-                .set_symbol(&character.to_string())
-                .set_style(style);
-        }
-    }
-}
-
 fn render_header_underline(frame: &mut Frame<'_>, area: Rect, label_x: i32, label: &str) {
     for offset in 0..label.chars().count() {
         let x = label_x
@@ -3445,14 +3350,6 @@ mod tests {
             .concat()
     }
 
-    fn header_library_x(terminal: &Terminal<TestBackend>, width: u16) -> Option<u16> {
-        row_text(terminal, 0, 1, width)
-            .chars()
-            .position(|character| character == 'L')
-            .and_then(|x| u16::try_from(x).ok())
-            .map(|x| x.saturating_sub(1))
-    }
-
     #[test]
     fn project_shows_inherited_preview_resolution_files_and_initialize()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -3479,17 +3376,15 @@ mod tests {
                 .is_none()
         );
         let buffer = terminal.backend().buffer();
-        assert!(row_text(&terminal, 0, 0, 100).contains("Config Options"));
+        assert!(row_text(&terminal, 0, 0, 100).contains("Menu"));
         assert_eq!(buffer[(0, 0)].symbol(), "┌");
+        assert_eq!(buffer[(MENU_WIDTH - 1, 0)].symbol(), "┐");
+        assert_eq!(buffer[(MENU_WIDTH - 1, 28)].symbol(), "┘");
+        assert_eq!(buffer[(MENU_WIDTH, 0)].symbol(), "┌");
         assert_eq!(buffer[(99, 0)].symbol(), "┐");
-        assert_eq!(buffer[(0, 2)].symbol(), "└");
-        assert_eq!(buffer[(1, 2)].symbol(), "─");
-        assert_eq!(buffer[(99, 2)].symbol(), "┘");
-        assert_eq!(buffer[(0, 3)].symbol(), "┌");
-        assert_eq!(buffer[(99, 3)].symbol(), "┐");
-        assert_ne!(buffer[(1, 4)].symbol(), " ");
-        assert_eq!(buffer[(1, 4)].fg, Color::Yellow);
-        let project_columns = pane_columns(Rect::new(0, 3, 100, 26));
+        assert_ne!(buffer[(MENU_WIDTH + 1, 1)].symbol(), " ");
+        assert_eq!(buffer[(MENU_WIDTH + 1, 1)].fg, Color::Yellow);
+        let project_columns = pane_columns(Rect::new(MENU_WIDTH, 0, 100 - MENU_WIDTH, 29));
         assert!(
             row_text(
                 &terminal,
@@ -3501,12 +3396,13 @@ mod tests {
         );
         assert_eq!(buffer[(2, 1)].fg, Color::Yellow);
         assert_eq!(buffer[(2, 1)].bg, JET_BLACK);
-        assert_eq!(buffer[(3, 2)].fg, Color::Yellow);
+        assert_eq!(buffer[(MENU_WIDTH - 1, 1)].symbol(), "┃");
         assert_eq!(buffer[(0, 28)].symbol(), "└");
-        assert_eq!(buffer[(0, 29)].symbol(), "m");
-        assert_eq!(buffer[(1, 29)].symbol(), ":");
+        assert_eq!(buffer[(0, 29)].symbol(), "←");
+        assert_eq!(buffer[(3, 29)].symbol(), ":");
         assert!((0..100).all(|x| buffer[(x, 29)].bg == Color::Yellow));
 
+        state.handle_event(key(KeyCode::Right), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
         assert_eq!(state.project_section, ProjectSection::Resolution);
         terminal.draw(|frame| state.render(frame))?;
@@ -3689,21 +3585,28 @@ mod tests {
             }),
             &workspace,
         );
+        state.handle_event(key(KeyCode::Right), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         let [taxonomies, types, metadata] = state.library.pane_areas;
-        assert_eq!(taxonomies.x, 0);
-        assert_eq!(taxonomies.right() + 1, types.x);
-        assert_eq!(types.right() + 1, metadata.x);
+        let taxonomy_description = state.library.taxonomy_description_area;
+        assert_eq!(taxonomies.x, MENU_WIDTH);
+        assert_eq!(taxonomies.bottom(), types.y);
+        assert_eq!((types.x, types.width), (taxonomies.x, taxonomies.width));
+        assert_eq!(taxonomies.right() + 1, taxonomy_description.x);
+        assert_eq!(taxonomy_description.right() + 1, metadata.x);
         assert_eq!(metadata.right(), 120);
-        assert!(taxonomies.width.abs_diff(types.width) <= 1);
-        assert!(types.width.abs_diff(metadata.width) <= 1);
+        assert_eq!(
+            taxonomy_description.height,
+            taxonomies.height + types.height
+        );
+        assert!(taxonomies.width.abs_diff(taxonomy_description.width) <= 1);
+        assert!(taxonomy_description.width.abs_diff(metadata.width) <= 1);
         assert!(taxonomies.width.abs_diff(metadata.width) <= 1);
         let titles = row_text(&terminal, 0, taxonomies.y, 120);
-        for title in ["Taxonomies", "Types", "Type Details"] {
+        for title in ["Taxonomies", "Taxonomy Description", "Type Details"] {
             assert!(titles.contains(title));
         }
-        let taxonomy_description = state.library.taxonomy_description_area;
-        assert_eq!(taxonomies.bottom(), taxonomy_description.y);
+        assert!(row_text(&terminal, types.x, types.y, types.width).contains("Types"));
         assert!(
             row_text(
                 &terminal,
@@ -3912,15 +3815,13 @@ mod tests {
         assert_eq!(state.project_section, ProjectSection::Resolution);
 
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.library.focus = LibraryFocus::Types;
         terminal.draw(|frame| state.render(frame))?;
         assert!(state.library.type_area.height > 0);
-        let [_, types, details] = state.library.pane_areas;
-        assert_eq!(types.bottom(), details.y);
-        assert_eq!(
-            state.library.pane_areas[0].bottom(),
-            state.library.taxonomy_description_area.y
-        );
+        let [taxonomies, types, details] = state.library.pane_areas;
+        assert_eq!(taxonomies.bottom(), types.y);
+        assert_eq!(state.library.taxonomy_description_area.bottom(), details.y);
         let type_area = state.library.type_area;
         let taxonomy_area = state.library.browser_area;
         assert_eq!(
@@ -3951,21 +3852,16 @@ mod tests {
             )
             .contains("An addition")
         );
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(state.library.property_scroll, 0);
         state.handle_event(key(KeyCode::PageDown), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(state.library.property_scroll > 0);
         assert!(text(&terminal).contains("Properties"));
-        assert!(
-            row_text(
-                &terminal,
-                state.library.metadata_area.x,
-                state.library.metadata_area.y + 2,
-                state.library.metadata_area.width,
-            )
-            .contains("intent")
-        );
         assert_eq!(state.library.browse_selected, 0);
-        assert_eq!(state.library.type_selected, 0);
+        assert_eq!(state.library.type_selected, 2);
         Ok(())
     }
 
@@ -3975,22 +3871,29 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
-        let mut compact = Terminal::new(TestBackend::new(95, 30))?;
+        state.home_focus = HomeFocus::Content;
+        let mut compact = Terminal::new(TestBackend::new(MENU_WIDTH + 95, 30))?;
         compact.draw(|frame| state.render(frame))?;
         assert_eq!(
-            state.library.pane_areas[1].bottom(),
+            state.library.pane_areas[0].bottom(),
+            state.library.pane_areas[1].y
+        );
+        assert_eq!(
+            state.library.taxonomy_description_area.bottom(),
             state.library.pane_areas[2].y
         );
         assert!(text(&compact).contains("Type Details"));
 
-        let mut wide = Terminal::new(TestBackend::new(96, 30))?;
+        let mut wide = Terminal::new(TestBackend::new(MENU_WIDTH + 96, 30))?;
         wide.draw(|frame| state.render(frame))?;
         let [taxonomies, types, metadata] = state.library.pane_areas;
-        assert_eq!(taxonomies.right() + 1, types.x);
-        assert_eq!(types.right() + 1, metadata.x);
-        assert_eq!(metadata.right(), 96);
-        assert!(taxonomies.width.abs_diff(types.width) <= 1);
-        assert!(types.width.abs_diff(metadata.width) <= 1);
+        let taxonomy_description = state.library.taxonomy_description_area;
+        assert_eq!(taxonomies.bottom(), types.y);
+        assert_eq!(taxonomies.right() + 1, taxonomy_description.x);
+        assert_eq!(taxonomy_description.right() + 1, metadata.x);
+        assert_eq!(metadata.right(), MENU_WIDTH + 96);
+        assert!(taxonomies.width.abs_diff(taxonomy_description.width) <= 1);
+        assert!(taxonomy_description.width.abs_diff(metadata.width) <= 1);
         assert!(text(&wide).contains("Type Details"));
         Ok(())
     }
@@ -4000,10 +3903,11 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
-        let mut terminal = Terminal::new(TestBackend::new(80, 35))?;
+        state.home_focus = HomeFocus::Content;
+        let mut terminal = Terminal::new(TestBackend::new(MENU_WIDTH + 80, 35))?;
         terminal.draw(|frame| state.render(frame))?;
         let details = state.library.pane_areas[2];
-        assert_eq!(state.library.pane_areas[1].bottom(), details.y);
+        assert_eq!(state.library.taxonomy_description_area.bottom(), details.y);
         assert!(row_text(&terminal, details.x, details.y, details.width).contains("Type Details"));
         let area = state.library.metadata_area;
         let required = row_text(&terminal, area.x, area.y + 4, area.width);
@@ -4020,6 +3924,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         let target = TaxonomyId::new("team")?;
         let session = state.global.as_mut().ok_or("missing global")?;
         session.fork_taxonomy(&TaxonomyId::new("conventional")?, target.clone())?;
@@ -4052,6 +3957,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         let session = state.global.as_mut().ok_or("missing global")?;
         for index in 0..8 {
             session.fork_taxonomy(
@@ -4096,6 +4002,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state
             .global
             .as_mut()
@@ -4147,6 +4054,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
         let list = state.library.browser_area;
@@ -4157,6 +4065,8 @@ mod tests {
         state.handle_event(key(KeyCode::Right), &workspace);
         assert_eq!(state.library.focus, LibraryFocus::Taxonomies);
         state.handle_event(key(KeyCode::Left), &workspace);
+        assert_eq!(state.home_focus, HomeFocus::Menu);
+        state.handle_event(key(KeyCode::Right), &workspace);
         assert_eq!(state.library.focus, LibraryFocus::Taxonomies);
         terminal.draw(|frame| state.render(frame))?;
         assert!(!row_text(&terminal, list.x, list.y + 3, list.width).contains('›'));
@@ -4198,6 +4108,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.library.select_taxonomy(2);
         state.handle_event(key(KeyCode::Down), &workspace);
         state.handle_event(key(KeyCode::Enter), &workspace);
@@ -4210,7 +4121,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
         let rendered = text(&terminal);
-        assert!(!row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Config Options"));
+        assert!(row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Menu"));
         assert!(rendered.contains("Name"));
         assert!(rendered.contains("Description"));
         assert!(rendered.contains("+ add type"));
@@ -4229,9 +4140,8 @@ mod tests {
             row_text(&terminal, 0, MINIMUM_HEIGHT - 1, MINIMUM_WIDTH)
                 .starts_with("esc: back  enter: next/open  ctrl+s: stage  /: commands")
         );
-        state.advance_header(StdDuration::from_millis(240));
         terminal.draw(|frame| state.render(frame))?;
-        assert!(!row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Config Options"));
+        assert!(row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Menu"));
 
         state.handle_event(Event::Paste("team".into()), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
@@ -4315,7 +4225,6 @@ mod tests {
         state.handle_event(Event::Paste("stage".into()), &workspace);
         state.handle_event(key(KeyCode::Enter), &workspace);
         assert!(matches!(state.screen, Screen::Home));
-        assert!(state.header_animating());
         assert!(state.scope_dirty(ConfigurationDestination::Global));
         let staged = state
             .global
@@ -4336,6 +4245,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
@@ -4382,6 +4292,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
@@ -4515,6 +4426,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
         state.handle_event(
@@ -4555,6 +4467,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(Event::Paste("team".into()), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
@@ -4628,6 +4541,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
         terminal.draw(|frame| state.render(frame))?;
@@ -4669,6 +4583,7 @@ mod tests {
         for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
             let mut state = State::new(&workspace);
             state.category = Category::Library;
+            state.home_focus = HomeFocus::Content;
             state.handle_event(key(KeyCode::Char('n')), &workspace);
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             for focus in [
@@ -4712,6 +4627,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         for index in 0..3 {
             state.library.select_taxonomy(index);
             let source = state.selected_taxonomy().ok_or("missing source")?;
@@ -4761,7 +4677,6 @@ mod tests {
         state.library.select_taxonomy(0);
         let source = state.selected_taxonomy().ok_or("missing source")?;
         state.handle_event(key(KeyCode::Char('f')), &workspace);
-        state.advance_header(StdDuration::from_millis(240));
         rename_creation(&mut state, &workspace, "Research")?;
         stage_creation(&mut state, &workspace);
         assert!(
@@ -4892,6 +4807,7 @@ mod tests {
             )?);
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.library.select_taxonomy(3);
         state.handle_event(key(KeyCode::Char('f')), &workspace);
         assert_eq!(
@@ -4962,6 +4878,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.library.select_create();
         state.handle_event(key(KeyCode::Char('f')), &workspace);
         assert!(matches!(state.status, Some(Notice::Error(_))));
@@ -4982,7 +4899,6 @@ mod tests {
         state.handle_event(key(KeyCode::Char('f')), &workspace);
         state.handle_event(key(KeyCode::Char('d')), &workspace);
         assert!(state.fork_source.is_some());
-        state.advance_header(StdDuration::from_millis(240));
         state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
         terminal.draw(|frame| state.render(frame))?;
@@ -5009,183 +4925,165 @@ mod tests {
     }
 
     #[test]
-    fn create_header_animates_and_widgets_use_the_full_content_width()
+    fn create_breadcrumb_sits_above_editor_widgets_beside_the_inert_menu()
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(state.header_animating());
-        assert!(!row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Config Options"));
-        assert!(row_text(&terminal, 0, 1, MINIMUM_WIDTH).contains("Project"));
-        let initial_x = header_library_x(&terminal, MINIMUM_WIDTH).ok_or("missing Library")?;
+        let content_x = MENU_WIDTH;
+        let content_width = MINIMUM_WIDTH - MENU_WIDTH;
+        assert!(row_text(&terminal, 0, 0, content_x).contains("Menu"));
+        assert!(row_text(&terminal, 0, 1, content_x).contains("Project"));
+        assert!(row_text(&terminal, 0, 2, content_x).contains("Library"));
+        assert!(
+            row_text(&terminal, content_x, 1, content_width).contains("Library / create taxonomy")
+        );
+        assert_eq!(state.tab_areas, [Rect::default(); 2]);
 
         let [taxonomy, types] = state.create_areas;
         for pane in [taxonomy, types] {
-            assert_eq!(pane.x, 0);
-            assert_eq!(pane.width, MINIMUM_WIDTH);
+            assert_eq!(pane.x, content_x);
+            assert_eq!(pane.width, content_width);
         }
+        assert_eq!(taxonomy.y, BREADCRUMB_HEIGHT);
         assert_eq!(taxonomy.height, 8);
         assert_eq!(types.height, 6);
         assert_eq!(types.y, taxonomy.bottom());
         assert_eq!(types.bottom(), MINIMUM_HEIGHT - 1);
-        assert_eq!(terminal.backend().buffer()[(0, taxonomy.y)].symbol(), "┌");
-        assert!(
-            row_text(&terminal, 1, taxonomy.y + 3, taxonomy.width - 2)
-                .trim()
-                .is_empty()
-        );
-        assert!(
-            row_text(&terminal, 1, taxonomy.y + 5, taxonomy.width - 2)
-                .trim()
-                .is_empty()
-        );
-        assert!(
-            row_text(&terminal, 1, taxonomy.y + 6, taxonomy.width - 2)
-                .trim()
-                .is_empty()
-        );
-        assert_eq!(
-            terminal.backend().buffer()[(0, taxonomy.bottom() - 1)].symbol(),
-            "└"
-        );
-        assert_eq!(terminal.backend().buffer()[(0, types.y)].symbol(), "┌");
-        state.advance_header(StdDuration::from_millis(120));
-        terminal.draw(|frame| state.render(frame))?;
-        let middle_x = header_library_x(&terminal, MINIMUM_WIDTH).ok_or("missing Library")?;
-        assert!(middle_x < initial_x);
-        assert!(!row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Config Options"));
-        let faded = Color::White.lerp(&JET_BLACK, state.header_progress);
-        assert_ne!(faded, Color::White);
-        assert_ne!(faded, JET_BLACK);
-        assert!((1..middle_x).any(|x| {
-            let cell = &terminal.backend().buffer()[(x, 1)];
-            cell.symbol() != " " && cell.fg == faded
-        }));
-
-        state.advance_header(StdDuration::from_millis(120));
-        terminal.draw(|frame| state.render(frame))?;
-        let final_x = header_library_x(&terminal, MINIMUM_WIDTH).ok_or("missing Library")?;
-        assert!(final_x < middle_x);
-        assert!(!state.header_animating());
-        assert!(!row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Config Options"));
-        assert!(!row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Create Taxonomy"));
-        assert_eq!(terminal.backend().buffer()[(1, 0)].symbol(), "─");
-        assert!(row_text(&terminal, 0, 1, MINIMUM_WIDTH).contains("/ create taxonomy"));
-        assert!(!row_text(&terminal, 0, 1, MINIMUM_WIDTH).contains("Project"));
-        assert_eq!(state.breadcrumb_area.x, final_x);
-        assert_eq!(
-            terminal.backend().buffer()[(state.breadcrumb_area.right(), 1)].symbol(),
-            " "
-        );
-        assert_eq!(
-            terminal.backend().buffer()[(state.breadcrumb_area.right(), 1)].bg,
-            JET_BLACK
-        );
-        assert_eq!(
-            terminal.backend().buffer()[(state.breadcrumb_area.right() + 1, 1)].symbol(),
-            "/"
-        );
 
         let breadcrumb = state.breadcrumb_area;
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: breadcrumb.x,
-                row: breadcrumb.y,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
+        assert_eq!((breadcrumb.x, breadcrumb.y), (content_x + 1, 1));
+        let label = &terminal.backend().buffer()[(breadcrumb.x + 1, 1)];
+        let underline = &terminal.backend().buffer()[(breadcrumb.x + 1, 2)];
+        assert_eq!(label.symbol(), "L");
+        assert_eq!(label.fg, Color::Yellow);
+        assert_eq!(underline.symbol(), "─");
+        assert_eq!(underline.fg, Color::Yellow);
+
+        state.handle_event(click(Rect::new(1, 1, 1, 1)), &workspace);
+        assert!(matches!(
+            state.screen,
+            Screen::TaxonomyEditor(EditorMode::Create)
+        ));
+        assert_eq!(state.category, Category::Library);
+
+        let mut wide = Terminal::new(TestBackend::new(120, 30))?;
+        wide.draw(|frame| state.render(frame))?;
+        let [taxonomy, types] = state.create_areas;
+        assert!(
+            [taxonomy, types]
+                .into_iter()
+                .all(|pane| pane.x == content_x && pane.width == 120 - content_x)
         );
+        let mut small = Terminal::new(TestBackend::new(MINIMUM_WIDTH - 1, MINIMUM_HEIGHT))?;
+        small.draw(|frame| state.render(frame))?;
+        assert!(text(&small).contains("Terminal too small"));
+        assert_eq!(state.breadcrumb_area, Rect::default());
+
+        terminal.draw(|frame| state.render(frame))?;
+        state.handle_event(click(state.breadcrumb_area), &workspace);
         assert!(matches!(state.screen, Screen::Home));
         assert!(state.editor.is_none());
-        assert!(state.header_animating());
         terminal.draw(|frame| state.render(frame))?;
-        assert!(!row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Config Options"));
-        assert!(!row_text(&terminal, 0, 1, MINIMUM_WIDTH).contains("create taxonomy"));
-        state.advance_header(StdDuration::from_millis(120));
-        terminal.draw(|frame| state.render(frame))?;
-        let reverse_x = header_library_x(&terminal, MINIMUM_WIDTH).ok_or("missing Library")?;
-        assert!(reverse_x > final_x);
-        assert!(!row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Config Options"));
-        state.advance_header(StdDuration::from_millis(120));
-        terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(header_library_x(&terminal, MINIMUM_WIDTH), Some(initial_x));
-        assert!(row_text(&terminal, 0, 1, MINIMUM_WIDTH).contains("Project"));
-        assert!(row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Config Options"));
-        assert!(!state.header_animating());
+        assert_eq!(state.breadcrumb_area, Rect::default());
+        assert!(!text(&terminal).contains("create taxonomy /"));
+        assert_eq!(state.library.pane_areas[0].y, 0);
+        assert_eq!(state.library.pane_areas[0].x, content_x);
         Ok(())
     }
 
     #[test]
-    fn tabs_and_moving_breadcrumb_use_yellow_text_and_clickable_underlines()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn menu_marks_the_selected_tab_in_its_right_border() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
-        let project = state.tab_areas[Category::Project.index()];
-        for x in project.x + 1..project.x + 8 {
-            let label = &terminal.backend().buffer()[(x, 1)];
-            let underline = &terminal.backend().buffer()[(x, 2)];
-            assert_eq!(label.fg, Color::Yellow);
-            assert_eq!(label.bg, JET_BLACK);
-            assert_eq!(underline.fg, Color::Yellow);
-            assert_eq!(underline.symbol(), "─");
-        }
-        assert_eq!(
-            terminal.backend().buffer()[(project.right(), 2)].fg,
-            Color::DarkGray
-        );
-        let library = state.tab_areas[Category::Library.index()];
+        let border = MENU_WIDTH - 1;
+        let cell = |terminal: &Terminal<TestBackend>, x: u16, y: u16| {
+            terminal.backend().buffer()[(x, y)].clone()
+        };
+        assert_eq!(state.home_focus, HomeFocus::Menu);
+        assert_eq!(cell(&terminal, 0, 0).fg, Color::Yellow);
+        assert_eq!(cell(&terminal, 2, 1).symbol(), "P");
+        assert_eq!(cell(&terminal, 2, 1).fg, Color::Yellow);
+        assert_eq!(cell(&terminal, 2, 1).bg, JET_BLACK);
+        assert_eq!(cell(&terminal, border, 1).symbol(), "┃");
+        assert_eq!(cell(&terminal, border, 1).fg, Color::Yellow);
+        assert_ne!(cell(&terminal, 2, 2).fg, Color::Yellow);
+        assert_eq!(cell(&terminal, border, 2).symbol(), "│");
+
         state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: library.x + 2,
-                row: 2,
-                modifiers: KeyModifiers::NONE,
-            }),
+            click(state.tab_areas[Category::Library.index()]),
             &workspace,
         );
         assert_eq!(state.category, Category::Library);
+        assert_eq!(state.home_focus, HomeFocus::Menu);
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(
-            terminal.backend().buffer()[(library.x + 1, 2)].fg,
+        assert_eq!(cell(&terminal, 2, 2).fg, Color::Yellow);
+        assert_eq!(cell(&terminal, border, 2).symbol(), "┃");
+        assert_eq!(cell(&terminal, border, 1).symbol(), "│");
+        let taxonomies = state.library.pane_areas[0];
+        assert_ne!(
+            cell(&terminal, taxonomies.x, taxonomies.y).fg,
             Color::Yellow
         );
-        assert_eq!(
-            terminal.backend().buffer()[(project.x + 1, 2)].fg,
-            Color::DarkGray
-        );
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        state.advance_header(StdDuration::from_millis(120));
+
+        state.handle_event(key(KeyCode::Right), &workspace);
         terminal.draw(|frame| state.render(frame))?;
-        let breadcrumb = state.breadcrumb_area;
+        assert_ne!(cell(&terminal, 0, 0).fg, Color::Yellow);
         assert_eq!(
-            terminal.backend().buffer()[(breadcrumb.x + 1, 1)].fg,
+            cell(&terminal, taxonomies.x, taxonomies.y).fg,
             Color::Yellow
         );
-        assert_eq!(
-            terminal.backend().buffer()[(breadcrumb.x + 1, 2)].fg,
-            Color::Yellow
-        );
-        assert_eq!(
-            terminal.backend().buffer()[(breadcrumb.x + 1, 1)].bg,
-            JET_BLACK
-        );
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: breadcrumb.x + 2,
-                row: breadcrumb.y + 1,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        assert!(matches!(state.screen, Screen::Home));
+        assert_eq!(cell(&terminal, border, 2).symbol(), "┃");
+        assert_eq!(cell(&terminal, border, 2).fg, Color::Yellow);
+        assert_ne!(cell(&terminal, border, 1).fg, Color::Yellow);
         Ok(())
+    }
+
+    #[test]
+    fn arrows_move_focus_from_the_menu_through_each_view() {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        assert_eq!(state.home_focus, HomeFocus::Menu);
+        state.handle_event(key(KeyCode::Char('m')), &workspace);
+        assert_eq!(state.category, Category::Project);
+        state.handle_event(key(KeyCode::Left), &workspace);
+        assert_eq!(state.home_focus, HomeFocus::Menu);
+        state.handle_event(key(KeyCode::Up), &workspace);
+        assert_eq!(state.category, Category::Project);
+
+        state.handle_event(key(KeyCode::Right), &workspace);
+        assert_eq!(state.home_focus, HomeFocus::Content);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        assert_eq!(state.project_section, ProjectSection::Resolution);
+        assert_eq!(state.category, Category::Project);
+        state.handle_event(key(KeyCode::Right), &workspace);
+        assert_eq!(state.home_focus, HomeFocus::Content);
+        state.handle_event(key(KeyCode::Left), &workspace);
+        assert_eq!(state.home_focus, HomeFocus::Menu);
+
+        state.handle_event(key(KeyCode::Down), &workspace);
+        assert_eq!(state.category, Category::Library);
+        assert_eq!(state.project_section, ProjectSection::Resolution);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        assert_eq!(state.category, Category::Library);
+        state.handle_event(key(KeyCode::Right), &workspace);
+        assert_eq!(state.home_focus, HomeFocus::Content);
+        assert_eq!(state.library.focus, LibraryFocus::Taxonomies);
+        state.handle_event(key(KeyCode::Right), &workspace);
+        assert_eq!(state.library.focus, LibraryFocus::Types);
+        state.handle_event(key(KeyCode::Left), &workspace);
+        assert_eq!(state.library.focus, LibraryFocus::Taxonomies);
+        assert_eq!(state.home_focus, HomeFocus::Content);
+        state.handle_event(key(KeyCode::Left), &workspace);
+        assert_eq!(state.home_focus, HomeFocus::Menu);
+        state.handle_event(key(KeyCode::Up), &workspace);
+        assert_eq!(state.category, Category::Project);
     }
 
     #[test]
@@ -5194,14 +5092,14 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
-        state.advance_header(StdDuration::from_millis(240));
         state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
         assert!(matches!(state.screen, Screen::TypeEditor));
         state.handle_event(Event::Paste("feat".into()), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(!row_text(&terminal, 0, 0, 120).contains("Config Options"));
+        assert!(row_text(&terminal, 0, 0, 120).contains("Menu"));
         assert!(!row_text(&terminal, 0, 0, 120).contains("Create Taxonomy"));
         assert!(row_text(&terminal, 0, 1, 120).contains("/ create taxonomy"));
         assert!(
@@ -5255,7 +5153,6 @@ mod tests {
         assert!(matches!(state.screen, Screen::Home));
         assert!(state.editor.is_none());
         assert!(state.form.is_none());
-        assert!(state.header_animating());
         assert_eq!(workspace.saves.get(), 0);
         Ok(())
     }
@@ -5266,10 +5163,10 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.library.select_taxonomy(0);
         state.handle_event(key(KeyCode::Char('f')), &workspace);
         assert!(state.fork_source.is_some());
-        state.advance_header(StdDuration::from_millis(240));
         let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
         terminal.draw(|frame| state.render(frame))?;
         assert!(row_text(&terminal, 0, 1, 120).contains("/ fork taxonomy"));
@@ -5294,48 +5191,12 @@ mod tests {
     }
 
     #[test]
-    fn header_reversal_and_resize_keep_the_current_position()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Library;
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        state.advance_header(StdDuration::from_millis(80));
-        let progress = state.header_progress;
-        let mut wide = Terminal::new(TestBackend::new(120, 30))?;
-        wide.draw(|frame| state.render(frame))?;
-        let [taxonomy, types] = state.create_areas;
-        assert!(
-            [taxonomy, types]
-                .into_iter()
-                .all(|pane| pane.x == 0 && pane.width == 120)
-        );
-        assert_eq!(types.bottom(), 29);
-        let before = header_library_x(&wide, 120);
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        assert_eq!(state.header_progress.to_bits(), progress.to_bits());
-        wide.draw(|frame| state.render(frame))?;
-        assert_eq!(header_library_x(&wide, 120), before);
-        state.advance_header(StdDuration::from_millis(80));
-        assert!(state.header_progress < progress);
-        let mut minimum = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        minimum.draw(|frame| state.render(frame))?;
-        let mut small = Terminal::new(TestBackend::new(MINIMUM_WIDTH - 1, MINIMUM_HEIGHT - 1))?;
-        small.draw(|frame| state.render(frame))?;
-        assert_eq!(state.breadcrumb_area, Rect::default());
-        state.advance_header(StdDuration::from_millis(240));
-        minimum.draw(|frame| state.render(frame))?;
-        assert!(!state.header_animating());
-        assert!(row_text(&minimum, 0, 0, MINIMUM_WIDTH).contains("Config Options"));
-        Ok(())
-    }
-
-    #[test]
     fn empty_custom_action_click_uses_dirty_scope_guard() -> Result<(), Box<dyn std::error::Error>>
     {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state
             .project
             .as_mut()
@@ -5371,11 +5232,11 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
         assert!(
-            row_text(&terminal, 0, 29, 100)
-                .contains("m: menu  ←/→: focus  ↑/↓: move  /: commands  ?: help")
+            row_text(&terminal, 0, 29, 100).contains("←/→: focus  ↑/↓: move  /: commands  ?: help")
         );
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         terminal.draw(|frame| state.render(frame))?;
@@ -5425,12 +5286,13 @@ mod tests {
     }
 
     #[test]
-    fn library_and_creation_commands_are_lowercase_and_switch_shows_m()
+    fn library_and_creation_commands_are_lowercase_and_switch_has_no_shortcut()
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
             let mut state = State::new(&workspace);
             state.category = Category::Library;
+            state.home_focus = HomeFocus::Content;
             state.handle_event(key(KeyCode::Char('/')), &workspace);
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| state.render(frame))?;
@@ -5439,10 +5301,14 @@ mod tests {
                 return Err("missing palette".into());
             };
             assert_eq!(
-                terminal.backend().buffer()
-                    [(palette.list_area.right() - 1, palette.list_area.y + 5)]
-                    .symbol(),
-                "m"
+                row_text(
+                    &terminal,
+                    palette.list_area.x,
+                    palette.list_area.y + 5,
+                    palette.list_area.width
+                )
+                .trim_end(),
+                "switch to project"
             );
             for scroll in [false, true] {
                 if scroll {
@@ -5472,9 +5338,14 @@ mod tests {
                 return Err("missing palette".into());
             };
             assert_eq!(
-                terminal.backend().buffer()[(palette.list_area.right() - 1, palette.list_area.y)]
-                    .symbol(),
-                "m"
+                row_text(
+                    &terminal,
+                    palette.list_area.x,
+                    palette.list_area.y,
+                    palette.list_area.width
+                )
+                .trim_end(),
+                "Switch to Library"
             );
             state.handle_event(key(KeyCode::Enter), &workspace);
             assert_eq!(state.category, Category::Library);
@@ -5496,7 +5367,7 @@ mod tests {
     }
 
     #[test]
-    fn home_m_cycles_tabs_without_opening_commands_at_compact_and_wide_widths()
+    fn home_arrows_switch_tabs_and_m_does_nothing_at_compact_and_wide_widths()
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (100, 30)] {
@@ -5504,17 +5375,18 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| state.render(frame))?;
             let footer = row_text(&terminal, 0, height - 1, width);
-            assert!(footer.starts_with("m: menu  ↑/↓: move  /: commands  ?: help"));
+            assert!(footer.starts_with("←/→: focus  ↑/↓: move  /: commands  ?: help"));
             assert!(!footer.contains('|'));
             state.handle_event(key(KeyCode::Tab), &workspace);
             state.handle_event(key(KeyCode::BackTab), &workspace);
-            assert_eq!(state.category, Category::Project);
             state.handle_event(key(KeyCode::Char('m')), &workspace);
+            assert_eq!(state.category, Category::Project);
+            state.handle_event(key(KeyCode::Down), &workspace);
             assert_eq!(state.category, Category::Library);
             assert!(state.home_overlay.is_none());
             terminal.draw(|frame| state.render(frame))?;
             let footer = row_text(&terminal, 0, height - 1, width);
-            assert!(footer.starts_with("m: menu  ←/→: focus  ↑/↓: move  /: commands  ?: help"));
+            assert!(footer.starts_with("←/→: focus  ↑/↓: move  /: commands  ?: help"));
             assert!(!footer.contains('|'));
             state.handle_event(key(KeyCode::Char('/')), &workspace);
             assert!(matches!(state.home_overlay, Some(HomeOverlay::Palette(_))));
@@ -5541,6 +5413,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         state.handle_event(Event::Paste("edit".into()), &workspace);
         state.handle_event(key(KeyCode::Char('n')), &workspace);
@@ -5567,13 +5440,13 @@ mod tests {
         state.handle_event(key(KeyCode::Char('?')), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Initialize project"));
-        let help = centered_rect(58, 12, Rect::new(0, 3, 100, 26));
+        let help = centered_rect(58, 13, Rect::new(0, 0, 100, 29));
         let content_x = help.x + 2;
         let content_width = help.width - 4;
         let switch_row = row_text(&terminal, content_x, help.y + 2, content_width);
-        let review_row = row_text(&terminal, content_x, help.y + 6, content_width);
+        let review_row = row_text(&terminal, content_x, help.y + 7, content_width);
         assert!(switch_row.starts_with("Switch Project / Library"));
-        assert!(switch_row.ends_with("m/click"));
+        assert!(switch_row.ends_with("↑/↓/click"));
         assert!(review_row.starts_with("Review changes"));
         assert!(review_row.ends_with("ctrl+s"));
         assert!(text(&terminal).contains("[esc] close"));
@@ -5603,16 +5476,17 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         state.handle_event(key(KeyCode::Char('?')), &workspace);
         terminal.draw(|frame| state.render(frame))?;
-        let help = centered_rect(58, 12, Rect::new(0, 3, MINIMUM_WIDTH, MINIMUM_HEIGHT - 4));
+        let help = centered_rect(58, 13, Rect::new(0, 0, MINIMUM_WIDTH, MINIMUM_HEIGHT - 1));
         let content_x = help.x + 2;
         let content_width = help.width - 4;
         let switch_row = row_text(&terminal, content_x, help.y + 2, content_width);
         let edit_row = row_text(&terminal, content_x, help.y + 6, content_width);
         assert!(switch_row.starts_with("Switch Project / Library"));
-        assert!(switch_row.ends_with("m/click"));
+        assert!(switch_row.ends_with("↑/↓/click"));
         assert!(edit_row.starts_with("New / edit / fork / delete"));
         assert!(edit_row.ends_with("n/e/f/d"));
         state.handle_event(key(KeyCode::Enter), &workspace);
@@ -5642,6 +5516,7 @@ mod tests {
             .ok_or("missing project")?
             .initialize_project()?;
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         state.handle_event(Event::Paste("create".into()), &workspace);
         state.handle_event(key(KeyCode::Enter), &workspace);
@@ -5659,6 +5534,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
         assert!(row_text(&terminal, 0, 17, MINIMUM_WIDTH).contains("?: help"));
@@ -5672,7 +5548,7 @@ mod tests {
         let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
             return Err("palette missing".into());
         };
-        assert_eq!(palette.list_area.height, 7);
+        assert_eq!(palette.list_area.height, 8);
         assert_eq!(
             terminal.backend().buffer()[(palette.list_area.x - 1, palette.list_area.y - 3)]
                 .symbol(),
@@ -5691,7 +5567,7 @@ mod tests {
             return Err("palette missing".into());
         };
         assert_eq!(palette.selected, 7);
-        assert_eq!(palette.list_offset, 1);
+        assert_eq!(palette.list_offset, 0);
         assert!(
             row_text(
                 &terminal,
@@ -5714,7 +5590,7 @@ mod tests {
         let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
             return Err("palette missing".into());
         };
-        assert_eq!(palette.selected, 1);
+        assert_eq!(palette.selected, 0);
         state.handle_event(
             Event::Mouse(ratatui::crossterm::event::MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -5745,6 +5621,7 @@ mod tests {
         assert!(state.form_scroll > 0);
 
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state
             .global
             .as_mut()
@@ -5816,6 +5693,7 @@ mod tests {
 
         state.status = None;
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.global = None;
         state.global_error = "global load failed".into();
         terminal.draw(|frame| state.render(frame))?;
@@ -5836,9 +5714,10 @@ mod tests {
             .initialize_project()?;
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(text(&terminal).contains("unapplied changes"));
-        assert_eq!(terminal.backend().buffer()[(83, 1)].fg, Color::Yellow);
-        state.handle_event(key(KeyCode::Char('m')), &workspace);
+        assert_eq!(row_text(&terminal, 0, 26, MENU_WIDTH), "│ unapplied│");
+        assert_eq!(row_text(&terminal, 0, 27, MENU_WIDTH), "│ changes  │");
+        assert_eq!(terminal.backend().buffer()[(2, 26)].fg, Color::Yellow);
+        state.handle_event(key(KeyCode::Down), &workspace);
         assert_eq!(state.category, Category::Library);
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Library"));
@@ -5875,6 +5754,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
         assert!(matches!(state.status, Some(Notice::Error(_))));
@@ -5930,6 +5810,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.global = None;
         state.global_error = "global load failed".into();
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
@@ -5960,6 +5841,7 @@ mod tests {
             .ok_or("missing project")?
             .initialize_project()?;
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
         assert!(matches!(
             state.screen,
@@ -5998,7 +5880,7 @@ mod tests {
     fn too_small_view_blocks_hidden_actions() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        let mut terminal = Terminal::new(TestBackend::new(59, 17))?;
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH - 1, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Terminal too small"));
         let before = state.project_section;
@@ -6012,7 +5894,7 @@ mod tests {
         assert!(text(&minimum).contains("Project"));
         let buffer = minimum.backend().buffer();
         assert_eq!(buffer[(0, 0)].symbol(), "┌");
-        assert_eq!(buffer[(0, 2)].symbol(), "└");
+        assert_eq!(buffer[(MENU_WIDTH, 0)].symbol(), "┌");
         assert_eq!(buffer[(0, 16)].symbol(), "└");
         Ok(())
     }
@@ -6023,6 +5905,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(Event::Paste("team".into()), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
@@ -6084,9 +5967,9 @@ mod tests {
             let (workspace, source) = child_editor_workspace()?;
             let mut state = State::new(&workspace);
             state.category = Category::Library;
+            state.home_focus = HomeFocus::Content;
             state.library.select_taxonomy(3);
             state.handle_event(key(KeyCode::Char(action)), &workspace);
-            state.advance_header(StdDuration::from_millis(240));
             let initial_types = state.editor.as_ref().ok_or("missing taxonomy")?.types.len();
             state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
             assert!(matches!(state.screen, Screen::TypeEditor));
@@ -6195,9 +6078,9 @@ mod tests {
         let (workspace, source) = child_editor_workspace()?;
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.library.select_taxonomy(3);
         state.handle_event(key(KeyCode::Char('e')), &workspace);
-        state.advance_header(StdDuration::from_millis(240));
         state.handle_event(key(KeyCode::Down), &workspace);
         state.handle_event(key(KeyCode::Enter), &workspace);
         state.handle_event(key(KeyCode::Enter), &workspace);
@@ -6255,6 +6138,7 @@ mod tests {
         let (workspace, source) = child_editor_workspace()?;
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.library.select_taxonomy(3);
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
@@ -6322,9 +6206,9 @@ mod tests {
         for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
             let mut state = State::new(&workspace);
             state.category = Category::Library;
+            state.home_focus = HomeFocus::Content;
             state.library.select_taxonomy(3);
             state.handle_event(key(KeyCode::Char('f')), &workspace);
-            state.advance_header(StdDuration::from_millis(240));
             state.open_type_editor(Some(0));
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| state.render(frame))?;
@@ -6400,6 +6284,7 @@ mod tests {
             let (workspace, source) = child_editor_workspace()?;
             let mut state = State::new(&workspace);
             state.category = Category::Library;
+            state.home_focus = HomeFocus::Content;
             state.library.select_taxonomy(3);
             state.handle_event(key(KeyCode::Char(action)), &workspace);
             assert!(!state.taxonomy_is_dirty());
@@ -6463,8 +6348,8 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
-        state.advance_header(StdDuration::from_millis(240));
         state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
         state.handle_event(Event::Paste("feat".into()), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
@@ -6488,7 +6373,7 @@ mod tests {
             .description
             .cursor();
         state.handle_event(key(KeyCode::Esc), &workspace);
-        let mut terminal = Terminal::new(TestBackend::new(60, 18))?;
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Discard Property"));
         let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
@@ -6610,6 +6495,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(Event::Paste("team".into()), &workspace);
         state.handle_event(key(KeyCode::Esc), &workspace);
@@ -6661,6 +6547,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         let long = "Release Notes ".repeat(5);
         let long_note = format!(
@@ -6678,7 +6565,7 @@ mod tests {
             ("!!!", "use letters a-z", "use letters a-z"),
             (
                 long.as_str(),
-                "saves as release-notes-release-notes-release-notes…",
+                "saves as release-notes-release-notes-release…",
                 long_note.as_str(),
             ),
             ("team-changes", "", ""),
@@ -6720,6 +6607,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
         state.handle_event(Event::Paste("Breaking\nChange".into()), &workspace);
@@ -6831,6 +6719,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(Event::Paste("Team Changes".into()), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
@@ -6884,6 +6773,7 @@ mod tests {
         let (workspace, source) = child_editor_workspace()?;
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         state.library.select_taxonomy(3);
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         state.handle_event(key(KeyCode::Enter), &workspace);
@@ -6940,6 +6830,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
         send(&mut state, &workspace, key(KeyCode::Char('n')));
         type_text(&mut state, &workspace, "Team Changes");
         assert_preview(&mut state, "Name", "saves as team-changes")?;
