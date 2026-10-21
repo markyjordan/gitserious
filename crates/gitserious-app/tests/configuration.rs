@@ -1,598 +1,467 @@
-#![cfg(any())] // Legacy template/typeset configuration contract.
+#![allow(clippy::expect_used)]
 
 use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
+use std::path::Path;
 
 use gitserious_app::{
-    ConfigurationCatalog, ConfigurationCatalogError, ConfigurationEdit, ConfigurationEntity,
-    ConfigurationMutationError, CustomConfiguration, CustomConfigurationError,
-    GlobalConfigurationStore, apply_configuration_edits, create_taxonomy, create_template,
-    create_typeset, delete_taxonomy, delete_template, delete_typeset, find_taxonomy, find_template,
-    find_typeset, fingerprint_resolved_taxonomy, fork_conventional, list_taxonomies,
-    list_templates, list_typesets, update_taxonomy,
+    ConfigurationDestination, ConfigurationEditor, ConfigurationError, ConfigurationSession,
+    ConfigurationWorkspace, GlobalConfiguration, GlobalConfigurationStore, ProjectConfig,
+    ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
+    TaxonomyCatalog, TaxonomyOrigin, edit_configuration, revised_taxonomy,
 };
 use gitserious_core::{
-    ChangeTypeDefinition, ChangeTypeId, ChangeTypeSchema, Description, PropertyDefinition,
-    PropertyKey, PropertyMultiplicity, PropertyRequirement, ResolvedTaxonomy, TaxonomyDefinition,
-    TaxonomyId, TaxonomyVersion, TemplateDefinition, TemplateId, TemplateVersion,
-    TypesetDefinition, TypesetId, TypesetVersion, built_in_configuration,
+    Description, Taxonomy, TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FakeError {
-    Unavailable,
-    Concurrent,
+fn id(value: &str) -> TaxonomyId {
+    TaxonomyId::new(value).expect("valid test identity")
 }
+
+fn built_in_ids() -> Vec<TaxonomyId> {
+    built_in_taxonomies()
+        .iter()
+        .map(|taxonomy| taxonomy.id().clone())
+        .collect()
+}
+
+fn custom(name: &str) -> Taxonomy {
+    built_in_taxonomies()[0].fork(id(name))
+}
+
+fn library(custom: Vec<Taxonomy>) -> Result<GlobalConfiguration, ConfigurationError> {
+    GlobalConfiguration::new(1, id("conventional"), built_in_ids(), custom)
+}
+
+#[test]
+fn built_in_shadowing_and_duplicate_custom_taxonomies_are_rejected() {
+    for reserved in ["conventional", "research", "infra-ops"] {
+        assert_eq!(
+            TaxonomyCatalog::new(&[custom(reserved)]).err(),
+            Some(ConfigurationError::DuplicateOrReservedTaxonomy(id(
+                reserved
+            ))),
+            "{reserved} shadowed a built-in"
+        );
+    }
+    assert_eq!(
+        TaxonomyCatalog::new(&[custom("team"), custom("team")]).err(),
+        Some(ConfigurationError::DuplicateOrReservedTaxonomy(id("team")))
+    );
+    assert!(library(vec![custom("team"), custom("team")]).is_err());
+}
+
+#[test]
+fn global_selection_rejects_dangling_and_duplicate_references() {
+    let cases = [
+        (id("missing"), built_in_ids()),
+        (id("conventional"), vec![id("conventional"), id("missing")]),
+        (id("conventional"), vec![id("research")]),
+        (
+            id("conventional"),
+            vec![id("conventional"), id("conventional")],
+        ),
+        (id("conventional"), Vec::new()),
+    ];
+    for (index, (default, available)) in cases.into_iter().enumerate() {
+        assert!(
+            GlobalConfiguration::new(1, default, available, Vec::new()).is_err(),
+            "case {index} was accepted"
+        );
+    }
+    assert!(GlobalConfiguration::new(2, id("conventional"), built_in_ids(), Vec::new()).is_err());
+}
+
+#[test]
+fn catalog_lists_built_ins_then_custom_taxonomies_in_storage_order() -> Result<(), Box<dyn Error>> {
+    let catalog = library(vec![custom("zeta"), custom("alpha")])?.catalog()?;
+
+    assert_eq!(
+        catalog
+            .taxonomies()
+            .iter()
+            .map(|taxonomy| taxonomy.id().as_str())
+            .collect::<Vec<_>>(),
+        ["conventional", "research", "infra-ops", "zeta", "alpha"]
+    );
+    assert_eq!(
+        catalog.origin(&id("research")),
+        Some(TaxonomyOrigin::BuiltIn)
+    );
+    assert_eq!(catalog.origin(&id("alpha")), Some(TaxonomyOrigin::Custom));
+    assert_eq!(catalog.origin(&id("missing")), None);
+    Ok(())
+}
+
+#[test]
+fn created_taxonomies_are_queryable_as_custom_library_entries() -> Result<(), Box<dyn Error>> {
+    let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
+    let team = Taxonomy::new(
+        id("team"),
+        TaxonomyVersion::V1,
+        Description::new("Team policy.")?,
+        None,
+        built_in_taxonomies()[1].commit_types().to_vec(),
+    )?;
+
+    session.create_taxonomy(team.clone())?;
+
+    assert_eq!(
+        session.global().custom_taxonomies(),
+        std::slice::from_ref(&team)
+    );
+    assert_eq!(session.catalog()?.find(&id("team")), Some(&team));
+    assert_eq!(
+        session.catalog()?.origin(&id("team")),
+        Some(TaxonomyOrigin::Custom)
+    );
+    assert!(session.is_dirty());
+    assert!(session.review()?.contains("Custom taxonomies\n  0 -> 1"));
+    Ok(())
+}
+
+#[test]
+fn failed_create_and_update_leave_the_snapshot_unchanged() -> Result<(), Box<dyn Error>> {
+    let mut session = ConfigurationSession::open_global(library(vec![custom("team")])?);
+    let before = session.global().clone();
+
+    assert!(session.create_taxonomy(custom("team")).is_err());
+    assert!(session.create_taxonomy(custom("research")).is_err());
+    assert!(session.update_taxonomy(custom("team")).is_err());
+    assert!(session.update_taxonomy(custom("missing")).is_err());
+
+    assert_eq!(session.global(), &before);
+    assert!(!session.is_dirty());
+    Ok(())
+}
+
+#[test]
+fn updates_must_advance_the_taxonomy_version() -> Result<(), Box<dyn Error>> {
+    let original = custom("team");
+    let mut session = ConfigurationSession::open_global(library(vec![original.clone()])?);
+    let revised = revised_taxonomy(
+        &original,
+        Description::new("Revised team policy.")?,
+        original.commit_types().to_vec(),
+    )?;
+    let skipped = Taxonomy::new(
+        original.id().clone(),
+        TaxonomyVersion::new(3)?,
+        original.description().clone(),
+        original.derived_from().cloned(),
+        original.commit_types().to_vec(),
+    )?;
+
+    let error = session
+        .update_taxonomy(skipped)
+        .expect_err("skipping a version was accepted");
+    assert!(error.contains("version 2"), "{error}");
+    session.update_taxonomy(revised.clone())?;
+
+    assert_eq!(revised.version(), TaxonomyVersion::new(2)?);
+    assert_eq!(revised.derived_from(), original.derived_from());
+    assert_eq!(session.catalog()?.find(&id("team")), Some(&revised));
+    Ok(())
+}
+
+#[test]
+fn deletes_protect_selected_and_built_in_taxonomies_then_succeed() -> Result<(), Box<dyn Error>> {
+    let mut available = built_in_ids();
+    available.push(id("team"));
+    let global = GlobalConfiguration::new(
+        1,
+        id("conventional"),
+        available,
+        vec![custom("team"), custom("spare")],
+    )?;
+    let mut session = ConfigurationSession::open_global(global.clone());
+
+    assert!(session.delete_taxonomy(&id("team")).is_err());
+    assert!(session.delete_taxonomy(&id("conventional")).is_err());
+    assert!(session.delete_taxonomy(&id("missing")).is_err());
+    assert_eq!(session.global(), &global);
+
+    session.delete_taxonomy(&id("spare"))?;
+    session.configure_global(id("conventional"), built_in_ids())?;
+    session.delete_taxonomy(&id("team"))?;
+
+    assert!(session.global().custom_taxonomies().is_empty());
+    Ok(())
+}
+
+#[test]
+fn library_edits_belong_to_the_global_destination() -> Result<(), Box<dyn Error>> {
+    let root = RepositoryRoot::new(std::env::temp_dir())?;
+    let mut session = ConfigurationSession::open_project(
+        root,
+        GlobalConfiguration::default(),
+        ProjectState::Absent,
+    )?;
+
+    for result in [
+        session.create_taxonomy(custom("team")),
+        session.fork_taxonomy(&id("conventional"), id("team")),
+        session.update_taxonomy(custom("team")),
+        session.delete_taxonomy(&id("team")),
+        session.configure_global(id("research"), built_in_ids()),
+    ] {
+        let error = result.expect_err("a project session edited the global library");
+        assert!(error.contains("Global configuration"), "{error}");
+    }
+    assert_eq!(session.global(), &GlobalConfiguration::default());
+    Ok(())
+}
+
+#[test]
+fn fork_copies_a_built_in_under_a_new_identity_with_lineage() -> Result<(), Box<dyn Error>> {
+    let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
+
+    session.fork_taxonomy(&id("research"), id("lab"))?;
+
+    let source = &built_in_taxonomies()[1];
+    let fork = session
+        .catalog()?
+        .find(&id("lab"))
+        .cloned()
+        .ok_or("fork is missing")?;
+    assert_eq!(fork.version(), TaxonomyVersion::V1);
+    assert_eq!(fork.description(), source.description());
+    assert_eq!(fork.commit_types(), source.commit_types());
+    assert_eq!(
+        fork.derived_from(),
+        Some(&TaxonomyLineage::new(id("research"), source.version()))
+    );
+    assert_eq!(session.catalog()?.find(&id("research")), Some(source));
+    Ok(())
+}
+
+#[test]
+fn fork_rejects_reserved_and_existing_identities_atomically() -> Result<(), Box<dyn Error>> {
+    let mut session = ConfigurationSession::open_global(library(vec![custom("team")])?);
+    let before = session.global().clone();
+
+    for target in ["conventional", "infra-ops", "team"] {
+        let error = session
+            .fork_taxonomy(&id("research"), id(target))
+            .expect_err("fork overwrote an existing identity");
+        assert!(error.contains("already exists"), "{error}");
+    }
+
+    assert_eq!(session.global(), &before);
+    Ok(())
+}
+
+#[test]
+fn forks_of_custom_taxonomies_preserve_content_and_reset_the_new_version()
+-> Result<(), Box<dyn Error>> {
+    let original = custom("team");
+    let revised = revised_taxonomy(
+        &original,
+        Description::new("Second team policy.")?,
+        built_in_taxonomies()[2].commit_types().to_vec(),
+    )?;
+    let mut session = ConfigurationSession::open_global(library(vec![revised.clone()])?);
+
+    session.fork_taxonomy(&id("team"), id("team-copy"))?;
+
+    let fork = session
+        .catalog()?
+        .find(&id("team-copy"))
+        .cloned()
+        .ok_or("fork is missing")?;
+    assert_eq!(fork.version(), TaxonomyVersion::V1);
+    assert_eq!(fork.description(), revised.description());
+    assert_eq!(fork.commit_types(), revised.commit_types());
+    assert_eq!(
+        fork.derived_from(),
+        Some(&TaxonomyLineage::new(id("team"), TaxonomyVersion::new(2)?))
+    );
+    Ok(())
+}
+
+#[test]
+fn forks_reject_unavailable_sources() {
+    let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
+
+    let error = session
+        .fork_taxonomy(&id("missing"), id("team"))
+        .expect_err("fork of a missing source was accepted");
+
+    assert!(error.contains("not installed"), "{error}");
+    assert!(!session.is_dirty());
+}
+
+#[derive(Debug)]
+struct FakeError(&'static str);
 
 impl Display for FakeError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Unavailable => "configuration store unavailable",
-            Self::Concurrent => "configuration changed concurrently",
-        })
+        formatter.write_str(self.0)
     }
 }
 
 impl Error for FakeError {}
 
-struct RecordingStore {
-    current: RefCell<CustomConfiguration>,
-    load_error: Cell<Option<FakeError>>,
-    swap_error: Cell<Option<FakeError>>,
-    loads: Cell<usize>,
+struct FakeGlobalStore {
+    current: RefCell<GlobalConfiguration>,
+    fail: bool,
     swaps: Cell<usize>,
 }
 
-impl RecordingStore {
-    fn new(current: CustomConfiguration) -> Self {
+impl FakeGlobalStore {
+    fn new(current: GlobalConfiguration) -> Self {
         Self {
             current: RefCell::new(current),
-            load_error: Cell::new(None),
-            swap_error: Cell::new(None),
-            loads: Cell::new(0),
+            fail: false,
             swaps: Cell::new(0),
         }
     }
-
-    fn snapshot(&self) -> CustomConfiguration {
-        self.current.borrow().clone()
-    }
 }
 
-impl GlobalConfigurationStore for RecordingStore {
+impl GlobalConfigurationStore for FakeGlobalStore {
     type Error = FakeError;
 
-    fn load(&self) -> Result<CustomConfiguration, Self::Error> {
-        self.loads.set(self.loads.get() + 1);
-        match self.load_error.get() {
-            Some(error) => Err(error),
-            None => Ok(self.snapshot()),
-        }
+    fn load(&self) -> Result<GlobalConfiguration, Self::Error> {
+        Ok(self.current.borrow().clone())
     }
 
     fn compare_and_swap(
         &self,
-        expected: &CustomConfiguration,
-        replacement: &CustomConfiguration,
+        expected: &GlobalConfiguration,
+        replacement: &GlobalConfiguration,
     ) -> Result<(), Self::Error> {
         self.swaps.set(self.swaps.get() + 1);
-        if let Some(error) = self.swap_error.get() {
-            return Err(error);
+        if self.fail {
+            return Err(FakeError("global store failed"));
         }
         if *self.current.borrow() != *expected {
-            return Err(FakeError::Concurrent);
+            return Err(FakeError("global configuration changed while editing"));
         }
         *self.current.borrow_mut() = replacement.clone();
         Ok(())
     }
 }
 
-fn description(value: &str) -> Result<Description, Box<dyn Error>> {
-    Ok(Description::new(value)?)
-}
+struct NoRepository;
 
-fn change_type(id: &str) -> Result<ChangeTypeDefinition, Box<dyn Error>> {
-    Ok(ChangeTypeDefinition::new(
-        ChangeTypeId::new(id)?,
-        description(&format!("Meaning of {id}."))?,
-    ))
-}
+impl RepositoryLocator for NoRepository {
+    type Error = FakeError;
 
-fn property(key: &str) -> Result<PropertyDefinition, Box<dyn Error>> {
-    Ok(PropertyDefinition::new(
-        PropertyKey::new(key)?,
-        format!("Meaning of {key}."),
-        PropertyRequirement::Required,
-        PropertyMultiplicity::Single,
-    )?)
-}
-
-fn taxonomy(version: u16, include_beta: bool) -> Result<TaxonomyDefinition, Box<dyn Error>> {
-    let mut change_types = vec![change_type("alpha")?];
-    if include_beta {
-        change_types.push(change_type("beta")?);
+    fn locate(&self, _start: &Path) -> Result<RepositoryRoot, Self::Error> {
+        Err(FakeError("no repository"))
     }
-    Ok(TaxonomyDefinition::new(
-        TaxonomyId::new("custom")?,
-        TaxonomyVersion::new(version)?,
-        description("Custom taxonomy.")?,
-        change_types,
-    )?)
 }
 
-fn typeset(version: u16, include_beta: bool) -> Result<TypesetDefinition, Box<dyn Error>> {
-    let mut schemas = vec![ChangeTypeSchema::new(
-        ChangeTypeId::new("alpha")?,
-        vec![property("intent")?],
-    )?];
-    if include_beta {
-        schemas.push(ChangeTypeSchema::new(
-            ChangeTypeId::new("beta")?,
-            Vec::new(),
-        )?);
+struct NoProject;
+
+impl ProjectStateStore for NoProject {
+    type Error = FakeError;
+
+    fn inspect(&self, _: &RepositoryRoot) -> Result<ProjectState, Self::Error> {
+        Err(FakeError("unexpected project read"))
     }
-    Ok(TypesetDefinition::new(
-        TaxonomyId::new("custom")?,
-        TypesetId::new("strict")?,
-        TypesetVersion::new(version)?,
-        description("Strict typeset.")?,
-        schemas,
-    )?)
-}
-
-fn template(version: u16) -> Result<TemplateDefinition, Box<dyn Error>> {
-    Ok(TemplateDefinition::new(
-        TemplateId::new("custom-template")?,
-        TemplateVersion::new(version)?,
-        description("Custom template.")?,
-        TaxonomyId::new("custom")?,
-        TypesetId::new("strict")?,
-    ))
-}
-
-fn full_configuration() -> Result<CustomConfiguration, Box<dyn Error>> {
-    Ok(CustomConfiguration::new(
-        vec![taxonomy(1, false)?],
-        vec![typeset(1, false)?],
-        vec![template(1)?],
-    )?)
-}
-
-#[test]
-fn empty_user_catalog_resolves_the_built_in_template_generically() -> Result<(), Box<dyn Error>> {
-    let catalog = ConfigurationCatalog::new(&CustomConfiguration::default())?;
-    let resolved = catalog.resolve(&TemplateId::new("default")?)?;
-    assert_eq!(resolved.template_id().as_str(), "default");
-    assert_eq!(resolved.taxonomy_id().as_str(), "conventional");
-    assert_eq!(resolved.typeset_id().as_str(), "default");
-    assert_eq!(resolved.change_types().len(), 11);
-    assert_eq!(
-        catalog.taxonomies().len(),
-        built_in_configuration().taxonomies().len()
-    );
-    assert_eq!(
-        catalog.typesets().len(),
-        built_in_configuration().typesets().len()
-    );
-    assert_eq!(
-        catalog.templates().len(),
-        built_in_configuration().templates().len()
-    );
-    Ok(())
-}
-
-#[test]
-fn custom_template_resolves_the_joined_taxonomy_and_typeset() -> Result<(), Box<dyn Error>> {
-    let configuration = full_configuration()?;
-    let catalog = ConfigurationCatalog::new(&configuration)?;
-    let resolved = catalog.resolve(&TemplateId::new("custom-template")?)?;
-    assert_eq!(resolved.taxonomy_id().as_str(), "custom");
-    assert_eq!(resolved.typeset_id().as_str(), "strict");
-    assert_eq!(resolved.change_types()[0].id().as_str(), "alpha");
-    assert_eq!(
-        resolved.change_types()[0].properties()[0].key().as_str(),
-        "intent"
-    );
-    Ok(())
-}
-
-#[test]
-fn effective_catalog_rejects_every_built_in_shadowing_form() -> Result<(), Box<dyn Error>> {
-    let built_in = built_in_configuration();
-    for taxonomy in built_in.taxonomies() {
-        let collision = CustomConfiguration::new(vec![taxonomy.clone()], Vec::new(), Vec::new())?;
-        assert!(
-            matches!(ConfigurationCatalog::new(&collision), Err(ConfigurationCatalogError::ReservedTaxonomy(id)) if &id == taxonomy.id())
-        );
+    fn ensure_local_state(&self, _: &RepositoryRoot) -> Result<(), Self::Error> {
+        Err(FakeError("unexpected project write"))
     }
-    for typeset in built_in.typesets() {
-        let collision = CustomConfiguration::new(Vec::new(), vec![typeset.clone()], Vec::new())?;
-        assert!(
-            matches!(ConfigurationCatalog::new(&collision), Err(ConfigurationCatalogError::ReservedTypeset { taxonomy, typeset: id }) if &taxonomy == typeset.taxonomy() && &id == typeset.id())
-        );
+    fn initialize(
+        &self,
+        _: &RepositoryRoot,
+        _: &ProjectConfig,
+        _: &ProjectLock,
+    ) -> Result<(), Self::Error> {
+        Err(FakeError("unexpected project write"))
     }
-    for template in built_in.templates() {
-        let collision = CustomConfiguration::new(Vec::new(), Vec::new(), vec![template.clone()])?;
-        assert!(
-            matches!(ConfigurationCatalog::new(&collision), Err(ConfigurationCatalogError::ReservedTemplate(id)) if &id == template.id())
-        );
+    fn create_lock(&self, _: &RepositoryRoot, _: &ProjectLock) -> Result<(), Self::Error> {
+        Err(FakeError("unexpected project write"))
     }
-    Ok(())
+    fn replace_lock(
+        &self,
+        _: &RepositoryRoot,
+        _: &ProjectLock,
+        _: &ProjectLock,
+    ) -> Result<(), Self::Error> {
+        Err(FakeError("unexpected project write"))
+    }
+    fn compare_and_swap(
+        &self,
+        _: &RepositoryRoot,
+        _: &ProjectConfig,
+        _: &ProjectLock,
+        _: &ProjectConfig,
+        _: &ProjectLock,
+    ) -> Result<(), Self::Error> {
+        Err(FakeError("unexpected project write"))
+    }
+}
+
+struct Script<F>(F);
+
+impl<F> ConfigurationEditor for Script<F>
+where
+    F: Fn(&dyn ConfigurationWorkspace) -> Result<(), String>,
+{
+    fn edit(&self, workspace: &dyn ConfigurationWorkspace) -> Result<(), String> {
+        (self.0)(workspace)
+    }
+}
+
+fn edit_global<F>(store: &FakeGlobalStore, script: F) -> Result<(), String>
+where
+    F: Fn(&dyn ConfigurationWorkspace) -> Result<(), String>,
+{
+    edit_configuration(
+        &NoRepository,
+        &NoProject,
+        store,
+        Path::new("."),
+        &Script(script),
+    )
 }
 
 #[test]
-fn catalog_rejects_dangling_and_incomplete_definitions() -> Result<(), Box<dyn Error>> {
-    let dangling_typeset =
-        CustomConfiguration::new(Vec::new(), vec![typeset(1, false)?], Vec::new())?;
-    assert!(matches!(
-        ConfigurationCatalog::new(&dangling_typeset),
-        Err(ConfigurationCatalogError::UnknownTypesetTaxonomy { .. })
-    ));
-
-    let incomplete = CustomConfiguration::new(
-        vec![taxonomy(1, true)?],
-        vec![typeset(1, false)?],
-        Vec::new(),
-    )?;
-    assert!(matches!(
-        ConfigurationCatalog::new(&incomplete),
-        Err(ConfigurationCatalogError::Resolution(_))
-    ));
-
-    let dangling_template =
-        CustomConfiguration::new(vec![taxonomy(1, false)?], Vec::new(), vec![template(1)?])?;
-    assert!(matches!(
-        ConfigurationCatalog::new(&dangling_template),
-        Err(ConfigurationCatalogError::UnknownTemplateTypeset { .. })
-    ));
-    Ok(())
-}
-
-#[test]
-fn snapshots_reject_duplicates_and_canonicalize_top_level_order() -> Result<(), Box<dyn Error>> {
-    let duplicate = taxonomy(1, false)?;
-    assert_eq!(
-        CustomConfiguration::new(vec![duplicate.clone(), duplicate], Vec::new(), Vec::new(),),
-        Err(CustomConfigurationError::DuplicateTaxonomy(
-            TaxonomyId::new("custom")?
-        ))
-    );
-
-    let second = TaxonomyDefinition::new(
-        TaxonomyId::new("aaa")?,
-        TaxonomyVersion::V1,
-        description("First alphabetically.")?,
-        vec![change_type("alpha")?],
-    )?;
-    let configuration =
-        CustomConfiguration::new(vec![taxonomy(1, false)?, second], Vec::new(), Vec::new())?;
-    assert_eq!(configuration.taxonomies()[0].id().as_str(), "aaa");
-    assert_eq!(configuration.taxonomies()[1].id().as_str(), "custom");
-    Ok(())
-}
-
-#[test]
-fn item_crud_builds_and_queries_a_reusable_configuration() -> Result<(), Box<dyn Error>> {
-    let store = RecordingStore::new(CustomConfiguration::default());
-    create_taxonomy(&store, taxonomy(1, false)?)?;
-    create_typeset(&store, typeset(1, false)?)?;
-    create_template(&store, template(1)?)?;
-
-    assert!(find_taxonomy(&store, &TaxonomyId::new("custom")?)?.is_some());
-    assert!(
-        find_typeset(
-            &store,
-            &TaxonomyId::new("custom")?,
-            &TypesetId::new("strict")?
-        )?
-        .is_some()
-    );
-    assert!(find_template(&store, &TemplateId::new("custom-template")?)?.is_some());
-    assert_eq!(
-        list_taxonomies(&store)?.len(),
-        built_in_configuration().taxonomies().len() + 1
-    );
-    assert_eq!(
-        list_typesets(&store)?.len(),
-        built_in_configuration().typesets().len() + 1
-    );
-    assert_eq!(
-        list_templates(&store)?.len(),
-        built_in_configuration().templates().len() + 1
-    );
-    assert_eq!(store.swaps.get(), 3);
-    Ok(())
-}
-
-#[test]
-fn failed_create_and_update_leave_the_snapshot_unchanged() -> Result<(), Box<dyn Error>> {
-    let initial = full_configuration()?;
-    let store = RecordingStore::new(initial.clone());
-    let duplicate = create_taxonomy(&store, taxonomy(1, false)?);
-    assert!(matches!(
-        duplicate,
-        Err(ConfigurationMutationError::AlreadyExists(
-            ConfigurationEntity::Taxonomy(_)
-        ))
-    ));
-    let stale = update_taxonomy(&store, taxonomy(1, false)?);
-    assert!(matches!(
-        stale,
-        Err(ConfigurationMutationError::VersionNotAdvanced { .. })
-    ));
-    let incompatible = update_taxonomy(&store, taxonomy(2, true)?);
-    assert!(matches!(
-        incompatible,
-        Err(ConfigurationMutationError::Catalog(_))
-    ));
-    assert_eq!(store.snapshot(), initial);
-    assert_eq!(store.swaps.get(), 0);
-    Ok(())
-}
-
-#[test]
-fn atomic_edits_can_advance_a_taxonomy_and_all_covering_typesets() -> Result<(), Box<dyn Error>> {
-    let store = RecordingStore::new(full_configuration()?);
-    apply_configuration_edits(
-        &store,
-        [
-            ConfigurationEdit::UpdateTaxonomy(taxonomy(2, true)?),
-            ConfigurationEdit::UpdateTypeset(typeset(2, true)?),
-        ],
-    )?;
-    let catalog = ConfigurationCatalog::new(&store.snapshot())?;
-    let resolved = catalog.resolve(&TemplateId::new("custom-template")?)?;
-    assert_eq!(resolved.taxonomy_version().get(), 2);
-    assert_eq!(resolved.typeset_version().get(), 2);
-    assert_eq!(resolved.change_types().len(), 2);
-    assert_eq!(store.swaps.get(), 1);
-    Ok(())
-}
-
-#[test]
-fn deletes_protect_dependents_then_succeed_in_dependency_order() -> Result<(), Box<dyn Error>> {
-    let store = RecordingStore::new(full_configuration()?);
-    let taxonomy_result = delete_taxonomy(&store, &TaxonomyId::new("custom")?);
-    assert!(matches!(
-        taxonomy_result,
-        Err(ConfigurationMutationError::Referenced { .. })
-    ));
-    let typeset_result = delete_typeset(
-        &store,
-        &TaxonomyId::new("custom")?,
-        &TypesetId::new("strict")?,
-    );
-    assert!(matches!(
-        typeset_result,
-        Err(ConfigurationMutationError::Referenced { .. })
-    ));
-
-    delete_template(&store, &TemplateId::new("custom-template")?)?;
-    delete_typeset(
-        &store,
-        &TaxonomyId::new("custom")?,
-        &TypesetId::new("strict")?,
-    )?;
-    delete_taxonomy(&store, &TaxonomyId::new("custom")?)?;
-    assert_eq!(store.snapshot(), CustomConfiguration::default());
-    Ok(())
-}
-
-#[test]
-fn reserved_mutations_and_store_failures_remain_precise() -> Result<(), Box<dyn Error>> {
-    let store = RecordingStore::new(CustomConfiguration::default());
-    let reserved = create_template(&store, built_in_configuration().template().clone());
-    assert!(matches!(
-        reserved,
-        Err(ConfigurationMutationError::Reserved(
-            ConfigurationEntity::Template(_)
-        ))
-    ));
-    store.load_error.set(Some(FakeError::Unavailable));
-    assert!(matches!(
-        list_templates(&store),
-        Err(ConfigurationMutationError::Store(FakeError::Unavailable))
-    ));
-    store.load_error.set(None);
-    store.swap_error.set(Some(FakeError::Concurrent));
-    assert!(matches!(
-        create_taxonomy(&store, taxonomy(1, false)?),
-        Err(ConfigurationMutationError::Store(FakeError::Concurrent))
-    ));
-    Ok(())
-}
-
-#[test]
-fn resolved_fingerprint_is_stable_and_covers_semantic_identity() -> Result<(), Box<dyn Error>> {
-    let catalog = ConfigurationCatalog::new(&full_configuration()?)?;
-    let resolved = catalog.resolve(&TemplateId::new("custom-template")?)?;
-    let first = fingerprint_resolved_taxonomy(&resolved);
-    let second = fingerprint_resolved_taxonomy(&resolved.clone());
-    assert_eq!(first, second);
-
-    let built_in = built_in_configuration();
-    let conventional =
-        ResolvedTaxonomy::resolve(built_in.template(), built_in.taxonomy(), built_in.typeset())?;
-    assert_ne!(first, fingerprint_resolved_taxonomy(&conventional));
-    assert!(first.to_string().starts_with("sha256:"));
-    Ok(())
-}
-
-#[test]
-fn fork_copies_the_built_in_chain_under_new_identities() -> Result<(), Box<dyn Error>> {
-    let store = RecordingStore::new(CustomConfiguration::default());
-    let forked = fork_conventional(
-        &store,
-        TemplateId::new("platform")?,
-        TaxonomyId::new("ops")?,
-        TypesetId::new("baseline")?,
-    )?;
-    assert_eq!(forked.template().as_str(), "platform");
-    assert_eq!(forked.taxonomy().as_str(), "ops");
-    assert_eq!(forked.typeset().as_str(), "baseline");
-
-    let built_in = built_in_configuration();
-    let taxonomy =
-        find_taxonomy(&store, &TaxonomyId::new("ops")?)?.ok_or("forked taxonomy is present")?;
-    assert_eq!(
-        taxonomy
-            .change_types()
-            .iter()
-            .map(|change_type| change_type.id().clone())
-            .collect::<Vec<_>>(),
-        built_in
-            .taxonomy()
-            .change_types()
-            .iter()
-            .map(|change_type| change_type.id().clone())
-            .collect::<Vec<_>>()
-    );
-    let typeset = find_typeset(
-        &store,
-        &TaxonomyId::new("ops")?,
-        &TypesetId::new("baseline")?,
-    )?
-    .ok_or("forked typeset is present")?;
-    assert_eq!(typeset.schemas().len(), built_in.typeset().schemas().len());
-    let template = find_template(&store, &TemplateId::new("platform")?)?
-        .ok_or("forked template is present")?;
-    assert_eq!(template.taxonomy(), &TaxonomyId::new("ops")?);
-    assert_eq!(template.typeset(), &TypesetId::new("baseline")?);
-    assert_eq!(template.version(), TemplateVersion::V1);
-
-    let catalog = ConfigurationCatalog::new(&store.snapshot())?;
-    let resolved = catalog.resolve(&TemplateId::new("platform")?)?;
-    assert_eq!(
-        resolved.change_types().len(),
-        built_in.taxonomy().change_types().len()
-    );
-    assert_eq!(store.swaps.get(), 1);
-    Ok(())
-}
-
-#[test]
-fn fork_rejects_reserved_and_existing_identities_atomically() -> Result<(), Box<dyn Error>> {
-    let store = RecordingStore::new(CustomConfiguration::default());
-    let before = store.snapshot();
-    assert!(matches!(
-        fork_conventional(
-            &store,
-            TemplateId::new("platform")?,
-            TaxonomyId::new("conventional")?,
-            TypesetId::new("baseline")?,
-        ),
-        Err(ConfigurationMutationError::Reserved(
-            ConfigurationEntity::Taxonomy(taxonomy)
-        )) if taxonomy.as_str() == "conventional"
-    ));
-    assert_eq!(store.snapshot(), before);
-
-    create_taxonomy(&store, taxonomy(1, false)?)?;
-    let before = store.snapshot();
-    assert!(matches!(
-        fork_conventional(
-            &store,
-            TemplateId::new("platform")?,
-            taxonomy(1, false)?.id().clone(),
-            TypesetId::new("baseline")?,
-        ),
-        Err(ConfigurationMutationError::AlreadyExists(
-            ConfigurationEntity::Taxonomy(existing)
-        )) if existing == taxonomy(1, false)?.id().clone()
-    ));
-    assert_eq!(store.snapshot(), before);
-    Ok(())
-}
-
-#[test]
-fn arbitrary_forks_preserve_source_content_and_reset_new_identity_versions()
+fn reviewed_global_sessions_save_one_snapshot_and_reject_concurrent_changes()
 -> Result<(), Box<dyn Error>> {
-    let initial = CustomConfiguration::new(
-        vec![taxonomy(2, true)?],
-        vec![typeset(3, true)?],
-        vec![template(4)?],
-    )?;
-    for selected in ["default", "ml-research", "infra-ops", "custom-template"] {
-        let store = RecordingStore::new(initial.clone());
-        let before = ConfigurationCatalog::new(&initial)?;
-        let source = before.resolve(&TemplateId::new(selected)?)?;
-        let forked = gitserious_app::fork_configuration(
-            &store,
-            &TemplateId::new(selected)?,
-            TemplateId::new("copy")?,
-            TaxonomyId::new("copy-taxonomy")?,
-            TypesetId::new("copy-typeset")?,
-        )?;
-        assert_eq!(store.loads.get(), 1);
-        assert_eq!(store.swaps.get(), 1);
-        let after = ConfigurationCatalog::new(&store.snapshot())?;
-        let resolved = after.resolve(forked.template())?;
-        assert_eq!(resolved.taxonomy_id(), forked.taxonomy());
-        assert_eq!(resolved.typeset_id(), forked.typeset());
-        assert_eq!(resolved.template_version(), TemplateVersion::V1);
-        assert_eq!(resolved.taxonomy_version(), TaxonomyVersion::V1);
-        assert_eq!(resolved.typeset_version(), TypesetVersion::V1);
-        assert_eq!(
-            resolved.template_description(),
-            source.template_description()
-        );
-        assert_eq!(
-            resolved.taxonomy_description(),
-            source.taxonomy_description()
-        );
-        assert_eq!(resolved.typeset_description(), source.typeset_description());
-        assert_eq!(resolved.change_types(), source.change_types());
-        assert_eq!(after.resolve(&TemplateId::new(selected)?)?, source);
-        let old_typeset = before
-            .find_typeset(source.taxonomy_id(), source.typeset_id())
-            .ok_or("missing source")?;
-        let new_typeset = after
-            .find_typeset(forked.taxonomy(), forked.typeset())
-            .ok_or("missing fork")?;
-        assert_eq!(new_typeset.schemas(), old_typeset.schemas());
-    }
+    let store = FakeGlobalStore::new(GlobalConfiguration::default());
+    edit_global(&store, |workspace| {
+        let mut session = workspace.load(ConfigurationDestination::Global)?;
+        session.fork_taxonomy(&id("conventional"), id("team"))?;
+        let saved = workspace.save(&session)?;
+        assert!(!saved.is_dirty());
+        workspace.save(&saved)?;
+        Ok(())
+    })?;
+    assert_eq!(store.swaps.get(), 1);
+    assert_eq!(store.current.borrow().custom_taxonomies(), [custom("team")]);
+
+    let stale = FakeGlobalStore::new(GlobalConfiguration::default());
+    let error = edit_global(&stale, |workspace| {
+        let mut session = workspace.load(ConfigurationDestination::Global)?;
+        *stale.current.borrow_mut() = library(vec![custom("other")]).map_err(|e| e.to_string())?;
+        session.fork_taxonomy(&id("conventional"), id("team"))?;
+        workspace.save(&session).map(|_| ())
+    })
+    .expect_err("a stale session overwrote a newer library");
+    assert!(error.contains("changed while editing"), "{error}");
+    assert_eq!(
+        stale.current.borrow().custom_taxonomies(),
+        [custom("other")]
+    );
     Ok(())
 }
 
 #[test]
-fn arbitrary_forks_reject_unavailable_sources_collisions_and_failed_saves()
--> Result<(), Box<dyn Error>> {
-    for (source, template, taxonomy, typeset) in [
-        ("missing", "copy", "copy-taxonomy", "copy-typeset"),
-        ("ml-research", "default", "copy-taxonomy", "copy-typeset"),
-        ("ml-research", "copy", "conventional", "copy-typeset"),
-        (
-            "ml-research",
-            "custom-template",
-            "copy-taxonomy",
-            "copy-typeset",
-        ),
-        ("ml-research", "copy", "custom", "strict"),
-    ] {
-        let initial = full_configuration()?;
-        let store = RecordingStore::new(initial.clone());
-        assert!(
-            gitserious_app::fork_configuration(
-                &store,
-                &TemplateId::new(source)?,
-                TemplateId::new(template)?,
-                TaxonomyId::new(taxonomy)?,
-                TypesetId::new(typeset)?
-            )
-            .is_err()
-        );
-        assert_eq!(store.snapshot(), initial);
-        assert_eq!(store.swaps.get(), 0);
-    }
-    for error in [FakeError::Unavailable, FakeError::Concurrent] {
-        let initial = full_configuration()?;
-        let store = RecordingStore::new(initial.clone());
-        store.swap_error.set(Some(error));
-        assert!(
-            matches!(gitserious_app::fork_configuration(&store, &TemplateId::new("ml-research")?, TemplateId::new("copy")?, TaxonomyId::new("copy-taxonomy")?, TypesetId::new("copy-typeset")?), Err(ConfigurationMutationError::Store(actual)) if actual == error)
-        );
-        assert_eq!(store.snapshot(), initial);
-    }
-    Ok(())
+fn global_store_failures_are_reported_and_leave_the_library_unchanged() {
+    let mut store = FakeGlobalStore::new(GlobalConfiguration::default());
+    store.fail = true;
+
+    let error = edit_global(&store, |workspace| {
+        let mut session = workspace.load(ConfigurationDestination::Global)?;
+        session.fork_taxonomy(&id("conventional"), id("team"))?;
+        workspace.save(&session).map(|_| ())
+    })
+    .expect_err("a failed save was reported as success");
+
+    assert_eq!(error, "global store failed");
+    assert_eq!(*store.current.borrow(), GlobalConfiguration::default());
 }
