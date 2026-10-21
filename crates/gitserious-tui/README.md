@@ -29,15 +29,15 @@ uninitialized repository offers an Initialize action that reviews the portable
 policy before creating `gitserious.toml` and `gitserious.lock`.
 
 Library groups built-in and custom taxonomies beneath ruled headings with a
-nonselectable blank row between sections. A separate Taxonomy Description box
-sits below the list and shows the selected description and optional fork
-lineage. An empty Custom section offers `+ create taxonomy`. Enter or a click
+nonselectable blank row between sections. Types sits below the list. A
+separate Taxonomy Description box shows the selected description and optional
+fork lineage. An empty Custom section offers `+ create taxonomy`. Enter or a click
 starts the reviewed create flow used by `n`. Once a custom taxonomy exists,
 its rows replace the action. While the action is selected, Taxonomy
 Description, Types, and Type Details show `n/a`, and focus stays on Taxonomies.
-Wide terminals use three evenly spaced columns for Taxonomies,
-Types, and Type Details; compact terminals stack Types and Type Details in the
-right column.
+Wide terminals use three evenly spaced columns: Taxonomies above Types,
+Taxonomy Description, and Type Details. Compact terminals stack Taxonomy
+Description above Type Details in the right column.
 Create Taxonomy has one Taxonomy frame with ruled Name and Description sections,
 followed by a Types list. Section headings are bold white; the active widget's
 border and title are yellow. Name is a single line; Description is multiline.

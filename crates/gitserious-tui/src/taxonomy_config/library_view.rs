@@ -11,6 +11,7 @@ use crate::theme::{
 };
 
 const WIDE_LIBRARY_WIDTH: u16 = 96;
+const COMPACT_DESCRIPTION_ROWS: usize = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum LibraryFocus {
@@ -75,18 +76,18 @@ struct LibraryLayout {
 }
 
 impl LibraryLayout {
-    fn new(area: Rect, taxonomy_count: usize, type_count: usize) -> Self {
+    fn new(area: Rect, taxonomy_count: usize) -> Self {
         let (left, middle, right) = if area.width >= WIDE_LIBRARY_WIDTH {
             let usable = area.width.saturating_sub(2);
             let third = usable / 3;
             let remainder = usable % 3;
             let taxonomy_width = third + u16::from(remainder > 0);
-            let type_width = third + u16::from(remainder > 1);
+            let description_width = third + u16::from(remainder > 1);
             let left = Rect::new(area.x, area.y, taxonomy_width, area.height);
             let middle = Rect::new(
                 left.right().saturating_add(1),
                 area.y,
-                type_width,
+                description_width,
                 area.height,
             );
             let right = Rect::new(middle.right().saturating_add(1), area.y, third, area.height);
@@ -95,12 +96,11 @@ impl LibraryLayout {
             let columns = pane_columns(area);
             (columns[0], None, columns[1])
         };
-        let (taxonomies, taxonomy_description) =
-            stack_column(left, taxonomy_count.saturating_add(3), 4);
-        let (types, details) = if let Some(middle) = middle {
+        let (taxonomies, types) = stack_column(left, taxonomy_count.saturating_add(3), 5);
+        let (taxonomy_description, details) = if let Some(middle) = middle {
             (middle, right)
         } else {
-            stack_column(right, type_count.max(1), 5)
+            stack_column(right, COMPACT_DESCRIPTION_ROWS, 5)
         };
         Self {
             taxonomies,
@@ -233,11 +233,7 @@ impl LibraryViewState {
             selected.map_or(&[], |value| value.commit_types());
         self.type_selected = self.type_selected.min(definitions.len().saturating_sub(1));
 
-        let layout = LibraryLayout::new(
-            area,
-            items.len() + usize::from(show_create),
-            definitions.len(),
-        );
+        let layout = LibraryLayout::new(area, items.len() + usize::from(show_create));
         self.pane_areas = [layout.taxonomies, layout.types, layout.details];
         self.taxonomy_description_area = layout.taxonomy_description;
         let active = |pane| focused && self.focus == pane;

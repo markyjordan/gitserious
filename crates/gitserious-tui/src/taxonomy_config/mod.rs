@@ -3588,19 +3588,25 @@ mod tests {
         state.handle_event(key(KeyCode::Right), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         let [taxonomies, types, metadata] = state.library.pane_areas;
+        let taxonomy_description = state.library.taxonomy_description_area;
         assert_eq!(taxonomies.x, MENU_WIDTH);
-        assert_eq!(taxonomies.right() + 1, types.x);
-        assert_eq!(types.right() + 1, metadata.x);
+        assert_eq!(taxonomies.bottom(), types.y);
+        assert_eq!((types.x, types.width), (taxonomies.x, taxonomies.width));
+        assert_eq!(taxonomies.right() + 1, taxonomy_description.x);
+        assert_eq!(taxonomy_description.right() + 1, metadata.x);
         assert_eq!(metadata.right(), 120);
-        assert!(taxonomies.width.abs_diff(types.width) <= 1);
-        assert!(types.width.abs_diff(metadata.width) <= 1);
+        assert_eq!(
+            taxonomy_description.height,
+            taxonomies.height + types.height
+        );
+        assert!(taxonomies.width.abs_diff(taxonomy_description.width) <= 1);
+        assert!(taxonomy_description.width.abs_diff(metadata.width) <= 1);
         assert!(taxonomies.width.abs_diff(metadata.width) <= 1);
         let titles = row_text(&terminal, 0, taxonomies.y, 120);
-        for title in ["Taxonomies", "Types", "Type Details"] {
+        for title in ["Taxonomies", "Taxonomy Description", "Type Details"] {
             assert!(titles.contains(title));
         }
-        let taxonomy_description = state.library.taxonomy_description_area;
-        assert_eq!(taxonomies.bottom(), taxonomy_description.y);
+        assert!(row_text(&terminal, types.x, types.y, types.width).contains("Types"));
         assert!(
             row_text(
                 &terminal,
@@ -3813,12 +3819,9 @@ mod tests {
         state.library.focus = LibraryFocus::Types;
         terminal.draw(|frame| state.render(frame))?;
         assert!(state.library.type_area.height > 0);
-        let [_, types, details] = state.library.pane_areas;
-        assert_eq!(types.bottom(), details.y);
-        assert_eq!(
-            state.library.pane_areas[0].bottom(),
-            state.library.taxonomy_description_area.y
-        );
+        let [taxonomies, types, details] = state.library.pane_areas;
+        assert_eq!(taxonomies.bottom(), types.y);
+        assert_eq!(state.library.taxonomy_description_area.bottom(), details.y);
         let type_area = state.library.type_area;
         let taxonomy_area = state.library.browser_area;
         assert_eq!(
@@ -3849,21 +3852,16 @@ mod tests {
             )
             .contains("An addition")
         );
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(state.library.property_scroll, 0);
         state.handle_event(key(KeyCode::PageDown), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(state.library.property_scroll > 0);
         assert!(text(&terminal).contains("Properties"));
-        assert!(
-            row_text(
-                &terminal,
-                state.library.metadata_area.x,
-                state.library.metadata_area.y + 2,
-                state.library.metadata_area.width,
-            )
-            .contains("intent")
-        );
         assert_eq!(state.library.browse_selected, 0);
-        assert_eq!(state.library.type_selected, 0);
+        assert_eq!(state.library.type_selected, 2);
         Ok(())
     }
 
@@ -3877,7 +3875,11 @@ mod tests {
         let mut compact = Terminal::new(TestBackend::new(MENU_WIDTH + 95, 30))?;
         compact.draw(|frame| state.render(frame))?;
         assert_eq!(
-            state.library.pane_areas[1].bottom(),
+            state.library.pane_areas[0].bottom(),
+            state.library.pane_areas[1].y
+        );
+        assert_eq!(
+            state.library.taxonomy_description_area.bottom(),
             state.library.pane_areas[2].y
         );
         assert!(text(&compact).contains("Type Details"));
@@ -3885,11 +3887,13 @@ mod tests {
         let mut wide = Terminal::new(TestBackend::new(MENU_WIDTH + 96, 30))?;
         wide.draw(|frame| state.render(frame))?;
         let [taxonomies, types, metadata] = state.library.pane_areas;
-        assert_eq!(taxonomies.right() + 1, types.x);
-        assert_eq!(types.right() + 1, metadata.x);
+        let taxonomy_description = state.library.taxonomy_description_area;
+        assert_eq!(taxonomies.bottom(), types.y);
+        assert_eq!(taxonomies.right() + 1, taxonomy_description.x);
+        assert_eq!(taxonomy_description.right() + 1, metadata.x);
         assert_eq!(metadata.right(), MENU_WIDTH + 96);
-        assert!(taxonomies.width.abs_diff(types.width) <= 1);
-        assert!(types.width.abs_diff(metadata.width) <= 1);
+        assert!(taxonomies.width.abs_diff(taxonomy_description.width) <= 1);
+        assert!(taxonomy_description.width.abs_diff(metadata.width) <= 1);
         assert!(text(&wide).contains("Type Details"));
         Ok(())
     }
@@ -3903,7 +3907,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MENU_WIDTH + 80, 35))?;
         terminal.draw(|frame| state.render(frame))?;
         let details = state.library.pane_areas[2];
-        assert_eq!(state.library.pane_areas[1].bottom(), details.y);
+        assert_eq!(state.library.taxonomy_description_area.bottom(), details.y);
         assert!(row_text(&terminal, details.x, details.y, details.width).contains("Type Details"));
         let area = state.library.metadata_area;
         let required = row_text(&terminal, area.x, area.y + 4, area.width);
