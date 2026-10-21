@@ -7,6 +7,16 @@ use gitserious_app::{BranchState, RepositoryRoot, RepositoryStatusReader};
 use gitserious_fs::GitRepositoryStatusReader;
 use tempfile::TempDir;
 
+// Windows file names cannot contain line breaks; the parser's unit tests cover them there.
+#[cfg(unix)]
+const RENAMED: &str = "new\nname";
+#[cfg(not(unix))]
+const RENAMED: &str = "new name";
+#[cfg(unix)]
+const UNTRACKED: &str = "untracked/a b\nc";
+#[cfg(not(unix))]
+const UNTRACKED: &str = "untracked/a b c";
+
 fn git(directory: &Path, arguments: &[&str]) -> Result<Output, Box<dyn Error>> {
     let output = Command::new("git")
         .arg("-C")
@@ -49,9 +59,9 @@ fn real_status_preserves_index_and_reports_partial_staging_rename_untracked_and_
     fs::write(temp.path().join("src/file.rs"), "staged\n")?;
     git(temp.path(), &["add", "src/file.rs"])?;
     fs::write(temp.path().join("src/file.rs"), "unstaged\n")?;
-    git(temp.path(), &["mv", "old name", "new\nname"])?;
+    git(temp.path(), &["mv", "old name", RENAMED])?;
     fs::create_dir(temp.path().join("untracked"))?;
-    fs::write(temp.path().join("untracked/a b\nc"), "new\n")?;
+    fs::write(temp.path().join(UNTRACKED), "new\n")?;
     let before = fs::read(temp.path().join(".git/index"))?;
     let status = reader.read(&root)?;
     assert_eq!(fs::read(temp.path().join(".git/index"))?, before);
@@ -66,13 +76,13 @@ fn real_status_preserves_index_and_reports_partial_staging_rename_untracked_and_
         .iter()
         .find(|entry| entry.original_path.is_some())
         .ok_or("missing rename")?;
-    assert_eq!(rename.path, Path::new("new\nname"));
+    assert_eq!(rename.path, Path::new(RENAMED));
     assert_eq!(rename.original_path.as_deref(), Some(Path::new("old name")));
     assert!(
         status
             .entries
             .iter()
-            .any(|entry| entry.untracked && entry.path == Path::new("untracked/a b\nc"))
+            .any(|entry| entry.untracked && entry.path == Path::new(UNTRACKED))
     );
     assert!(status.has_staged_changes());
     git(temp.path(), &["checkout", "--detach"])?;
