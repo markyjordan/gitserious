@@ -2,11 +2,15 @@
 
 ## Configuration
 
-Bare `gitserious config` opens Project and Library tabs in a standalone Config
-Options box. Project and Library widgets align with its outer edges and begin
-directly below it, without an enclosing frame.
-The selected tab uses yellow text on black with a yellow segment in the lower
-border beneath its label. The label and underline both switch tabs when clicked.
+Bare `gitserious config` lists Project and Library in a Menu column on the
+left. Project and Library widgets fill the space to its right, without
+an enclosing frame.
+The selected entry uses yellow text on black with a heavy yellow segment in the
+column's right border beside its label. Clicking an entry switches to it.
+Menu has focus at startup, with a yellow border and title. Up and
+Down switch between Project and Library; Left and Right move focus between
+Menu and the widgets to its right. While any scope has unapplied
+changes, `unapplied changes` appears at the bottom of the column.
 Project shows the repository's pinned commit taxonomy and available set when
 its lock is valid, or a labeled inherited preview when commit authoring is
 blocked. Its Commit section opens the focused Project override editor;
@@ -72,14 +76,14 @@ unchanged name or a total above 80.
 Staging creates a snapshot at version 1 with lineage pointing to the selected
 source ID and version. Source changes never propagate to the fork.
 Edit Taxonomy retains its Metadata and type list.
-In the Create flow, Config Options disappears immediately and returns after
-the header settles back on Library. Project fades and moves away while Library
-moves left into `[Library] / create taxonomy`; leaving reverses the motion.
-The Taxonomy and Types widgets span the content width with no gap. Taxonomy
-stays eight rows tall, with two Description input rows beneath its heading;
-Types uses the remaining space. The Library breadcrumb uses the same moving
-yellow underline. Its label and underline return from the main Create or Fork
-view; in a child editor they confirm before discarding the whole draft.
+In Create, Fork, and Edit, Menu stays visible but cannot be focused
+or clicked. A breadcrumb widget above the editor reads
+`Library / create taxonomy`, with `Library` in yellow above a yellow segment in
+the breadcrumb's lower border. The Taxonomy and Types widgets span the width
+beside Menu with no gap. Taxonomy stays eight rows tall, with two
+Description input rows beneath its heading; Types uses the remaining space.
+The Library label and underline return from the main Create or Fork view; in a
+child editor they confirm before discarding the whole draft.
 Adding or editing a type in Create, Fork, or Edit Taxonomy opens an eight-row
 Type frame with Name, Description, and an independent `used/80` counter.
 Type and property Name, and Condition name, save and preview their IDs the
@@ -128,17 +132,18 @@ Library breadcrumb alerts discard the entire taxonomy draft; Type and Property
 alerts discard only that child. Button targets refresh after terminal resize.
 
 Type Details has ruled Description and Properties headings, followed by a
-two-column properties table with left-aligned values. Left and Right change
-focus between the two lists; Up and Down select within the focused list. Page Up
+two-column properties table with left-aligned values. Left and Right move focus
+from Menu to Taxonomies to Types and back; Up and Down select within
+the focused list. Page Up
 and Page Down scroll Taxonomy Description when Taxonomies has focus and Type
 Details when Types has focus. The focused list's border and title are yellow;
 its selected row is yellow while the other list retains a subdued selection.
-The Project and Library command bars show `m: menu`, which cycles between them.
-The `/` key opens commands; clicking a tab also switches views. Command bar
+The Project and Library command bars show `←/→: focus` and `↑/↓: move`. The
+`/` key opens commands. Command bar
 hints use spaces rather than pipe separators. Library commands use lowercase
 labels: `create taxonomy`, `edit taxonomy`, `fork taxonomy`, `delete taxonomy`,
 `review changes`, `switch to project`, `help`, and `quit`. Shortcuts align at the
-right edge, including `m` beside the switch command.
+right edge; the switch command has none.
 Project has its own command list. A bordered Search field shows the `/` prompt
 and input cursor above the results. Arrow keys select a filtered command and
 Enter runs it; Esc closes the popup. Existing direct shortcuts such as `n`,
@@ -162,7 +167,7 @@ content grows.
 
 The interface shares the commit TUI's true-black canvas, dark Unicode frames,
 yellow active rows and navigation strip, zebra tables, mouse targets, bracketed
-paste, and a 60-column by 18-row minimum-size guard.
+paste, and an 18-row minimum height. Configuration needs at least 66 columns.
 
 ## Commit authoring
 

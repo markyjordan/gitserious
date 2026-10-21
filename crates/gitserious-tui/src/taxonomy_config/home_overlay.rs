@@ -89,7 +89,7 @@ impl HomeCommand {
             Self::Edit => "e",
             Self::Fork => "f",
             Self::Delete => "d",
-            Self::SwitchTab => "m",
+            Self::SwitchTab => "",
             Self::Help => "?",
             Self::Quit => "q",
         }
@@ -307,7 +307,8 @@ fn render_palette(
 fn render_help(frame: &mut Frame<'_>, area: Rect, category: Category) {
     let rows: &[(&str, &str)] = match category {
         Category::Project => &[
-            ("Switch Project / Library", "m/click"),
+            ("Switch Project / Library", "↑/↓/click"),
+            ("Focus menu or sections", "←/→"),
             ("Move between sections", "↑/↓"),
             ("Configure project", "enter"),
             ("Initialize project", "i"),
@@ -317,8 +318,8 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, category: Category) {
             ("Quit", "esc/q"),
         ],
         Category::Library => &[
-            ("Switch Project / Library", "m/click"),
-            ("Focus taxonomy or type", "←/→"),
+            ("Switch Project / Library", "↑/↓/click"),
+            ("Focus menu, taxonomy, or type", "←/→"),
             ("Move selection", "↑/↓"),
             ("Scroll details", "pgup/pgdn"),
             ("New / edit / fork / delete", "n/e/f/d"),
@@ -327,7 +328,7 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, category: Category) {
             ("Quit", "esc/q"),
         ],
     };
-    let popup = centered_rect(58, 12.min(area.height), area);
+    let popup = centered_rect(58, 13.min(area.height), area);
     frame.render_widget(Clear, popup);
     frame.render_widget(popup_block(), popup);
     let content_x = popup.x.saturating_add(2);

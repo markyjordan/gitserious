@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-pub(crate) const MINIMUM_WIDTH: u16 = 60;
+pub(crate) const MINIMUM_WIDTH: u16 = 66;
 pub(crate) const MINIMUM_HEIGHT: u16 = 18;
 pub(crate) const JET_BLACK: Color = Color::Rgb(0, 0, 0);
 pub(crate) const ZEBRA_BACKGROUND: Color = Color::Rgb(16, 16, 16);

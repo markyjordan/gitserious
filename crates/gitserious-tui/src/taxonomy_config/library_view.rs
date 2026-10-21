@@ -211,6 +211,7 @@ impl LibraryViewState {
         area: Rect,
         catalog: Option<&TaxonomyCatalog>,
         error: Option<&str>,
+        focused: bool,
     ) {
         let items = catalog.map_or(&[][..], TaxonomyCatalog::taxonomies);
         let show_create = catalog.is_some_and(|value| {
@@ -239,9 +240,19 @@ impl LibraryViewState {
         );
         self.pane_areas = [layout.taxonomies, layout.types, layout.details];
         self.taxonomy_description_area = layout.taxonomy_description;
-        self.render_taxonomies(frame, layout.taxonomies, items, catalog, error, show_create);
+        let active = |pane| focused && self.focus == pane;
+        let taxonomies_active = active(LibraryFocus::Taxonomies);
+        let types_active = active(LibraryFocus::Types);
+        self.render_taxonomies(
+            frame,
+            layout.taxonomies,
+            catalog,
+            error,
+            show_create,
+            taxonomies_active,
+        );
         self.render_taxonomy_description(frame, layout.taxonomy_description, selected);
-        self.render_types(frame, layout.types, definitions);
+        self.render_types(frame, layout.types, definitions, types_active);
         frame.render_widget(
             Block::bordered()
                 .border_style(frame_style())
@@ -255,12 +266,13 @@ impl LibraryViewState {
         &mut self,
         frame: &mut Frame<'_>,
         pane: Rect,
-        items: &[Taxonomy],
         catalog: Option<&TaxonomyCatalog>,
         error: Option<&str>,
         show_create: bool,
+        active: bool,
     ) {
-        let style = focus_frame_style(self.focus == LibraryFocus::Taxonomies);
+        let items = catalog.map_or(&[][..], TaxonomyCatalog::taxonomies);
+        let style = focus_frame_style(active);
         frame.render_widget(
             Block::bordered()
                 .border_style(style)
@@ -342,7 +354,7 @@ impl LibraryViewState {
             }
         }));
         frame.render_stateful_widget(
-            List::new(rows).highlight_style(selected_style(self.focus == LibraryFocus::Taxonomies)),
+            List::new(rows).highlight_style(selected_style(active)),
             list_area,
             &mut state,
         );
@@ -396,8 +408,9 @@ impl LibraryViewState {
         frame: &mut Frame<'_>,
         area: Rect,
         definitions: &[CommitTypeDefinition],
+        active: bool,
     ) {
-        let style = focus_frame_style(self.focus == LibraryFocus::Types);
+        let style = focus_frame_style(active);
         frame.render_widget(
             Block::bordered()
                 .border_style(style)
@@ -438,7 +451,7 @@ impl LibraryViewState {
         let mut state = ListState::default();
         state.select(Some(self.type_selected));
         frame.render_stateful_widget(
-            List::new(rows).highlight_style(selected_style(self.focus == LibraryFocus::Types)),
+            List::new(rows).highlight_style(selected_style(active)),
             list_area,
             &mut state,
         );
