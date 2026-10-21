@@ -10,7 +10,6 @@ messages="$(cd "$(dirname "$messages")" && pwd)/$(basename "$messages")"
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
-allowlist=scripts/ci/compiled-sources-allowlist.txt
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "error: missing jq; install it and add it to PATH" >&2
@@ -70,34 +69,16 @@ offenders() {
     label 'commented-out mod' || true
 }
 
-allowed() {
-  if [[ -f "$allowlist" ]]; then
-    { grep -vE '^[[:space:]]*(#|$)' "$allowlist" || true; } | sort -u
-  fi
-}
-
 compiled="$(compiled_sources | normalize_paths | sort -u)"
-found="$(offenders | sort -u)"
-listed="$(allowed)"
 status=0
 
 while IFS=$'\t' read -r path reason; do
   [[ -n "$path" ]] || continue
-  if ! grep -qxF "$path" <<<"$listed"; then
-    echo "error: $path is left out of the build ($reason); compile it, delete it, or list it in $allowlist" >&2
-    status=1
-  fi
-done <<<"$found"
-
-while IFS= read -r path; do
-  [[ -n "$path" ]] || continue
-  if ! cut -f1 <<<"$found" | grep -qxF "$path"; then
-    echo "error: $allowlist lists $path, which is no longer left out of the build; remove the entry" >&2
-    status=1
-  fi
-done <<<"$listed"
+  echo "error: $path is left out of the build ($reason); compile it or delete it" >&2
+  status=1
+done < <(offenders | sort -u)
 
 if ((status == 0)); then
-  echo "No Rust source under crates/ is left out of the build beyond $(grep -c . <<<"$listed" || true) allowlisted files."
+  echo "Every Rust source under crates/ is compiled."
 fi
 exit "$status"
