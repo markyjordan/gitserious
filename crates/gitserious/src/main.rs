@@ -5,10 +5,12 @@ use std::process::ExitCode;
 use gitserious_app::resolve_global_paths;
 use gitserious_cli::CommitAdapters;
 use gitserious_fs::{
-    GitCommitWriter, GitRepositoryLocator, SystemGlobalPathResolver, TomlGlobalConfigurationStore,
-    TomlProjectStateStore,
+    GitCommitWriter, GitRepositoryLocator, GitRepositoryStatusReader, SystemGlobalPathResolver,
+    TomlGlobalConfigurationStore, TomlProjectStateStore,
 };
-use gitserious_tui::{RatatuiCommitDraftAuthor, RatatuiTaxonomyConfigurationEditor};
+use gitserious_tui::{
+    RatatuiCommitDraftAuthor, RatatuiInteractiveUi, RatatuiTaxonomyConfigurationEditor,
+};
 
 fn main() -> ExitCode {
     let mut stderr = io::stderr();
@@ -24,7 +26,11 @@ fn main() -> ExitCode {
     // Legacy template/typeset editor construction retained in gitserious-tui/src/config/.
     // let editor = RatatuiConfigurationEditor;
     let editor = RatatuiTaxonomyConfigurationEditor::with_library_path(configuration.path());
-    let commit = CommitAdapters::new(&author, &writer).with_configuration_editor(&editor);
+    let interactive = RatatuiInteractiveUi::with_library_path(configuration.path());
+    let status = GitRepositoryStatusReader;
+    let commit = CommitAdapters::new(&author, &writer)
+        .with_configuration_editor(&editor)
+        .with_interactive(&interactive, &status);
     let mut stdout = io::stdout();
 
     gitserious_cli::run_with_commit(

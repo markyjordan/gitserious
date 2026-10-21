@@ -1,16 +1,17 @@
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt::{self, Display, Formatter};
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
-    ConfigurationEditor, GlobalConfigurationStore, InitOutcome, InitStatus, ProjectStateStore,
-    RepositoryLocator, RepositoryRoot, TaxonomyOrigin, create_commit_with_taxonomy,
-    edit_configuration, initialize_project,
+    ConfigurationEditor, GlobalConfigurationStore, HelpPage, InitOutcome, InitStatus,
+    InteractiveEntry, InteractiveUi, ProjectStateStore, RepositoryLocator, RepositoryRoot,
+    RepositoryStatusReader, TaxonomyOrigin, create_commit_with_taxonomy, edit_configuration,
+    initialize_project, run_interactive,
 };
 use gitserious_core::{CommitMessage, CommitTypeDefinition, CommitTypeId, Taxonomy, TaxonomyId};
 
@@ -20,11 +21,11 @@ use gitserious_core::{CommitMessage, CommitTypeDefinition, CommitTypeId, Taxonom
     version,
     about = "Create durable commit-message policy for Git repositories",
     disable_colored_help = true,
-    subcommand_required = true
+    subcommand_required = false
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -68,6 +69,7 @@ pub struct CommitAdapters<'a, A: ?Sized, W: ?Sized> {
     author: &'a A,
     writer: &'a W,
     configuration_editor: Option<&'a dyn ConfigurationEditor>,
+    interactive: Option<(&'a dyn InteractiveUi, &'a dyn RepositoryStatusReader)>,
 }
 
 impl<'a, A: ?Sized, W: ?Sized> CommitAdapters<'a, A, W> {
@@ -77,7 +79,19 @@ impl<'a, A: ?Sized, W: ?Sized> CommitAdapters<'a, A, W> {
             author,
             writer,
             configuration_editor: None,
+            interactive: None,
         }
+    }
+
+    /// Supplies the unified shell and its read-only Git adapter.
+    #[must_use]
+    pub fn with_interactive(
+        mut self,
+        ui: &'a dyn InteractiveUi,
+        status: &'a dyn RepositoryStatusReader,
+    ) -> Self {
+        self.interactive = Some((ui, status));
+        self
     }
 
     #[must_use]
@@ -239,7 +253,45 @@ where
             };
         }
     };
-    match cli.command {
+    let entry = match &cli.command {
+        None => Some(InteractiveEntry::Home),
+        Some(Command::Config { action: None }) if adapters.interactive.is_some() => {
+            Some(InteractiveEntry::Config)
+        }
+        _ => None,
+    };
+    if let Some(entry) = entry {
+        if entry == InteractiveEntry::Home
+            && (!std::io::stdin().is_terminal() || !std::io::stdout().is_terminal())
+        {
+            return if writeln!(stdout, "{}", Cli::command().render_long_help()).is_ok() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            };
+        }
+        let Some((ui, status)) = adapters.interactive else {
+            return operational_error(stderr, "interactive shell is not configured");
+        };
+        return match run_interactive(
+            locator,
+            store,
+            global,
+            status,
+            adapters.writer,
+            start,
+            ui,
+            entry,
+            &interactive_help(),
+        ) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => operational_error(stderr, error),
+        };
+    }
+    let Some(command) = cli.command else {
+        return ExitCode::SUCCESS;
+    };
+    match command {
         Command::Commit {
             taxonomy,
             commit_type,
@@ -447,4 +499,54 @@ impl CommitWriter for UnsupportedCommitAdapter {
     ) -> Result<CommitOutput, Self::Error> {
         Err(UnsupportedCommitError)
     }
+}
+
+/// Man-style presentation data for the unified Help surface.
+#[must_use]
+pub fn interactive_help() -> Vec<HelpPage> {
+    let commands = [
+        ("Overview", Cli::command()),
+        (
+            "Config",
+            Cli::command()
+                .find_subcommand("config")
+                .cloned()
+                .unwrap_or_else(Cli::command),
+        ),
+        (
+            "Commit",
+            Cli::command()
+                .find_subcommand("commit")
+                .cloned()
+                .unwrap_or_else(Cli::command),
+        ),
+        (
+            "Init",
+            Cli::command()
+                .find_subcommand("init")
+                .cloned()
+                .unwrap_or_else(Cli::command),
+        ),
+    ];
+    let descriptions = [
+        "Bare gitserious opens Home. Config configures repository policy and your taxonomy library. Commit previews Git changes before authoring a durable message. Lore is planned for v0.3.0.",
+        "Bare gitserious config opens Config. Project controls repository overrides and its portable lock. Library owns taxonomies. Changes remain unapplied until review and Apply.",
+        "gitserious commit authors directly from persisted project policy. --taxonomy chooses an available taxonomy for this commit; --type preselects a type. Only Git's staged index is committed. Stage changes with Git before using Start commit in the shell.",
+        "gitserious init initializes repository-local gitserious.toml and gitserious.lock. --taxonomy selects an installed taxonomy for fresh policy.",
+    ];
+    let examples = [
+        "gitserious\ngitserious --help",
+        "gitserious config\ngitserious config list\ngitserious config show conventional",
+        "git add src/\ngitserious commit\ngitserious commit --taxonomy conventional --type feat",
+        "gitserious init\ngitserious init --taxonomy research",
+    ];
+    let mut pages: Vec<_> = commands.into_iter().enumerate().map(|(index, (title, mut command))| {
+        if index > 0 { command = command.bin_name(format!("gitserious {}", title.to_lowercase())); }
+        HelpPage {
+            title: title.into(),
+            text: format!("NAME\n    gitserious — {title}\n\nSYNOPSIS AND OPTIONS\n{}\nDESCRIPTION\n{}\n\nEXAMPLES\n{}\n\nEXIT STATUS\n    0: success or shell exit. Nonzero: an operational error or cancelled direct commit.\n", command.render_long_help(), descriptions[index], examples[index]),
+        }
+    }).collect();
+    pages.push(HelpPage { title: "Keyboard Navigation".into(), text: "NAME\n    gitserious — keyboard navigation\n\nDESCRIPTION\n    Tab / Shift+Tab: switch sections from any overview, including Config's Project and Library.\n    Esc: close an overlay, go back, or return to Home from an overview.\n    Enter: open the selected item or start a staged commit.\n    /: contextual commands. ?: contextual help. q: quit at overview level.\n\nCONFIG\n    Menu: Up/Down selects Project or Library; Left/Right moves focus between Menu and its widgets.\n    Library: n creates, e edits, f forks, and d deletes a taxonomy.\n    Create Taxonomy: Up/Down crosses Name, Description, and Types; Left/Right moves within text.\n    Ctrl+N adds a type; Ctrl+S stages the taxonomy. Alt+Enter adds a description newline; Alt+/ inserts a literal slash.\n    / offers add type and validate and stage taxonomy.\n    From Project or Library, Ctrl+S reviews staged changes; Enter applies from Review.\n\nCOMMIT\n    Overview: r refreshes; o shows the full Git result; Left/Right controls directories.\n    Picker: Tab / Shift+Tab selects taxonomy; Up/Down selects type; Enter composes.\n    Composer: Ctrl+S validates and reviews; Esc returns through discard protection.\n    Review: Enter submits; Esc returns to editing.\n\nHELP\n    Left/Right selects pages; Up/Down and Page Up/Page Down scroll.\n".into() });
+    pages
 }
