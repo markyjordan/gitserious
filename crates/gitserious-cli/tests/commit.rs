@@ -1,304 +1,71 @@
-#![cfg(any())] // Legacy --template commit contract.
+mod support;
 
-use std::cell::{Cell, RefCell};
+use std::error::Error;
+use std::process::ExitCode;
+
+use gitserious_app::fingerprint_taxonomy;
+use gitserious_core::{CommitTypeId, built_in_commit_types, built_in_taxonomies};
+use support::{AuthorOutcome, Harness, Project, initialized_state};
+
+fn initialized() -> Result<Harness, Box<dyn Error>> {
+    Ok(Harness::new(Project::with(initialized_state()?)))
+}
 
 #[test]
-fn template_option_selects_only_project_policy_without_loading_global_defaults()
--> Result<(), Box<dyn Error>> {
-    let harness = Harness::new(initialized_state()?);
-    let (exit, _, error) = harness.run(&[
+fn taxonomy_option_selects_a_locked_taxonomy_without_changing_policy() -> Result<(), Box<dyn Error>>
+{
+    let harness = initialized()?;
+    let (exit, _, stderr) = harness.run(&[
         "gitserious",
         "commit",
-        "--template",
-        "ml-research",
+        "--taxonomy",
+        "research",
         "--type",
         "hypothesis",
     ]);
-    assert_eq!(exit, ExitCode::SUCCESS, "{error}");
-    assert!(harness.writer.messages.borrow()[0].starts_with("hypothesis"));
-    assert!(harness.writer.messages.borrow()[0].contains("prediction:"));
-    let invalid = Harness::new(initialized_state()?);
-    let (exit, _, error) = invalid.run(&[
+    assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
+    let messages = harness.writer.messages.borrow();
+    assert!(messages[0].starts_with("hypothesis(tui-editor)!: expose command\n"));
+    assert!(messages[0].contains("prediction:\n"));
+    assert!(messages[0].contains("Gitserious-Taxonomy: research@1\n"));
+    assert_eq!(*harness.project.state.borrow(), Some(initialized_state()?));
+
+    let invalid = initialized()?;
+    let (exit, _, stderr) = invalid.run(&[
         "gitserious",
         "commit",
-        "--template",
+        "--taxonomy",
         "infra-ops",
         "--type",
         "feat",
     ]);
+    let first_infra_type = built_in_taxonomies()[2].commit_types()[0].id().to_string();
     assert_eq!(exit, ExitCode::FAILURE);
-    assert!(error.contains("choose one of: provision"));
+    assert!(
+        stderr.contains(&format!("choose one of: {first_infra_type}")),
+        "{stderr}"
+    );
     assert_eq!(invalid.author.calls.get(), 0);
     assert_eq!(invalid.writer.calls.get(), 0);
-    let (exit, _, error) = invalid.run(&["gitserious", "commit", "--template", "global-only"]);
+
+    let (exit, _, stderr) = invalid.run(&["gitserious", "commit", "--taxonomy", "global-only"]);
     assert_eq!(exit, ExitCode::FAILURE);
-    assert!(error.contains("template global-only is not available"));
+    assert!(stderr.contains("global-only"), "{stderr}");
+    assert!(
+        stderr.contains("choose one of: conventional, research, infra-ops"),
+        "{stderr}"
+    );
     assert_eq!(invalid.author.calls.get(), 0);
     Ok(())
-}
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
-use std::path::{Path, PathBuf};
-use std::process::ExitCode;
-
-use gitserious_app::{
-    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutput, CommitWriter, CustomConfiguration,
-    GlobalConfigurationStore, ProjectConfig, ProjectLock, ProjectState, ProjectStateStore,
-    RepositoryLocator, RepositoryRoot, resolve_project_lock,
-};
-use gitserious_cli::{CommitAdapters, run_from_with_commit};
-use gitserious_core::{
-    AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
-    CommitTypeId, PropertyRequirement, PropertyValue, PropertyValues,
-};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct FakeError;
-
-impl Display for FakeError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter.write_str("fake adapter failure")
-    }
-}
-
-impl Error for FakeError {}
-
-struct FakeLocator;
-
-impl RepositoryLocator for FakeLocator {
-    type Error = FakeError;
-
-    fn locate(&self, _start: &Path) -> Result<RepositoryRoot, Self::Error> {
-        RepositoryRoot::new(repository_path()).map_err(|_| FakeError)
-    }
-}
-
-struct FakeStore {
-    state: ProjectState,
-}
-
-impl ProjectStateStore for FakeStore {
-    type Error = FakeError;
-
-    fn inspect(&self, _root: &RepositoryRoot) -> Result<ProjectState, Self::Error> {
-        Ok(self.state.clone())
-    }
-
-    fn ensure_local_state(&self, _root: &RepositoryRoot) -> Result<(), Self::Error> {
-        Err(FakeError)
-    }
-
-    fn initialize(
-        &self,
-        _root: &RepositoryRoot,
-        _config: &ProjectConfig,
-        _lock: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Err(FakeError)
-    }
-
-    fn create_lock(&self, _root: &RepositoryRoot, _lock: &ProjectLock) -> Result<(), Self::Error> {
-        Err(FakeError)
-    }
-
-    fn replace_lock(
-        &self,
-        _root: &RepositoryRoot,
-        _current: &ProjectLock,
-        _replacement: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Err(FakeError)
-    }
-
-    fn compare_and_swap(
-        &self,
-        _root: &RepositoryRoot,
-        _current_config: &ProjectConfig,
-        _current_lock: &ProjectLock,
-        _replacement_config: &ProjectConfig,
-        _replacement_lock: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Err(FakeError)
-    }
-}
-
-struct FakeAuthor {
-    outcome: RefCell<AuthorOutcome>,
-    calls: Cell<usize>,
-    seen: RefCell<Vec<(Vec<CommitTypeId>, Option<CommitTypeId>)>>,
-}
-
-enum AuthorOutcome {
-    Valid,
-    Cancelled,
-    Failed,
-}
-
-impl CommitDraftAuthor for FakeAuthor {
-    type Error = FakeError;
-
-    fn author_with_context(
-        &self,
-        context: &gitserious_app::CommitAuthoringContext,
-    ) -> Result<gitserious_app::CommitAuthoringOutcome, Self::Error> {
-        let template = context.initial_template();
-        match self.author(template.definitions(), context.preselected_type())? {
-            CommitDraftAuthorOutcome::Cancelled => {
-                Ok(gitserious_app::CommitAuthoringOutcome::Cancelled)
-            }
-            CommitDraftAuthorOutcome::Authored(draft) => {
-                let message = template.render(&draft).map_err(|_| FakeError)?;
-                Ok(gitserious_app::CommitAuthoringOutcome::Authored(
-                    gitserious_app::AuthoredCommit::reviewed(template.id().clone(), draft, message),
-                ))
-            }
-        }
-    }
-
-    fn author(
-        &self,
-        definitions: &[CommitTypeDefinition],
-        preselected: Option<&CommitTypeDefinition>,
-    ) -> Result<CommitDraftAuthorOutcome, Self::Error> {
-        self.calls.set(self.calls.get() + 1);
-        self.seen.borrow_mut().push((
-            definitions
-                .iter()
-                .map(|definition| definition.id().clone())
-                .collect(),
-            preselected.map(|definition| definition.id().clone()),
-        ));
-        match *self.outcome.borrow() {
-            AuthorOutcome::Valid => valid_draft(&definitions[0])
-                .map(CommitDraftAuthorOutcome::Authored)
-                .map_err(|_| FakeError),
-            AuthorOutcome::Cancelled => Ok(CommitDraftAuthorOutcome::Cancelled),
-            AuthorOutcome::Failed => Err(FakeError),
-        }
-    }
-}
-
-struct FakeWriter {
-    calls: Cell<usize>,
-    messages: RefCell<Vec<String>>,
-}
-
-impl CommitWriter for FakeWriter {
-    type Error = FakeError;
-
-    fn commit(
-        &self,
-        _root: &RepositoryRoot,
-        message: &CommitMessage,
-    ) -> Result<CommitOutput, Self::Error> {
-        self.calls.set(self.calls.get() + 1);
-        self.messages.borrow_mut().push(message.as_str().to_owned());
-        Ok(CommitOutput::new(
-            b"git summary\n".to_vec(),
-            b"hook warning\n".to_vec(),
-        ))
-    }
-}
-
-struct FakeUserStore;
-
-impl GlobalConfigurationStore for FakeUserStore {
-    type Error = FakeError;
-
-    fn load(&self) -> Result<CustomConfiguration, Self::Error> {
-        Err(FakeError)
-    }
-
-    fn compare_and_swap(
-        &self,
-        _expected: &CustomConfiguration,
-        _replacement: &CustomConfiguration,
-    ) -> Result<(), Self::Error> {
-        Err(FakeError)
-    }
-}
-
-fn repository_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fake-repository")
-}
-
-fn initialized_state() -> Result<ProjectState, Box<dyn Error>> {
-    let config = ProjectConfig::default_channel()?;
-    let lock = resolve_project_lock(&config)?;
-    Ok(ProjectState::Initialized { config, lock })
-}
-
-fn valid_draft(definition: &CommitTypeDefinition) -> Result<CommitDraft, Box<dyn Error>> {
-    let properties = definition
-        .properties()
-        .iter()
-        .filter(|property| property.requirement() == &PropertyRequirement::Required)
-        .map(|property| {
-            Ok(AuthoredProperty::new(
-                property.key().clone(),
-                PropertyValues::single(PropertyValue::new(format!("authored {}", property.key()))?),
-            ))
-        })
-        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
-    Ok(CommitDraft::new(
-        definition.id().clone(),
-        Some(CommitScope::new("tui editor")?),
-        CommitSubject::new("expose command")?,
-        properties,
-    )?
-    .with_breaking_change(PropertyValue::new("replace CLI contract")?))
-}
-
-struct Harness {
-    store: FakeStore,
-    author: FakeAuthor,
-    writer: FakeWriter,
-}
-
-impl Harness {
-    fn new(state: ProjectState) -> Self {
-        Self {
-            store: FakeStore { state },
-            author: FakeAuthor {
-                outcome: RefCell::new(AuthorOutcome::Valid),
-                calls: Cell::new(0),
-                seen: RefCell::default(),
-            },
-            writer: FakeWriter {
-                calls: Cell::new(0),
-                messages: RefCell::default(),
-            },
-        }
-    }
-
-    fn run(&self, arguments: &[&str]) -> (ExitCode, String, String) {
-        let commit = CommitAdapters::new(&self.author, &self.writer);
-        let configuration = FakeUserStore;
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-        let exit = run_from_with_commit(
-            arguments.iter().copied(),
-            &repository_path(),
-            &FakeLocator,
-            &self.store,
-            &configuration,
-            &commit,
-            &mut stdout,
-            &mut stderr,
-        );
-        (
-            exit,
-            String::from_utf8_lossy(&stdout).into_owned(),
-            String::from_utf8_lossy(&stderr).into_owned(),
-        )
-    }
 }
 
 #[test]
 fn type_option_is_a_preselection_and_forwards_exact_git_output() -> Result<(), Box<dyn Error>> {
-    let harness = Harness::new(initialized_state()?);
+    let harness = initialized()?;
+
     let (exit, stdout, stderr) = harness.run(&["gitserious", "commit", "--type", "feat"]);
-    assert_eq!(exit, ExitCode::SUCCESS);
+
+    assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
     assert_eq!(stdout, "git summary\n");
     assert_eq!(stderr, "hook warning\n");
     assert_eq!(harness.author.calls.get(), 1);
@@ -307,13 +74,11 @@ fn type_option_is_a_preselection_and_forwards_exact_git_output() -> Result<(), B
         Some(CommitTypeId::new("feat")?)
     );
     assert_eq!(harness.writer.calls.get(), 1);
-    let schema = gitserious_app::built_in_effective_catalog()?
-        .resolve(&gitserious_core::TemplateId::new("default")?)?;
-    let fingerprint = gitserious_app::fingerprint_resolved_taxonomy(&schema);
+    let fingerprint = fingerprint_taxonomy(&built_in_taxonomies()[0]);
     assert_eq!(
         harness.writer.messages.borrow()[0],
         format!(
-            "feat(tui-editor)!: expose command\n\nintent:\nauthored intent\n\ndecision:\nauthored decision\n\nBREAKING CHANGE: replace CLI contract\n\nGitserious-Template: default@1\nGitserious-Taxonomy: conventional@1\nGitserious-Typeset: conventional/default@1\nGitserious-Schema: {fingerprint}\n"
+            "feat(tui-editor)!: expose command\n\nintent:\nauthored intent\n\ndecision:\nauthored decision\n\nBREAKING CHANGE: replace CLI contract\n\nGitserious-Taxonomy: conventional@1\nGitserious-Schema: {fingerprint}\n"
         )
     );
     Ok(())
@@ -321,21 +86,25 @@ fn type_option_is_a_preselection_and_forwards_exact_git_output() -> Result<(), B
 
 #[test]
 fn bare_commit_delegates_type_selection_to_the_author() -> Result<(), Box<dyn Error>> {
-    let harness = Harness::new(initialized_state()?);
-    let (exit, _, _) = harness.run(&["gitserious", "commit"]);
-    assert_eq!(exit, ExitCode::SUCCESS);
+    let harness = initialized()?;
+
+    let (exit, _, stderr) = harness.run(&["gitserious", "commit"]);
+
+    assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
     let seen = harness.author.seen.borrow();
     assert_eq!(seen[0].1, None);
-    assert_eq!(seen[0].0.len(), 11);
+    assert_eq!(seen[0].0.len(), built_in_commit_types().len());
     assert_eq!(harness.writer.calls.get(), 1);
     Ok(())
 }
 
 #[test]
 fn cancellation_keeps_the_failure_status_and_never_writes() -> Result<(), Box<dyn Error>> {
-    let harness = Harness::new(initialized_state()?);
+    let harness = initialized()?;
     harness.author.outcome.replace(AuthorOutcome::Cancelled);
+
     let (exit, stdout, stderr) = harness.run(&["gitserious", "commit"]);
+
     assert_eq!(exit, ExitCode::FAILURE);
     assert!(stdout.is_empty());
     assert_eq!(stderr, "Commit cancelled.\n");
@@ -345,14 +114,16 @@ fn cancellation_keeps_the_failure_status_and_never_writes() -> Result<(), Box<dy
 
 #[test]
 fn unavailable_type_is_rejected_before_authoring_in_policy_order() -> Result<(), Box<dyn Error>> {
-    let harness = Harness::new(initialized_state()?);
+    let harness = initialized()?;
+
     let (exit, stdout, stderr) = harness.run(&["gitserious", "commit", "--type", "custom"]);
+
     assert_eq!(exit, ExitCode::FAILURE);
     assert!(stdout.is_empty());
-    assert!(stderr.starts_with("error: commit type "));
+    assert!(stderr.starts_with("error: commit type "), "{stderr}");
     assert!(stderr.contains("custom"));
-    assert!(stderr.contains("choose one of: feat, fix"));
-    assert!(stderr.contains("revert\n"));
+    assert!(stderr.contains("choose one of: feat, fix"), "{stderr}");
+    assert!(stderr.ends_with("revert\n"), "{stderr}");
     assert_eq!(harness.author.calls.get(), 0);
     assert_eq!(harness.writer.calls.get(), 0);
     Ok(())
@@ -360,9 +131,11 @@ fn unavailable_type_is_rejected_before_authoring_in_policy_order() -> Result<(),
 
 #[test]
 fn author_errors_are_presented_without_invoking_git() -> Result<(), Box<dyn Error>> {
-    let harness = Harness::new(initialized_state()?);
+    let harness = initialized()?;
     harness.author.outcome.replace(AuthorOutcome::Failed);
+
     let (exit, stdout, stderr) = harness.run(&["gitserious", "commit"]);
+
     assert_eq!(exit, ExitCode::FAILURE);
     assert!(stdout.is_empty());
     assert_eq!(stderr, "error: fake adapter failure\n");
