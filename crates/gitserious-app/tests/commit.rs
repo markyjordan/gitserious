@@ -1,26 +1,23 @@
-#![cfg(any())] // Legacy template-aware commit contract.
-
 use std::cell::RefCell;
-#[path = "support/commit_templates.rs"]
-mod template_tests;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gitserious_app::{
-    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitPolicyError,
-    CommitWriter, CreateCommitError, CustomConfiguration, ProjectConfig, ProjectLock, ProjectState,
-    ProjectStateStore, RepositoryLocator, RepositoryRoot, ResolvedCommitType, ResolvedTemplate,
-    create_commit, resolve_project_lock,
+    AuthoredCommit, CommitAuthoringContext, CommitAuthoringOutcome, CommitDraftAuthor,
+    CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitPolicyError, CommitTaxonomy,
+    CommitWriter, CreateCommitError, Fingerprint, GlobalConfiguration, ProjectConfig, ProjectLock,
+    ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot, create_commit,
+    create_commit_with_taxonomy, fingerprint_project_config, fingerprint_taxonomy,
+    resolve_effective_configuration,
 };
 use gitserious_core::{
-    AuthoredProperty, ChangeTypeDefinition, ChangeTypeId, ChangeTypeSchema, CommitDraft,
-    CommitMessage, CommitSubject, CommitTypeDefinition, CommitTypeId, Description,
-    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyValue,
-    PropertyValues, TaxonomyDefinition, TaxonomyId, TaxonomyVersion, TemplateDefinition,
-    TemplateId, TemplateVersion, TypesetDefinition, TypesetId, TypesetVersion,
-    built_in_commit_types,
+    AuthoredProperty, CommitDraft, CommitMessage, CommitProvenance, CommitSubject,
+    CommitTypeDefinition, CommitTypeId, ConditionalApplicability, Description, PropertyDefinition,
+    PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyResponse, PropertyValue,
+    PropertyValues, SchemaVersion, Taxonomy, TaxonomyId, TaxonomyVersion, built_in_commit_types,
+    built_in_taxonomies, render_commit_message, render_commit_message_with_provenance,
 };
 
 type Trace = Rc<RefCell<Vec<&'static str>>>;
@@ -122,28 +119,23 @@ impl CommitDraftAuthor for FakeAuthor {
 
     fn author_with_context(
         &self,
-        context: &gitserious_app::CommitAuthoringContext,
-    ) -> Result<gitserious_app::CommitAuthoringOutcome, Self::Error> {
-        let template = context.initial_template();
-        self.author(template.definitions(), context.preselected_type())
+        context: &CommitAuthoringContext,
+    ) -> Result<CommitAuthoringOutcome, Self::Error> {
+        let taxonomy = context.initial_taxonomy();
+        self.author(taxonomy.definitions(), context.preselected_type())
             .map(|outcome| match outcome {
-                CommitDraftAuthorOutcome::Cancelled => {
-                    gitserious_app::CommitAuthoringOutcome::Cancelled
-                }
+                CommitDraftAuthorOutcome::Cancelled => CommitAuthoringOutcome::Cancelled,
                 CommitDraftAuthorOutcome::Authored(draft) => {
-                    let authored = match template.render(&draft) {
-                        Ok(message) => gitserious_app::AuthoredCommit::reviewed(
-                            template.id().clone(),
-                            draft,
-                            message,
-                        ),
-                        Err(_) => gitserious_app::AuthoredCommit::new(template.id().clone(), draft),
+                    let authored = match taxonomy.render(&draft) {
+                        Ok(message) => {
+                            AuthoredCommit::reviewed(taxonomy.id().clone(), draft, message)
+                        }
+                        Err(_) => AuthoredCommit::new(taxonomy.id().clone(), draft),
                     };
-                    gitserious_app::CommitAuthoringOutcome::Authored(authored)
+                    CommitAuthoringOutcome::Authored(authored)
                 }
             })
     }
-
     fn author(
         &self,
         definitions: &[CommitTypeDefinition],
@@ -198,10 +190,14 @@ fn repository_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fake-repository")
 }
 
-fn initialized_state() -> Result<ProjectState, Box<dyn Error>> {
-    let config = ProjectConfig::default_channel()?;
-    let lock = resolve_project_lock(&config)?;
+fn state_for(config: ProjectConfig) -> Result<ProjectState, Box<dyn Error>> {
+    let effective = resolve_effective_configuration(&GlobalConfiguration::default(), &config)?;
+    let lock = ProjectLock::capture(&config, &effective)?;
     Ok(ProjectState::Initialized { config, lock })
+}
+
+fn initialized_state() -> Result<ProjectState, Box<dyn Error>> {
+    state_for(ProjectConfig::inherited())
 }
 
 fn valid_draft(definition: &CommitTypeDefinition) -> Result<CommitDraft, Box<dyn Error>> {
@@ -271,6 +267,26 @@ impl Harness {
             requested,
         )
     }
+
+    fn run_with<A>(
+        &self,
+        author: &A,
+        taxonomy: Option<&TaxonomyId>,
+        requested: Option<&CommitTypeId>,
+    ) -> Result<CommitOutcome, CreateCommitError<FakeError, FakeError, FakeError, FakeError>>
+    where
+        A: CommitDraftAuthor<Error = FakeError>,
+    {
+        create_commit_with_taxonomy(
+            &self.locator,
+            &self.store,
+            author,
+            &self.writer,
+            &repository_path(),
+            taxonomy,
+            requested,
+        )
+    }
 }
 
 #[test]
@@ -278,7 +294,9 @@ fn requested_type_is_resolved_before_authoring_and_commits_once_in_port_order()
 -> Result<(), Box<dyn Error>> {
     let harness = Harness::new(initialized_state()?);
     let requested = CommitTypeId::new("feat")?;
+
     let outcome = harness.run(Some(&requested))?;
+
     assert_eq!(
         outcome,
         CommitOutcome::Created(CommitOutput::new(
@@ -294,15 +312,19 @@ fn requested_type_is_resolved_before_authoring_and_commits_once_in_port_order()
     assert_eq!(seen.len(), 1);
     assert_eq!(seen[0].1.as_ref(), Some(&requested));
     assert_eq!(seen[0].0.len(), built_in_commit_types().len());
-    assert_eq!(harness.writer.messages.borrow().len(), 1);
-    assert!(harness.writer.messages.borrow()[0].starts_with("feat: create durable commit\n"));
+    let messages = harness.writer.messages.borrow();
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].starts_with("feat: create durable commit\n"));
+    assert!(messages[0].contains("Gitserious-Taxonomy: conventional@1\n"));
     Ok(())
 }
 
 #[test]
 fn omitted_type_delegates_selection_with_locked_policy_order() -> Result<(), Box<dyn Error>> {
     let harness = Harness::new(initialized_state()?);
+
     assert!(matches!(harness.run(None)?, CommitOutcome::Created(_)));
+
     let seen = harness.author.seen.borrow();
     assert_eq!(seen[0].1, None);
     assert_eq!(
@@ -321,7 +343,9 @@ fn author_cancellation_never_invokes_the_writer() -> Result<(), Box<dyn Error>> 
     harness.author.result.replace(FakeAuthorResult::Outcome(
         CommitDraftAuthorOutcome::Cancelled,
     ));
+
     assert_eq!(harness.run(None)?, CommitOutcome::Cancelled);
+
     assert!(harness.writer.messages.borrow().is_empty());
     assert_eq!(
         harness.trace.borrow().as_slice(),
@@ -332,15 +356,29 @@ fn author_cancellation_never_invokes_the_writer() -> Result<(), Box<dyn Error>> 
 
 #[test]
 fn every_incomplete_project_state_is_rejected_before_authoring() -> Result<(), Box<dyn Error>> {
-    let config = ProjectConfig::default_channel()?;
-    let lock = resolve_project_lock(&config)?;
+    let ProjectState::Initialized { config, lock } = initialized_state()? else {
+        return Err("initialized_state is not initialized".into());
+    };
+    let stale = ProjectLock::new(
+        lock.version(),
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000".parse()?,
+        lock.default_taxonomy().clone(),
+        lock.taxonomies().to_vec(),
+    )?;
     for (state, expected) in [
         (ProjectState::Absent, CommitPolicyError::NotInitialized),
         (
-            ProjectState::ConfigOnly(config),
+            ProjectState::ConfigOnly(config.clone()),
             CommitPolicyError::MissingLock,
         ),
         (ProjectState::LockOnly, CommitPolicyError::OrphanLock),
+        (
+            ProjectState::Initialized {
+                config,
+                lock: stale,
+            },
+            CommitPolicyError::StaleLock,
+        ),
     ] {
         let harness = Harness::new(state);
         assert!(matches!(
@@ -349,21 +387,6 @@ fn every_incomplete_project_state_is_rejected_before_authoring() -> Result<(), B
         ));
         assert!(harness.author.seen.borrow().is_empty());
     }
-
-    let stale = ProjectState::Initialized {
-        config: ProjectConfig::default_channel()?,
-        lock: ProjectLock::new(
-            lock.version(),
-            "sha256:0000000000000000000000000000000000000000000000000000000000000000".parse()?,
-            lock.template_reference().clone(),
-            lock.resolved_template().clone(),
-        )?,
-    };
-    let stale_harness = Harness::new(stale);
-    assert!(matches!(
-        stale_harness.run(None),
-        Err(CreateCommitError::Policy(CommitPolicyError::StaleLock))
-    ));
     Ok(())
 }
 
@@ -409,8 +432,17 @@ fn requested_and_authored_types_are_defended_at_the_application_boundary()
 #[test]
 fn invalid_authored_draft_is_revalidated_before_writing() -> Result<(), Box<dyn Error>> {
     let harness = Harness::new(initialized_state()?);
+    let feat = built_in_commit_types()
+        .iter()
+        .find(|definition| definition.id().as_str() == "feat")
+        .ok_or("conventional has no feat")?;
+    let required = feat
+        .properties()
+        .iter()
+        .filter(|property| property.requirement() == &PropertyRequirement::Required)
+        .count();
     let incomplete = CommitDraft::new(
-        CommitTypeId::new("feat")?,
+        feat.id().clone(),
         None,
         CommitSubject::new("missing properties")?,
         Vec::new(),
@@ -418,62 +450,13 @@ fn invalid_authored_draft_is_revalidated_before_writing() -> Result<(), Box<dyn 
     harness.author.result.replace(FakeAuthorResult::Outcome(
         CommitDraftAuthorOutcome::Authored(incomplete),
     ));
+
     assert!(matches!(
         harness.run(None),
-        Err(CreateCommitError::InvalidDraft(errors)) if errors.as_slice().len() == 2
+        Err(CreateCommitError::InvalidDraft(errors)) if errors.as_slice().len() == required
     ));
+    assert!(required > 0);
     assert!(harness.writer.messages.borrow().is_empty());
-    Ok(())
-}
-
-#[test]
-fn tampered_lock_entries_are_detected_before_authoring() -> Result<(), Box<dyn Error>> {
-    for tampered in [
-        CommitTypeId::new("feat")?,
-        CommitTypeId::new("docs")?,
-        CommitTypeId::new("revert")?,
-    ] {
-        let config = ProjectConfig::default_channel()?;
-        let expected = resolve_project_lock(&config)?;
-        let entries = expected
-            .resolved_template()
-            .commit_types()
-            .iter()
-            .map(|entry| -> Result<ResolvedCommitType, Box<dyn Error>> {
-                if entry.id() == &tampered {
-                    Ok(ResolvedCommitType::new(
-                        entry.id().clone(),
-                        entry.schema_version(),
-                        "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-                            .parse()?,
-                    ))
-                } else {
-                    Ok(entry.clone())
-                }
-            })
-            .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
-        let resolved = ResolvedTemplate::new(
-            expected.resolved_template().id().clone(),
-            expected.resolved_template().version(),
-            expected.resolved_template().fingerprint(),
-            entries,
-        )?;
-        let state = ProjectState::Initialized {
-            config: config.clone(),
-            lock: ProjectLock::new(
-                expected.version(),
-                expected.config_fingerprint(),
-                expected.template_reference().clone(),
-                resolved,
-            )?,
-        };
-        let harness = Harness::new(state);
-        assert!(matches!(
-            harness.run(None),
-            Err(CreateCommitError::Policy(CommitPolicyError::StaleLock))
-        ));
-        assert!(harness.author.seen.borrow().is_empty());
-    }
     Ok(())
 }
 
@@ -485,6 +468,7 @@ fn every_port_failure_is_preserved_and_stops_downstream_calls() -> Result<(), Bo
         locator.run(None),
         Err(CreateCommitError::Repository(FakeError("locator failed")))
     ));
+    assert_eq!(locator.trace.borrow().as_slice(), ["locate"]);
 
     let store = Harness::new(initialized_state()?);
     let _ = store.store.state.replace(Err(FakeError("store failed")));
@@ -492,6 +476,7 @@ fn every_port_failure_is_preserved_and_stops_downstream_calls() -> Result<(), Bo
         store.run(None),
         Err(CreateCommitError::Store(FakeError("store failed")))
     ));
+    assert_eq!(store.trace.borrow().as_slice(), ["locate", "inspect"]);
 
     let author = Harness::new(initialized_state()?);
     author
@@ -515,23 +500,16 @@ fn every_port_failure_is_preserved_and_stops_downstream_calls() -> Result<(), Bo
 }
 
 #[test]
-fn custom_template_commits_with_its_own_schema() -> Result<(), Box<dyn Error>> {
-    let taxonomy = TaxonomyDefinition::new(
+fn custom_taxonomy_commits_with_its_own_schema() -> Result<(), Box<dyn Error>> {
+    let ops = Taxonomy::new(
         TaxonomyId::new("ops")?,
         TaxonomyVersion::V1,
         Description::new("Operations change classes.")?,
-        vec![ChangeTypeDefinition::new(
-            ChangeTypeId::new("provision")?,
-            Description::new("Infrastructure provisioning.")?,
-        )],
-    )?;
-    let typeset = TypesetDefinition::new(
-        taxonomy.id().clone(),
-        TypesetId::new("baseline")?,
-        TypesetVersion::V1,
-        Description::new("Baseline durable context for operations.")?,
-        vec![ChangeTypeSchema::new(
-            ChangeTypeId::new("provision")?,
+        None,
+        vec![CommitTypeDefinition::new(
+            SchemaVersion::V1,
+            CommitTypeId::new("provision")?,
+            "Infrastructure provisioning.",
             vec![PropertyDefinition::new(
                 PropertyKey::new("intent")?,
                 "Why the infrastructure must change.",
@@ -540,48 +518,333 @@ fn custom_template_commits_with_its_own_schema() -> Result<(), Box<dyn Error>> {
             )?],
         )?],
     )?;
-    let template = TemplateDefinition::new(
-        TemplateId::new("platform")?,
-        TemplateVersion::V1,
-        Description::new("Platform operations policy.")?,
-        taxonomy.id().clone(),
-        typeset.id().clone(),
-    );
-    let configuration = CustomConfiguration::new(vec![taxonomy], vec![typeset], vec![template])?;
-    let config = ProjectConfig::new(
-        gitserious_app::PROJECT_CONFIG_VERSION,
-        TemplateId::new("platform")?,
-        configuration,
+    let config = ProjectConfig::new(1, Some(ops.id().clone()), Some(vec![ops.id().clone()]))?;
+    let lock = ProjectLock::new(
+        1,
+        fingerprint_project_config(&config),
+        ops.id().clone(),
+        vec![ops],
     )?;
-    let lock = resolve_project_lock(&config)?;
+    let harness = Harness::new(ProjectState::Initialized { config, lock });
 
-    let trace = Trace::default();
-    let locator = FakeLocator {
-        fail: false,
-        trace: Rc::clone(&trace),
-    };
-    let store = FakeStore {
-        state: RefCell::new(Ok(ProjectState::Initialized { config, lock })),
-        trace: Rc::clone(&trace),
-    };
-    let author = FakeAuthor {
-        result: RefCell::new(FakeAuthorResult::Valid(0)),
-        seen: RefCell::default(),
-        trace: Rc::clone(&trace),
-    };
-    let writer = FakeWriter {
-        fail: false,
-        messages: RefCell::default(),
-        trace: Rc::clone(&trace),
-    };
-    let outcome = create_commit(&locator, &store, &author, &writer, &repository_path(), None)?;
-    assert!(matches!(outcome, CommitOutcome::Created(_)));
+    assert!(matches!(harness.run(None)?, CommitOutcome::Created(_)));
+
     assert_eq!(
-        author.seen.borrow()[0].0,
+        harness.author.seen.borrow()[0].0,
         vec![CommitTypeId::new("provision")?]
     );
-    let message = &writer.messages.borrow()[0];
+    let message = &harness.writer.messages.borrow()[0];
     assert!(message.starts_with("provision: create durable commit\n"));
     assert!(message.contains("intent:\nauthored intent\n"));
+    assert!(message.contains("Gitserious-Taxonomy: ops@1\n"));
+    Ok(())
+}
+
+#[derive(Clone, Copy, Default)]
+enum ReviewMode {
+    #[default]
+    Canonical,
+    Missing,
+    Plain,
+    WrongFingerprint,
+}
+
+#[derive(Default)]
+struct ContextAuthor<'a> {
+    choose: Option<TaxonomyId>,
+    forged: Option<TaxonomyId>,
+    initial_schema: bool,
+    review_mode: ReviewMode,
+    change_policy: Option<&'a FakeStore>,
+    reviewed: RefCell<Vec<String>>,
+    seen: RefCell<Vec<CommitAuthoringContext>>,
+}
+
+impl CommitDraftAuthor for ContextAuthor<'_> {
+    type Error = FakeError;
+
+    fn author(
+        &self,
+        _: &[CommitTypeDefinition],
+        _: Option<&CommitTypeDefinition>,
+    ) -> Result<CommitDraftAuthorOutcome, Self::Error> {
+        Err(FakeError("unexpected flat authoring"))
+    }
+
+    fn author_with_context(
+        &self,
+        context: &CommitAuthoringContext,
+    ) -> Result<CommitAuthoringOutcome, Self::Error> {
+        self.seen.borrow_mut().push(context.clone());
+        let selected = self
+            .choose
+            .as_ref()
+            .unwrap_or(context.initial_taxonomy().id());
+        let taxonomy = context
+            .find_taxonomy(selected)
+            .ok_or(FakeError("missing taxonomy"))?;
+        let schema = if self.initial_schema {
+            context.initial_taxonomy()
+        } else {
+            taxonomy
+        };
+        let definition = schema
+            .definitions()
+            .iter()
+            .find(|definition| definition.id().as_str() == "fix")
+            .ok_or(FakeError("missing fix"))?;
+        let draft = valid_draft(definition).map_err(|_| FakeError("invalid draft"))?;
+        let message = match self.review_mode {
+            ReviewMode::Missing => None,
+            ReviewMode::Plain => render_commit_message(definition, &draft).ok(),
+            ReviewMode::WrongFingerprint => render_commit_message_with_provenance(
+                &CommitProvenance::new(
+                    taxonomy.taxonomy().clone(),
+                    Fingerprint::from_bytes([0; 32]),
+                ),
+                &draft,
+            )
+            .ok(),
+            ReviewMode::Canonical => taxonomy.render(&draft).ok(),
+        };
+        let id = self.forged.clone().unwrap_or_else(|| taxonomy.id().clone());
+        let authored = match message {
+            Some(message) => {
+                self.reviewed.borrow_mut().push(message.as_str().to_owned());
+                AuthoredCommit::reviewed(id, draft, message)
+            }
+            None => AuthoredCommit::new(id, draft),
+        };
+        if let Some(store) = self.change_policy {
+            let research = TaxonomyId::new("research").map_err(|_| FakeError("invalid id"))?;
+            let config = ProjectConfig::new(1, Some(research), None)
+                .map_err(|_| FakeError("invalid policy"))?;
+            *store.state.borrow_mut() =
+                Ok(state_for(config).map_err(|_| FakeError("invalid lock"))?);
+        }
+        Ok(CommitAuthoringOutcome::Authored(authored))
+    }
+}
+
+#[test]
+fn missing_or_mismatched_reviewed_bytes_never_reach_git() -> Result<(), Box<dyn Error>> {
+    for review_mode in [
+        ReviewMode::Missing,
+        ReviewMode::Plain,
+        ReviewMode::WrongFingerprint,
+    ] {
+        let harness = Harness::new(initialized_state()?);
+        let author = ContextAuthor {
+            review_mode,
+            ..Default::default()
+        };
+
+        let error = harness
+            .run_with(&author, None, None)
+            .err()
+            .ok_or("unreviewed message accepted")?;
+
+        if matches!(review_mode, ReviewMode::Missing) {
+            assert!(matches!(error, CreateCommitError::MissingReviewedMessage));
+        } else {
+            assert!(matches!(error, CreateCommitError::ReviewedMessageMismatch));
+        }
+        assert!(harness.writer.messages.borrow().is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn approved_message_uses_the_captured_policy_even_if_the_project_changes()
+-> Result<(), Box<dyn Error>> {
+    let harness = Harness::new(initialized_state()?);
+    let author = ContextAuthor {
+        change_policy: Some(&harness.store),
+        ..Default::default()
+    };
+
+    harness.run_with(&author, None, None)?;
+
+    assert_eq!(*harness.writer.messages.borrow(), *author.reviewed.borrow());
+    assert!(harness.writer.messages.borrow()[0].contains("Gitserious-Taxonomy: conventional@1\n"));
+    assert!(matches!(
+        &*harness.store.state.borrow(),
+        Ok(ProjectState::Initialized { config, .. })
+            if config.default_taxonomy().map(TaxonomyId::as_str) == Some("research")
+    ));
+    assert_eq!(
+        harness
+            .trace
+            .borrow()
+            .iter()
+            .filter(|call| **call == "inspect")
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+struct DraftOnlyAuthor;
+
+impl CommitDraftAuthor for DraftOnlyAuthor {
+    type Error = FakeError;
+
+    fn author(
+        &self,
+        definitions: &[CommitTypeDefinition],
+        _: Option<&CommitTypeDefinition>,
+    ) -> Result<CommitDraftAuthorOutcome, Self::Error> {
+        valid_draft(&definitions[0])
+            .map(CommitDraftAuthorOutcome::Authored)
+            .map_err(|_| FakeError("invalid draft"))
+    }
+}
+
+#[test]
+fn draft_only_adapter_cannot_write_unreviewed_provenance() -> Result<(), Box<dyn Error>> {
+    let harness = Harness::new(initialized_state()?);
+
+    assert!(matches!(
+        harness.run_with(&DraftOnlyAuthor, None, None),
+        Err(CreateCommitError::MissingReviewedMessage)
+    ));
+    assert!(harness.writer.messages.borrow().is_empty());
+    Ok(())
+}
+
+#[test]
+fn explicit_and_authored_taxonomy_choices_use_their_own_schema_without_policy_writes()
+-> Result<(), Box<dyn Error>> {
+    for explicit in [true, false] {
+        let initial = initialized_state()?;
+        let harness = Harness::new(initial.clone());
+        let research = TaxonomyId::new("research")?;
+        let author = ContextAuthor {
+            choose: Some(research.clone()),
+            ..Default::default()
+        };
+
+        harness.run_with(&author, explicit.then_some(&research), None)?;
+
+        let seen = author.seen.borrow();
+        assert_eq!(
+            seen[0].initial_taxonomy().id().as_str(),
+            if explicit { "research" } else { "conventional" }
+        );
+        assert_eq!(seen[0].taxonomies().len(), built_in_taxonomies().len());
+        let messages = harness.writer.messages.borrow();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].contains("symptom:\n"));
+        assert!(messages[0].contains("Gitserious-Taxonomy: research@1\n"));
+        assert_eq!(*harness.store.state.borrow(), Ok(initial));
+    }
+    Ok(())
+}
+
+#[test]
+fn taxonomy_mismatch_unknown_taxonomy_and_cross_schema_drafts_never_reach_git()
+-> Result<(), Box<dyn Error>> {
+    let fix = CommitTypeId::new("fix")?;
+    let harness = Harness::new(initialized_state()?);
+    let author = ContextAuthor {
+        choose: Some(TaxonomyId::new("research")?),
+        ..Default::default()
+    };
+    assert!(matches!(
+        harness.run_with(&author, None, Some(&fix)),
+        Err(CreateCommitError::AuthoredTaxonomyMismatch { .. })
+    ));
+
+    let author = ContextAuthor {
+        forged: Some(TaxonomyId::new("global-only")?),
+        ..Default::default()
+    };
+    assert!(matches!(
+        harness.run_with(&author, None, None),
+        Err(CreateCommitError::UnknownTaxonomy { .. })
+    ));
+
+    let author = ContextAuthor {
+        choose: Some(TaxonomyId::new("research")?),
+        initial_schema: true,
+        ..Default::default()
+    };
+    assert!(matches!(
+        harness.run_with(&author, None, None),
+        Err(CreateCommitError::InvalidDraft(_))
+    ));
+    assert!(harness.writer.messages.borrow().is_empty());
+    Ok(())
+}
+
+#[test]
+fn unknown_requested_taxonomy_fails_before_authoring() -> Result<(), Box<dyn Error>> {
+    let harness = Harness::new(initialized_state()?);
+    let author = ContextAuthor::default();
+    let research = TaxonomyId::new("research")?;
+
+    harness.run_with(&author, Some(&research), None)?;
+    assert_eq!(author.seen.borrow()[0].initial_taxonomy().id(), &research);
+
+    let missing = TaxonomyId::new("global-only")?;
+    assert!(matches!(
+        harness.run_with(&author, Some(&missing), None),
+        Err(CreateCommitError::UnknownTaxonomy { requested, .. }) if requested == missing
+    ));
+    assert_eq!(author.seen.borrow().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn authoring_context_rejects_ambiguous_or_missing_initial_selections() -> Result<(), Box<dyn Error>>
+{
+    let conventional = built_in_taxonomies()[0].clone();
+    let id = conventional.id().clone();
+
+    assert!(CommitAuthoringContext::new(vec![], &id, None).is_err());
+    assert!(
+        CommitAuthoringContext::new(vec![conventional.clone(), conventional.clone()], &id, None)
+            .is_err()
+    );
+    assert!(
+        CommitAuthoringContext::new(
+            vec![conventional.clone()],
+            &TaxonomyId::new("absent")?,
+            None
+        )
+        .is_err()
+    );
+    assert!(
+        CommitAuthoringContext::new(vec![conventional], &id, Some(&CommitTypeId::new("absent")?))
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn taxonomy_render_binds_the_application_fingerprint_into_provenance() -> Result<(), Box<dyn Error>>
+{
+    let conventional = built_in_taxonomies()[0].clone();
+    let fingerprint = fingerprint_taxonomy(&conventional);
+    let draft = CommitDraft::from_responses(
+        CommitTypeId::new("docs")?,
+        None,
+        CommitSubject::new("correct a typo")?,
+        vec![PropertyResponse::new(
+            PropertyKey::new("reason")?,
+            None,
+            Some(ConditionalApplicability::DoesNotApply),
+        )],
+    )?;
+
+    let message: CommitMessage = CommitTaxonomy::new(conventional).render(&draft)?;
+
+    assert_eq!(
+        message.as_str(),
+        format!(
+            "docs: correct a typo\n\nGitserious-Taxonomy: conventional@1\nGitserious-Schema: {fingerprint}\n"
+        )
+    );
+    assert_eq!(fingerprint.to_string().parse::<Fingerprint>()?, fingerprint);
     Ok(())
 }

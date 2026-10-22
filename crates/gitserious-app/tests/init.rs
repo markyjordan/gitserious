@@ -1,27 +1,20 @@
-#![cfg(any())] // Legacy template-based initialization contract.
-
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
 use gitserious_app::{
-    ConfigurationCatalog, ConfigurationCatalogError, CustomConfiguration, Fingerprint, InitStatus,
-    InitializeProjectError, ProjectConfig, ProjectLock, ProjectState, ProjectStateStore,
-    RepositoryLocator, RepositoryRoot, built_in_effective_catalog,
-    fingerprint_commit_message_template, fingerprint_commit_type_definition,
-    fingerprint_project_config, initialize_project, resolve_project_lock,
+    Fingerprint, GlobalConfiguration, InitOutcome, InitStatus, InitializeProjectError,
+    ProjectConfig, ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
+    fingerprint_project_config, fingerprint_taxonomy, initialize_project,
+    resolve_effective_configuration,
 };
 use gitserious_core::{
-    CommitMessageTemplateDefinition, CommitTypeDefinition, CommitTypeId, ConditionId, Description,
-    PropertyCondition, PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement,
-    SchemaVersion, TemplateDefinition, TemplateId, TemplateVersion, built_in_configuration,
-    default_commit_message_template,
+    CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
+    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, SchemaVersion,
+    Taxonomy, TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
 };
-
-fn catalog() -> Result<ConfigurationCatalog, ConfigurationCatalogError> {
-    built_in_effective_catalog()
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FakeError {
@@ -169,10 +162,29 @@ impl ProjectStateStore for FakeStore {
     }
 }
 
+fn lock_for(
+    global: &GlobalConfiguration,
+    config: &ProjectConfig,
+) -> Result<ProjectLock, Box<dyn Error>> {
+    let effective = resolve_effective_configuration(global, config)?;
+    Ok(ProjectLock::capture(config, &effective)?)
+}
+
 fn default_config_and_lock() -> Result<(ProjectConfig, ProjectLock), Box<dyn Error>> {
-    let config = ProjectConfig::default_channel()?;
-    let lock = resolve_project_lock(&config)?;
+    let config = ProjectConfig::inherited();
+    let lock = lock_for(&GlobalConfiguration::default(), &config)?;
     Ok((config, lock))
+}
+
+fn init<S>(
+    locator: &FakeLocator,
+    store: &S,
+    start: &Path,
+) -> Result<InitOutcome, InitializeProjectError<FakeError, FakeError>>
+where
+    S: ProjectStateStore<Error = FakeError>,
+{
+    initialize_project(locator, store, &GlobalConfiguration::default(), None, start)
 }
 
 fn repository_path() -> PathBuf {
@@ -185,17 +197,16 @@ fn stale_lock(current: &ProjectLock) -> Result<ProjectLock, Box<dyn Error>> {
     Ok(ProjectLock::new(
         current.version(),
         fingerprint,
-        current.template_reference().clone(),
-        current.resolved_template().clone(),
+        current.default_taxonomy().clone(),
+        current.taxonomies().to_vec(),
     )?)
 }
 
-fn assert_resolution(status: InitStatus, outcome: &gitserious_app::InitOutcome) {
+fn assert_resolution(status: InitStatus, outcome: &InitOutcome) {
     assert_eq!(outcome.status(), status);
     assert_eq!(outcome.root().as_path(), repository_path());
-    assert_eq!(outcome.template_reference().as_str(), "default");
-    assert_eq!(outcome.resolved_template().as_str(), "conventional");
-    assert_eq!(outcome.resolved_version(), TemplateVersion::V1);
+    assert_eq!(outcome.taxonomy().as_str(), "conventional");
+    assert_eq!(outcome.version(), TaxonomyVersion::V1);
 }
 
 #[test]
@@ -204,13 +215,7 @@ fn absent_state_creates_config_and_lock_once() -> Result<(), Box<dyn Error>> {
     let store = FakeStore::new(ProjectState::Absent);
     let (expected_config, expected_lock) = default_config_and_lock()?;
 
-    let outcome = initialize_project(
-        &locator,
-        &store,
-        &catalog()?,
-        None,
-        &repository_path().join("subdir"),
-    )?;
+    let outcome = init(&locator, &store, &repository_path().join("subdir"))?;
 
     assert_resolution(InitStatus::Initialized, &outcome);
     assert_eq!(locator.calls.get(), 1);
@@ -231,7 +236,7 @@ fn config_only_state_creates_only_the_missing_lock() -> Result<(), Box<dyn Error
     let (config, expected_lock) = default_config_and_lock()?;
     let store = FakeStore::new(ProjectState::ConfigOnly(config));
 
-    let outcome = initialize_project(&locator, &store, &catalog()?, None, &repository_path())?;
+    let outcome = init(&locator, &store, &repository_path())?;
 
     assert_resolution(InitStatus::LockCreated, &outcome);
     assert_eq!(
@@ -251,7 +256,7 @@ fn matching_initialized_state_ensures_only_local_state() -> Result<(), Box<dyn E
     let (config, lock) = default_config_and_lock()?;
     let store = FakeStore::new(ProjectState::Initialized { config, lock });
 
-    let outcome = initialize_project(&locator, &store, &catalog()?, None, &repository_path())?;
+    let outcome = init(&locator, &store, &repository_path())?;
 
     assert_resolution(InitStatus::AlreadyInitialized, &outcome);
     assert_eq!(
@@ -271,7 +276,7 @@ fn stale_initialized_state_replaces_only_the_observed_lock() -> Result<(), Box<d
         lock: stale.clone(),
     });
 
-    let outcome = initialize_project(&locator, &store, &catalog()?, None, &repository_path())?;
+    let outcome = init(&locator, &store, &repository_path())?;
 
     assert_resolution(InitStatus::LockRefreshed, &outcome);
     assert_eq!(
@@ -290,7 +295,7 @@ fn orphan_lock_is_refused_without_a_write() -> Result<(), Box<dyn Error>> {
     let locator = FakeLocator::available()?;
     let store = FakeStore::new(ProjectState::LockOnly);
 
-    let error = initialize_project(&locator, &store, &catalog()?, None, &repository_path()).err();
+    let error = init(&locator, &store, &repository_path()).err();
 
     assert!(matches!(error, Some(InitializeProjectError::OrphanLock)));
     assert_eq!(store.calls.borrow().as_slice(), [StoreCall::Inspect]);
@@ -298,18 +303,17 @@ fn orphan_lock_is_refused_without_a_write() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn unknown_authored_template_is_refused_without_a_write() -> Result<(), Box<dyn Error>> {
+fn unknown_authored_taxonomy_is_refused_without_a_write() -> Result<(), Box<dyn Error>> {
     let locator = FakeLocator::available()?;
-    let config = ProjectConfig::new(
-        1,
-        TemplateId::new("custom")?,
-        CustomConfiguration::default(),
-    )?;
+    let config = ProjectConfig::new(1, Some(TaxonomyId::new("custom")?), None)?;
     let store = FakeStore::new(ProjectState::ConfigOnly(config));
 
-    let error = initialize_project(&locator, &store, &catalog()?, None, &repository_path()).err();
+    let error = init(&locator, &store, &repository_path()).err();
 
-    assert!(matches!(error, Some(InitializeProjectError::Policy(_))));
+    assert!(matches!(
+        error,
+        Some(InitializeProjectError::Configuration(_))
+    ));
     assert_eq!(store.calls.borrow().as_slice(), [StoreCall::Inspect]);
     Ok(())
 }
@@ -317,13 +321,7 @@ fn unknown_authored_template_is_refused_without_a_write() -> Result<(), Box<dyn 
 #[test]
 fn locator_and_each_store_failure_remain_distinguishable() -> Result<(), Box<dyn Error>> {
     let store = FakeStore::new(ProjectState::Absent);
-    let locator_error = initialize_project(
-        &FakeLocator::failing(),
-        &store,
-        &catalog()?,
-        None,
-        &repository_path(),
-    );
+    let locator_error = init(&FakeLocator::failing(), &store, &repository_path());
     assert!(matches!(
         locator_error,
         Err(InitializeProjectError::Repository(FakeError::Locate))
@@ -331,24 +329,25 @@ fn locator_and_each_store_failure_remain_distinguishable() -> Result<(), Box<dyn
     assert!(store.calls.borrow().is_empty());
 
     let locator = FakeLocator::available()?;
+    let (config, lock) = default_config_and_lock()?;
     for (state, failure) in [
         (ProjectState::Absent, FakeError::Inspect),
         (ProjectState::Absent, FakeError::EnsureLocalState),
         (ProjectState::Absent, FakeError::Initialize),
         (
-            ProjectState::ConfigOnly(ProjectConfig::default_channel()?),
+            ProjectState::ConfigOnly(config.clone()),
             FakeError::CreateLock,
         ),
         (
             ProjectState::Initialized {
-                config: default_config_and_lock()?.0,
-                lock: stale_lock(&default_config_and_lock()?.1)?,
+                config: config.clone(),
+                lock: stale_lock(&lock)?,
             },
             FakeError::ReplaceLock,
         ),
     ] {
         let store = FakeStore::failing(state, failure);
-        let error = initialize_project(&locator, &store, &catalog()?, None, &repository_path());
+        let error = init(&locator, &store, &repository_path());
         assert!(matches!(
             error,
             Err(InitializeProjectError::Store(actual)) if actual == failure
@@ -385,7 +384,17 @@ fn definition(
     )?)
 }
 
-fn fingerprint_identity_variants() -> Result<Vec<CommitTypeDefinition>, Box<dyn Error>> {
+fn taxonomy(commit_types: Vec<CommitTypeDefinition>) -> Result<Taxonomy, Box<dyn Error>> {
+    Ok(Taxonomy::new(
+        TaxonomyId::new("team")?,
+        TaxonomyVersion::V1,
+        Description::new("Team policy.")?,
+        None,
+        commit_types,
+    )?)
+}
+
+fn commit_type_variants() -> Result<Vec<CommitTypeDefinition>, Box<dyn Error>> {
     let required = property(
         "intent",
         "Why.",
@@ -398,7 +407,7 @@ fn fingerprint_identity_variants() -> Result<Vec<CommitTypeDefinition>, Box<dyn 
         PropertyRequirement::Recommended,
         PropertyMultiplicity::Single,
     )?;
-    Ok(vec![
+    let mut variants = vec![
         definition(
             1,
             "feat",
@@ -418,17 +427,9 @@ fn fingerprint_identity_variants() -> Result<Vec<CommitTypeDefinition>, Box<dyn 
             "Changed.",
             vec![required.clone(), second.clone()],
         )?,
-        definition(
-            1,
-            "feat",
-            "Feature.",
-            vec![second.clone(), required.clone()],
-        )?,
-    ])
-}
-
-fn fingerprint_property_variants() -> Result<Vec<CommitTypeDefinition>, Box<dyn Error>> {
-    let variants = [
+        definition(1, "feat", "Feature.", vec![second, required])?,
+    ];
+    for (key, description, requirement, multiplicity) in [
         (
             "intent",
             "Why.",
@@ -459,30 +460,21 @@ fn fingerprint_property_variants() -> Result<Vec<CommitTypeDefinition>, Box<dyn 
             PropertyRequirement::Required,
             PropertyMultiplicity::Multiple,
         ),
-    ];
-    variants
-        .into_iter()
-        .map(|(key, description, requirement, multiplicity)| {
-            definition(
-                1,
-                "feat",
-                "Feature.",
-                vec![property(key, description, requirement, multiplicity)?],
-            )
-        })
-        .collect()
-}
-
-fn fingerprint_condition_variants() -> Result<Vec<CommitTypeDefinition>, Box<dyn Error>> {
-    [
+    ] {
+        variants.push(definition(
+            1,
+            "feat",
+            "Feature.",
+            vec![property(key, description, requirement, multiplicity)?],
+        )?);
+    }
+    for (id, rationale) in [
         ("known-cost", "When known."),
         ("different-condition", "When known."),
         ("known-cost", "A different rationale."),
-    ]
-    .into_iter()
-    .map(|(id, rationale)| {
+    ] {
         let condition = PropertyCondition::new(ConditionId::new(id)?, rationale)?;
-        definition(
+        variants.push(definition(
             1,
             "feat",
             "Feature.",
@@ -492,139 +484,104 @@ fn fingerprint_condition_variants() -> Result<Vec<CommitTypeDefinition>, Box<dyn
                 PropertyRequirement::Conditional(condition),
                 PropertyMultiplicity::Single,
             )?],
-        )
-    })
-    .collect()
+        )?);
+    }
+    Ok(variants)
 }
 
 #[test]
-fn definition_fingerprint_changes_for_every_semantic_dimension() -> Result<(), Box<dyn Error>> {
-    let mut definitions = fingerprint_identity_variants()?;
-    definitions.extend(fingerprint_property_variants()?);
-    definitions.extend(fingerprint_condition_variants()?);
-    let fingerprints = definitions
+fn taxonomy_fingerprint_changes_for_every_semantic_dimension() -> Result<(), Box<dyn Error>> {
+    let variants = commit_type_variants()?;
+    let mut taxonomies = variants
         .iter()
-        .map(fingerprint_commit_type_definition)
-        .collect::<std::collections::BTreeSet<_>>();
+        .map(|definition| taxonomy(vec![definition.clone()]))
+        .collect::<Result<Vec<_>, _>>()?;
+    let base = taxonomy(vec![variants[0].clone()])?;
+    let renamed = Taxonomy::new(
+        TaxonomyId::new("renamed")?,
+        base.version(),
+        base.description().clone(),
+        None,
+        base.commit_types().to_vec(),
+    )?;
+    let versioned = Taxonomy::new(
+        base.id().clone(),
+        TaxonomyVersion::new(2)?,
+        base.description().clone(),
+        None,
+        base.commit_types().to_vec(),
+    )?;
+    let described = Taxonomy::new(
+        base.id().clone(),
+        base.version(),
+        Description::new("Changed policy.")?,
+        None,
+        base.commit_types().to_vec(),
+    )?;
+    let derived = Taxonomy::new(
+        base.id().clone(),
+        base.version(),
+        base.description().clone(),
+        Some(TaxonomyLineage::new(
+            TaxonomyId::new("conventional")?,
+            TaxonomyVersion::V1,
+        )),
+        base.commit_types().to_vec(),
+    )?;
+    let pair = taxonomy(vec![variants[0].clone(), variants[2].clone()])?;
+    let reversed = taxonomy(vec![variants[2].clone(), variants[0].clone()])?;
+    taxonomies.extend([renamed, versioned, described, derived, pair, reversed]);
 
-    assert_eq!(fingerprints.len(), definitions.len());
-    Ok(())
-}
+    let fingerprints = taxonomies
+        .iter()
+        .map(fingerprint_taxonomy)
+        .collect::<BTreeSet<_>>();
 
-#[test]
-fn config_and_template_fingerprints_are_stable_and_order_sensitive() -> Result<(), Box<dyn Error>> {
-    let (config, lock) = default_config_and_lock()?;
+    assert_eq!(fingerprints.len(), taxonomies.len());
     assert_eq!(
-        fingerprint_project_config(&config).to_string(),
-        "sha256:e42b105788a902758375a4fa48d875a753a7954c654e8bc8bfc13456d1e95f98"
+        fingerprint_taxonomy(&base),
+        fingerprint_taxonomy(&taxonomy(vec![variants[0].clone()])?)
     );
+    Ok(())
+}
+
+#[test]
+fn config_fingerprints_are_stable_and_order_sensitive() -> Result<(), Box<dyn Error>> {
+    let conventional = TaxonomyId::new("conventional")?;
+    let research = TaxonomyId::new("research")?;
+    let forward = ProjectConfig::new(1, None, Some(vec![conventional.clone(), research.clone()]))?;
+    let backward = ProjectConfig::new(1, None, Some(vec![research.clone(), conventional]))?;
+    let selected = ProjectConfig::new(1, Some(research), None)?;
+
     assert_eq!(
-        fingerprint_commit_message_template(default_commit_message_template()).to_string(),
-        lock.resolved_template().fingerprint().to_string()
+        fingerprint_project_config(&ProjectConfig::inherited()).to_string(),
+        "sha256:ae803a06a548de790893fbcd733e0033ea7c04167b3a70c2ab2a7d219893fa37",
+        "an existing gitserious.lock would read as stale"
     );
-    let custom_config = ProjectConfig::new(
-        1,
-        TemplateId::new("custom")?,
-        CustomConfiguration::default(),
-    )?;
-    assert_ne!(
-        fingerprint_project_config(&config),
-        fingerprint_project_config(&custom_config)
-    );
-
-    let original = default_commit_message_template();
-    let mut reversed = original.commit_types().to_vec();
-    reversed.reverse();
-    let reordered = CommitMessageTemplateDefinition::new(
-        original.version(),
-        original.id().clone(),
-        original.description(),
-        reversed,
-    )?;
-    assert_ne!(
-        fingerprint_commit_message_template(original),
-        fingerprint_commit_message_template(&reordered)
-    );
-    let renamed = CommitMessageTemplateDefinition::new(
-        original.version(),
-        TemplateId::new("renamed")?,
-        original.description(),
-        original.commit_types().to_vec(),
-    )?;
-    let versioned = CommitMessageTemplateDefinition::new(
-        TemplateVersion::new(2)?,
-        original.id().clone(),
-        original.description(),
-        original.commit_types().to_vec(),
-    )?;
-    assert_ne!(
-        fingerprint_commit_message_template(original),
-        fingerprint_commit_message_template(&renamed)
-    );
-    assert_ne!(
-        fingerprint_commit_message_template(original),
-        fingerprint_commit_message_template(&versioned)
+    let fingerprints = [&ProjectConfig::inherited(), &forward, &backward, &selected]
+        .map(fingerprint_project_config)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(fingerprints.len(), 4);
+    assert_eq!(
+        fingerprint_project_config(&forward),
+        fingerprint_project_config(&forward.clone())
     );
     Ok(())
 }
 
 #[test]
-fn project_fingerprint_covers_inactive_custom_definitions() -> Result<(), Box<dyn Error>> {
-    let built_in = built_in_configuration();
-    let template = |description: &str| -> Result<TemplateDefinition, Box<dyn Error>> {
-        Ok(TemplateDefinition::new(
-            TemplateId::new("inactive")?,
-            TemplateVersion::V1,
-            Description::new(description)?,
-            built_in.taxonomy().id().clone(),
-            built_in.typeset().id().clone(),
-        ))
-    };
-    let config = |description: &str| -> Result<ProjectConfig, Box<dyn Error>> {
-        Ok(ProjectConfig::new(
-            1,
-            built_in.template().id().clone(),
-            CustomConfiguration::new(vec![], vec![], vec![template(description)?])?,
-        )?)
-    };
-
-    assert_ne!(
-        fingerprint_project_config(&config("First inactive description.")?),
-        fingerprint_project_config(&config("Changed inactive description.")?)
-    );
-    Ok(())
-}
-
-#[test]
-fn resolved_default_lock_is_exact_and_deterministic() -> Result<(), Box<dyn Error>> {
+fn captured_default_lock_is_exact_and_deterministic() -> Result<(), Box<dyn Error>> {
     let (config, first) = default_config_and_lock()?;
-    let second = resolve_project_lock(&config)?;
+    let second = lock_for(&GlobalConfiguration::default(), &config)?;
 
     assert_eq!(first, second);
     assert_eq!(first.version(), 1);
-    assert_eq!(first.template_reference().as_str(), "default");
-    assert_eq!(first.resolved_template().id().as_str(), "conventional");
-    assert_eq!(first.resolved_template().version(), TemplateVersion::V1);
-    assert_eq!(first.resolved_template().commit_types().len(), 11);
+    assert!(first.matches(&config));
+    assert_eq!(first.default_taxonomy().as_str(), "conventional");
+    assert_eq!(first.taxonomies(), built_in_taxonomies());
     assert_eq!(
-        first.resolved_templates().len(),
-        built_in_configuration().templates().len()
-    );
-    assert!(
-        first
-            .resolved_templates()
-            .iter()
-            .any(|template| template.id().as_str() == "ml-research")
-    );
-    assert!(
-        first
-            .resolved_templates()
-            .iter()
-            .any(|template| template.id().as_str() == "infra-ops")
-    );
-    assert_eq!(
-        first
-            .resolved_template()
+        first.taxonomies()[0]
             .commit_types()
             .iter()
             .map(|definition| definition.id().as_str())
@@ -638,28 +595,23 @@ fn resolved_default_lock_is_exact_and_deterministic() -> Result<(), Box<dyn Erro
 }
 
 #[test]
-fn custom_project_templates_are_all_recorded_in_the_lock() -> Result<(), Box<dyn Error>> {
-    let custom = CustomConfiguration::new(
-        Vec::new(),
-        Vec::new(),
-        vec![TemplateDefinition::new(
-            TemplateId::new("inactive")?,
-            TemplateVersion::V1,
-            Description::new("An inactive template.")?,
-            built_in_configuration().taxonomy().id().clone(),
-            built_in_configuration().typeset().id().clone(),
-        )],
+fn available_custom_taxonomies_are_recorded_in_the_lock() -> Result<(), Box<dyn Error>> {
+    let team = TaxonomyId::new("team")?;
+    let mut available = GlobalConfiguration::default()
+        .available_taxonomies()
+        .to_vec();
+    available.push(team.clone());
+    let fork = built_in_taxonomies()[0].fork(team.clone());
+    let global = GlobalConfiguration::new(
+        1,
+        TaxonomyId::new("conventional")?,
+        available,
+        vec![fork.clone()],
     )?;
-    let config = ProjectConfig::new(1, TemplateId::new("default")?, custom)?;
-    let lock = resolve_project_lock(&config)?;
-    assert_eq!(
-        lock.resolved_templates().len(),
-        built_in_configuration().templates().len() + 1
-    );
-    assert!(
-        lock.resolved_templates()
-            .iter()
-            .any(|template| template.id().as_str() == "inactive")
-    );
+
+    let lock = lock_for(&global, &ProjectConfig::inherited())?;
+
+    assert_eq!(lock.taxonomies().len(), built_in_taxonomies().len() + 1);
+    assert_eq!(lock.taxonomies().last(), Some(&fork));
     Ok(())
 }
