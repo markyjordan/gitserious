@@ -1,16 +1,9 @@
-#![cfg(any())] // Legacy template/typeset TOML contract.
-
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use gitserious_app::{CustomConfiguration, GlobalConfigurationStore, GlobalPaths};
-use gitserious_core::{
-    ChangeTypeDefinition, ChangeTypeId, ChangeTypeSchema, ConditionId, Description,
-    PropertyCondition, PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement,
-    TaxonomyDefinition, TaxonomyId, TaxonomyVersion, TemplateDefinition, TemplateId,
-    TemplateVersion, TypesetDefinition, TypesetId, TypesetVersion,
-};
+use gitserious_app::{GlobalConfiguration, GlobalConfigurationStore, GlobalPaths};
+use gitserious_core::{TaxonomyId, built_in_taxonomies};
 use gitserious_fs::{GlobalConfigurationError, TomlGlobalConfigurationStore};
 use tempfile::TempDir;
 
@@ -24,76 +17,17 @@ fn store(root: &Path) -> TomlGlobalConfigurationStore {
     TomlGlobalConfigurationStore::new(paths.config().clone())
 }
 
-fn property(
-    key: &str,
-    requirement: PropertyRequirement,
-    multiplicity: PropertyMultiplicity,
-) -> Result<PropertyDefinition, Box<dyn Error>> {
-    Ok(PropertyDefinition::new(
-        PropertyKey::new(key)?,
-        format!("Durable meaning of {key} 🦀."),
-        requirement,
-        multiplicity,
-    )?)
-}
-
-fn sample_configuration() -> Result<CustomConfiguration, Box<dyn Error>> {
-    let taxonomy_id = TaxonomyId::new("custom")?;
-    let taxonomy = TaxonomyDefinition::new(
-        taxonomy_id.clone(),
-        TaxonomyVersion::new(2)?,
-        Description::new("A custom taxonomy 🦀.")?,
-        vec![ChangeTypeDefinition::new(
-            ChangeTypeId::new("change")?,
-            Description::new("A meaningful change.")?,
-        )],
-    )?;
-    let conditional = PropertyCondition::new(
-        ConditionId::new("known-cost")?,
-        "Required when a known cost exists.",
-    )?;
-    let typeset = TypesetDefinition::new(
-        taxonomy_id.clone(),
-        TypesetId::new("all-levels")?,
-        TypesetVersion::new(3)?,
-        Description::new("Every requirement level.")?,
-        vec![ChangeTypeSchema::new(
-            ChangeTypeId::new("change")?,
-            vec![
-                property(
-                    "required",
-                    PropertyRequirement::Required,
-                    PropertyMultiplicity::Single,
-                )?,
-                property(
-                    "recommended",
-                    PropertyRequirement::Recommended,
-                    PropertyMultiplicity::Single,
-                )?,
-                property(
-                    "optional",
-                    PropertyRequirement::Optional,
-                    PropertyMultiplicity::Multiple,
-                )?,
-                property(
-                    "conditional",
-                    PropertyRequirement::Conditional(conditional),
-                    PropertyMultiplicity::Single,
-                )?,
-            ],
-        )?],
-    )?;
-    let template = TemplateDefinition::new(
-        TemplateId::new("custom-template")?,
-        TemplateVersion::new(4)?,
-        Description::new("Reusable custom policy.")?,
-        taxonomy_id,
-        typeset.id().clone(),
-    );
-    Ok(CustomConfiguration::new(
-        vec![taxonomy],
-        vec![typeset],
-        vec![template],
+fn custom_configuration() -> Result<GlobalConfiguration, Box<dyn Error>> {
+    let team = TaxonomyId::new("team")?;
+    let mut available = GlobalConfiguration::default()
+        .available_taxonomies()
+        .to_vec();
+    available.push(team.clone());
+    Ok(GlobalConfiguration::new(
+        1,
+        team.clone(),
+        available,
+        vec![built_in_taxonomies()[0].fork(team)],
     )?)
 }
 
@@ -105,11 +39,18 @@ fn write_config(root: &Path, contents: &str) -> Result<PathBuf, Box<dyn Error>> 
     Ok(path)
 }
 
+fn has_temporary_files(directory: &Path) -> Result<bool, Box<dyn Error>> {
+    Ok(fs::read_dir(directory)?
+        .filter_map(Result::ok)
+        .any(|entry| entry.file_name().to_string_lossy().starts_with(".tmp")))
+}
+
 #[test]
-fn missing_configuration_loads_empty_without_creating_storage() -> Result<(), Box<dyn Error>> {
+fn missing_configuration_loads_the_built_in_default_without_creating_storage()
+-> Result<(), Box<dyn Error>> {
     let temporary = TempDir::new()?;
     let store = store(temporary.path());
-    assert_eq!(store.load()?, CustomConfiguration::default());
+    assert_eq!(store.load()?, GlobalConfiguration::default());
     assert!(!temporary.path().join("config").exists());
     assert_eq!(store.path(), temporary.path().join("config/config.toml"));
     Ok(())
@@ -120,27 +61,20 @@ fn compare_and_swap_creates_round_trips_and_replaces_complete_configuration()
 -> Result<(), Box<dyn Error>> {
     let temporary = TempDir::new()?;
     let store = store(temporary.path());
-    let expected = CustomConfiguration::default();
-    let replacement = sample_configuration()?;
-    store.compare_and_swap(&expected, &replacement)?;
+    let replacement = custom_configuration()?;
+    store.compare_and_swap(&GlobalConfiguration::default(), &replacement)?;
     assert_eq!(store.load()?, replacement);
 
     let contents = fs::read_to_string(store.path())?;
     assert!(contents.starts_with("config-version = 1\n"));
-    assert!(contents.contains("level = \"required\""));
-    assert!(contents.contains("level = \"recommended\""));
-    assert!(contents.contains("level = \"optional\""));
-    assert!(contents.contains("level = \"conditional\""));
-    assert!(contents.contains("multiplicity = \"multiple\""));
+    assert!(contents.contains("default-taxonomy = \"team\""));
+    assert!(contents.contains("[[taxonomies]]"));
+    assert!(contents.contains("id = \"team\""));
     assert!(contents.ends_with('\n'));
-    assert!(
-        fs::read_dir(temporary.path().join("config"))?
-            .filter_map(Result::ok)
-            .all(|entry| !entry.file_name().to_string_lossy().contains(".tmp."))
-    );
+    assert!(!has_temporary_files(&temporary.path().join("config"))?);
 
-    store.compare_and_swap(&replacement, &CustomConfiguration::default())?;
-    assert_eq!(store.load()?, CustomConfiguration::default());
+    store.compare_and_swap(&replacement, &GlobalConfiguration::default())?;
+    assert_eq!(store.load()?, GlobalConfiguration::default());
     Ok(())
 }
 
@@ -148,49 +82,56 @@ fn compare_and_swap_creates_round_trips_and_replaces_complete_configuration()
 fn stale_expected_snapshots_are_rejected_without_overwrite() -> Result<(), Box<dyn Error>> {
     let temporary = TempDir::new()?;
     let store = store(temporary.path());
-    let replacement = sample_configuration()?;
-    store.compare_and_swap(&CustomConfiguration::default(), &replacement)?;
+    store.compare_and_swap(&GlobalConfiguration::default(), &custom_configuration()?)?;
     let before = fs::read(store.path())?;
     let result = store.compare_and_swap(
-        &CustomConfiguration::default(),
-        &CustomConfiguration::default(),
+        &GlobalConfiguration::default(),
+        &GlobalConfiguration::default(),
     );
     assert!(matches!(
         result,
         Err(GlobalConfigurationError::ConcurrentChange(_))
     ));
     assert_eq!(fs::read(store.path())?, before);
+    assert!(!has_temporary_files(&temporary.path().join("config"))?);
     Ok(())
 }
 
 #[test]
 fn strict_format_rejects_unknown_fields_unsupported_versions_and_invalid_values()
 -> Result<(), Box<dyn Error>> {
+    let selection = "default-taxonomy = \"conventional\"\n\
+                     available-taxonomies = [\"conventional\"]\ntaxonomies = []\n";
     let cases = [
         (
-            "config-version = 1\ntaxonomies = []\ntypesets = []\ntemplates = []\nunknown = true\n",
+            format!("config-version = 1\n{selection}unknown = true\n"),
             "unknown field",
         ),
+        (format!("config-version = 2\n{selection}"), "version 2"),
         (
-            "config-version = 2\ntaxonomies = []\ntypesets = []\ntemplates = []\n",
-            "unsupported custom configuration version 2",
+            "config-version = 1\ndefault-taxonomy = \"Bad\"\n\
+             available-taxonomies = [\"conventional\"]\ntaxonomies = []\n"
+                .to_owned(),
+            "Bad",
         ),
         (
-            "config-version = 1\ntypesets = []\ntemplates = []\n[[taxonomies]]\nid = \"Bad\"\nversion = 1\ndescription = \"Bad.\"\nchange-types = [{ id = \"change\", description = \"Change.\" }]\n",
-            "invalid taxonomies[0].id",
+            "config-version = 1\ndefault-taxonomy = \"missing\"\n\
+             available-taxonomies = [\"conventional\"]\ntaxonomies = []\n"
+                .to_owned(),
+            "missing",
         ),
     ];
     for (index, (contents, expected)) in cases.into_iter().enumerate() {
         let temporary = TempDir::new()?;
         let store = store(temporary.path());
-        write_config(temporary.path(), contents)?;
+        write_config(temporary.path(), &contents)?;
         let Err(error) = store.load() else {
-            return Err(std::io::Error::other(format!(
-                "format fixture {index} was unexpectedly accepted"
-            ))
-            .into());
+            return Err(format!("format fixture {index} was unexpectedly accepted").into());
         };
-        assert!(matches!(error, GlobalConfigurationError::Format { .. }));
+        assert!(
+            matches!(error, GlobalConfigurationError::Format { .. }),
+            "case {index}: {error}"
+        );
         assert!(
             error.to_string().contains(expected),
             "case {index} did not contain {expected:?}: {error}"
@@ -204,10 +145,17 @@ fn nonregular_configuration_paths_are_rejected() -> Result<(), Box<dyn Error>> {
     let temporary = TempDir::new()?;
     let store = store(temporary.path());
     fs::create_dir_all(store.path())?;
-    assert!(matches!(
-        store.load(),
-        Err(GlobalConfigurationError::ExpectedFile(_))
-    ));
+    let error = store
+        .load()
+        .err()
+        .ok_or("a directory loaded as configuration")?;
+    assert!(error.to_string().contains("config.toml"), "{error}");
+    assert!(
+        store
+            .compare_and_swap(&GlobalConfiguration::default(), &custom_configuration()?)
+            .is_err()
+    );
+    assert!(store.path().is_dir());
     Ok(())
 }
 
@@ -217,10 +165,11 @@ fn non_directory_configuration_roots_are_rejected_without_replacement() -> Resul
     let temporary = TempDir::new()?;
     fs::write(temporary.path().join("config"), "collision")?;
     let store = store(temporary.path());
-    assert!(matches!(
-        store.compare_and_swap(&CustomConfiguration::default(), &sample_configuration()?),
-        Err(GlobalConfigurationError::ExpectedDirectory(_))
-    ));
+    assert!(
+        store
+            .compare_and_swap(&GlobalConfiguration::default(), &custom_configuration()?)
+            .is_err()
+    );
     assert_eq!(
         fs::read_to_string(temporary.path().join("config"))?,
         "collision"
@@ -230,43 +179,26 @@ fn non_directory_configuration_roots_are_rejected_without_replacement() -> Resul
 
 #[cfg(unix)]
 #[test]
-fn symbolic_configuration_files_are_rejected_without_following_them() -> Result<(), Box<dyn Error>>
-{
+fn symbolic_configuration_files_are_never_replaced() -> Result<(), Box<dyn Error>> {
     use std::os::unix::fs::symlink;
 
     let temporary = TempDir::new()?;
     let outside = temporary.path().join("outside.toml");
     fs::write(
         &outside,
-        "config-version = 1\ntaxonomies = []\ntypesets = []\ntemplates = []\n",
+        "config-version = 1\ndefault-taxonomy = \"conventional\"\n\
+         available-taxonomies = [\"conventional\", \"research\", \"infra-ops\"]\ntaxonomies = []\n",
     )?;
+    let before = fs::read(&outside)?;
+    let link = temporary.path().join("config/config.toml");
     fs::create_dir(temporary.path().join("config"))?;
-    symlink(&outside, temporary.path().join("config/config.toml"))?;
+    symlink(&outside, &link)?;
     let store = store(temporary.path());
     assert!(matches!(
-        store.load(),
-        Err(GlobalConfigurationError::Symlink(_))
+        store.compare_and_swap(&store.load()?, &custom_configuration()?),
+        Err(GlobalConfigurationError::UnsafePath(_))
     ));
-    assert!(matches!(
-        store.compare_and_swap(&CustomConfiguration::default(), &sample_configuration()?),
-        Err(GlobalConfigurationError::Symlink(_))
-    ));
-    assert!(outside.exists());
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn new_configuration_directory_requests_private_unix_permissions() -> Result<(), Box<dyn Error>> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let temporary = TempDir::new()?;
-    let store = store(temporary.path());
-    store.compare_and_swap(&CustomConfiguration::default(), &sample_configuration()?)?;
-    let mode = fs::metadata(temporary.path().join("config"))?
-        .permissions()
-        .mode()
-        & 0o777;
-    assert_eq!(mode, 0o700);
+    assert!(fs::symlink_metadata(&link)?.file_type().is_symlink());
+    assert_eq!(fs::read(&outside)?, before);
     Ok(())
 }

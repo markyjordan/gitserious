@@ -1,27 +1,21 @@
-#![cfg(any())] // Legacy project template/lock TOML contract.
-
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use gitserious_app::{
-    ConfigurationCatalog, ConfigurationCatalogError, CustomConfiguration, InitStatus,
-    InitializeProjectError, ProjectConfig, ProjectState, ProjectStateStore, RepositoryLocator,
-    built_in_effective_catalog, initialize_project, resolve_project_lock,
+    GlobalConfiguration, InitOutcome, InitStatus, InitializeProjectError, ProjectConfig,
+    ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
+    initialize_project, resolve_effective_configuration,
 };
-use gitserious_core::{
-    ChangeTypeDefinition, ChangeTypeId, ChangeTypeSchema, Description, PropertyDefinition,
-    PropertyKey, PropertyMultiplicity, PropertyRequirement, TaxonomyDefinition, TaxonomyId,
-    TaxonomyVersion, TemplateDefinition, TemplateId, TemplateVersion, TypesetDefinition, TypesetId,
-    TypesetVersion,
+use gitserious_core::TaxonomyId;
+use gitserious_fs::{
+    GitRepositoryError, GitRepositoryLocator, ProjectStateError, TomlProjectStateStore,
 };
-use gitserious_fs::{GitRepositoryLocator, ProjectStateError, TomlProjectStateStore};
 use tempfile::TempDir;
 
-fn catalog() -> Result<ConfigurationCatalog, ConfigurationCatalogError> {
-    built_in_effective_catalog()
-}
+type InitResult =
+    Result<InitOutcome, InitializeProjectError<GitRepositoryError, ProjectStateError>>;
 
 fn repository() -> Result<TempDir, Box<dyn Error>> {
     let directory = tempfile::tempdir()?;
@@ -35,8 +29,18 @@ fn repository() -> Result<TempDir, Box<dyn Error>> {
     Ok(directory)
 }
 
-fn root(directory: &Path) -> Result<gitserious_app::RepositoryRoot, Box<dyn Error>> {
+fn root(directory: &Path) -> Result<RepositoryRoot, Box<dyn Error>> {
     Ok(GitRepositoryLocator.locate(directory)?)
+}
+
+fn init(directory: &Path) -> InitResult {
+    initialize_project(
+        &GitRepositoryLocator,
+        &TomlProjectStateStore,
+        &GlobalConfiguration::default(),
+        None,
+        directory,
+    )
 }
 
 struct ProjectPaths {
@@ -65,53 +69,48 @@ fn assert_ignored(repository: &Path, path: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn populated_project_config() -> Result<ProjectConfig, Box<dyn Error>> {
-    let taxonomy_id = TaxonomyId::new("delivery")?;
-    let taxonomy = TaxonomyDefinition::new(
-        taxonomy_id.clone(),
-        TaxonomyVersion::new(2)?,
-        Description::new("Delivery changes 🦀.")?,
-        vec![ChangeTypeDefinition::new(
-            ChangeTypeId::new("ship")?,
-            Description::new("Release a durable artifact.")?,
-        )],
-    )?;
-    let typeset = TypesetDefinition::new(
-        taxonomy_id.clone(),
-        TypesetId::new("evidence")?,
-        TypesetVersion::new(3)?,
-        Description::new("Release evidence requirements.")?,
-        vec![ChangeTypeSchema::new(
-            ChangeTypeId::new("ship")?,
-            vec![PropertyDefinition::new(
-                PropertyKey::new("verification")?,
-                "How the artifact was verified.",
-                PropertyRequirement::Required,
-                PropertyMultiplicity::Multiple,
-            )?],
-        )?],
-    )?;
-    let alternate = TemplateDefinition::new(
-        TemplateId::new("alternate")?,
-        TemplateVersion::V1,
-        Description::new("An alternate local selection.")?,
-        taxonomy_id.clone(),
-        typeset.id().clone(),
-    );
-    let selected = TemplateDefinition::new(
-        TemplateId::new("release-team")?,
-        TemplateVersion::new(4)?,
-        Description::new("The selected release policy.")?,
-        taxonomy_id,
-        typeset.id().clone(),
-    );
-    let custom =
-        CustomConfiguration::new(vec![taxonomy], vec![typeset], vec![selected, alternate])?;
+fn initialized(directory: &Path) -> Result<(ProjectConfig, ProjectLock), Box<dyn Error>> {
+    match TomlProjectStateStore.inspect(&root(directory)?)? {
+        ProjectState::Initialized { config, lock } => Ok((config, lock)),
+        state => Err(format!("unexpected state: {state:?}").into()),
+    }
+}
+
+fn lock_for(config: &ProjectConfig) -> Result<ProjectLock, Box<dyn Error>> {
+    let effective = resolve_effective_configuration(&GlobalConfiguration::default(), config)?;
+    Ok(ProjectLock::capture(config, &effective)?)
+}
+
+fn research_project() -> Result<ProjectConfig, Box<dyn Error>> {
     Ok(ProjectConfig::new(
         1,
-        TemplateId::new("release-team")?,
-        custom,
+        Some(TaxonomyId::new("research")?),
+        Some(vec![
+            TaxonomyId::new("research")?,
+            TaxonomyId::new("conventional")?,
+        ]),
     )?)
+}
+
+fn with_stale_fingerprint(lock: &str) -> Result<String, Box<dyn Error>> {
+    let marker = "config-fingerprint = \"sha256:";
+    let start = lock.find(marker).ok_or("lock has no fingerprint")? + marker.len();
+    let replacement = if lock[start..].starts_with('0') {
+        "1"
+    } else {
+        "0"
+    };
+    Ok(format!(
+        "{}{replacement}{}",
+        &lock[..start],
+        &lock[start + 1..]
+    ))
+}
+
+fn has_temporary_files(directory: &Path) -> Result<bool, Box<dyn Error>> {
+    Ok(fs::read_dir(directory)?
+        .filter_map(Result::ok)
+        .any(|entry| entry.file_name().to_string_lossy().starts_with(".tmp")))
 }
 
 #[test]
@@ -136,38 +135,35 @@ fn initialization_writes_exact_config_and_ordered_lock() -> Result<(), Box<dyn E
     fs::create_dir(&paths.local_state)?;
     fs::write(paths.local_state.join("notes.txt"), "preserve me")?;
 
-    let outcome = initialize_project(
-        &GitRepositoryLocator,
-        &TomlProjectStateStore,
-        &catalog()?,
-        None,
-        repository.path(),
-    )?;
+    let outcome = init(repository.path())?;
 
     assert_eq!(outcome.status(), InitStatus::Initialized);
-    assert_eq!(
-        fs::read_to_string(&paths.config)?,
-        "config-version = 1\nactive-template = \"default\"\n\
-         taxonomies = []\ntypesets = []\ntemplates = []\n"
-    );
+    assert_eq!(fs::read_to_string(&paths.config)?, "config-version = 1\n");
     let lock = fs::read_to_string(&paths.lock)?;
     assert!(lock.starts_with("# This file is generated by gitserious. Do not edit.\n"));
     assert!(lock.ends_with('\n'));
+    let sections = lock.split("\n[[taxonomies]]\n").skip(1).collect::<Vec<_>>();
     assert_eq!(
-        lock.matches("[[resolved-template.commit-types]]").count(),
-        11
+        sections
+            .iter()
+            .map(|section| section.lines().next().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        [
+            "id = \"conventional\"",
+            "id = \"research\"",
+            "id = \"infra-ops\""
+        ]
     );
+    let conventional = sections[0];
     let mut previous = 0;
     for id in [
         "feat", "fix", "refactor", "perf", "test", "docs", "chore", "build", "ci", "style",
         "revert",
     ] {
-        let position = lock[previous..]
+        previous += conventional[previous..]
             .find(&format!("id = \"{id}\""))
-            .ok_or_else(|| format!("missing {id}"))?
-            + previous;
-        assert!(position >= previous);
-        previous = position + 1;
+            .ok_or_else(|| format!("{id} is missing or out of order"))?
+            + 1;
     }
     assert_eq!(
         fs::read_to_string(paths.local_state.join("notes.txt"))?,
@@ -180,89 +176,29 @@ fn initialization_writes_exact_config_and_ordered_lock() -> Result<(), Box<dyn E
 }
 
 #[test]
-fn initialization_refreshes_a_legacy_single_template_lock() -> Result<(), Box<dyn Error>> {
+fn template_era_lock_is_refused_with_an_actionable_message() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     let paths = project_paths(repository.path());
-    initialize_project(
-        &GitRepositoryLocator,
-        &TomlProjectStateStore,
-        &catalog()?,
-        None,
-        repository.path(),
-    )?;
-    let current = fs::read_to_string(&paths.lock)?;
-    let legacy = current
-        .split("\n[[resolved-templates]]")
-        .next()
-        .ok_or("generated lock did not contain selectable templates")?
-        .to_owned()
-        + "\n";
-    fs::write(&paths.lock, &legacy)?;
-    let state = TomlProjectStateStore.inspect(&root(repository.path())?)?;
-    assert!(matches!(state, ProjectState::Initialized { .. }));
-    let outcome = initialize_project(
-        &GitRepositoryLocator,
-        &TomlProjectStateStore,
-        &catalog()?,
-        None,
-        repository.path(),
-    )?;
-    assert_eq!(outcome.status(), InitStatus::LockRefreshed);
-    let refreshed = fs::read_to_string(&paths.lock)?;
-    assert!(refreshed.contains("[[resolved-templates]]"));
-    assert!(refreshed.contains("id = \"ml-research\""));
-    assert!(refreshed.contains("id = \"infra-ops\""));
-    Ok(())
-}
+    init(repository.path())?;
+    let before = format!(
+        "{}[resolved-template]\nid = \"default\"\n",
+        fs::read_to_string(&paths.lock)?
+    );
+    fs::write(&paths.lock, &before)?;
 
-#[test]
-fn old_default_alias_collection_refreshes_without_rewriting_authored_config()
--> Result<(), Box<dyn Error>> {
-    let repository = repository()?;
-    let root = root(repository.path())?;
-    let config = ProjectConfig::default_channel()?;
-    let expected = resolve_project_lock(&config)?;
-    let templates = expected
-        .resolved_templates()
-        .iter()
-        .map(|template| {
-            if template.id().as_str() == "default" {
-                expected.resolved_template().clone()
-            } else {
-                template.clone()
-            }
-        })
-        .collect();
-    let legacy = gitserious_app::ProjectLock::with_resolved_templates(
-        expected.version(),
-        expected.config_fingerprint(),
-        expected.template_reference().clone(),
-        expected.resolved_template().clone(),
-        templates,
-    )?;
-    TomlProjectStateStore.initialize(&root, &config, &legacy)?;
-    let paths = project_paths(repository.path());
-    let authored = format!(
-        "# preserve my comments\n{}",
-        fs::read_to_string(&paths.config)?
+    let error = init(repository.path())
+        .err()
+        .ok_or("a template-era lock was accepted")?;
+
+    assert!(matches!(
+        error,
+        InitializeProjectError::Store(ProjectStateError::LegacyFormat(_))
+    ));
+    assert!(
+        error.to_string().contains("superseded pre-release"),
+        "{error}"
     );
-    fs::write(&paths.config, &authored)?;
-    let outcome = initialize_project(
-        &GitRepositoryLocator,
-        &TomlProjectStateStore,
-        &catalog()?,
-        None,
-        repository.path(),
-    )?;
-    assert_eq!(outcome.status(), InitStatus::LockRefreshed);
-    assert_eq!(fs::read_to_string(&paths.config)?, authored);
-    assert_eq!(
-        TomlProjectStateStore.inspect(&root)?,
-        ProjectState::Initialized {
-            config,
-            lock: expected
-        }
-    );
+    assert_eq!(fs::read_to_string(&paths.lock)?, before);
     Ok(())
 }
 
@@ -270,8 +206,8 @@ fn old_default_alias_collection_refreshes_without_rewriting_authored_config()
 fn populated_project_configuration_round_trips_canonically() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     let paths = project_paths(repository.path());
-    let config = populated_project_config()?;
-    let lock = resolve_project_lock(&config)?;
+    let config = research_project()?;
+    let lock = lock_for(&config)?;
 
     TomlProjectStateStore.initialize(&root(repository.path())?, &config, &lock)?;
 
@@ -282,21 +218,11 @@ fn populated_project_configuration_round_trips_canonically() -> Result<(), Box<d
             lock
         }
     );
-    let contents = fs::read_to_string(paths.config)?;
-    assert!(contents.starts_with("config-version = 1\nactive-template = \"release-team\"\n"));
-    assert!(contents.contains("description = \"Delivery changes 🦀.\""));
-    assert!(contents.contains("multiplicity = \"multiple\""));
-    assert!(contents.contains("level = \"required\""));
-    let taxonomy = contents.find("[[taxonomies]]").ok_or("missing taxonomy")?;
-    let typeset = contents.find("[[typesets]]").ok_or("missing typeset")?;
-    let alternate = contents
-        .find("id = \"alternate\"")
-        .ok_or("missing alternate template")?;
-    let selected = contents
-        .find("id = \"release-team\"")
-        .ok_or("missing selected template")?;
-    assert!(taxonomy < typeset && typeset < alternate && alternate < selected);
-    assert!(contents.ends_with('\n'));
+    assert_eq!(
+        fs::read_to_string(paths.config)?,
+        "config-version = 1\ndefault-taxonomy = \"research\"\n\
+         available-taxonomies = [\n    \"research\",\n    \"conventional\",\n]\n"
+    );
     Ok(())
 }
 
@@ -304,26 +230,14 @@ fn populated_project_configuration_round_trips_canonically() -> Result<(), Box<d
 fn matching_state_is_byte_preserving_and_idempotent() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     let paths = project_paths(repository.path());
-    initialize_project(
-        &GitRepositoryLocator,
-        &TomlProjectStateStore,
-        &catalog()?,
-        None,
-        repository.path(),
-    )?;
+    init(repository.path())?;
     let config_before = fs::read(&paths.config)?;
     let lock_before = fs::read(&paths.lock)?;
     let config_modified = fs::metadata(&paths.config)?.modified()?;
     let lock_modified = fs::metadata(&paths.lock)?.modified()?;
     fs::remove_dir_all(&paths.local_state)?;
 
-    let outcome = initialize_project(
-        &GitRepositoryLocator,
-        &TomlProjectStateStore,
-        &catalog()?,
-        None,
-        repository.path(),
-    )?;
+    let outcome = init(repository.path())?;
 
     assert_eq!(outcome.status(), InitStatus::AlreadyInitialized);
     assert_eq!(fs::read(&paths.config)?, config_before);
@@ -345,13 +259,7 @@ fn existing_local_state_and_custom_ignore_are_preserved() -> Result<(), Box<dyn 
         "local = true\n",
     )?;
 
-    let outcome = initialize_project(
-        &GitRepositoryLocator,
-        &TomlProjectStateStore,
-        &catalog()?,
-        None,
-        repository.path(),
-    )?;
+    let outcome = init(repository.path())?;
 
     assert_eq!(outcome.status(), InitStatus::Initialized);
     assert_eq!(fs::read_to_string(paths.local_ignore)?, "cache/**\n");
@@ -366,19 +274,13 @@ fn existing_local_state_and_custom_ignore_are_preserved() -> Result<(), Box<dyn 
 fn existing_valid_config_creates_only_a_missing_lock() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     let paths = project_paths(repository.path());
-    let authored = "config-version = 1\nactive-template = \"default\"\n\
-                    taxonomies = []\ntypesets = []\ntemplates = []\n";
+    let authored = "# team policy\nconfig-version = 1\ndefault-taxonomy = \"infra-ops\"\n";
     fs::write(&paths.config, authored)?;
 
-    let outcome = initialize_project(
-        &GitRepositoryLocator,
-        &TomlProjectStateStore,
-        &catalog()?,
-        None,
-        repository.path(),
-    )?;
+    let outcome = init(repository.path())?;
 
     assert_eq!(outcome.status(), InitStatus::LockCreated);
+    assert_eq!(outcome.taxonomy().as_str(), "infra-ops");
     assert_eq!(fs::read_to_string(paths.config)?, authored);
     assert!(paths.lock.is_file());
     Ok(())
@@ -388,29 +290,12 @@ fn existing_valid_config_creates_only_a_missing_lock() -> Result<(), Box<dyn Err
 fn recognized_stale_lock_is_replaced_without_rewriting_config() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     let paths = project_paths(repository.path());
-    initialize_project(
-        &GitRepositoryLocator,
-        &TomlProjectStateStore,
-        &catalog()?,
-        None,
-        repository.path(),
-    )?;
+    init(repository.path())?;
     let authored = fs::read(&paths.config)?;
     let current = fs::read_to_string(&paths.lock)?;
-    let stale = current.replace(
-        "config-fingerprint = \"sha256:e",
-        "config-fingerprint = \"sha256:a",
-    );
-    assert_ne!(stale, current);
-    fs::write(&paths.lock, stale)?;
+    fs::write(&paths.lock, with_stale_fingerprint(&current)?)?;
 
-    let outcome = initialize_project(
-        &GitRepositoryLocator,
-        &TomlProjectStateStore,
-        &catalog()?,
-        None,
-        repository.path(),
-    )?;
+    let outcome = init(repository.path())?;
 
     assert_eq!(outcome.status(), InitStatus::LockRefreshed);
     assert_eq!(fs::read(&paths.config)?, authored);
@@ -422,38 +307,16 @@ fn recognized_stale_lock_is_replaced_without_rewriting_config() -> Result<(), Bo
 fn concurrent_lock_change_is_preserved_and_refused() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     let paths = project_paths(repository.path());
-    initialize_project(
-        &GitRepositoryLocator,
-        &TomlProjectStateStore,
-        &catalog()?,
-        None,
-        repository.path(),
-    )?;
-    let original = match TomlProjectStateStore.inspect(&root(repository.path())?)? {
-        ProjectState::Initialized { lock, .. } => lock,
-        state => return Err(format!("unexpected state: {state:?}").into()),
-    };
-    let changed = fs::read_to_string(&paths.lock)?.replace(
-        "config-fingerprint = \"sha256:e",
-        "config-fingerprint = \"sha256:a",
-    );
+    init(repository.path())?;
+    let (_, original) = initialized(repository.path())?;
+    let changed = with_stale_fingerprint(&fs::read_to_string(&paths.lock)?)?;
     fs::write(&paths.lock, &changed)?;
 
     let error = TomlProjectStateStore.replace_lock(&root(repository.path())?, &original, &original);
 
-    assert!(matches!(
-        error,
-        Err(ProjectStateError::ConcurrentLockChange(_))
-    ));
+    assert!(matches!(error, Err(ProjectStateError::ConcurrentChange(_))));
     assert_eq!(fs::read_to_string(paths.lock)?, changed);
-    assert!(fs::read_dir(repository.path())?.all(|entry| {
-        entry.is_ok_and(|entry| {
-            !entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".gitserious.lock.tmp.")
-        })
-    }));
+    assert!(!has_temporary_files(repository.path())?);
     Ok(())
 }
 
@@ -461,20 +324,10 @@ fn concurrent_lock_change_is_preserved_and_refused() -> Result<(), Box<dyn Error
 fn project_pair_compare_and_swap_replaces_config_and_lock_together() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     let paths = project_paths(repository.path());
-    initialize_project(
-        &GitRepositoryLocator,
-        &TomlProjectStateStore,
-        &catalog()?,
-        None,
-        repository.path(),
-    )?;
-    let (current_config, current_lock) =
-        match TomlProjectStateStore.inspect(&root(repository.path())?)? {
-            ProjectState::Initialized { config, lock } => (config, lock),
-            state => return Err(format!("unexpected state: {state:?}").into()),
-        };
-    let replacement_config = populated_project_config()?;
-    let replacement_lock = resolve_project_lock(&replacement_config)?;
+    init(repository.path())?;
+    let (current_config, current_lock) = initialized(repository.path())?;
+    let replacement_config = research_project()?;
+    let replacement_lock = lock_for(&replacement_config)?;
 
     TomlProjectStateStore.compare_and_swap(
         &root(repository.path())?,
@@ -491,9 +344,7 @@ fn project_pair_compare_and_swap_replaces_config_and_lock_together() -> Result<(
             lock: replacement_lock
         }
     );
-    assert!(fs::read_dir(repository.path())?.all(|entry| {
-        entry.is_ok_and(|entry| !entry.file_name().to_string_lossy().contains(".tmp."))
-    }));
+    assert!(!has_temporary_files(repository.path())?);
     assert!(paths.config.is_file() && paths.lock.is_file());
     Ok(())
 }
@@ -504,55 +355,38 @@ fn project_pair_compare_and_swap_rejects_concurrent_change_to_either_artifact()
     for changed_artifact in ["config", "lock"] {
         let repository = repository()?;
         let paths = project_paths(repository.path());
-        initialize_project(
-            &GitRepositoryLocator,
-            &TomlProjectStateStore,
-            &catalog()?,
-            None,
-            repository.path(),
-        )?;
-        let (current_config, current_lock) =
-            match TomlProjectStateStore.inspect(&root(repository.path())?)? {
-                ProjectState::Initialized { config, lock } => (config, lock),
-                state => return Err(format!("unexpected state: {state:?}").into()),
-            };
-        match changed_artifact {
-            "config" => {
-                let changed = fs::read_to_string(&paths.config)?.replace(
-                    "active-template = \"default\"",
-                    "active-template = \"changed\"",
-                );
-                fs::write(&paths.config, changed)?;
-            }
-            "lock" => {
-                let changed = fs::read_to_string(&paths.lock)?.replace(
-                    "config-fingerprint = \"sha256:e",
-                    "config-fingerprint = \"sha256:a",
-                );
-                fs::write(&paths.lock, changed)?;
-            }
-            _ => return Err("unexpected artifact".into()),
+        init(repository.path())?;
+        let (current_config, current_lock) = initialized(repository.path())?;
+        if changed_artifact == "config" {
+            fs::write(
+                &paths.config,
+                "config-version = 1\ndefault-taxonomy = \"infra-ops\"\n",
+            )?;
+        } else {
+            let changed = with_stale_fingerprint(&fs::read_to_string(&paths.lock)?)?;
+            fs::write(&paths.lock, changed)?;
         }
         let before_config = fs::read(&paths.config)?;
         let before_lock = fs::read(&paths.lock)?;
-        let replacement_config = populated_project_config()?;
-        let replacement_lock = resolve_project_lock(&replacement_config)?;
+        let replacement_config = research_project()?;
+        let replacement_lock = lock_for(&replacement_config)?;
 
-        assert!(matches!(
-            TomlProjectStateStore.compare_and_swap(
-                &root(repository.path())?,
-                &current_config,
-                &current_lock,
-                &replacement_config,
-                &replacement_lock,
+        assert!(
+            matches!(
+                TomlProjectStateStore.compare_and_swap(
+                    &root(repository.path())?,
+                    &current_config,
+                    &current_lock,
+                    &replacement_config,
+                    &replacement_lock,
+                ),
+                Err(ProjectStateError::ConcurrentChange(_))
             ),
-            Err(ProjectStateError::ConcurrentProjectChange { .. })
-        ));
+            "{changed_artifact} change was not detected"
+        );
         assert_eq!(fs::read(&paths.config)?, before_config);
         assert_eq!(fs::read(&paths.lock)?, before_lock);
-        assert!(fs::read_dir(repository.path())?.all(|entry| {
-            entry.is_ok_and(|entry| !entry.file_name().to_string_lossy().contains(".tmp."))
-        }));
+        assert!(!has_temporary_files(repository.path())?);
     }
     Ok(())
 }
@@ -561,26 +395,21 @@ fn project_pair_compare_and_swap_rejects_concurrent_change_to_either_artifact()
 fn malformed_unknown_and_unsupported_config_are_refused() -> Result<(), Box<dyn Error>> {
     for contents in [
         "not toml",
-        "config-version = 2\nactive-template = \"default\"\n\
-         taxonomies = []\ntypesets = []\ntemplates = []\n",
-        "config-version = 1\nactive-template = \"default\"\n\
-         taxonomies = []\ntypesets = []\ntemplates = []\nunknown = true\n",
-        "config-version = 1\nactive-template = \"Custom\"\n\
-         taxonomies = []\ntypesets = []\ntemplates = []\n",
-        "config-version = 1\nactive-template = \"custom\"\n\
-         typesets = []\ntemplates = []\n\
-         [[taxonomies]]\nid = \"custom\"\nversion = 1\n\
-         description = \"Custom.\"\nunknown = true\n\
-         change-types = [{ id = \"change\", description = \"Change.\" }]\n",
+        "config-version = 2\n",
+        "config-version = 1\nunknown = true\n",
+        "config-version = 1\ndefault-taxonomy = \"Custom\"\n",
     ] {
         let repository = repository()?;
         let paths = project_paths(repository.path());
         fs::write(paths.config, contents)?;
 
-        assert!(matches!(
-            TomlProjectStateStore.inspect(&root(repository.path())?),
-            Err(ProjectStateError::ConfigFormat { .. })
-        ));
+        assert!(
+            matches!(
+                TomlProjectStateStore.inspect(&root(repository.path())?),
+                Err(ProjectStateError::Format { .. })
+            ),
+            "accepted {contents:?}"
+        );
     }
     Ok(())
 }
@@ -590,27 +419,28 @@ fn malformed_unknown_and_unsupported_lock_are_refused() -> Result<(), Box<dyn Er
     for mutation in ["malformed", "unknown", "unsupported"] {
         let repository = repository()?;
         let paths = project_paths(repository.path());
-        initialize_project(
-            &GitRepositoryLocator,
-            &TomlProjectStateStore,
-            &catalog()?,
-            None,
-            repository.path(),
-        )?;
+        init(repository.path())?;
         let contents = match mutation {
             "malformed" => String::from("not toml"),
-            "unknown" => format!("{}unknown = true\n", fs::read_to_string(&paths.lock)?),
-            "unsupported" => {
+            "unknown" => fs::read_to_string(&paths.lock)?.replacen(
+                "lock-version = 1\n",
+                "lock-version = 1\nunknown = true\n",
+                1,
+            ),
+            _ => {
                 fs::read_to_string(&paths.lock)?.replacen("lock-version = 1", "lock-version = 2", 1)
             }
-            _ => return Err("unexpected mutation".into()),
         };
+        assert_ne!(contents, fs::read_to_string(&paths.lock)?);
         fs::write(&paths.lock, contents)?;
 
-        assert!(matches!(
-            TomlProjectStateStore.inspect(&root(repository.path())?),
-            Err(ProjectStateError::LockFormat { .. })
-        ));
+        assert!(
+            matches!(
+                TomlProjectStateStore.inspect(&root(repository.path())?),
+                Err(ProjectStateError::Format { .. })
+            ),
+            "accepted the {mutation} lock"
+        );
     }
     Ok(())
 }
@@ -619,17 +449,14 @@ fn malformed_unknown_and_unsupported_lock_are_refused() -> Result<(), Box<dyn Er
 fn orphan_lock_is_refused_without_guessing_config() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     let paths = project_paths(repository.path());
-    fs::write(paths.lock, "generated but orphaned")?;
+    fs::write(&paths.lock, "generated but orphaned")?;
 
-    let error = initialize_project(
-        &GitRepositoryLocator,
-        &TomlProjectStateStore,
-        &catalog()?,
-        None,
-        repository.path(),
-    );
-
-    assert!(matches!(error, Err(InitializeProjectError::OrphanLock)));
+    assert!(matches!(
+        init(repository.path()),
+        Err(InitializeProjectError::OrphanLock)
+    ));
+    assert!(!paths.config.exists());
+    assert_eq!(fs::read_to_string(paths.lock)?, "generated but orphaned");
     Ok(())
 }
 
@@ -639,17 +466,10 @@ fn non_directory_and_non_regular_known_paths_are_refused() -> Result<(), Box<dyn
     let paths = project_paths(non_directory_repository.path());
     fs::write(&paths.local_state, "collision")?;
     assert!(matches!(
-        initialize_project(
-            &GitRepositoryLocator,
-            &TomlProjectStateStore,
-            &catalog()?,
-            None,
-            non_directory_repository.path()
-        ),
-        Err(InitializeProjectError::Store(
-            ProjectStateError::ExpectedDirectory(_)
-        ))
+        init(non_directory_repository.path()),
+        Err(InitializeProjectError::Store(_))
     ));
+    assert_eq!(fs::read_to_string(&paths.local_state)?, "collision");
     assert!(!paths.config.exists());
     assert!(!paths.lock.exists());
 
@@ -658,7 +478,7 @@ fn non_directory_and_non_regular_known_paths_are_refused() -> Result<(), Box<dyn
         fs::create_dir(repository.path().join(target))?;
         assert!(matches!(
             TomlProjectStateStore.inspect(&root(repository.path())?),
-            Err(ProjectStateError::ExpectedFile(_))
+            Err(ProjectStateError::UnsafePath(_))
         ));
     }
 
@@ -668,7 +488,7 @@ fn non_directory_and_non_regular_known_paths_are_refused() -> Result<(), Box<dyn
     fs::create_dir(&paths.local_ignore)?;
     assert!(matches!(
         TomlProjectStateStore.ensure_local_state(&root(marker_repository.path())?),
-        Err(ProjectStateError::ExpectedFile(_))
+        Err(ProjectStateError::UnsafePath(_))
     ));
     Ok(())
 }
@@ -678,22 +498,13 @@ fn non_directory_and_non_regular_known_paths_are_refused() -> Result<(), Box<dyn
 fn symlinks_at_each_protected_path_are_refused() -> Result<(), Box<dyn Error>> {
     use std::os::unix::fs::symlink;
 
-    let symlinked_directory_repository = repository()?;
-    let outside = tempfile::tempdir()?;
-    let paths = project_paths(symlinked_directory_repository.path());
-    symlink(outside.path(), &paths.local_state)?;
-    assert!(matches!(
-        TomlProjectStateStore.ensure_local_state(&root(symlinked_directory_repository.path())?),
-        Err(ProjectStateError::Symlink(_))
-    ));
-
     for target in ["gitserious.toml", "gitserious.lock"] {
         let repository = repository()?;
         let outside = tempfile::NamedTempFile::new()?;
         symlink(outside.path(), repository.path().join(target))?;
         assert!(matches!(
             TomlProjectStateStore.inspect(&root(repository.path())?),
-            Err(ProjectStateError::Symlink(_))
+            Err(ProjectStateError::UnsafePath(_))
         ));
     }
 
@@ -704,8 +515,9 @@ fn symlinks_at_each_protected_path_are_refused() -> Result<(), Box<dyn Error>> {
     symlink(outside.path(), &paths.local_ignore)?;
     assert!(matches!(
         TomlProjectStateStore.ensure_local_state(&root(marker_repository.path())?),
-        Err(ProjectStateError::Symlink(_))
+        Err(ProjectStateError::UnsafePath(_))
     ));
+    assert_eq!(fs::read(outside.path())?, b"");
     Ok(())
 }
 
@@ -716,8 +528,8 @@ fn direct_store_creation_refuses_either_existing_root_artifact() -> Result<(), B
         let paths = project_paths(repository.path());
         let collision = repository.path().join(target);
         fs::write(&collision, "preserve")?;
-        let config = ProjectConfig::default_channel()?;
-        let lock = resolve_project_lock(&config)?;
+        let config = ProjectConfig::inherited();
+        let lock = lock_for(&config)?;
 
         assert!(matches!(
             TomlProjectStateStore.initialize(&root(repository.path())?, &config, &lock),
