@@ -1,248 +1,88 @@
-#![cfg(any())] // Legacy CLI adapter contract.
+mod support;
 
-use std::cell::RefCell;
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
-use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use gitserious_app::{
-    CustomConfiguration, GlobalConfigurationStore, ProjectConfig, ProjectLock, ProjectState,
-    ProjectStateStore, RepositoryLocator, RepositoryRoot,
-};
-use gitserious_cli::run_from;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct FakeError;
-
-impl Display for FakeError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter.write_str("repository unavailable")
-    }
-}
-
-impl Error for FakeError {}
-
-struct FakeLocator {
-    error: bool,
-}
-
-impl RepositoryLocator for FakeLocator {
-    type Error = FakeError;
-
-    fn locate(&self, _start: &Path) -> Result<RepositoryRoot, Self::Error> {
-        if self.error {
-            Err(FakeError)
-        } else {
-            RepositoryRoot::new(repository_path()).map_err(|_| FakeError)
-        }
-    }
-}
-
-#[derive(Default)]
-struct RecordingStore {
-    initialized: RefCell<Option<(ProjectConfig, ProjectLock)>>,
-}
-
-impl ProjectStateStore for RecordingStore {
-    type Error = FakeError;
-
-    fn inspect(&self, _root: &RepositoryRoot) -> Result<ProjectState, Self::Error> {
-        Ok(ProjectState::Absent)
-    }
-
-    fn ensure_local_state(&self, _root: &RepositoryRoot) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn initialize(
-        &self,
-        _root: &RepositoryRoot,
-        config: &ProjectConfig,
-        lock: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        self.initialized
-            .replace(Some((config.clone(), lock.clone())));
-        Ok(())
-    }
-
-    fn create_lock(&self, _root: &RepositoryRoot, _lock: &ProjectLock) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn replace_lock(
-        &self,
-        _root: &RepositoryRoot,
-        _current: &ProjectLock,
-        _replacement: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn compare_and_swap(
-        &self,
-        _root: &RepositoryRoot,
-        _current_config: &ProjectConfig,
-        _current_lock: &ProjectLock,
-        _replacement_config: &ProjectConfig,
-        _replacement_lock: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
-struct FakeUserStore {
-    error: bool,
-}
-
-impl GlobalConfigurationStore for FakeUserStore {
-    type Error = FakeError;
-
-    fn load(&self) -> Result<CustomConfiguration, Self::Error> {
-        if self.error {
-            Err(FakeError)
-        } else {
-            Ok(CustomConfiguration::default())
-        }
-    }
-
-    fn compare_and_swap(
-        &self,
-        _expected: &CustomConfiguration,
-        _replacement: &CustomConfiguration,
-    ) -> Result<(), Self::Error> {
-        Err(FakeError)
-    }
-}
-
-fn repository_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fake-repository")
-}
-
-fn run(arguments: &[&str], locator: &FakeLocator) -> (ExitCode, String, String, RecordingStore) {
-    let store = RecordingStore::default();
-    let configuration = FakeUserStore { error: false };
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let exit = run_from(
-        arguments.iter().copied(),
-        &repository_path().join("subdir"),
-        locator,
-        &store,
-        &configuration,
-        &mut stdout,
-        &mut stderr,
-    );
-    (
-        exit,
-        String::from_utf8(stdout).unwrap_or_default(),
-        String::from_utf8(stderr).unwrap_or_default(),
-        store,
-    )
-}
+use gitserious_core::{TaxonomyId, built_in_taxonomies};
+use support::{Harness, Locator, Project, repository_path};
 
 #[test]
-fn init_dispatches_and_reports_the_exact_resolution() {
-    let (exit, stdout, stderr, store) = run(&["gitserious", "init"], &FakeLocator { error: false });
+fn init_dispatches_and_reports_the_exact_resolution() -> Result<(), Box<dyn std::error::Error>> {
+    let harness = Harness::new(Project::default());
+
+    let (exit, stdout, stderr) = harness.run(&["gitserious", "init"]);
 
     assert_eq!(exit, ExitCode::SUCCESS);
     assert_eq!(
         stdout,
         format!(
-            "Initialized gitserious in {} (default -> conventional@1).\n",
+            "Initialized gitserious in {} (conventional@1).\n",
             repository_path().display()
         )
     );
     assert!(stderr.is_empty());
-    let initialized = store.initialized.borrow();
-    assert_eq!(
-        initialized
-            .as_ref()
-            .map(|(config, _)| config.active_template().as_str()),
-        Some("default")
-    );
-    assert_eq!(
-        initialized
-            .as_ref()
-            .map(|(_, lock)| lock.resolved_template().commit_types().len()),
-        Some(11)
-    );
+    let initialized = harness.project.initialized.borrow();
+    let (config, lock) = initialized.as_ref().ok_or("init did not write")?;
+    assert_eq!(config.default_taxonomy(), None);
+    assert_eq!(lock.taxonomies(), built_in_taxonomies());
+    Ok(())
 }
 
 #[test]
-fn default_init_does_not_load_unavailable_global_configuration() {
-    let store = RecordingStore::default();
-    let configuration = FakeUserStore { error: true };
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let exit = run_from(
-        ["gitserious", "init"],
-        &repository_path(),
-        &FakeLocator { error: false },
-        &store,
-        &configuration,
-        &mut stdout,
-        &mut stderr,
-    );
+fn init_reports_an_unreadable_global_configuration_without_writing() {
+    let mut harness = Harness::new(Project::default());
+    harness.global.fail = true;
 
-    assert_eq!(exit, ExitCode::SUCCESS);
-    assert!(String::from_utf8_lossy(&stdout).contains("default -> conventional@1"));
-    assert!(stderr.is_empty());
-    assert!(store.initialized.borrow().is_some());
+    let (exit, stdout, stderr) = harness.run(&["gitserious", "init"]);
+
+    assert_eq!(exit, ExitCode::FAILURE);
+    assert!(stdout.is_empty());
+    assert_eq!(stderr, "error: global configuration unavailable\n");
+    assert!(harness.project.initialized.borrow().is_none());
 }
 
 #[test]
 fn operational_failures_use_stderr_and_exit_one() {
-    let (exit, stdout, stderr, store) = run(&["gitserious", "init"], &FakeLocator { error: true });
+    let mut harness = Harness::new(Project::default());
+    harness.locator = Locator { fail: true };
+
+    let (exit, stdout, stderr) = harness.run(&["gitserious", "init"]);
 
     assert_eq!(exit, ExitCode::FAILURE);
     assert!(stdout.is_empty());
     assert_eq!(stderr, "error: repository unavailable\n");
-    assert!(store.initialized.borrow().is_none());
+    assert!(harness.project.initialized.borrow().is_none());
 }
 
 #[test]
-fn init_selects_an_explicit_installed_template() {
-    let store = RecordingStore::default();
-    let configuration = FakeUserStore { error: false };
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let exit = run_from(
-        ["gitserious", "init", "--template", "default"]
-            .into_iter()
-            .map(std::borrow::ToOwned::to_owned),
-        &repository_path().join("subdir"),
-        &FakeLocator { error: false },
-        &store,
-        &configuration,
-        &mut stdout,
-        &mut stderr,
-    );
+fn init_selects_an_explicit_installed_taxonomy() -> Result<(), Box<dyn std::error::Error>> {
+    let harness = Harness::new(Project::default());
 
-    assert_eq!(exit, ExitCode::SUCCESS);
-    assert!(String::from_utf8_lossy(&stdout).contains("(default -> conventional@1)."));
-    let initialized = store.initialized.borrow();
+    let (exit, stdout, stderr) = harness.run(&["gitserious", "init", "--taxonomy", "research"]);
+
+    assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
+    assert!(stdout.ends_with(" (research@1).\n"), "{stdout}");
+    let initialized = harness.project.initialized.borrow();
+    let (config, lock) = initialized.as_ref().ok_or("init did not write")?;
     assert_eq!(
-        initialized
-            .as_ref()
-            .map(|(config, _)| config.active_template().as_str()),
-        Some("default")
+        config.default_taxonomy(),
+        Some(&TaxonomyId::new("research")?)
     );
+    assert_eq!(lock.default_taxonomy().as_str(), "research");
+    Ok(())
 }
 
 #[test]
-fn init_rejects_an_uninstalled_template() {
-    let (exit, stdout, stderr, _) = run(
-        &["gitserious", "init", "--template", "missing"],
-        &FakeLocator { error: false },
-    );
+fn init_rejects_an_uninstalled_taxonomy() {
+    let harness = Harness::new(Project::default());
+
+    let (exit, stdout, stderr) = harness.run(&["gitserious", "init", "--taxonomy", "missing"]);
 
     assert_eq!(exit, ExitCode::FAILURE);
     assert!(stdout.is_empty());
-    assert_eq!(
-        stderr,
-        "error: template TemplateId(\"missing\") is not installed\n"
-    );
+    assert!(stderr.starts_with("error: taxonomy "), "{stderr}");
+    assert!(stderr.contains("missing"), "{stderr}");
+    assert!(stderr.ends_with(" is not installed\n"), "{stderr}");
+    assert!(harness.project.initialized.borrow().is_none());
 }
 
 #[test]
@@ -254,25 +94,32 @@ fn help_and_version_succeed_on_stdout_without_touching_adapters() {
         ),
         (&["gitserious", "--version"][..], "gitserious 0.1.0"),
     ] {
-        let (exit, stdout, stderr, store) = run(arguments, &FakeLocator { error: true });
+        let mut harness = Harness::new(Project::default());
+        harness.locator = Locator { fail: true };
+        harness.global.fail = true;
+
+        let (exit, stdout, stderr) = harness.run(arguments);
+
         assert_eq!(exit, ExitCode::SUCCESS);
-        assert!(stdout.contains(expected));
+        assert!(stdout.contains(expected), "{stdout}");
         assert!(stderr.is_empty());
-        assert!(store.initialized.borrow().is_none());
+        assert!(harness.project.initialized.borrow().is_none());
     }
 }
 
 #[test]
-fn missing_and_unknown_commands_are_usage_errors() {
+fn unknown_commands_and_extra_arguments_are_usage_errors() {
     for arguments in [
-        &["gitserious"][..],
         &["gitserious", "unknown"][..],
         &["gitserious", "init", "extra"][..],
     ] {
-        let (exit, stdout, stderr, store) = run(arguments, &FakeLocator { error: true });
-        assert_eq!(exit, ExitCode::from(2));
+        let harness = Harness::new(Project::default());
+
+        let (exit, stdout, stderr) = harness.run(arguments);
+
+        assert_eq!(exit, ExitCode::from(2), "{arguments:?}");
         assert!(stdout.is_empty());
-        assert!(stderr.contains("Usage:"));
-        assert!(store.initialized.borrow().is_none());
+        assert!(stderr.contains("Usage:"), "{stderr}");
+        assert!(harness.project.initialized.borrow().is_none());
     }
 }
