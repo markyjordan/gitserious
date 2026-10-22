@@ -1,22 +1,6 @@
 # Rust files left out of the build when this check landed. Each entry is
 # ported or deleted under https://github.com/markyjordan/gitserious/issues/97;
 # check-compiled-sources.sh fails on new offenders and on stale entries.
-crates/gitserious-app/src/commit_authoring_context.rs
-crates/gitserious-app/src/configuration_catalog.rs
-crates/gitserious-app/src/configuration_crud.rs
-crates/gitserious-app/src/configuration_editor.rs
-crates/gitserious-app/src/create_commit.rs
-crates/gitserious-app/src/custom_configuration.rs
-crates/gitserious-app/src/effective_catalog.rs
-crates/gitserious-app/src/fork_configuration.rs
-crates/gitserious-app/src/global_configuration_store.rs
-crates/gitserious-app/src/initialize_project.rs
-crates/gitserious-app/src/lib.rs
-crates/gitserious-app/src/project_config.rs
-crates/gitserious-app/src/project_configuration.rs
-crates/gitserious-app/src/project_lock.rs
-crates/gitserious-app/src/project_state.rs
-crates/gitserious-app/src/project_state_store.rs
 crates/gitserious-app/tests/commit_provenance.rs
 crates/gitserious-app/tests/commit.rs
 crates/gitserious-app/tests/configuration.rs
@@ -24,23 +8,13 @@ crates/gitserious-app/tests/init.rs
 crates/gitserious-app/tests/project_configuration.rs
 crates/gitserious-app/tests/support/commit_templates.rs
 crates/gitserious-app/tests/support/configuration_session.rs
-crates/gitserious-cli/src/config_view.rs
-crates/gitserious-cli/src/lib.rs
 crates/gitserious-cli/tests/cli.rs
 crates/gitserious-cli/tests/commit.rs
 crates/gitserious-cli/tests/config.rs
-crates/gitserious-core/src/built_in_template.rs
-crates/gitserious-core/src/commit_provenance.rs
-crates/gitserious-core/src/lib.rs
-crates/gitserious-core/src/template.rs
 crates/gitserious-core/tests/commit_provenance.rs
 crates/gitserious-core/tests/domain_bundles.rs
 crates/gitserious-core/tests/draft_responses.rs
 crates/gitserious-core/tests/taxonomy_configuration.rs
-crates/gitserious-core/tests/template.rs
-crates/gitserious-fs/src/global_configuration.rs
-crates/gitserious-fs/src/lib.rs
-crates/gitserious-fs/src/project.rs
 crates/gitserious-fs/tests/global_configuration.rs
 crates/gitserious-fs/tests/project_state.rs
 crates/gitserious-fs/tests/unit/project.rs

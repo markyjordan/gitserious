@@ -2,35 +2,18 @@
 
 #![allow(clippy::missing_errors_doc)]
 
-// Legacy template-based authoring retained in commit_authoring_context.rs.
-// mod commit_authoring_context;
 mod commit_draft_author;
 mod commit_type_catalog;
 mod commit_writer;
-// Legacy configuration modules remain in place for manual verification.
-// mod configuration_catalog;
-// mod configuration_crud;
-// mod configuration_editor;
-// mod create_commit;
-// mod custom_configuration;
+mod create_taxonomy_commit;
 mod directory_creator;
-// mod effective_catalog;
 mod ensure_storage_directory;
 mod find_commit_type;
-// mod fork_configuration;
-// mod global_configuration_store;
 mod global_path_resolver;
 mod global_paths;
-// mod initialize_project;
-mod list_commit_types;
-// mod project_config;
-// mod project_configuration;
-// mod project_lock;
-// mod project_state;
-// mod project_state_store;
-mod create_taxonomy_commit;
 mod initialize_taxonomy_project;
 mod interactive;
+mod list_commit_types;
 mod repository_locator;
 mod repository_status;
 mod resolve_global_paths;
@@ -40,14 +23,9 @@ mod taxonomy_configuration_editor;
 mod taxonomy_policy;
 mod taxonomy_ports;
 
-// pub use commit_authoring_context::{...};
 pub use commit_draft_author::{CommitDraftAuthor, CommitDraftAuthorOutcome};
 pub use commit_type_catalog::CommitTypeCatalog;
 pub use commit_writer::{CommitOutput, CommitWriter};
-pub use taxonomy_authoring_context::{
-    AuthoredCommit, CommitAuthoringContext, CommitAuthoringOutcome, CommitTaxonomy,
-};
-// Legacy catalog/CRUD/editor exports intentionally disabled.
 pub use create_taxonomy_commit::{
     CommitOutcome, CommitPolicyError, CommitPreparationResult, CreateCommitError,
     CreateCommitResult, create_commit, create_commit_with_taxonomy, prepare_commit_with_taxonomy,
@@ -66,6 +44,9 @@ pub use list_commit_types::list_commit_types;
 pub use repository_locator::{RepositoryLocator, RepositoryRoot, RepositoryRootError};
 pub use resolve_global_paths::resolve_global_paths;
 pub use storage_directory::StorageDirectory;
+pub use taxonomy_authoring_context::{
+    AuthoredCommit, CommitAuthoringContext, CommitAuthoringOutcome, CommitTaxonomy,
+};
 pub use taxonomy_configuration_editor::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
     edit_configuration, revised_taxonomy,

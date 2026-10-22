@@ -8,11 +8,7 @@ mod git;
 mod git_commit;
 mod git_status;
 mod global;
-// Legacy template/typeset persistence retained in global_configuration.rs.
-// mod global_configuration;
 mod platform;
-// Legacy project persistence retained in project.rs.
-// mod project;
 mod taxonomy_global;
 mod taxonomy_project;
 mod taxonomy_wire;

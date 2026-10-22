@@ -23,8 +23,6 @@ fn main() -> ExitCode {
     let store = TomlProjectStateStore;
     let author = RatatuiCommitDraftAuthor;
     let writer = GitCommitWriter;
-    // Legacy template/typeset editor construction retained in gitserious-tui/src/config/.
-    // let editor = RatatuiConfigurationEditor;
     let editor = RatatuiTaxonomyConfigurationEditor::with_library_path(configuration.path());
     let interactive = RatatuiInteractiveUi::with_library_path(configuration.path());
     let status = GitRepositoryStatusReader;

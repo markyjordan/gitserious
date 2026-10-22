@@ -9,12 +9,8 @@ mod built_in_domain;
 mod built_in_infra_ops;
 #[allow(dead_code)]
 mod built_in_ml_research;
-// Legacy configurable message-template renderer retained in built_in_template.rs.
-// mod built_in_template;
 mod commit_draft;
 mod commit_message;
-// Legacy selectable-template provenance retained in commit_provenance.rs.
-// mod commit_provenance;
 mod commit_type;
 #[allow(dead_code)]
 mod configuration_template;
@@ -31,8 +27,6 @@ mod schema_version;
 mod taxonomy;
 mod taxonomy_provenance;
 mod taxonomy_version;
-// Legacy configurable message-template renderer retained in template.rs.
-// mod template;
 #[allow(dead_code)]
 mod template_version;
 #[allow(dead_code)]
@@ -53,8 +47,6 @@ pub use commit_message::{
     CommitValidationReport, render_commit_message, render_commit_message_with_provenance,
     validate_commit_draft, validate_commit_draft_report,
 };
-// Legacy configuration provenance remains in commit_provenance.rs for manual inspection.
-// pub use commit_provenance::CommitProvenance;
 pub use commit_type::{CommitTypeDefinition, CommitTypeDefinitionError};
 #[allow(unused_imports)]
 pub(crate) use configuration_template::TemplateDefinition;
