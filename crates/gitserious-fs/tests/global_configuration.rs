@@ -202,3 +202,19 @@ fn symbolic_configuration_files_are_never_replaced() -> Result<(), Box<dyn Error
     assert_eq!(fs::read(&outside)?, before);
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn new_configuration_directory_requests_private_unix_permissions() -> Result<(), Box<dyn Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temporary = TempDir::new()?;
+    let store = store(temporary.path());
+    store.compare_and_swap(&GlobalConfiguration::default(), &custom_configuration()?)?;
+    let mode = fs::metadata(temporary.path().join("config"))?
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o700);
+    Ok(())
+}

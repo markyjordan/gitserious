@@ -498,6 +498,20 @@ fn non_directory_and_non_regular_known_paths_are_refused() -> Result<(), Box<dyn
 fn symlinks_at_each_protected_path_are_refused() -> Result<(), Box<dyn Error>> {
     use std::os::unix::fs::symlink;
 
+    let symlinked_directory_repository = repository()?;
+    let outside = tempfile::tempdir()?;
+    let paths = project_paths(symlinked_directory_repository.path());
+    symlink(outside.path(), &paths.local_state)?;
+    assert!(matches!(
+        init(symlinked_directory_repository.path()),
+        Err(InitializeProjectError::Store(
+            ProjectStateError::UnsafePath(_)
+        ))
+    ));
+    assert_eq!(fs::read_dir(outside.path())?.count(), 0);
+    assert!(!paths.config.exists());
+    assert!(!paths.lock.exists());
+
     for target in ["gitserious.toml", "gitserious.lock"] {
         let repository = repository()?;
         let outside = tempfile::NamedTempFile::new()?;
