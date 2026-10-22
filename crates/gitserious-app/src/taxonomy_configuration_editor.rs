@@ -209,6 +209,18 @@ impl ConfigurationSession {
         if self.catalog()?.find(taxonomy.id()).is_some() {
             return Err(format!("taxonomy {:?} already exists", taxonomy.id()));
         }
+        if let Some(original) = self
+            .global_original
+            .custom_taxonomies()
+            .iter()
+            .find(|original| original.id() == taxonomy.id())
+        {
+            return Err(format!(
+                "taxonomy {:?} was deleted in this session at version {}; save before reusing its name",
+                taxonomy.id(),
+                original.version().get()
+            ));
+        }
         let mut custom = self.global_working.custom_taxonomies().to_vec();
         custom.push(taxonomy);
         self.replace_custom(custom)
