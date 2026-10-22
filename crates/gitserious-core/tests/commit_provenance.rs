@@ -1,22 +1,17 @@
-#![cfg(any())] // Legacy four-trailer provenance contract.
-
 use std::error::Error;
 
 use gitserious_core::{
-    ChangeTypeDefinition, ChangeTypeSchema, CommitDraft, CommitProvenance, CommitScope,
-    CommitSubject, CommitTypeId, CommitValidationError, ConditionalApplicability, Description,
-    Fingerprint, FingerprintError, PropertyDefinition, PropertyKey, PropertyMultiplicity,
-    PropertyRequirement, PropertyResponse, PropertyValue, PropertyValues, ResolvedTaxonomy,
-    TaxonomyDefinition, TaxonomyId, TaxonomyVersion, TemplateDefinition, TemplateId,
-    TemplateVersion, TypesetDefinition, TypesetId, TypesetVersion, built_in_configuration,
-    render_commit_message, render_commit_message_with_provenance,
+    CommitDraft, CommitProvenance, CommitScope, CommitSubject, CommitTypeDefinition, CommitTypeId,
+    CommitValidationError, ConditionalApplicability, Description, Fingerprint, FingerprintError,
+    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyResponse,
+    PropertyValue, PropertyValues, SchemaVersion, Taxonomy, TaxonomyId, TaxonomyVersion,
+    built_in_taxonomies, render_commit_message, render_commit_message_with_provenance,
 };
 use unicode_width::UnicodeWidthStr;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
-fn schema(domain: &str, required: Option<&str>) -> Result<ResolvedTaxonomy, Box<dyn Error>> {
-    let taxonomy_id = TaxonomyId::new(domain)?;
+fn taxonomy(domain: &str, required: Option<&str>) -> Result<Taxonomy, Box<dyn Error>> {
     let properties = required
         .map(|key| -> Result<_, Box<dyn Error>> {
             Ok(PropertyDefinition::new(
@@ -29,33 +24,18 @@ fn schema(domain: &str, required: Option<&str>) -> Result<ResolvedTaxonomy, Box<
         .transpose()?
         .into_iter()
         .collect();
-    let taxonomy = TaxonomyDefinition::new(
-        taxonomy_id.clone(),
+    Ok(Taxonomy::new(
+        TaxonomyId::new(domain)?,
         TaxonomyVersion::new(2)?,
         Description::new("Domain changes.")?,
-        vec![ChangeTypeDefinition::new(
+        None,
+        vec![CommitTypeDefinition::new(
+            SchemaVersion::V1,
             CommitTypeId::new("fix")?,
-            Description::new("Correct a failure.")?,
-        )],
-    )?;
-    let typeset = TypesetDefinition::new(
-        taxonomy_id.clone(),
-        TypesetId::new("default")?,
-        TypesetVersion::new(3)?,
-        Description::new("Domain context.")?,
-        vec![ChangeTypeSchema::new(
-            CommitTypeId::new("fix")?,
+            "Correct a failure.",
             properties,
         )?],
-    )?;
-    let template = TemplateDefinition::new(
-        TemplateId::new(format!("{domain}-template"))?,
-        TemplateVersion::new(4)?,
-        Description::new("Domain template.")?,
-        taxonomy_id,
-        typeset.id().clone(),
-    );
-    Ok(ResolvedTaxonomy::resolve(&template, &taxonomy, &typeset)?)
+    )?)
 }
 
 fn draft(required: Option<(&str, &str)>) -> Result<CommitDraft, Box<dyn Error>> {
@@ -81,21 +61,21 @@ fn draft(required: Option<(&str, &str)>) -> Result<CommitDraft, Box<dyn Error>> 
 #[test]
 fn trailers_preserve_qualified_identities_versions_and_exact_order() -> TestResult {
     let digest = Fingerprint::from_bytes([0xab; 32]);
-    let resolved = schema("research", Some("cause"))?;
-    let provenance = CommitProvenance::new(resolved.clone(), digest);
-    assert_eq!(provenance.schema(), &resolved);
+    let research = taxonomy("research", Some("cause"))?;
+    let provenance = CommitProvenance::new(research.clone(), digest);
+    assert_eq!(provenance.taxonomy(), &research);
     assert_eq!(provenance.fingerprint(), digest);
     let draft = draft(Some(("cause", "The sample split leaked speaker identity.")))?;
     let before = draft.clone();
+
     let message = render_commit_message_with_provenance(&provenance, &draft)?;
+
     assert_eq!(
         message.as_str(),
         concat!(
             "fix(data-source): preserve the evidence\n\ncause:\n",
             "The sample split leaked speaker identity.\n\n",
-            "Gitserious-Template: research-template@4\n",
             "Gitserious-Taxonomy: research@2\n",
-            "Gitserious-Typeset: research/default@3\n",
             "Gitserious-Schema: sha256:abababababababababababababababababababababababababababababababab\n"
         )
     );
@@ -108,20 +88,21 @@ fn trailers_preserve_qualified_identities_versions_and_exact_order() -> TestResu
 }
 
 #[test]
-fn overlapping_types_are_validated_against_the_provenance_schema() -> TestResult {
+fn overlapping_types_are_validated_against_the_provenance_taxonomy() -> TestResult {
     let research = CommitProvenance::new(
-        schema("research", Some("cause"))?,
+        taxonomy("research", Some("cause"))?,
         Fingerprint::from_bytes([1; 32]),
     );
     let ops = CommitProvenance::new(
-        schema("ops", Some("impact"))?,
+        taxonomy("ops", Some("impact"))?,
         Fingerprint::from_bytes([2; 32]),
     );
     let draft = draft(Some(("cause", "The sample split leaked speaker identity.")))?;
     assert!(render_commit_message_with_provenance(&research, &draft).is_ok());
+
     let errors = render_commit_message_with_provenance(&ops, &draft)
         .err()
-        .ok_or("wrong schema accepted")?;
+        .ok_or("wrong taxonomy accepted")?;
     assert_eq!(
         errors.as_slice(),
         &[
@@ -129,6 +110,7 @@ fn overlapping_types_are_validated_against_the_provenance_schema() -> TestResult
             CommitValidationError::MissingRequired(PropertyKey::new("impact")?),
         ]
     );
+
     let unknown = CommitDraft::from_responses(
         CommitTypeId::new("absent")?,
         None,
@@ -141,23 +123,25 @@ fn overlapping_types_are_validated_against_the_provenance_schema() -> TestResult
     assert_eq!(
         errors.as_slice(),
         &[CommitValidationError::UnknownCommitType {
-            template: TemplateId::new("research-template")?,
+            taxonomy: TaxonomyId::new("research")?,
             actual: CommitTypeId::new("absent")?,
         }]
     );
-    assert!(errors.to_string().contains("research-template"));
+    assert!(errors.to_string().contains("research"));
     Ok(())
 }
 
 #[test]
 fn provenance_does_not_change_wrapped_body_or_breaking_change_bytes() -> TestResult {
-    let resolved = schema("research", Some("cause"))?;
-    let definition = resolved.change_types()[0].commit_type_definition();
-    let provenance = CommitProvenance::new(resolved, Fingerprint::from_bytes([0; 32]));
+    let research = taxonomy("research", Some("cause"))?;
+    let definition = research.commit_types()[0].clone();
+    let provenance = CommitProvenance::new(research, Fingerprint::from_bytes([0; 32]));
     let draft = draft(Some(("cause", &"Context 界 🦀 e\u{301} ".repeat(30))))?
         .with_breaking_change(PropertyValue::new("Clients must migrate. ".repeat(20))?);
+
     let canonical = render_commit_message(&definition, &draft)?;
     let with_provenance = render_commit_message_with_provenance(&provenance, &draft)?;
+
     assert!(
         canonical
             .as_str()
@@ -167,37 +151,41 @@ fn provenance_does_not_change_wrapped_body_or_breaking_change_bytes() -> TestRes
     assert!(
         with_provenance
             .as_str()
-            .starts_with(&format!("{canonical}\nGitserious-Template:"))
+            .starts_with(&format!("{canonical}\nGitserious-Taxonomy:"))
     );
     let tail = with_provenance
         .as_str()
         .strip_prefix(canonical.as_str())
         .ok_or("message prefix changed")?;
     let trailers: Vec<_> = tail.trim_start_matches('\n').lines().collect();
-    assert_eq!(trailers.len(), 4);
-    assert!(trailers[3].starts_with("Gitserious-Schema: sha256:"));
-    assert!(UnicodeWidthStr::width(trailers[3]) > 80);
+    assert_eq!(trailers.len(), 2);
+    assert!(trailers[1].starts_with("Gitserious-Schema: sha256:"));
+    assert!(UnicodeWidthStr::width(trailers[1]) > 80);
     Ok(())
 }
 
 #[test]
 fn empty_schemas_render_header_and_provenance_without_empty_properties() -> TestResult {
     let provenance =
-        CommitProvenance::new(schema("empty", None)?, Fingerprint::from_bytes([0; 32]));
+        CommitProvenance::new(taxonomy("empty", None)?, Fingerprint::from_bytes([0; 32]));
+
     let message = render_commit_message_with_provenance(&provenance, &draft(None)?)?;
-    assert!(message.as_str().starts_with(
-        "fix(data-source): preserve the evidence\n\nGitserious-Template: empty-template@4\n"
-    ));
-    assert_eq!(message.as_str().lines().count(), 6);
+
+    assert!(
+        message.as_str().starts_with(
+            "fix(data-source): preserve the evidence\n\nGitserious-Taxonomy: empty@2\n"
+        )
+    );
+    assert_eq!(message.as_str().lines().count(), 4);
     Ok(())
 }
 
 #[test]
 fn provenance_rendering_keeps_explicit_applicability_validation() -> TestResult {
-    let built_in = built_in_configuration();
-    let resolved =
-        ResolvedTaxonomy::resolve(built_in.template(), built_in.taxonomy(), built_in.typeset())?;
-    let provenance = CommitProvenance::new(resolved, Fingerprint::from_bytes([0; 32]));
+    let provenance = CommitProvenance::new(
+        built_in_taxonomies()[0].clone(),
+        Fingerprint::from_bytes([0; 32]),
+    );
     let mut responses = ["intent", "decision"]
         .into_iter()
         .map(|key| -> Result<_, Box<dyn Error>> {
@@ -215,6 +203,7 @@ fn provenance_rendering_keeps_explicit_applicability_validation() -> TestResult 
         responses.clone(),
     )?;
     assert!(render_commit_message_with_provenance(&provenance, &unanswered).is_err());
+
     responses.push(PropertyResponse::new(
         PropertyKey::new("constraints")?,
         None,
@@ -230,18 +219,18 @@ fn provenance_rendering_keeps_explicit_applicability_validation() -> TestResult 
     assert!(
         message
             .as_str()
-            .contains("Gitserious-Template: default@1\n")
+            .contains("Gitserious-Taxonomy: conventional@1\n")
     );
     assert!(!message.as_str().contains("constraints:"));
-    // Existing adapters can continue rendering legacy drafts during migration.
-    let legacy = CommitDraft::new(
+
+    let without_responses = CommitDraft::new(
         answered.commit_type().clone(),
         None,
         answered.subject().clone(),
         answered.properties().to_vec(),
     )?;
     assert_eq!(
-        render_commit_message_with_provenance(&provenance, &legacy)?,
+        render_commit_message_with_provenance(&provenance, &without_responses)?,
         message
     );
     Ok(())

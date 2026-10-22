@@ -1,14 +1,12 @@
-#![cfg(any())] // Legacy resolved-taxonomy response contract.
-
 use std::error::Error;
 
 use gitserious_core::{
     CommitDraft, CommitDraftError, CommitSubject, CommitTypeDefinition, CommitTypeId,
     CommitValidationError, ConditionId, ConditionalApplicability, PropertyCondition,
     PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyResponse,
-    PropertyValidationIssueKind, PropertyValue, PropertyValues, ResolvedTaxonomy, SchemaVersion,
-    ValidationSeverity, built_in_configuration, render_commit_message, validate_commit_draft,
-    validate_commit_draft_report, validate_property_responses,
+    PropertyValidationIssueKind, PropertyValue, PropertyValues, SchemaVersion, ValidationSeverity,
+    built_in_commit_types, render_commit_message, validate_commit_draft,
+    validate_commit_draft_report,
 };
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -307,11 +305,11 @@ fn repeatable_values_preserve_authored_order_and_enforce_multiplicity() -> TestR
 }
 
 #[test]
-fn draft_validation_preserves_shared_response_diagnostics_and_header_checks() -> TestResult {
-    let built_in = built_in_configuration();
-    let resolved =
-        ResolvedTaxonomy::resolve(built_in.template(), built_in.taxonomy(), built_in.typeset())?;
-    let selected = &resolved.change_types()[0];
+fn draft_validation_reports_the_header_mismatch_before_response_diagnostics() -> TestResult {
+    let feat = built_in_commit_types()
+        .iter()
+        .find(|definition| definition.id().as_str() == "feat")
+        .ok_or("conventional has no feat")?;
     let responses = vec![
         response("intent", Some("reason"), None)?,
         response(
@@ -320,29 +318,36 @@ fn draft_validation_preserves_shared_response_diagnostics_and_header_checks() ->
             Some(ConditionalApplicability::DoesNotApply),
         )?,
     ];
-    let shared = validate_property_responses(selected, &responses);
-    let draft = CommitDraft::from_responses(
+    let matching = CommitDraft::from_responses(
+        feat.id().clone(),
+        None,
+        CommitSubject::new("check schema")?,
+        responses.clone(),
+    )?;
+    let mismatched = CommitDraft::from_responses(
         CommitTypeId::new("wrong")?,
         None,
         CommitSubject::new("check schema")?,
         responses,
     )?;
-    let report = validate_commit_draft_report(&selected.commit_type_definition(), &draft);
+
+    let expected: Vec<_> = validate_commit_draft_report(feat, &matching)
+        .errors()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    let report = validate_commit_draft_report(feat, &mismatched);
+
+    assert!(!expected.is_empty());
     assert!(matches!(
         report.errors()[0],
         CommitValidationError::TypeMismatch { .. }
     ));
-    let shared_errors: Vec<_> = shared
-        .issues()
-        .iter()
-        .filter(|issue| issue.severity() == ValidationSeverity::Error)
-        .map(|issue| issue.kind().to_string())
-        .collect();
-    let draft_errors: Vec<_> = report.errors()[1..]
+    let rest: Vec<_> = report.errors()[1..]
         .iter()
         .map(ToString::to_string)
         .collect();
-    assert_eq!(shared_errors, draft_errors);
-    assert!(render_commit_message(&selected.commit_type_definition(), &draft).is_err());
+    assert_eq!(rest, expected);
+    assert!(render_commit_message(feat, &mismatched).is_err());
     Ok(())
 }

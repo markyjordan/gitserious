@@ -1,47 +1,33 @@
-#![cfg(any())] // Legacy template/typeset built-in bundle contract.
-
 use std::error::Error;
 use std::fmt::Write as _;
 
 use gitserious_core::{
     CommitDraft, CommitSubject, CommitValidationError, PropertyMultiplicity, PropertyRequirement,
-    PropertyResponse, PropertyValue, PropertyValues, ResolvedTaxonomy, TaxonomyVersion, TemplateId,
-    TemplateVersion, TypesetVersion, built_in_configuration, render_commit_message,
-    validate_commit_draft_report,
+    PropertyResponse, PropertyValue, PropertyValues, Taxonomy, TaxonomyVersion,
+    built_in_taxonomies, render_commit_message, validate_commit_draft_report,
 };
 
 type TestResult = Result<(), Box<dyn Error>>;
 
-fn resolve(id: &str) -> Result<ResolvedTaxonomy, Box<dyn Error>> {
-    let catalog = built_in_configuration();
-    let template = catalog
-        .find_template(&TemplateId::new(id)?)
-        .ok_or("missing template")?;
-    let taxonomy = catalog
-        .find_taxonomy(template.taxonomy())
-        .ok_or("missing taxonomy")?;
-    let typeset = catalog
-        .find_typeset(template.taxonomy(), template.typeset())
-        .ok_or("missing typeset")?;
-    Ok(ResolvedTaxonomy::resolve(template, taxonomy, typeset)?)
+fn built_in(id: &str) -> Result<&'static Taxonomy, Box<dyn Error>> {
+    Ok(built_in_taxonomies()
+        .iter()
+        .find(|taxonomy| taxonomy.id().as_str() == id)
+        .ok_or_else(|| format!("missing built-in taxonomy {id}"))?)
 }
 
-fn verify_bundle(id: &str, expected: &[(&str, &str)]) -> TestResult {
-    let schema = resolve(id)?;
-    assert_eq!(schema.template_id().as_str(), id);
-    assert_eq!(schema.taxonomy_id().as_str(), id);
-    assert_eq!(schema.typeset_id().as_str(), "default");
-    assert_eq!(schema.template_version(), TemplateVersion::V1);
-    assert_eq!(schema.taxonomy_version(), TaxonomyVersion::V1);
-    assert_eq!(schema.typeset_version(), TypesetVersion::V1);
-    assert!(!schema.template_description().as_str().trim().is_empty());
-    assert!(!schema.taxonomy_description().as_str().trim().is_empty());
-    assert!(!schema.typeset_description().as_str().trim().is_empty());
-    assert_eq!(schema.change_types().len(), expected.len());
-    for (change, (expected_type, expected_properties)) in schema.change_types().iter().zip(expected)
+fn verify_taxonomy(id: &str, expected: &[(&str, &str)]) -> TestResult {
+    let taxonomy = built_in(id)?;
+    assert_eq!(taxonomy.id().as_str(), id);
+    assert_eq!(taxonomy.version(), TaxonomyVersion::V1);
+    assert!(!taxonomy.description().as_str().trim().is_empty());
+    assert_eq!(taxonomy.derived_from(), None);
+    assert_eq!(taxonomy.commit_types().len(), expected.len());
+    for (change, (expected_type, expected_properties)) in
+        taxonomy.commit_types().iter().zip(expected)
     {
         assert_eq!(change.id().as_str(), *expected_type);
-        assert!(!change.description().as_str().trim().is_empty());
+        assert!(!change.description().trim().is_empty());
         let actual = change
             .properties()
             .iter()
@@ -72,17 +58,17 @@ fn verify_bundle(id: &str, expected: &[(&str, &str)]) -> TestResult {
                 ))
             })
             .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
-        let definition = change.commit_type_definition();
+        let definition = change;
         let complete = CommitDraft::from_responses(
             change.id().clone(),
             None,
             CommitSubject::new("record context")?,
             responses.clone(),
         )?;
-        let report = validate_commit_draft_report(&definition, &complete);
+        let report = validate_commit_draft_report(definition, &complete);
         assert!(!report.has_errors());
         assert!(report.warnings().is_empty());
-        let rendered = render_commit_message(&definition, &complete)?;
+        let rendered = render_commit_message(definition, &complete)?;
         let mut expected_message = format!("{expected_type}: record context\n");
         for property in change.properties() {
             write!(
@@ -93,7 +79,6 @@ fn verify_bundle(id: &str, expected: &[(&str, &str)]) -> TestResult {
             )?;
         }
         assert_eq!(rendered.as_str(), expected_message);
-        // An omitted recommendation warns; each omitted required value blocks.
         for property in change.properties() {
             let missing = CommitDraft::from_responses(
                 change.id().clone(),
@@ -105,7 +90,7 @@ fn verify_bundle(id: &str, expected: &[(&str, &str)]) -> TestResult {
                     .cloned()
                     .collect(),
             )?;
-            let report = validate_commit_draft_report(&definition, &missing);
+            let report = validate_commit_draft_report(definition, &missing);
             match property.requirement() {
                 PropertyRequirement::Required => {
                     assert_eq!(
@@ -114,12 +99,12 @@ fn verify_bundle(id: &str, expected: &[(&str, &str)]) -> TestResult {
                             property.key().clone()
                         )]
                     );
-                    assert!(render_commit_message(&definition, &missing).is_err());
+                    assert!(render_commit_message(definition, &missing).is_err());
                 }
                 PropertyRequirement::Recommended => {
                     assert!(!report.has_errors());
                     assert_eq!(report.warnings().len(), 1);
-                    assert!(render_commit_message(&definition, &missing).is_ok());
+                    assert!(render_commit_message(definition, &missing).is_ok());
                 }
                 other => return Err(format!("unexpected requirement: {other:?}").into()),
             }
@@ -129,9 +114,9 @@ fn verify_bundle(id: &str, expected: &[(&str, &str)]) -> TestResult {
 }
 
 #[test]
-fn ml_research_preserves_the_agreed_schema_and_requirement_contract() -> TestResult {
-    verify_bundle(
-        "ml-research",
+fn research_preserves_the_agreed_schema_and_requirement_contract() -> TestResult {
+    verify_taxonomy(
+        "research",
         &[
             (
                 "hypothesis",
@@ -172,57 +157,41 @@ fn ml_research_preserves_the_agreed_schema_and_requirement_contract() -> TestRes
 }
 
 #[test]
-fn domain_defaults_do_not_change_conventional_compatibility_or_order() -> TestResult {
-    let catalog = built_in_configuration();
+fn domain_taxonomies_do_not_change_conventional_compatibility_or_order() -> TestResult {
     assert_eq!(
-        catalog
-            .taxonomies()
+        built_in_taxonomies()
             .iter()
-            .map(|t| t.id().as_str())
+            .map(|taxonomy| taxonomy.id().as_str())
             .collect::<Vec<_>>(),
-        ["conventional", "ml-research", "infra-ops"]
+        ["conventional", "research", "infra-ops"]
     );
-    assert_eq!(
-        catalog
-            .templates()
-            .iter()
-            .map(|t| t.id().as_str())
-            .collect::<Vec<_>>(),
-        ["default", "ml-research", "infra-ops"]
-    );
-    let conventional = resolve("default")?;
-    assert_eq!(catalog.taxonomy().id(), conventional.taxonomy_id());
-    assert_eq!(catalog.typeset().id(), conventional.typeset_id());
-    assert_eq!(catalog.template().id(), conventional.template_id());
+    let conventional = built_in("conventional")?;
     assert_eq!(
         conventional
-            .change_types()
+            .commit_types()
             .iter()
-            .map(|t| t.id().as_str())
+            .map(|definition| definition.id().as_str())
             .collect::<Vec<_>>(),
         [
             "feat", "fix", "refactor", "perf", "test", "docs", "chore", "build", "ci", "style",
             "revert"
         ]
     );
-    let ml = resolve("ml-research")?;
-    let ml_fix = ml
-        .change_types()
-        .iter()
-        .find(|t| t.id().as_str() == "fix")
-        .ok_or("ML fix missing")?;
-    let conventional_fix = conventional
-        .change_types()
-        .iter()
-        .find(|t| t.id().as_str() == "fix")
-        .ok_or("Conventional fix missing")?;
-    assert_ne!(ml_fix.properties(), conventional_fix.properties());
+    let fix = |taxonomy: &Taxonomy| {
+        taxonomy
+            .commit_types()
+            .iter()
+            .find(|definition| definition.id().as_str() == "fix")
+            .map(|definition| definition.properties().to_vec())
+    };
+    assert!(fix(built_in("research")?).is_some());
+    assert_ne!(fix(built_in("research")?), fix(conventional));
     Ok(())
 }
 
 #[test]
 fn infra_ops_preserves_the_agreed_schema_and_requirement_contract() -> TestResult {
-    verify_bundle(
+    verify_taxonomy(
         "infra-ops",
         &[
             (

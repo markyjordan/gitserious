@@ -10,8 +10,7 @@ trap 'rm -rf "$fixture_dir"' EXIT
 repo="$fixture_dir/repo"
 deps="$fixture_dir/target/debug/deps"
 messages="$fixture_dir/messages.jsonl"
-allowlist="$repo/scripts/ci/compiled-sources-allowlist.txt"
-mkdir -p "$repo/crates/demo/src" "$repo/crates/demo/tests/unit" "$repo/scripts/ci" "$deps"
+mkdir -p "$repo/crates/demo/src" "$repo/crates/demo/tests/unit" "$deps"
 
 printf 'mod live;\n// mod dead;\n' >"$repo/crates/demo/src/lib.rs"
 printf 'pub fn live() {}\n' >"$repo/crates/demo/src/live.rs"
@@ -69,7 +68,7 @@ expect_fail_naming() {
   done
 }
 
-expect_fail_naming "offenders without an allowlist" \
+expect_fail_naming "uncompiled, gated, and unregistered files" \
   "crates/demo/src/dead.rs is left out of the build (never compiled)" \
   "crates/demo/tests/gated.rs is left out of the build (gated by cfg(any()))" \
   "crates/demo/src/lib.rs is left out of the build (commented-out mod)"
@@ -78,12 +77,9 @@ if grep -qF "crates/demo/tests/unit/mod.rs" "$fixture_dir/stderr"; then
   exit 1
 fi
 
-printf '# known offenders\n\ncrates/demo/src/dead.rs\ncrates/demo/src/lib.rs\ncrates/demo/tests/gated.rs\n' >"$allowlist"
-expect_pass "every offender allowlisted"
-
-printf 'crates/demo/src/live.rs\n' >>"$allowlist"
-expect_fail_naming "stale allowlist entry" \
-  "lists crates/demo/src/live.rs, which is no longer left out of the build"
+git -C "$repo" rm -q --cached crates/demo/src/dead.rs crates/demo/tests/gated.rs
+printf 'mod live;\n' >"$repo/crates/demo/src/lib.rs"
+expect_pass "every tracked source compiled"
 
 printf '{"reason":"build-finished","success":true}\n' >"$messages"
 expect_fail_naming "messages without workspace artifacts" "names no workspace .rmeta artifacts"
