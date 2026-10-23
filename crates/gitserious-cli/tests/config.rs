@@ -69,9 +69,7 @@ fn show_missing_taxonomy_fails_on_stderr() {
 
     assert_eq!(exit, ExitCode::FAILURE);
     assert!(stdout.is_empty());
-    assert!(stderr.starts_with("error: taxonomy "), "{stderr}");
-    assert!(stderr.contains("missing"), "{stderr}");
-    assert!(stderr.ends_with(" is not installed\n"), "{stderr}");
+    assert_eq!(stderr, "error: taxonomy \"missing\" is not installed\n");
 }
 
 #[test]

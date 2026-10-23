@@ -167,11 +167,37 @@ fn unavailable_type_is_rejected_before_terminal_authoring() -> Result<(), Box<dy
 
     assert_eq!(output.status.code(), Some(1));
     assert!(stdout(&output).is_empty());
-    let error = stderr(&output);
-    assert!(error.contains("custom"));
-    assert!(error.contains("choose one of: feat, fix"), "{error}");
-    assert!(error.contains("revert"));
-    assert!(!error.contains("interactive terminal"));
+    assert_eq!(
+        stderr(&output),
+        "error: commit type \"custom\" is unavailable; choose one of: feat, fix, refactor, \
+         perf, test, docs, chore, build, ci, style, revert\n"
+    );
+    assert!(!head_exists(repository.path())?);
+    Ok(())
+}
+
+#[test]
+fn unknown_taxonomies_are_quoted_as_typed() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    let home = Home::new()?;
+
+    let init = home.run(repository.path(), &["init", "--taxonomy", "nope"])?;
+    assert_eq!(init.status.code(), Some(1));
+    assert_eq!(stderr(&init), "error: taxonomy \"nope\" is not installed\n");
+    assert!(!repository.path().join("gitserious.toml").exists());
+
+    let show = home.run(repository.path(), &["config", "show", "nope"])?;
+    assert_eq!(show.status.code(), Some(1));
+    assert_eq!(stderr(&show), "error: taxonomy \"nope\" is not installed\n");
+
+    home.init(repository.path())?;
+    let commit = home.run(repository.path(), &["commit", "--taxonomy", "nope"])?;
+    assert_eq!(commit.status.code(), Some(1));
+    assert_eq!(
+        stderr(&commit),
+        "error: taxonomy \"nope\" is unavailable; choose one of: conventional, research, \
+         infra-ops\n"
+    );
     assert!(!head_exists(repository.path())?);
     Ok(())
 }
