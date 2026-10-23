@@ -971,7 +971,7 @@ fn build_properties(
                 issues.push(ValidationIssue {
                     field: Some(FieldId::Property(definition_index)),
                     line: first_line,
-                    message: format!("complete required property {:?}", property.key()),
+                    message: format!("complete required property \"{}\"", property.key()),
                 });
             }
             continue;
@@ -1677,6 +1677,30 @@ mod confirmation_tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn empty_required_property_is_named_by_its_key() {
+        let mut session = AuthoringSession::new(gitserious_core::built_in_commit_types(), Some(0));
+        session.handle_event(key(KeyCode::Down));
+        session.handle_event(Event::Paste("add a thing".into()));
+        session.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('s'),
+            KeyModifiers::CONTROL,
+        )));
+        let messages = session
+            .composer
+            .issues
+            .iter()
+            .map(|issue| issue.message.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            messages,
+            [
+                "complete required property \"intent\"",
+                "complete required property \"decision\"",
+            ]
+        );
     }
 
     #[test]

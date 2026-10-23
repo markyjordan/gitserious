@@ -83,6 +83,15 @@ pub enum PropertyMultiplicity {
     Multiple,
 }
 
+impl PropertyMultiplicity {
+    pub(crate) const fn values_phrase(self) -> &'static str {
+        match self {
+            Self::Single => "a single value",
+            Self::Multiple => "multiple values",
+        }
+    }
+}
+
 /// A non-empty collection of authored values with explicit multiplicity.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PropertyValues {

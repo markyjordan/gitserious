@@ -332,21 +332,21 @@ impl Display for CommitValidationError {
         match self {
             Self::UnknownCommitType { taxonomy, actual } => write!(
                 formatter,
-                "type {actual:?} is not available in taxonomy {taxonomy:?}"
+                "type \"{actual}\" is not available in taxonomy \"{taxonomy}\""
             ),
             Self::PropertyResponse(kind) => Display::fmt(kind, formatter),
             Self::TypeMismatch { expected, actual } => write!(
                 formatter,
-                "selected type {expected:?} cannot use header type {actual:?}"
+                "selected type \"{expected}\" cannot use header type \"{actual}\""
             ),
             Self::UnknownProperty(key) => {
                 write!(
                     formatter,
-                    "property {key:?} is not defined for the selected type"
+                    "property \"{key}\" is not defined for the selected type"
                 )
             }
             Self::MissingRequired(key) => {
-                write!(formatter, "complete required property {key:?}")
+                write!(formatter, "complete required property \"{key}\"")
             }
             Self::Multiplicity {
                 key,
@@ -354,7 +354,9 @@ impl Display for CommitValidationError {
                 actual,
             } => write!(
                 formatter,
-                "property {key:?} requires {expected:?} values, not {actual:?} values"
+                "property \"{key}\" takes {}, not {}",
+                expected.values_phrase(),
+                actual.values_phrase()
             ),
         }
     }
