@@ -2,9 +2,10 @@ use std::error::Error;
 
 use gitserious_core::{
     AuthoredProperty, COMMIT_MESSAGE_WIDTH, CommitDraft, CommitDraftError, CommitScope,
-    CommitScopeError, CommitSubject, CommitSubjectError, CommitTypeDefinition, CommitTypeId,
-    CommitValidationError, PropertyDefinition, PropertyKey, PropertyMultiplicity,
-    PropertyRequirement, PropertyValue, PropertyValues, SchemaVersion, built_in_commit_types,
+    CommitScopeError, CommitSubject, CommitSubjectError, CommitTypeDefinition,
+    CommitTypeDefinitionError, CommitTypeId, CommitValidationError, PropertyDefinition,
+    PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyValidationIssueKind,
+    PropertyValue, PropertyValues, SchemaVersion, TaxonomyError, TaxonomyId, built_in_commit_types,
     render_commit_message, validate_commit_draft,
 };
 use unicode_width::UnicodeWidthStr;
@@ -338,6 +339,109 @@ fn validation_reports_type_unknown_required_and_multiplicity_failures() -> Resul
             actual: PropertyMultiplicity::Multiple,
         })
     ));
+    Ok(())
+}
+
+#[test]
+fn validation_messages_quote_names_and_state_multiplicity_in_words() -> Result<(), Box<dyn Error>> {
+    let key = PropertyKey::new("intent")?;
+    let feat = CommitTypeId::new("feat")?;
+    let fix = CommitTypeId::new("fix")?;
+    let single_to_multiple = || PropertyValidationIssueKind::Multiplicity {
+        key: key.clone(),
+        expected: PropertyMultiplicity::Single,
+        actual: PropertyMultiplicity::Multiple,
+    };
+    let cases = [
+        (
+            CommitValidationError::UnknownCommitType {
+                taxonomy: TaxonomyId::new("conventional")?,
+                actual: CommitTypeId::new("deploy")?,
+            }
+            .to_string(),
+            "type \"deploy\" is not available in taxonomy \"conventional\"",
+        ),
+        (
+            CommitValidationError::TypeMismatch {
+                expected: feat.clone(),
+                actual: fix,
+            }
+            .to_string(),
+            "selected type \"feat\" cannot use header type \"fix\"",
+        ),
+        (
+            CommitValidationError::UnknownProperty(key.clone()).to_string(),
+            "property \"intent\" is not defined for the selected type",
+        ),
+        (
+            CommitValidationError::MissingRequired(key.clone()).to_string(),
+            "complete required property \"intent\"",
+        ),
+        (
+            CommitValidationError::Multiplicity {
+                key: key.clone(),
+                expected: PropertyMultiplicity::Multiple,
+                actual: PropertyMultiplicity::Single,
+            }
+            .to_string(),
+            "property \"intent\" takes multiple values, not a single value",
+        ),
+        (
+            CommitValidationError::PropertyResponse(single_to_multiple()).to_string(),
+            "property \"intent\" takes a single value, not multiple values",
+        ),
+        (
+            PropertyValidationIssueKind::UnknownProperty(key.clone()).to_string(),
+            "property \"intent\" is not defined for the selected type",
+        ),
+        (
+            PropertyValidationIssueKind::DuplicateProperty(key.clone()).to_string(),
+            "property \"intent\" has more than one response",
+        ),
+        (
+            PropertyValidationIssueKind::MissingRequired(key.clone()).to_string(),
+            "complete required property \"intent\"",
+        ),
+        (
+            PropertyValidationIssueKind::MissingRecommended(key.clone()).to_string(),
+            "consider completing recommended property \"intent\"",
+        ),
+        (
+            PropertyValidationIssueKind::MissingConditionalDecision(key.clone()).to_string(),
+            "choose whether conditional property \"intent\" applies",
+        ),
+        (
+            PropertyValidationIssueKind::MissingApplicableValue(key.clone()).to_string(),
+            "complete applicable property \"intent\"",
+        ),
+        (
+            PropertyValidationIssueKind::ValueForNonApplicableProperty(key.clone()).to_string(),
+            "remove the value for non-applicable property \"intent\"",
+        ),
+        (
+            PropertyValidationIssueKind::UnexpectedConditionalDecision(key.clone()).to_string(),
+            "property \"intent\" is not conditional",
+        ),
+        (
+            single_to_multiple().to_string(),
+            "property \"intent\" takes a single value, not multiple values",
+        ),
+        (
+            CommitDraftError::DuplicateProperty(key.clone()).to_string(),
+            "commit draft repeats property \"intent\"",
+        ),
+        (
+            CommitTypeDefinitionError::DuplicateProperty(key).to_string(),
+            "commit type definition repeats property \"intent\"",
+        ),
+        (
+            TaxonomyError::DuplicateCommitType(feat).to_string(),
+            "taxonomy repeats commit type \"feat\"",
+        ),
+    ];
+    for (actual, expected) in cases {
+        assert_eq!(actual, expected);
+    }
     Ok(())
 }
 

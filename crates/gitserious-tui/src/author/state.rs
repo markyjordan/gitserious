@@ -1680,6 +1680,30 @@ mod confirmation_tests {
     }
 
     #[test]
+    fn empty_required_property_is_named_by_its_key() {
+        let mut session = AuthoringSession::new(gitserious_core::built_in_commit_types(), Some(0));
+        session.handle_event(key(KeyCode::Down));
+        session.handle_event(Event::Paste("add a thing".into()));
+        session.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('s'),
+            KeyModifiers::CONTROL,
+        )));
+        let messages = session
+            .composer
+            .issues
+            .iter()
+            .map(|issue| issue.message.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            messages,
+            [
+                "complete required property \"intent\"",
+                "complete required property \"decision\"",
+            ]
+        );
+    }
+
+    #[test]
     fn shared_commit_dialog_preserves_change_type_behavior()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut session = AuthoringSession::new(gitserious_core::built_in_commit_types(), None);
