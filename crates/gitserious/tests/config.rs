@@ -5,6 +5,7 @@ mod support;
 use std::error::Error;
 use std::fs;
 
+use gitserious_core::ConditionId;
 use support::{Home, repository, stderr, stdout};
 
 fn write_library(home: &Home, contents: &str) -> Result<(), Box<dyn Error>> {
@@ -35,6 +36,39 @@ multiplicity = \"single\"\n\
 \n\
 [taxonomies.commit-types.properties.requirement]\n\
 level = \"required\"\n";
+
+#[test]
+fn show_prints_built_in_properties_in_lock_words() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    let home = Home::new()?;
+
+    for taxonomy in ["conventional", "research", "infra-ops"] {
+        let output = home.run(repository.path(), &["config", "show", taxonomy])?;
+        assert!(output.status.success(), "{}", stderr(&output));
+        let shown = stdout(&output);
+        let properties = shown
+            .lines()
+            .filter_map(|line| line.strip_prefix("  "))
+            .collect::<Vec<_>>();
+        assert!(!properties.is_empty(), "{shown}");
+        for property in properties {
+            let columns = property.split('\t').collect::<Vec<_>>();
+            assert_eq!(columns.len(), 3, "{taxonomy}: {property:?}");
+            let (requirement, multiplicity) = (columns[1], columns[2]);
+            let condition = requirement.strip_prefix("conditional:");
+            assert!(
+                matches!(requirement, "required" | "recommended" | "optional")
+                    || condition.is_some_and(|id| ConditionId::new(id).is_ok()),
+                "{taxonomy}: {property:?}"
+            );
+            assert!(
+                matches!(multiplicity, "single" | "multiple"),
+                "{taxonomy}: {property:?}"
+            );
+        }
+    }
+    Ok(())
+}
 
 #[test]
 fn library_taxonomy_initializes_and_commits_from_the_portable_lock() -> Result<(), Box<dyn Error>> {

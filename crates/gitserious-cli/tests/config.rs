@@ -4,7 +4,11 @@ use std::error::Error;
 use std::process::ExitCode;
 
 use gitserious_app::GlobalConfiguration;
-use gitserious_core::{TaxonomyId, built_in_taxonomies};
+use gitserious_core::{
+    CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
+    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, SchemaVersion,
+    Taxonomy, TaxonomyId, TaxonomyVersion, built_in_taxonomies,
+};
 use support::{Global, Harness, Project};
 
 fn with_team() -> Result<GlobalConfiguration, Box<dyn Error>> {
@@ -51,7 +55,12 @@ fn show_renders_a_taxonomy_in_detail() {
         conventional.description()
     )));
     assert!(
-        stdout.contains("\n  intent\tRequired\tSingle\n"),
+        stdout.contains(
+            "\nfeat\tAn addition or expansion of capability.\n\
+             \x20 intent\trequired\tsingle\n\
+             \x20 decision\trequired\tsingle\n\
+             \x20 constraints\tconditional:non-obvious-requirements\tsingle\n\n"
+        ),
         "{stdout}"
     );
     assert_eq!(
@@ -89,6 +98,82 @@ fn list_and_show_include_user_forks() -> Result<(), Box<dyn Error>> {
     assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
     assert!(shown.starts_with("team\nv1\n"));
     assert!(shown.contains("\nforked from conventional@1\n"), "{shown}");
+    Ok(())
+}
+
+#[test]
+fn show_names_every_requirement_and_multiplicity_in_lock_words() -> Result<(), Box<dyn Error>> {
+    let property = |key: &str, requirement, multiplicity| {
+        PropertyDefinition::new(
+            PropertyKey::new(key)?,
+            "Why it matters.",
+            requirement,
+            multiplicity,
+        )
+        .map_err(Box::<dyn Error>::from)
+    };
+    let platform = TaxonomyId::new("platform")?;
+    let taxonomy = Taxonomy::new(
+        platform.clone(),
+        TaxonomyVersion::V1,
+        Description::new("Platform team policy.")?,
+        None,
+        vec![CommitTypeDefinition::new(
+            SchemaVersion::V1,
+            CommitTypeId::new("deploy")?,
+            "Ship a platform change.",
+            vec![
+                property(
+                    "intent",
+                    PropertyRequirement::Required,
+                    PropertyMultiplicity::Single,
+                )?,
+                property(
+                    "services",
+                    PropertyRequirement::Recommended,
+                    PropertyMultiplicity::Multiple,
+                )?,
+                property(
+                    "ticket",
+                    PropertyRequirement::Optional,
+                    PropertyMultiplicity::Single,
+                )?,
+                property(
+                    "rollback",
+                    PropertyRequirement::Conditional(PropertyCondition::new(
+                        ConditionId::new("schema-change")?,
+                        "Required when the deploy migrates a schema.",
+                    )?),
+                    PropertyMultiplicity::Multiple,
+                )?,
+            ],
+        )?],
+    )?;
+    let mut available = GlobalConfiguration::default()
+        .available_taxonomies()
+        .to_vec();
+    available.push(platform.clone());
+    let mut harness = Harness::new(Project::default());
+    harness.global = Global::new(GlobalConfiguration::new(
+        1,
+        platform,
+        available,
+        vec![taxonomy],
+    )?);
+
+    let (exit, stdout, stderr) = harness.run(&["gitserious", "config", "show", "platform"]);
+
+    assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
+    assert_eq!(
+        stdout,
+        "platform\nv1\nPlatform team policy.\n\
+         \n\
+         deploy\tShip a platform change.\n\
+         \x20 intent\trequired\tsingle\n\
+         \x20 services\trecommended\tmultiple\n\
+         \x20 ticket\toptional\tsingle\n\
+         \x20 rollback\tconditional:schema-change\tmultiple\n"
+    );
     Ok(())
 }
 
