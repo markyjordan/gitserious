@@ -381,9 +381,10 @@ where
                             ExitCode::FAILURE
                         }
                     }
-                    None => {
-                        operational_error(stderr, format!("taxonomy {taxonomy:?} is not installed"))
-                    }
+                    None => operational_error(
+                        stderr,
+                        format!("taxonomy \"{taxonomy}\" is not installed"),
+                    ),
                 },
             }
         }
