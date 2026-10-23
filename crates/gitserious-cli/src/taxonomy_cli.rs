@@ -13,7 +13,10 @@ use gitserious_app::{
     RepositoryStatusReader, TaxonomyOrigin, create_commit_with_taxonomy, edit_configuration,
     initialize_project, run_interactive,
 };
-use gitserious_core::{CommitMessage, CommitTypeDefinition, CommitTypeId, Taxonomy, TaxonomyId};
+use gitserious_core::{
+    CommitMessage, CommitTypeDefinition, CommitTypeId, PropertyMultiplicity, PropertyRequirement,
+    Taxonomy, TaxonomyId,
+};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -412,11 +415,21 @@ fn render_taxonomy(taxonomy: &Taxonomy) -> String {
             definition.description()
         ));
         for property in definition.properties() {
+            let requirement = match property.requirement() {
+                PropertyRequirement::Required => "required".to_owned(),
+                PropertyRequirement::Recommended => "recommended".to_owned(),
+                PropertyRequirement::Optional => "optional".to_owned(),
+                PropertyRequirement::Conditional(condition) => {
+                    format!("conditional:{}", condition.id())
+                }
+            };
+            let multiplicity = match property.multiplicity() {
+                PropertyMultiplicity::Single => "single",
+                PropertyMultiplicity::Multiple => "multiple",
+            };
             output.push_str(&format!(
-                "  {}\t{:?}\t{:?}\n",
-                property.key(),
-                property.requirement(),
-                property.multiplicity()
+                "  {}\t{requirement}\t{multiplicity}\n",
+                property.key()
             ));
         }
     }
