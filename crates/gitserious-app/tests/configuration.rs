@@ -49,25 +49,46 @@ fn built_in_shadowing_and_duplicate_custom_taxonomies_are_rejected() {
         TaxonomyCatalog::new(&[custom("team"), custom("team")]).err(),
         Some(ConfigurationError::DuplicateOrReservedTaxonomy(id("team")))
     );
-    assert!(library(vec![custom("team"), custom("team")]).is_err());
+    assert_eq!(
+        library(vec![custom("team"), custom("team")]).map_err(|error| error.to_string()),
+        Err("taxonomy \"team\" repeats or shadows an existing identity".to_owned())
+    );
 }
 
 #[test]
 fn global_selection_rejects_dangling_and_duplicate_references() {
     let cases = [
-        (id("missing"), built_in_ids()),
-        (id("conventional"), vec![id("conventional"), id("missing")]),
-        (id("conventional"), vec![id("research")]),
+        (
+            id("missing"),
+            built_in_ids(),
+            "default taxonomy \"missing\" must also be available",
+        ),
+        (
+            id("conventional"),
+            vec![id("conventional"), id("missing")],
+            "taxonomy \"missing\" is not installed",
+        ),
+        (
+            id("conventional"),
+            vec![id("research")],
+            "default taxonomy \"conventional\" must also be available",
+        ),
         (
             id("conventional"),
             vec![id("conventional"), id("conventional")],
+            "available taxonomies repeat \"conventional\"",
         ),
-        (id("conventional"), Vec::new()),
+        (
+            id("conventional"),
+            Vec::new(),
+            "at least one taxonomy must be available",
+        ),
     ];
-    for (index, (default, available)) in cases.into_iter().enumerate() {
-        assert!(
-            GlobalConfiguration::new(1, default, available, Vec::new()).is_err(),
-            "case {index} was accepted"
+    for (default, available, expected) in cases {
+        assert_eq!(
+            GlobalConfiguration::new(1, default, available, Vec::new())
+                .map_err(|error| error.to_string()),
+            Err(expected.to_owned())
         );
     }
     assert!(GlobalConfiguration::new(2, id("conventional"), built_in_ids(), Vec::new()).is_err());
@@ -126,8 +147,12 @@ fn failed_create_and_update_leave_the_snapshot_unchanged() -> Result<(), Box<dyn
     let mut session = ConfigurationSession::open_global(library(vec![custom("team")])?);
     let before = session.global().clone();
 
-    assert!(session.create_taxonomy(custom("team")).is_err());
-    assert!(session.create_taxonomy(custom("research")).is_err());
+    for existing in ["team", "research"] {
+        assert_eq!(
+            session.create_taxonomy(custom(existing)),
+            Err(format!("taxonomy \"{existing}\" already exists"))
+        );
+    }
     assert!(session.update_taxonomy(custom("team")).is_err());
     assert!(session.update_taxonomy(custom("missing")).is_err());
 
@@ -245,7 +270,7 @@ fn fork_rejects_reserved_and_existing_identities_atomically() -> Result<(), Box<
         let error = session
             .fork_taxonomy(&id("research"), id(target))
             .expect_err("fork overwrote an existing identity");
-        assert!(error.contains("already exists"), "{error}");
+        assert_eq!(error, format!("taxonomy \"{target}\" already exists"));
     }
 
     assert_eq!(session.global(), &before);
@@ -288,7 +313,7 @@ fn forks_reject_unavailable_sources() {
         .fork_taxonomy(&id("missing"), id("team"))
         .expect_err("fork of a missing source was accepted");
 
-    assert!(error.contains("not installed"), "{error}");
+    assert_eq!(error, "taxonomy \"missing\" is not installed");
     assert!(!session.is_dirty());
 }
 
@@ -485,8 +510,10 @@ fn recreating_an_original_identity_cannot_reset_its_version() -> Result<(), Box<
         .fork_taxonomy(&id("research"), id("team"))
         .expect_err("forking into team reset it to version 1");
 
-    assert!(recreated.contains("version 2"), "{recreated}");
-    assert!(forked.contains("version 2"), "{forked}");
+    let expected = "taxonomy \"team\" was deleted in this session at version 2; save before \
+                    reusing its name";
+    assert_eq!(recreated, expected);
+    assert_eq!(forked, expected);
     assert_eq!(session.global(), &deleted);
     assert_eq!(session.catalog()?.find(&id("team")), None);
     Ok(())

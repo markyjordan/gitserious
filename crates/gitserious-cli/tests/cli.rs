@@ -79,9 +79,7 @@ fn init_rejects_an_uninstalled_taxonomy() {
 
     assert_eq!(exit, ExitCode::FAILURE);
     assert!(stdout.is_empty());
-    assert!(stderr.starts_with("error: taxonomy "), "{stderr}");
-    assert!(stderr.contains("missing"), "{stderr}");
-    assert!(stderr.ends_with(" is not installed\n"), "{stderr}");
+    assert_eq!(stderr, "error: taxonomy \"missing\" is not installed\n");
     assert!(harness.project.initialized.borrow().is_none());
 }
 

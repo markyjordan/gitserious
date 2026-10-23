@@ -404,11 +404,10 @@ fn requested_and_authored_types_are_defended_at_the_application_boundary()
     let harness = Harness::new(initialized_state()?);
     harness.author.result.replace(FakeAuthorResult::Valid(1));
     let feat = CommitTypeId::new("feat")?;
-    assert!(matches!(
-        harness.run(Some(&feat)),
-        Err(CreateCommitError::AuthoredTypeMismatch { expected, actual })
-            if expected == feat && actual == CommitTypeId::new("fix")?
-    ));
+    assert_eq!(
+        harness.run(Some(&feat)).map_err(|error| error.to_string()),
+        Err("authored type \"fix\" does not match requested type \"feat\"".to_owned())
+    );
     assert!(harness.writer.messages.borrow().is_empty());
 
     let harness = Harness::new(initialized_state()?);
@@ -750,10 +749,15 @@ fn taxonomy_mismatch_unknown_taxonomy_and_cross_schema_drafts_never_reach_git()
         choose: Some(TaxonomyId::new("research")?),
         ..Default::default()
     };
-    assert!(matches!(
-        harness.run_with(&author, None, Some(&fix)),
-        Err(CreateCommitError::AuthoredTaxonomyMismatch { .. })
-    ));
+    assert_eq!(
+        harness
+            .run_with(&author, None, Some(&fix))
+            .map_err(|error| error.to_string()),
+        Err(
+            "authored taxonomy \"research\" does not match requested taxonomy \"conventional\""
+                .to_owned()
+        )
+    );
 
     let author = ContextAuthor {
         forged: Some(TaxonomyId::new("global-only")?),

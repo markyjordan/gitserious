@@ -103,12 +103,12 @@ impl<L: Display, S: Display, A: Display, W: Display> Display for CreateCommitErr
                 available,
             } => write!(
                 formatter,
-                "taxonomy {requested:?} is unavailable; choose one of: {}",
+                "taxonomy \"{requested}\" is unavailable; choose one of: {}",
                 display_ids(available)
             ),
             Self::AuthoredTaxonomyMismatch { expected, actual } => write!(
                 formatter,
-                "authored taxonomy {actual:?} does not match requested taxonomy {expected:?}"
+                "authored taxonomy \"{actual}\" does not match requested taxonomy \"{expected}\""
             ),
             Self::InvalidContext(error) => formatter.write_str(error),
             Self::Repository(error) => Display::fmt(error, formatter),
@@ -120,12 +120,12 @@ impl<L: Display, S: Display, A: Display, W: Display> Display for CreateCommitErr
                 available,
             } => write!(
                 formatter,
-                "commit type {requested:?} is unavailable; choose one of: {}",
+                "commit type \"{requested}\" is unavailable; choose one of: {}",
                 display_ids(available)
             ),
             Self::AuthoredTypeMismatch { expected, actual } => write!(
                 formatter,
-                "authored type {actual:?} does not match requested type {expected:?}"
+                "authored type \"{actual}\" does not match requested type \"{expected}\""
             ),
             Self::InvalidDraft(error) => Display::fmt(error, formatter),
             Self::Writer(error) => Display::fmt(error, formatter),
