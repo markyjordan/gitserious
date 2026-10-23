@@ -134,7 +134,7 @@ impl Display for TaxonomyError {
                 formatter.write_str("taxonomy must contain at least one commit type")
             }
             Self::DuplicateCommitType(id) => {
-                write!(formatter, "taxonomy repeats commit type {id:?}")
+                write!(formatter, "taxonomy repeats commit type \"{id}\"")
             }
         }
     }

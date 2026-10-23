@@ -255,29 +255,29 @@ impl Display for PropertyValidationIssueKind {
         match self {
             Self::UnknownProperty(key) => write!(
                 formatter,
-                "property {key:?} is not defined for the selected type"
+                "property \"{key}\" is not defined for the selected type"
             ),
             Self::DuplicateProperty(key) => {
-                write!(formatter, "property {key:?} has more than one response")
+                write!(formatter, "property \"{key}\" has more than one response")
             }
-            Self::MissingRequired(key) => write!(formatter, "complete required property {key:?}"),
+            Self::MissingRequired(key) => write!(formatter, "complete required property \"{key}\""),
             Self::MissingRecommended(key) => write!(
                 formatter,
-                "consider completing recommended property {key:?}"
+                "consider completing recommended property \"{key}\""
             ),
             Self::MissingConditionalDecision(key) => write!(
                 formatter,
-                "choose whether conditional property {key:?} applies"
+                "choose whether conditional property \"{key}\" applies"
             ),
             Self::MissingApplicableValue(key) => {
-                write!(formatter, "complete applicable property {key:?}")
+                write!(formatter, "complete applicable property \"{key}\"")
             }
             Self::ValueForNonApplicableProperty(key) => write!(
                 formatter,
-                "remove the value for non-applicable property {key:?}"
+                "remove the value for non-applicable property \"{key}\""
             ),
             Self::UnexpectedConditionalDecision(key) => {
-                write!(formatter, "property {key:?} is not conditional")
+                write!(formatter, "property \"{key}\" is not conditional")
             }
             Self::Multiplicity {
                 key,
@@ -285,7 +285,9 @@ impl Display for PropertyValidationIssueKind {
                 actual,
             } => write!(
                 formatter,
-                "property {key:?} requires {expected:?} values, not {actual:?} values"
+                "property \"{key}\" takes {}, not {}",
+                expected.values_phrase(),
+                actual.values_phrase()
             ),
         }
     }

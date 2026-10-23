@@ -113,7 +113,10 @@ impl Display for CommitTypeDefinitionError {
             Self::EmptyDescription => formatter
                 .write_str("commit type definition description must contain non-whitespace text"),
             Self::DuplicateProperty(key) => {
-                write!(formatter, "commit type definition repeats property {key:?}")
+                write!(
+                    formatter,
+                    "commit type definition repeats property \"{key}\""
+                )
             }
         }
     }

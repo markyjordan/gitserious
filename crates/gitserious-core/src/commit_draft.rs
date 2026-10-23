@@ -312,7 +312,7 @@ impl Display for CommitDraftError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::DuplicateProperty(key) => {
-                write!(formatter, "commit draft repeats property {key:?}")
+                write!(formatter, "commit draft repeats property \"{key}\"")
             }
         }
     }
