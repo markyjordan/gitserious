@@ -454,18 +454,21 @@ impl Display for ConfigurationError {
             Self::DuplicateOrReservedTaxonomy(id) => {
                 write!(
                     formatter,
-                    "taxonomy {id:?} repeats or shadows an existing identity"
+                    "taxonomy \"{id}\" repeats or shadows an existing identity"
                 )
             }
             Self::EmptyAvailableTaxonomies => {
                 formatter.write_str("at least one taxonomy must be available")
             }
             Self::DuplicateAvailableTaxonomy(id) => {
-                write!(formatter, "available taxonomies repeat {id:?}")
+                write!(formatter, "available taxonomies repeat \"{id}\"")
             }
-            Self::UnknownTaxonomy(id) => write!(formatter, "taxonomy {id:?} is not installed"),
+            Self::UnknownTaxonomy(id) => write!(formatter, "taxonomy \"{id}\" is not installed"),
             Self::DefaultNotAvailable(id) => {
-                write!(formatter, "default taxonomy {id:?} must also be available")
+                write!(
+                    formatter,
+                    "default taxonomy \"{id}\" must also be available"
+                )
             }
         }
     }

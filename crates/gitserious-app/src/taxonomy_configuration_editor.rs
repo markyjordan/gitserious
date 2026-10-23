@@ -207,7 +207,7 @@ impl ConfigurationSession {
     pub fn create_taxonomy(&mut self, taxonomy: Taxonomy) -> Result<(), String> {
         self.require_global()?;
         if self.catalog()?.find(taxonomy.id()).is_some() {
-            return Err(format!("taxonomy {:?} already exists", taxonomy.id()));
+            return Err(format!("taxonomy \"{}\" already exists", taxonomy.id()));
         }
         if let Some(original) = self
             .global_original
@@ -216,7 +216,7 @@ impl ConfigurationSession {
             .find(|original| original.id() == taxonomy.id())
         {
             return Err(format!(
-                "taxonomy {:?} was deleted in this session at version {}; save before reusing its name",
+                "taxonomy \"{}\" was deleted in this session at version {}; save before reusing its name",
                 taxonomy.id(),
                 original.version().get()
             ));
@@ -231,11 +231,11 @@ impl ConfigurationSession {
         self.require_global()?;
         let catalog = self.catalog()?;
         if catalog.find(&target).is_some() {
-            return Err(format!("taxonomy {target:?} already exists"));
+            return Err(format!("taxonomy \"{target}\" already exists"));
         }
         let fork = catalog
             .find(source)
-            .ok_or_else(|| format!("taxonomy {source:?} is not installed"))?
+            .ok_or_else(|| format!("taxonomy \"{source}\" is not installed"))?
             .fork(target);
         self.create_taxonomy(fork)
     }
