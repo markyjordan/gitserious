@@ -971,7 +971,7 @@ fn build_properties(
                 issues.push(ValidationIssue {
                     field: Some(FieldId::Property(definition_index)),
                     line: first_line,
-                    message: format!("complete required property {:?}", property.key()),
+                    message: format!("complete required property \"{}\"", property.key()),
                 });
             }
             continue;
