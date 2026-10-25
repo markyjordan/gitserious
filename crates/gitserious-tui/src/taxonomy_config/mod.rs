@@ -2324,7 +2324,7 @@ impl State {
                 vec![
                     ("esc", "back"),
                     ("↑/↓", "move"),
-                    ("←/→", "policy"),
+                    ("←/→", "choice"),
                     ("ctrl+s", "complete"),
                 ]
             }
@@ -3151,12 +3151,16 @@ fn project_guidance(status: &str) -> &'static str {
     }
 }
 
-const fn requirement_label(value: &PropertyRequirement) -> &'static str {
-    match value {
+fn policy_label(requirement: &PropertyRequirement, multiplicity: PropertyMultiplicity) -> String {
+    let requirement = match requirement {
         PropertyRequirement::Required => "required",
         PropertyRequirement::Recommended => "recommended",
         PropertyRequirement::Optional => "optional",
         PropertyRequirement::Conditional(_) => "conditional",
+    };
+    match multiplicity {
+        PropertyMultiplicity::Single => requirement.to_owned(),
+        PropertyMultiplicity::Multiple => format!("{requirement}, multiple"),
     }
 }
 

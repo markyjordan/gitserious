@@ -5,7 +5,7 @@ use ratatui::layout::{Constraint, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Cell, List, ListItem, ListState, Paragraph, Row, Table, Wrap};
 
-use super::{contains, pane_columns, requirement_label};
+use super::{contains, pane_columns, policy_label};
 use crate::theme::{
     focus_frame_style, frame_style, row_style, section_heading_style, selected_style,
 };
@@ -538,7 +538,7 @@ impl LibraryViewState {
         let requirement_width = definition
             .properties()
             .iter()
-            .map(|property| requirement_label(property.requirement()).len())
+            .map(|property| policy_label(property.requirement(), property.multiplicity()).len())
             .max()
             .unwrap_or(1);
         let requirement_width = u16::try_from(requirement_width).unwrap_or(u16::MAX);
@@ -553,7 +553,10 @@ impl LibraryViewState {
             .map(|property| {
                 Row::new(vec![
                     Cell::from(property.key().as_str()),
-                    Cell::from(requirement_label(property.requirement())),
+                    Cell::from(policy_label(
+                        property.requirement(),
+                        property.multiplicity(),
+                    )),
                 ])
             })
             .collect::<Vec<_>>();
