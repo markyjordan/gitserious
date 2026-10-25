@@ -797,6 +797,52 @@ mod tests {
     }
 
     #[test]
+    fn policy_arrows_reach_all_four_levels_and_left_undoes_right()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut property = PropertyEditorState::new(None, PropertyDraft::empty());
+        property.focus = PropertyFocus::Policy;
+        let mut walk = |code| {
+            (0..4)
+                .map(|_| {
+                    property.key(key(code));
+                    property.policy.label()
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            walk(KeyCode::Right),
+            ["recommended", "conditional", "optional", "required"]
+        );
+        assert_eq!(
+            walk(KeyCode::Left),
+            ["optional", "conditional", "recommended", "required"]
+        );
+
+        let mut loaded = PropertyEditorState::new(
+            Some(0),
+            PropertyDraft {
+                key: "notes".into(),
+                description: "Free-form notes".into(),
+                requirement: PropertyRequirement::Optional,
+                multiplicity: PropertyMultiplicity::Single,
+            },
+        );
+        loaded.focus = PropertyFocus::Policy;
+        for _ in 0..4 {
+            let start = loaded.policy;
+            loaded.key(key(KeyCode::Left));
+            loaded.key(key(KeyCode::Right));
+            assert_eq!(loaded.policy, start);
+            loaded.key(key(KeyCode::Right));
+        }
+        assert_eq!(
+            loaded.candidate()?.requirement,
+            PropertyRequirement::Optional
+        );
+        Ok(())
+    }
+
+    #[test]
     fn conditional_property_fits_compact_and_wide_views_with_a_single_cursor()
     -> Result<(), Box<dyn std::error::Error>> {
         let draft = PropertyDraft {
