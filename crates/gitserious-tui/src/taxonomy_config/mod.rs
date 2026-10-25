@@ -3024,7 +3024,11 @@ impl State {
             .session(destination)
             .and_then(|session| session.review().ok())
             .unwrap_or_else(|| "Configuration cannot be reviewed.".into());
-        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(hanging_wrap(
+            &text,
+            usize::from(area.width.saturating_sub(2)),
+        ))
+        .wrap(Wrap { trim: false });
         let viewport_height = area.height.saturating_sub(2);
         let total_rows =
             u16::try_from(paragraph.line_count(area.width.saturating_sub(2))).unwrap_or(u16::MAX);
@@ -3065,6 +3069,41 @@ impl State {
             ),
         );
     }
+}
+
+/// Wraps each line of `text` at spaces to `width` columns. Wrapped rows start under the line's
+/// subject: past its leading spaces and, when a gap of two or more spaces follows its first word,
+/// past that gap too. A word wider than its column is left for the paragraph to break.
+fn hanging_wrap(text: &str, width: usize) -> Vec<Line<'static>> {
+    let mut rows = Vec::new();
+    for line in text.lines() {
+        let body = line.trim_start();
+        let mut hang = line.len() - body.len();
+        if let Some(word) = body.find(' ')
+            && body[word..].starts_with("  ")
+        {
+            hang += body.len() - body[word..].trim_start().len();
+        }
+        let (subject, rest) = line.split_at(hang);
+        let indent = " ".repeat(Span::raw(subject).width());
+        let column = width.saturating_sub(indent.len());
+        let mut row = subject.to_owned();
+        let mut used = 0;
+        for word in rest.split(' ') {
+            let word_width = Span::raw(word).width();
+            if used > 0 && used + 1 + word_width > column {
+                rows.push(Line::from(std::mem::replace(&mut row, indent.clone())));
+                used = 0;
+            } else if used > 0 {
+                row.push(' ');
+                used += 1;
+            }
+            row.push_str(word);
+            used += word_width;
+        }
+        rows.push(Line::from(row));
+    }
+    rows
 }
 
 fn pane_columns(area: Rect) -> std::rc::Rc<[Rect]> {
@@ -5930,6 +5969,65 @@ mod tests {
         assert_eq!(workspace.saves.get(), 0);
         state.handle_event(key(KeyCode::Enter), &workspace);
         assert_eq!(workspace.saves.get(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn wrapped_review_lines_start_under_their_subject() -> Result<(), Box<dyn std::error::Error>> {
+        let types =
+            |ids: &[&str]| -> Result<Vec<CommitTypeDefinition>, Box<dyn std::error::Error>> {
+                ids.iter()
+                    .map(|id| {
+                        Ok(CommitTypeDefinition::new(
+                            SchemaVersion::new(1)?,
+                            CommitTypeId::new(*id)?,
+                            "A change",
+                            Vec::new(),
+                        )?)
+                    })
+                    .collect()
+            };
+        let team = Taxonomy::new(
+            TaxonomyId::new("team")?,
+            TaxonomyVersion::new(1)?,
+            Description::new("Team taxonomy")?,
+            None,
+            types(&["release", "fix", "hotfix"])?,
+        )?;
+        let conventional = TaxonomyId::new("conventional")?;
+        let workspace = Workspace::new();
+        *workspace.global.borrow_mut() = ConfigurationSession::open_global(
+            GlobalConfiguration::new(1, conventional.clone(), vec![conventional], vec![team])?,
+        );
+        let mut state = State::new(&workspace);
+        state.active_scope = ConfigurationDestination::Global;
+        state
+            .global
+            .as_mut()
+            .ok_or("missing global")?
+            .update_taxonomy(
+                &TaxonomyId::new("team")?,
+                Description::new("Team changes")?,
+                types(&["fix", "release"])?,
+            )?;
+        state.open_review();
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        terminal.draw(|frame| state.render(frame))?;
+
+        let frame = text(&terminal).chars().collect::<Vec<_>>();
+        let rows = frame
+            .chunks(usize::from(MINIMUM_WIDTH))
+            .map(|row| row.iter().collect::<String>())
+            .collect::<Vec<_>>();
+        let edited = rows
+            .iter()
+            .position(|row| row.contains("│  edited   team v1 -> v2: description; type hotfix"))
+            .ok_or("the edited line is not on screen")?;
+        assert!(
+            rows[edited + 1].contains("│           removed; types reordered "),
+            "the wrapped row does not start under the taxonomy id: {:?}",
+            rows[edited + 1]
+        );
         Ok(())
     }
 

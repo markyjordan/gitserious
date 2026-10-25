@@ -19,6 +19,7 @@ mod repository_status;
 mod resolve_global_paths;
 mod storage_directory;
 mod taxonomy_authoring_context;
+mod taxonomy_changes;
 mod taxonomy_configuration_editor;
 mod taxonomy_policy;
 mod taxonomy_ports;
