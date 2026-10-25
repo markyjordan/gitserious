@@ -2135,23 +2135,22 @@ impl State {
                             "A taxonomy named \"{id}\" already exists in the Library."
                         ));
                     }
-                    session.create_taxonomy(taxonomy)
+                    session.create_taxonomy(taxonomy).map(|()| true)
                 }
-                EditorMode::Edit => session
-                    .update_taxonomy(
-                        &id,
-                        taxonomy.description().clone(),
-                        taxonomy.commit_types().to_vec(),
-                    )
-                    .map(|_| ()),
+                EditorMode::Edit => session.update_taxonomy(
+                    &id,
+                    taxonomy.description().clone(),
+                    taxonomy.commit_types().to_vec(),
+                ),
             }
-            .map(|()| id)
+            .map(|staged| staged.then_some(id))
         });
         match result {
-            Ok(id) => {
+            Ok(staged) => {
                 self.leave_create_taxonomy();
-                self.status = Some(Notice::Info(format!(
-                    "Staged taxonomy \"{id}\". Ctrl+S reviews before applying."
+                self.status = Some(Notice::Info(staged.map_or_else(
+                    || "No changes to stage.".into(),
+                    |id| format!("Staged taxonomy \"{id}\". Ctrl+S reviews before applying."),
                 )));
             }
             Err(error) => self.status = Some(Notice::Error(error)),
