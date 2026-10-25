@@ -194,6 +194,75 @@ fn failed_create_and_update_leave_the_snapshot_unchanged() -> Result<(), Box<dyn
 }
 
 #[test]
+fn updates_that_change_nothing_leave_the_library_unchanged() -> Result<(), Box<dyn Error>> {
+    let original = custom("team");
+    let mut session = ConfigurationSession::open_global(library(vec![original.clone()])?);
+    let before = session.global().clone();
+
+    assert!(!stage(&mut session, &original)?);
+
+    assert_eq!(session.global(), &before);
+    assert!(!session.is_dirty());
+    Ok(())
+}
+
+#[test]
+fn edits_in_one_session_advance_the_version_once() -> Result<(), Box<dyn Error>> {
+    let original = custom("team");
+    let mut session = ConfigurationSession::open_global(library(vec![original.clone()])?);
+
+    for description in ["First revision.", "Second revision."] {
+        assert!(stage(&mut session, &at_version(&original, 1, description))?);
+        assert_eq!(
+            session.catalog()?.find(&id("team")),
+            Some(&at_version(&original, 2, description))
+        );
+    }
+    assert!(stage(&mut session, &original)?);
+
+    assert_eq!(session.catalog()?.find(&id("team")), Some(&original));
+    assert!(!session.is_dirty());
+    Ok(())
+}
+
+#[test]
+fn each_applied_edit_advances_the_version_by_one() -> Result<(), Box<dyn Error>> {
+    let original = custom("team");
+    let store = FakeGlobalStore::new(library(vec![original.clone()])?);
+
+    edit_global(&store, |workspace| {
+        let mut session = workspace.load(ConfigurationDestination::Global)?;
+        stage(&mut session, &at_version(&original, 1, "First revision."))?;
+        let mut session = workspace.save(&session)?;
+        stage(&mut session, &at_version(&original, 1, "Second revision."))?;
+        stage(&mut session, &at_version(&original, 1, "Third revision."))?;
+        workspace.save(&session).map(|_| ())
+    })?;
+
+    assert_eq!(
+        store.current.borrow().custom_taxonomies(),
+        [at_version(&original, 3, "Third revision.")]
+    );
+    Ok(())
+}
+
+#[test]
+fn edits_to_a_taxonomy_created_in_the_session_keep_its_first_version() -> Result<(), Box<dyn Error>>
+{
+    let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
+    session.fork_taxonomy(&id("conventional"), id("team"))?;
+    let fork = custom("team");
+
+    assert!(stage(&mut session, &at_version(&fork, 1, "Team policy."))?);
+
+    assert_eq!(
+        session.catalog()?.find(&id("team")),
+        Some(&at_version(&fork, 1, "Team policy."))
+    );
+    Ok(())
+}
+
+#[test]
 fn deletes_protect_selected_and_built_in_taxonomies_then_succeed() -> Result<(), Box<dyn Error>> {
     let mut available = built_in_ids();
     available.push(id("team"));
