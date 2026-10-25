@@ -148,3 +148,226 @@ impl Display for EditedPart<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use gitserious_core::{
+        Description, PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement,
+        SchemaVersion, TaxonomyId, TaxonomyVersion,
+    };
+
+    use super::*;
+
+    type TestResult = Result<(), Box<dyn Error>>;
+
+    fn commit_type(id: &str, description: &str) -> Result<CommitTypeDefinition, Box<dyn Error>> {
+        Ok(CommitTypeDefinition::new(
+            SchemaVersion::V1,
+            CommitTypeId::new(id)?,
+            description,
+            Vec::new(),
+        )?)
+    }
+
+    fn taxonomy(
+        id: &str,
+        version: u16,
+        description: &str,
+        types: Vec<CommitTypeDefinition>,
+    ) -> Result<Taxonomy, Box<dyn Error>> {
+        Ok(Taxonomy::new(
+            TaxonomyId::new(id)?,
+            TaxonomyVersion::new(version)?,
+            Description::new(description)?,
+            None,
+            types,
+        )?)
+    }
+
+    fn types(ids: &[&str]) -> Result<Vec<CommitTypeDefinition>, Box<dyn Error>> {
+        ids.iter().map(|id| commit_type(id, "A change.")).collect()
+    }
+
+    fn library(custom: Vec<Taxonomy>) -> Result<GlobalConfiguration, Box<dyn Error>> {
+        let conventional = TaxonomyId::new("conventional")?;
+        Ok(GlobalConfiguration::new(
+            1,
+            conventional.clone(),
+            vec![conventional],
+            custom,
+        )?)
+    }
+
+    fn id(value: &str) -> Result<CommitTypeId, Box<dyn Error>> {
+        Ok(CommitTypeId::new(value)?)
+    }
+
+    #[test]
+    fn an_unchanged_library_has_no_changes() -> TestResult {
+        let original = library(vec![taxonomy("team", 1, "Team.", types(&["release"])?)?])?;
+
+        assert!(taxonomy_changes(&original, &original.clone()).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn changes_list_working_order_then_deleted_in_original_order() -> TestResult {
+        let kept = taxonomy("kept", 1, "Kept.", types(&["release"])?)?;
+        let gone = taxonomy("gone", 2, "Gone.", types(&["release"])?)?;
+        let before = taxonomy("edited", 3, "Before.", types(&["release"])?)?;
+        let old = taxonomy("old", 1, "Old.", types(&["release"])?)?;
+        let after = taxonomy("edited", 4, "After.", types(&["release"])?)?;
+        let new = taxonomy("new", 1, "New.", types(&["release"])?)?;
+        let original = library(vec![
+            kept.clone(),
+            gone.clone(),
+            before.clone(),
+            old.clone(),
+        ])?;
+        let working = library(vec![after.clone(), kept, new.clone()])?;
+
+        assert_eq!(
+            taxonomy_changes(&original, &working),
+            [
+                TaxonomyChange::Edited {
+                    before: &before,
+                    after: &after,
+                    parts: vec![EditedPart::Description],
+                },
+                TaxonomyChange::Created(&new),
+                TaxonomyChange::Deleted(&gone),
+                TaxonomyChange::Deleted(&old),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_edit_names_each_changed_part() -> TestResult {
+        let before = taxonomy("team", 1, "Before.", types(&["release", "fix", "chore"])?)?;
+        let after = taxonomy(
+            "team",
+            2,
+            "After.",
+            vec![
+                commit_type("release", "A change.")?,
+                commit_type("fix", "A repair.")?,
+                commit_type("hotfix", "A change.")?,
+            ],
+        )?;
+        let (original, working) = (library(vec![before])?, library(vec![after])?);
+
+        let changes = taxonomy_changes(&original, &working);
+
+        let [TaxonomyChange::Edited { parts, .. }] = changes.as_slice() else {
+            return Err(format!("expected one edit, got {changes:?}").into());
+        };
+        assert_eq!(
+            parts,
+            &[
+                EditedPart::Description,
+                EditedPart::TypeChanged(&id("fix")?),
+                EditedPart::TypeAdded(&id("hotfix")?),
+                EditedPart::TypeRemoved(&id("chore")?),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_new_property_changes_its_type() -> TestResult {
+        let before = taxonomy("team", 1, "Team.", types(&["release"])?)?;
+        let property = PropertyDefinition::new(
+            PropertyKey::new("summary")?,
+            "What shipped",
+            PropertyRequirement::Required,
+            PropertyMultiplicity::Single,
+        )?;
+        let release = CommitTypeDefinition::new(
+            SchemaVersion::V1,
+            id("release")?,
+            "A change.",
+            vec![property],
+        )?;
+        let after = taxonomy("team", 2, "Team.", vec![release])?;
+        let (original, working) = (library(vec![before])?, library(vec![after])?);
+
+        let changes = taxonomy_changes(&original, &working);
+
+        let [TaxonomyChange::Edited { parts, .. }] = changes.as_slice() else {
+            return Err(format!("expected one edit, got {changes:?}").into());
+        };
+        assert_eq!(parts, &[EditedPart::TypeChanged(&id("release")?)]);
+        Ok(())
+    }
+
+    #[test]
+    fn types_reorder_only_when_the_kept_types_change_order() -> TestResult {
+        let before = taxonomy("team", 1, "Team.", types(&["a", "b", "c"])?)?;
+        let shifted = taxonomy("team", 2, "Team.", types(&["new", "a", "c"])?)?;
+        let swapped = taxonomy("team", 2, "Team.", types(&["b", "a", "c"])?)?;
+        let original = library(vec![before])?;
+        let parts = |after: &Taxonomy| -> Result<String, Box<dyn Error>> {
+            let working = library(vec![after.clone()])?;
+            Ok(taxonomy_changes(&original, &working)
+                .iter()
+                .map(ToString::to_string)
+                .collect())
+        };
+
+        assert_eq!(
+            parts(&shifted)?,
+            "edited   team v1 -> v2: type new added; type b removed"
+        );
+        assert_eq!(parts(&swapped)?, "edited   team v1 -> v2: types reordered");
+        Ok(())
+    }
+
+    #[test]
+    fn changes_render_as_words() -> TestResult {
+        let one = taxonomy("one", 1, "One.", types(&["release"])?)?;
+        let two = taxonomy("two", 3, "Two.", types(&["release", "fix"])?)?;
+        let fix = id("fix")?;
+        let hotfix = id("hotfix")?;
+        let release = id("release")?;
+        let lines = [
+            TaxonomyChange::Created(&one),
+            TaxonomyChange::Created(&two),
+            TaxonomyChange::Edited {
+                before: &one,
+                after: &two,
+                parts: vec![
+                    EditedPart::Description,
+                    EditedPart::TypeChanged(&fix),
+                    EditedPart::TypeAdded(&hotfix),
+                    EditedPart::TypeRemoved(&release),
+                    EditedPart::TypesReordered,
+                ],
+            },
+            TaxonomyChange::Edited {
+                before: &two,
+                after: &two,
+                parts: vec![EditedPart::Description],
+            },
+            TaxonomyChange::Deleted(&two),
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+
+        assert_eq!(
+            lines,
+            [
+                "created  one v1, 1 type",
+                "created  two v3, 2 types",
+                "edited   two v1 -> v3: description; type fix changed; type hotfix added; \
+                 type release removed; types reordered",
+                "edited   two v3: description",
+                "deleted  two v3",
+            ]
+        );
+        Ok(())
+    }
+}

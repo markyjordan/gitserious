@@ -592,3 +592,52 @@ fn recreating_an_original_identity_cannot_reset_its_version() -> Result<(), Box<
     assert_eq!(session.catalog()?.find(&id("team")), None);
     Ok(())
 }
+
+#[test]
+fn review_names_an_edited_taxonomy_and_what_changed() -> Result<(), Box<dyn Error>> {
+    let original = custom("team");
+    let mut session = ConfigurationSession::open_global(library(vec![original.clone()])?);
+
+    stage(&mut session, &at_version(&original, 1, "Team policy."))?;
+
+    assert_eq!(
+        session.review()?,
+        "GLOBAL CONFIGURATION\n\n\
+         Taxonomies\n  edited   team v1 -> v2: description\n\n\
+         Default\n  conventional\n\n\
+         Available\n  conventional, research, infra-ops"
+    );
+    Ok(())
+}
+
+#[test]
+fn review_names_a_created_and_a_deleted_taxonomy_in_one_session() -> Result<(), Box<dyn Error>> {
+    let mut session = ConfigurationSession::open_global(library(vec![custom("team")])?);
+
+    session.create_taxonomy(custom("other"))?;
+    session.delete_taxonomy(&id("team"))?;
+
+    let types = custom("other").commit_types().len();
+    assert!(session.review()?.contains(&format!(
+        "Taxonomies\n  created  other v1, {types} types\n  deleted  team v1\n\n"
+    )));
+    Ok(())
+}
+
+#[test]
+fn review_omits_taxonomies_when_only_the_selection_changed() -> Result<(), Box<dyn Error>> {
+    let original = custom("team");
+    let mut session = ConfigurationSession::open_global(library(vec![original.clone()])?);
+
+    stage(&mut session, &at_version(&original, 1, "Team policy."))?;
+    stage(&mut session, &original)?;
+    session.configure_global(id("research"), built_in_ids())?;
+
+    assert_eq!(
+        session.review()?,
+        "GLOBAL CONFIGURATION\n\n\
+         Default\n  conventional -> research\n\n\
+         Available\n  conventional, research, infra-ops"
+    );
+    Ok(())
+}
