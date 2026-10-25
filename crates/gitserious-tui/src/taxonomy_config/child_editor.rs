@@ -412,6 +412,11 @@ impl PropertyEditorState {
             .map(|definition| PropertyDraft::from(&definition))
     }
 
+    #[cfg(test)]
+    pub fn policy_labels(&self) -> [&'static str; 2] {
+        [self.policy.label(), multiplicity_label(self.multiplicity)]
+    }
+
     pub fn is_dirty(&self) -> bool {
         PropertyFields {
             name: self.text.name.lines().join("\n"),

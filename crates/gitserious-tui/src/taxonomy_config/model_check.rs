@@ -1,16 +1,20 @@
 //! Bounded exhaustive check of the configuration editor's reachable states.
 //!
-//! The check drives the real [`State`] through every sequence of keys from [`INPUTS`], up to each
-//! seed's depth bound, and checks every entry of [`PROPERTIES`] on every transition, the seed's
-//! own keys included. A state is rebuilt by replaying its keys into a fresh fake workspace and
+//! The check drives the real [`State`] through every sequence of keys from each seed's
+//! [`Alphabet`], up to the seed's depth bound, and checks every entry of [`PROPERTIES`] on every
+//! transition, the seed's own keys included. A seed explores every key in [`INPUTS`] unless it
+//! names a smaller alphabet, which lets it reach deeper for the same number of replays. After a
+//! seed's exploration, each of its [`Reach`] goals must have seen every expected value in some
+//! explored state. A state is rebuilt by replaying its keys into a fresh fake workspace and
 //! rendering into a [`TestBackend`] after every event, as the terminal loop does. Two states merge
 //! only when their [`Snapshot`]s print the same, and properties read nothing but snapshots, so a
 //! merge never hides a difference that a property can see. A key that quits the editor ends its
 //! branch, and the properties judge it as a transition that drops every draft. Exploration is
 //! breadth first, so a counterexample is a shortest one for its seed.
 //!
-//! To add a property, write a [`Check`], add it to [`PROPERTIES`], and add to [`Snapshot`] any
-//! field it reads that the snapshot does not hold yet.
+//! To add a property of every transition, write a [`Check`] and add it to [`PROPERTIES`]. To add a
+//! property of what a seed can reach, add a [`Reach`] to that seed. Add to [`Snapshot`] any field
+//! either one reads that the snapshot does not hold yet.
 //!
 //! P1, no silent draft loss. A taxonomy draft, type editor, property editor, or taxonomy metadata
 //! form with unsaved changes closes only after the user confirms the discard or after its changes
@@ -26,21 +30,31 @@
 //! as `created`, `edited`, or `deleted` followed by its id. Without it, a user applies a change
 //! that the review did not show.
 //!
+//! P4, the property editor reaches every policy. From a new property editor, the arrow keys and
+//! enter alone set the editor to all eight pairs of a requirement level (required, recommended,
+//! conditional, optional) and a multiplicity (single, multiple). Without it, a property needs a
+//! hand edit of `config.toml` to take a level or multiplicity the editor cannot set.
+//!
 //! Scope limits:
 //! - Only the keyboard events in [`INPUTS`]. Mouse, paste, and resize events are out of scope.
 //! - One terminal of `MINIMUM_WIDTH` by `MINIMUM_HEIGHT` cells. Mouse hit areas that rendering
 //!   records are not projected.
-//! - The property editor's policy, multiplicity, and scroll position and the child editors'
-//!   initial drafts are private to `child_editor`. The snapshot sees them only through the rendered
-//!   frame and each editor's `is_dirty`.
+//! - The property editor's scroll position and the child editors' initial drafts are private to
+//!   `child_editor`. The snapshot sees them only through the rendered frame and each editor's
+//!   `is_dirty`. It reads the property editor's policy and multiplicity through a test-only view
+//!   that returns the labels the editor renders.
 //! - `State` runs standalone, not inside the unified shell, so `ConfigView::request_leave_editor`
 //!   is not driven.
 //! - Workspace saves always succeed, and the project starts uninitialized.
 //! - P3 reads the frame, so it sees only the review rows that fit the viewport. Every seed's review
 //!   fits without scrolling.
-//! - A pass covers the six seeds to their depth bounds, not every reachable state. Every replay
+//! - P4 explores only the up, down, left, right, and enter keys from one new property editor. It
+//!   reads the editor's policy and multiplicity, not the frame, because at the minimum size a
+//!   conditional property's Policy and Multiplicity rows never fit the viewport together.
+//! - A pass covers the seven seeds to their depth bounds, not every reachable state. Every replay
 //!   renders each frame in a debug build, so the bounds keep the check near 45 seconds on six
-//!   cores. The editor seeds get the deeper bound because P1 lives in the editors.
+//!   cores. The editor seeds get the deeper bound because P1 lives in the editors. The P4 seed's
+//!   bound is deep enough to expand every state its five keys reach.
 
 use std::collections::HashSet;
 use std::num::NonZeroUsize;
@@ -104,6 +118,22 @@ struct Seed {
     keys: &'static [&'static str],
     ready: fn(&Snapshot) -> bool,
     depth: usize,
+    alphabet: Alphabet,
+    reaches: &'static [Reach],
+}
+
+/// The keys a seed explores after its own keys.
+enum Alphabet {
+    Every,
+    Only(&'static [&'static str]),
+}
+
+/// A property of what a seed can reach: every value in `expected` is what `observe` returns for
+/// at least one state explored from the seed.
+struct Reach {
+    name: &'static str,
+    observe: fn(&Snapshot) -> Option<String>,
+    expected: &'static [&'static str],
 }
 
 const SEEDS: &[Seed] = &[
@@ -113,6 +143,8 @@ const SEEDS: &[Seed] = &[
         keys: &["down", "right"],
         ready: at_taxonomy_list,
         depth: 2,
+        alphabet: Alphabet::Every,
+        reaches: &[],
     },
     Seed {
         name: "team at Library",
@@ -120,6 +152,8 @@ const SEEDS: &[Seed] = &[
         keys: &["down", "right", "down", "down", "down"],
         ready: team_selected,
         depth: 2,
+        alphabet: Alphabet::Every,
+        reaches: &[],
     },
     Seed {
         name: "built-ins with the create editor open",
@@ -127,6 +161,8 @@ const SEEDS: &[Seed] = &[
         keys: &["down", "right", "n"],
         ready: creating,
         depth: 3,
+        alphabet: Alphabet::Every,
+        reaches: &[],
     },
     Seed {
         name: "team with the edit editor open",
@@ -134,6 +170,8 @@ const SEEDS: &[Seed] = &[
         keys: &["down", "right", "down", "down", "down", "e"],
         ready: editing,
         depth: 3,
+        alphabet: Alphabet::Every,
+        reaches: &[],
     },
     Seed {
         name: "team edited at Library",
@@ -143,6 +181,8 @@ const SEEDS: &[Seed] = &[
         ],
         ready: team_selected,
         depth: 2,
+        alphabet: Alphabet::Every,
+        reaches: &[],
     },
     Seed {
         name: "a fork created and team deleted at Library",
@@ -152,6 +192,32 @@ const SEEDS: &[Seed] = &[
         ],
         ready: at_taxonomy_list,
         depth: 2,
+        alphabet: Alphabet::Every,
+        reaches: &[],
+    },
+    Seed {
+        name: "team with a new property editor open",
+        workspace: team_library,
+        keys: &[
+            "down", "right", "down", "down", "down", "e", "down", "enter", "ctrl+n",
+        ],
+        ready: adding_property,
+        depth: 13,
+        alphabet: Alphabet::Only(&["up", "down", "left", "right", "enter"]),
+        reaches: &[Reach {
+            name: "P4, the property editor reaches every policy",
+            observe: editor_policy,
+            expected: &[
+                "required single",
+                "required multiple",
+                "recommended single",
+                "recommended multiple",
+                "conditional single",
+                "conditional multiple",
+                "optional single",
+                "optional multiple",
+            ],
+        }],
     },
 ];
 
@@ -172,6 +238,14 @@ fn creating(snapshot: &Snapshot) -> bool {
 
 fn editing(snapshot: &Snapshot) -> bool {
     matches!(snapshot.screen, Screen::TaxonomyEditor(EditorMode::Edit))
+}
+
+fn adding_property(snapshot: &Snapshot) -> bool {
+    matches!(snapshot.screen, Screen::PropertyEditor)
+        && snapshot
+            .property_editor
+            .as_ref()
+            .is_some_and(|editor| editor.target.is_none())
 }
 
 #[expect(
@@ -254,6 +328,7 @@ struct PropertyEditorView {
     condition_name: Text,
     condition_rationale: Text,
     focus: PropertyFocus,
+    policy: [&'static str; 2],
     dirty: bool,
 }
 
@@ -363,6 +438,7 @@ impl Snapshot {
                     condition_name: Text::of(&editor.condition_name),
                     condition_rationale: Text::of(&editor.condition_rationale),
                     focus: editor.focus,
+                    policy: editor.policy_labels(),
                     dirty: editor.is_dirty(),
                 }),
             settings: state.settings.clone(),
@@ -537,6 +613,14 @@ fn review_names_every_taxonomy_change(
     Ok(())
 }
 
+fn editor_policy(snapshot: &Snapshot) -> Option<String> {
+    snapshot
+        .property_editor
+        .as_ref()
+        .filter(|_| matches!(snapshot.screen, Screen::PropertyEditor))
+        .map(|editor| editor.policy.join(" "))
+}
+
 /// Replays `keys` from a fresh workspace. Returns `None` when the last key quit the editor.
 fn replay(seed: &Seed, keys: &[usize]) -> Result<Option<Snapshot>, String> {
     let workspace = (seed.workspace)()?;
@@ -634,10 +718,8 @@ struct Coverage {
     elapsed: Duration,
 }
 
-fn explore(seed: &Seed) -> Result<Coverage, String> {
-    let started = Instant::now();
-    let prefix = seed
-        .keys
+fn input_indices(seed: &Seed, labels: &[&str]) -> Result<Vec<usize>, String> {
+    labels
         .iter()
         .map(|label| {
             INPUTS
@@ -645,7 +727,16 @@ fn explore(seed: &Seed) -> Result<Coverage, String> {
                 .position(|(input, _)| input == label)
                 .ok_or_else(|| format!("seed \"{}\" names unknown key {label}", seed.name))
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect()
+}
+
+fn explore(seed: &Seed) -> Result<Coverage, String> {
+    let started = Instant::now();
+    let prefix = input_indices(seed, seed.keys)?;
+    let alphabet = match seed.alphabet {
+        Alphabet::Every => (0..INPUTS.len()).collect(),
+        Alphabet::Only(labels) => input_indices(seed, labels)?,
+    };
     let mut before = replay(seed, &[])?.ok_or("the editor quit before any key")?;
     for end in 1..=prefix.len() {
         let after = replay(seed, &prefix[..end]);
@@ -659,12 +750,17 @@ fn explore(seed: &Seed) -> Result<Coverage, String> {
         ));
     }
     let mut visited = HashSet::from([format!("{before:?}")]);
+    let mut observed = seed
+        .reaches
+        .iter()
+        .map(|reach| (reach.observe)(&before).into_iter().collect::<HashSet<_>>())
+        .collect::<Vec<_>>();
     let mut frontier = vec![(prefix, before)];
     let mut transitions = 0;
     for level in 1..=seed.depth {
         let mut next = Vec::new();
         let edges = (0..frontier.len())
-            .flat_map(|parent| (0..INPUTS.len()).map(move |input| (parent, input)))
+            .flat_map(|parent| alphabet.iter().map(move |&input| (parent, input)))
             .collect::<Vec<_>>();
         let jobs = edges
             .iter()
@@ -680,12 +776,39 @@ fn explore(seed: &Seed) -> Result<Coverage, String> {
             check(seed, &keys, &frontier[parent].1, &after)?;
             if let Ok(Some(after)) = after
                 && visited.insert(format!("{after:?}"))
-                && level < seed.depth
             {
-                next.push((keys, after));
+                for (reach, values) in seed.reaches.iter().zip(&mut observed) {
+                    values.extend((reach.observe)(&after));
+                }
+                if level < seed.depth {
+                    next.push((keys, after));
+                }
             }
         }
         frontier = next;
+    }
+    for (reach, values) in seed.reaches.iter().zip(&observed) {
+        let missing = reach
+            .expected
+            .iter()
+            .filter(|value| !values.contains(**value))
+            .copied()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            let mut values = values.iter().map(String::as_str).collect::<Vec<_>>();
+            values.sort_unstable();
+            return Err(format!(
+                "{} failed from seed \"{}\".\nSeed keys: {}\nExplored to depth {} with: {}\n\
+                 Never reached: {}\nReached: {}",
+                reach.name,
+                seed.name,
+                seed.keys.join(" "),
+                seed.depth,
+                labels(&alphabet),
+                missing.join(", "),
+                values.join(", "),
+            ));
+        }
     }
     Ok(Coverage {
         states: visited.len(),
