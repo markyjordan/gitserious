@@ -5973,6 +5973,65 @@ mod tests {
     }
 
     #[test]
+    fn wrapped_review_lines_start_under_their_subject() -> Result<(), Box<dyn std::error::Error>> {
+        let types =
+            |ids: &[&str]| -> Result<Vec<CommitTypeDefinition>, Box<dyn std::error::Error>> {
+                ids.iter()
+                    .map(|id| {
+                        Ok(CommitTypeDefinition::new(
+                            SchemaVersion::new(1)?,
+                            CommitTypeId::new(*id)?,
+                            "A change",
+                            Vec::new(),
+                        )?)
+                    })
+                    .collect()
+            };
+        let team = Taxonomy::new(
+            TaxonomyId::new("team")?,
+            TaxonomyVersion::new(1)?,
+            Description::new("Team taxonomy")?,
+            None,
+            types(&["release", "fix", "hotfix"])?,
+        )?;
+        let conventional = TaxonomyId::new("conventional")?;
+        let workspace = Workspace::new();
+        *workspace.global.borrow_mut() = ConfigurationSession::open_global(
+            GlobalConfiguration::new(1, conventional.clone(), vec![conventional], vec![team])?,
+        );
+        let mut state = State::new(&workspace);
+        state.active_scope = ConfigurationDestination::Global;
+        state
+            .global
+            .as_mut()
+            .ok_or("missing global")?
+            .update_taxonomy(
+                &TaxonomyId::new("team")?,
+                Description::new("Team changes")?,
+                types(&["fix", "release"])?,
+            )?;
+        state.open_review();
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        terminal.draw(|frame| state.render(frame))?;
+
+        let frame = text(&terminal).chars().collect::<Vec<_>>();
+        let rows = frame
+            .chunks(usize::from(MINIMUM_WIDTH))
+            .map(|row| row.iter().collect::<String>())
+            .collect::<Vec<_>>();
+        let edited = rows
+            .iter()
+            .position(|row| row.contains("│  edited   team v1 -> v2: description; type hotfix"))
+            .ok_or("the edited line is not on screen")?;
+        assert!(
+            rows[edited + 1].contains("│           removed; types reordered "),
+            "the wrapped row does not start under the taxonomy id: {:?}",
+            rows[edited + 1]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn too_small_view_blocks_hidden_actions() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
