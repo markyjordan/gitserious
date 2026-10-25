@@ -265,6 +265,13 @@ enum Policy {
 }
 
 impl Policy {
+    const ORDER: [Self; 4] = [
+        Self::Required,
+        Self::Recommended,
+        Self::Conditional,
+        Self::Optional,
+    ];
+
     fn label(self) -> &'static str {
         match self {
             Self::Required => "required",
@@ -273,16 +280,14 @@ impl Policy {
             Self::Optional => "optional",
         }
     }
+}
 
-    fn next(self, right: bool) -> Self {
-        match (self, right) {
-            (Self::Required, true) | (Self::Conditional, false) => Self::Recommended,
-            (Self::Recommended, true) | (Self::Required | Self::Optional, false) => {
-                Self::Conditional
-            }
-            _ => Self::Required,
-        }
-    }
+fn cycle<T: Copy + PartialEq>(order: &[T], current: T, forward: bool) -> T {
+    let step = if forward { 1 } else { order.len() - 1 };
+    order
+        .iter()
+        .position(|value| *value == current)
+        .map_or(current, |index| order[(index + step) % order.len()])
 }
 
 pub(super) struct PropertyEditorState {
@@ -417,7 +422,7 @@ impl PropertyEditorState {
         }
         match key.code {
             KeyCode::Left | KeyCode::Right if self.focus == PropertyFocus::Policy => {
-                self.policy = self.policy.next(key.code == KeyCode::Right)
+                self.policy = cycle(&Policy::ORDER, self.policy, key.code == KeyCode::Right)
             }
             KeyCode::Enter
                 if key.modifiers.contains(KeyModifiers::ALT)
@@ -930,7 +935,7 @@ mod tests {
         property.key(key(KeyCode::Up));
         assert_eq!(property.focus, PropertyFocus::Policy);
         property.key(key(KeyCode::Right));
-        assert_eq!(property.policy, Policy::Required);
+        assert_eq!(property.policy, Policy::Optional);
         draw_compact(&mut property, &mut compact)?;
         assert_eq!(property.viewport_top, 0);
         assert_eq!(compact.backend().buffer()[(0, 13)].symbol(), "└");
@@ -938,10 +943,11 @@ mod tests {
             assert!((0..60).all(|x| compact.backend().buffer()[(x, y)].symbol() == " "));
         }
         property.key(key(KeyCode::Right));
-        assert_eq!(property.policy, Policy::Recommended);
+        assert_eq!(property.policy, Policy::Required);
         draw_compact(&mut property, &mut compact)?;
         assert_eq!(compact.backend().buffer()[(0, 13)].symbol(), "└");
-        property.key(key(KeyCode::Right));
+        property.key(key(KeyCode::Left));
+        property.key(key(KeyCode::Left));
         property.key(key(KeyCode::Down));
         property.key(key(KeyCode::Down));
         draw_compact(&mut property, &mut compact)?;
