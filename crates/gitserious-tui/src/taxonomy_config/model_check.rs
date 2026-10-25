@@ -21,6 +21,11 @@
 //! unsaved changes leaves the staged Library as it was. Without it, an edit that changes nothing
 //! advances the taxonomy's version and rewrites the user's configuration on apply.
 //!
+//! P3, the review names every taxonomy change. While the Global review shows, every custom
+//! taxonomy whose content differs between the saved and the staged Library appears in the frame
+//! as `created`, `edited`, or `deleted` followed by its id. Without it, a user applies a change
+//! that the review did not show.
+//!
 //! Scope limits:
 //! - Only the keyboard events in [`INPUTS`]. Mouse, paste, and resize events are out of scope.
 //! - One terminal of `MINIMUM_WIDTH` by `MINIMUM_HEIGHT` cells. Mouse hit areas that rendering
@@ -31,7 +36,9 @@
 //! - `State` runs standalone, not inside the unified shell, so `ConfigView::request_leave_editor`
 //!   is not driven.
 //! - Workspace saves always succeed, and the project starts uninitialized.
-//! - A pass covers the four seeds to their depth bounds, not every reachable state. Every replay
+//! - P3 reads the frame, so it sees only the review rows that fit the viewport. Every seed's review
+//!   fits without scrolling.
+//! - A pass covers the six seeds to their depth bounds, not every reachable state. Every replay
 //!   renders each frame in a debug build, so the bounds keep the check near 45 seconds on six
 //!   cores. The editor seeds get the deeper bound because P1 lives in the editors.
 
@@ -127,6 +134,24 @@ const SEEDS: &[Seed] = &[
         keys: &["down", "right", "down", "down", "down", "e"],
         ready: editing,
         depth: 3,
+    },
+    Seed {
+        name: "team edited at Library",
+        workspace: team_library,
+        keys: &[
+            "down", "right", "down", "down", "down", "e", "enter", "end", "a", "ctrl+s", "ctrl+s",
+        ],
+        ready: team_selected,
+        depth: 2,
+    },
+    Seed {
+        name: "a fork created and team deleted at Library",
+        workspace: team_library,
+        keys: &[
+            "down", "right", "f", "delete", "ctrl+s", "down", "down", "down", "d", "y",
+        ],
+        ready: at_taxonomy_list,
+        depth: 2,
     },
 ];
 
@@ -373,6 +398,10 @@ const PROPERTIES: &[(&str, Check)] = &[
         "P2, an unchanged edit stages nothing",
         unchanged_edit_stages_nothing,
     ),
+    (
+        "P3, the review names every taxonomy change",
+        review_names_every_taxonomy_change,
+    ),
 ];
 
 struct ChildEditor {
@@ -445,6 +474,65 @@ fn unchanged_edit_stages_nothing(
         && after.is_some_and(|after| after.staged_library() != before.staged_library())
     {
         return Err("Ctrl+S staged a change from an edit draft with no unsaved changes.".into());
+    }
+    Ok(())
+}
+
+fn find<'a>(library: &'a [Taxonomy], id: &TaxonomyId) -> Option<&'a Taxonomy> {
+    library.iter().find(|taxonomy| taxonomy.id() == id)
+}
+
+fn review_names_every_taxonomy_change(
+    _: &Snapshot,
+    _: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    let Some(after) = after.filter(|after| {
+        matches!(
+            after.screen,
+            Screen::Review(ConfigurationDestination::Global)
+        )
+    }) else {
+        return Ok(());
+    };
+    let saved = after.saved[0].global().custom_taxonomies();
+    let staged = after
+        .staged_library()
+        .map_or(&[][..], GlobalConfiguration::custom_taxonomies);
+    let changes = staged
+        .iter()
+        .filter_map(|taxonomy| match find(saved, taxonomy.id()) {
+            None => Some(("created", taxonomy.id())),
+            Some(before) if before != taxonomy => Some(("edited", taxonomy.id())),
+            Some(_) => None,
+        })
+        .chain(
+            saved
+                .iter()
+                .filter(|taxonomy| find(staged, taxonomy.id()).is_none())
+                .map(|taxonomy| ("deleted", taxonomy.id())),
+        );
+    let rows = after
+        .frame
+        .lines()
+        .map(|row| {
+            row.replace('│', " ")
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    for (kind, id) in changes {
+        let named = rows.iter().any(|words| {
+            words
+                .windows(2)
+                .any(|pair| pair[0] == kind && pair[1] == id.as_str())
+        });
+        if !named {
+            return Err(format!(
+                "The Global review does not name {kind} taxonomy \"{id}\"."
+            ));
+        }
     }
     Ok(())
 }
