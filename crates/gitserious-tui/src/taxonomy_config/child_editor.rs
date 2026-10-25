@@ -917,6 +917,72 @@ mod tests {
     }
 
     #[test]
+    fn multiplicity_row_toggles_into_the_completed_draft_and_counts_as_a_change()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut property = PropertyEditorState::new(None, PropertyDraft::empty());
+        property.paste("notes");
+        property.key(key(KeyCode::Enter));
+        property.paste("Free-form notes");
+        property.key(key(KeyCode::Enter));
+        property.key(key(KeyCode::Enter));
+        assert_eq!(property.focus, PropertyFocus::Multiplicity);
+        property.key(key(KeyCode::Right));
+        assert_eq!(
+            property.candidate()?.multiplicity,
+            PropertyMultiplicity::Multiple
+        );
+        property.key(key(KeyCode::Left));
+        assert_eq!(
+            property.candidate()?.multiplicity,
+            PropertyMultiplicity::Single
+        );
+        property.key(key(KeyCode::Left));
+        property.key(key(KeyCode::Up));
+        property.key(key(KeyCode::Left));
+        assert_eq!(
+            property.candidate()?,
+            PropertyDraft {
+                key: "notes".into(),
+                description: "Free-form notes".into(),
+                requirement: PropertyRequirement::Optional,
+                multiplicity: PropertyMultiplicity::Multiple,
+            }
+        );
+
+        let draft = PropertyDraft {
+            key: "evidence".into(),
+            description: "Supporting results".into(),
+            requirement: PropertyRequirement::Conditional(PropertyCondition::new(
+                ConditionId::new("changed")?,
+                "first\nsecond",
+            )?),
+            multiplicity: PropertyMultiplicity::Single,
+        };
+        let mut loaded = PropertyEditorState::new(Some(0), draft.clone());
+        loaded.focus = PropertyFocus::ConditionRationale;
+        loaded.key(key(KeyCode::Down));
+        assert_eq!(loaded.focus, PropertyFocus::ConditionRationale);
+        loaded.key(key(KeyCode::Down));
+        assert_eq!(loaded.focus, PropertyFocus::Multiplicity);
+        assert!(!loaded.is_dirty());
+        loaded.key(key(KeyCode::Right));
+        assert!(loaded.is_dirty());
+        assert_eq!(
+            loaded.candidate()?,
+            PropertyDraft {
+                multiplicity: PropertyMultiplicity::Multiple,
+                ..draft.clone()
+            }
+        );
+        loaded.key(key(KeyCode::Right));
+        assert!(!loaded.is_dirty());
+        loaded.key(key(KeyCode::Up));
+        assert_eq!(loaded.focus, PropertyFocus::ConditionRationale);
+        assert_eq!(loaded.candidate()?, draft);
+        Ok(())
+    }
+
+    #[test]
     fn conditional_property_fits_compact_and_wide_views_with_a_single_cursor()
     -> Result<(), Box<dyn std::error::Error>> {
         let draft = PropertyDraft {
