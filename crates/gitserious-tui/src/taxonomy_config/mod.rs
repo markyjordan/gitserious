@@ -35,6 +35,8 @@ use crate::theme::{
 mod child_editor;
 mod home_overlay;
 mod library_view;
+#[cfg(test)]
+mod model_check;
 mod naming;
 use child_editor::{ChildAction, PropertyEditorState, TypeEditorState};
 use home_overlay::{CommandPaletteState, CreateCommand, HomeCommand, HomeOverlay};
@@ -1620,6 +1622,7 @@ impl State {
                 .and_then(|editor| editor.target)
                 .map_or(0, |index| index + 1);
             self.type_editor = None;
+            self.form = None;
             self.screen = Screen::TaxonomyEditor(self.editor_mode);
         }
     }
@@ -1645,6 +1648,13 @@ impl State {
             }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.submit_form(kind)
+            }
+            KeyCode::Esc
+                if self.editor.as_ref().is_some_and(|draft| {
+                    form.fields != [draft.id.as_str(), draft.description.as_str()]
+                }) =>
+            {
+                self.open_discard(Screen::ConfirmDiscardChild(Box::new(self.screen.clone())));
             }
             KeyCode::Esc => {
                 self.form = None;
@@ -2481,6 +2491,9 @@ impl State {
             {
                 ("Discard Property", "Discard property changes?")
             }
+            Screen::ConfirmDiscardChild(return_to) if matches!(**return_to, Screen::Form(_)) => {
+                ("Discard Details", "Discard id and description changes?")
+            }
             Screen::ConfirmDiscardChild(_) => ("Discard Type", "Discard type changes?"),
             _ => return,
         };
@@ -3270,14 +3283,14 @@ mod tests {
 
     use super::*;
 
-    struct Workspace {
-        global: RefCell<ConfigurationSession>,
-        project: RefCell<ConfigurationSession>,
+    pub(super) struct Workspace {
+        pub(super) global: RefCell<ConfigurationSession>,
+        pub(super) project: RefCell<ConfigurationSession>,
         saves: Cell<usize>,
     }
 
     impl Workspace {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let global = GlobalConfiguration::default();
             let root = RepositoryRoot::new(std::env::temp_dir()).unwrap_or_else(|_| unreachable!());
             Self {

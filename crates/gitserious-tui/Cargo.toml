@@ -16,5 +16,8 @@ ratatui = { workspace = true, features = ["unstable-rendered-line-info"] }
 tui-textarea = { workspace = true }
 unicode-segmentation = { workspace = true }
 
+[dev-dependencies]
+ratatui = { workspace = true, features = ["layout-cache"] }
+
 [lints]
 workspace = true
