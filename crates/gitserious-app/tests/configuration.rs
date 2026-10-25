@@ -157,7 +157,11 @@ fn created_taxonomies_are_queryable_as_custom_library_entries() -> Result<(), Bo
         Some(TaxonomyOrigin::Custom)
     );
     assert!(session.is_dirty());
-    assert!(session.review()?.contains("Custom taxonomies\n  0 -> 1"));
+    assert!(
+        session
+            .review()?
+            .contains("Taxonomies\n  created  team v1, ")
+    );
     Ok(())
 }
 

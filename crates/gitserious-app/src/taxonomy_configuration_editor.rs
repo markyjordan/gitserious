@@ -3,6 +3,7 @@ use std::path::Path;
 
 use gitserious_core::{CommitTypeDefinition, Description, Taxonomy, TaxonomyId, TaxonomyVersion};
 
+use crate::taxonomy_changes::taxonomy_changes;
 use crate::{
     GlobalConfiguration, GlobalConfigurationStore, ProjectConfig, ProjectLock, ProjectState,
     ProjectStateStore, RepositoryLocator, RepositoryRoot, TaxonomyCatalog,
@@ -329,19 +330,32 @@ impl ConfigurationSession {
                 self.global_working
                     .catalog()
                     .map_err(|error| error.to_string())?;
-                Ok(format!(
-                    "GLOBAL CONFIGURATION\n\nDefault\n  {} -> {}\n\nAvailable\n  {}\n\nCustom taxonomies\n  {} -> {}",
-                    self.global_original.default_taxonomy(),
-                    self.global_working.default_taxonomy(),
+                let mut sections = vec!["GLOBAL CONFIGURATION".to_owned()];
+                let changes = taxonomy_changes(&self.global_original, &self.global_working);
+                if !changes.is_empty() {
+                    let lines = changes
+                        .iter()
+                        .map(|change| format!("  {change}"))
+                        .collect::<Vec<_>>();
+                    sections.push(format!("Taxonomies\n{}", lines.join("\n")));
+                }
+                let before = self.global_original.default_taxonomy();
+                let after = self.global_working.default_taxonomy();
+                sections.push(if before == after {
+                    format!("Default\n  {after}")
+                } else {
+                    format!("Default\n  {before} -> {after}")
+                });
+                sections.push(format!(
+                    "Available\n  {}",
                     self.global_working
                         .available_taxonomies()
                         .iter()
                         .map(ToString::to_string)
                         .collect::<Vec<_>>()
-                        .join(", "),
-                    self.global_original.custom_taxonomies().len(),
-                    self.global_working.custom_taxonomies().len(),
-                ))
+                        .join(", ")
+                ));
+                Ok(sections.join("\n\n"))
             }
             ConfigurationDestination::Project => {
                 let config = self
