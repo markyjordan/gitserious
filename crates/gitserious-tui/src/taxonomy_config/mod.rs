@@ -5,7 +5,6 @@ use crate::confirmation::{DiscardChoice, DiscardDialog};
 use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
     ProjectConfig, RepositoryRoot, TaxonomyOrigin, resolve_effective_configuration,
-    revised_taxonomy,
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
@@ -2136,29 +2135,22 @@ impl State {
                             "A taxonomy named \"{id}\" already exists in the Library."
                         ));
                     }
-                    session.create_taxonomy(taxonomy)
+                    session.create_taxonomy(taxonomy).map(|()| true)
                 }
-                EditorMode::Edit => {
-                    let original = session
-                        .catalog()?
-                        .find(taxonomy.id())
-                        .cloned()
-                        .ok_or("taxonomy is missing")?;
-                    revised_taxonomy(
-                        &original,
-                        taxonomy.description().clone(),
-                        taxonomy.commit_types().to_vec(),
-                    )
-                    .and_then(|revised| session.update_taxonomy(revised))
-                }
+                EditorMode::Edit => session.update_taxonomy(
+                    &id,
+                    taxonomy.description().clone(),
+                    taxonomy.commit_types().to_vec(),
+                ),
             }
-            .map(|()| id)
+            .map(|staged| staged.then_some(id))
         });
         match result {
-            Ok(id) => {
+            Ok(staged) => {
                 self.leave_create_taxonomy();
-                self.status = Some(Notice::Info(format!(
-                    "Staged taxonomy \"{id}\". Ctrl+S reviews before applying."
+                self.status = Some(Notice::Info(staged.map_or_else(
+                    || "No changes to stage.".into(),
+                    |id| format!("Staged taxonomy \"{id}\". Ctrl+S reviews before applying."),
                 )));
             }
             Err(error) => self.status = Some(Notice::Error(error)),
@@ -4003,11 +3995,7 @@ mod tests {
             .cloned()
             .ok_or("missing fork")?;
         let description = Description::new("A lengthy taxonomy description. ".repeat(40))?;
-        session.update_taxonomy(revised_taxonomy(
-            &original,
-            description,
-            original.commit_types().to_vec(),
-        )?)?;
+        session.update_taxonomy(&target, description, original.commit_types().to_vec())?;
         state.library.browse_selected = 3;
         let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
         terminal.draw(|frame| state.render(frame))?;
@@ -6265,6 +6253,50 @@ mod tests {
             source.commit_types()
         );
         assert_eq!(workspace.saves.get(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn staging_an_unchanged_edit_reports_that_nothing_was_staged()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (workspace, source) = child_editor_workspace()?;
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
+        state.library.select_taxonomy(3);
+        let library = state.global.clone().ok_or("missing global")?;
+        state.handle_event(key(KeyCode::Char('e')), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+
+        assert!(
+            matches!(state.status, Some(Notice::Info(ref message)) if message == "No changes to stage.")
+        );
+        assert!(matches!(state.screen, Screen::Home));
+        assert_eq!(state.category, Category::Library);
+        assert_eq!(
+            state.global.as_ref().map(ConfigurationSession::global),
+            Some(library.global())
+        );
+
+        state.handle_event(key(KeyCode::Char('e')), &workspace);
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        state.handle_event(Event::Paste(" revised".into()), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+
+        assert!(
+            matches!(state.status, Some(Notice::Info(ref message)) if message.starts_with("Staged taxonomy \"original\"."))
+        );
+        let staged = state
+            .global
+            .as_ref()
+            .ok_or("missing global")?
+            .catalog()?
+            .find(source.id())
+            .cloned()
+            .ok_or("missing taxonomy")?;
+        assert_eq!(staged.description().as_ref(), "Original taxonomy revised");
+        assert_eq!(staged.version(), TaxonomyVersion::new(4)?);
         Ok(())
     }
 

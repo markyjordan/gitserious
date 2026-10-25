@@ -49,7 +49,7 @@ pub use taxonomy_authoring_context::{
 };
 pub use taxonomy_configuration_editor::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
-    edit_configuration, revised_taxonomy,
+    edit_configuration,
 };
 pub use taxonomy_policy::{
     ConfigurationError, EffectiveConfiguration, GLOBAL_CONFIG_VERSION, GlobalConfiguration,
