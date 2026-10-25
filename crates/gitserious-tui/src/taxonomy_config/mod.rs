@@ -35,6 +35,8 @@ use crate::theme::{
 mod child_editor;
 mod home_overlay;
 mod library_view;
+#[cfg(test)]
+mod model_check;
 mod naming;
 use child_editor::{ChildAction, PropertyEditorState, TypeEditorState};
 use home_overlay::{CommandPaletteState, CreateCommand, HomeCommand, HomeOverlay};
@@ -3281,14 +3283,14 @@ mod tests {
 
     use super::*;
 
-    struct Workspace {
-        global: RefCell<ConfigurationSession>,
-        project: RefCell<ConfigurationSession>,
+    pub(super) struct Workspace {
+        pub(super) global: RefCell<ConfigurationSession>,
+        pub(super) project: RefCell<ConfigurationSession>,
         saves: Cell<usize>,
     }
 
     impl Workspace {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let global = GlobalConfiguration::default();
             let root = RepositoryRoot::new(std::env::temp_dir()).unwrap_or_else(|_| unreachable!());
             Self {
