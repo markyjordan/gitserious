@@ -5,7 +5,6 @@ use crate::confirmation::{DiscardChoice, DiscardDialog};
 use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
     ProjectConfig, RepositoryRoot, TaxonomyOrigin, resolve_effective_configuration,
-    revised_taxonomy,
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
@@ -2138,19 +2137,13 @@ impl State {
                     }
                     session.create_taxonomy(taxonomy)
                 }
-                EditorMode::Edit => {
-                    let original = session
-                        .catalog()?
-                        .find(taxonomy.id())
-                        .cloned()
-                        .ok_or("taxonomy is missing")?;
-                    revised_taxonomy(
-                        &original,
+                EditorMode::Edit => session
+                    .update_taxonomy(
+                        &id,
                         taxonomy.description().clone(),
                         taxonomy.commit_types().to_vec(),
                     )
-                    .and_then(|revised| session.update_taxonomy(revised))
-                }
+                    .map(|_| ()),
             }
             .map(|()| id)
         });
@@ -4003,11 +3996,7 @@ mod tests {
             .cloned()
             .ok_or("missing fork")?;
         let description = Description::new("A lengthy taxonomy description. ".repeat(40))?;
-        session.update_taxonomy(revised_taxonomy(
-            &original,
-            description,
-            original.commit_types().to_vec(),
-        )?)?;
+        session.update_taxonomy(&target, description, original.commit_types().to_vec())?;
         state.library.browse_selected = 3;
         let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
         terminal.draw(|frame| state.render(frame))?;

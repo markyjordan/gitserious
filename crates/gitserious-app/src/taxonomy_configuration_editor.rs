@@ -1,7 +1,7 @@
 use std::fmt::Display;
 use std::path::Path;
 
-use gitserious_core::{Taxonomy, TaxonomyId, TaxonomyVersion};
+use gitserious_core::{CommitTypeDefinition, Description, Taxonomy, TaxonomyId, TaxonomyVersion};
 
 use crate::{
     GlobalConfiguration, GlobalConfigurationStore, ProjectConfig, ProjectLock, ProjectState,
@@ -240,21 +240,51 @@ impl ConfigurationSession {
         self.create_taxonomy(fork)
     }
 
-    /// Replaces an existing custom taxonomy under the same identity and next version.
-    pub fn update_taxonomy(&mut self, taxonomy: Taxonomy) -> Result<(), String> {
+    /// Stages new content for an existing custom taxonomy and returns whether the library changed.
+    ///
+    /// Content equal to the taxonomy's current content changes nothing. Otherwise the taxonomy
+    /// takes the version after its persisted one, so every edit in one session shares a single
+    /// advance, and content equal to the persisted taxonomy restores it at its persisted version.
+    /// A taxonomy created in this session keeps the version it was created with.
+    pub fn update_taxonomy(
+        &mut self,
+        id: &TaxonomyId,
+        description: Description,
+        commit_types: Vec<CommitTypeDefinition>,
+    ) -> Result<bool, String> {
         self.require_global()?;
         let mut custom = self.global_working.custom_taxonomies().to_vec();
-        let Some(index) = custom.iter().position(|item| item.id() == taxonomy.id()) else {
+        let Some(index) = custom.iter().position(|item| item.id() == id) else {
             return Err("built-in or missing taxonomies cannot be edited".into());
         };
-        let expected = custom[index].version().get().saturating_add(1);
-        if taxonomy.version().get() != expected {
-            return Err(format!(
-                "taxonomy update must advance to version {expected}"
-            ));
+        let current = &custom[index];
+        let persisted = self
+            .global_original
+            .custom_taxonomies()
+            .iter()
+            .find(|original| original.id() == id);
+        let version = match persisted {
+            Some(persisted) => TaxonomyVersion::new(persisted.version().get().saturating_add(1))
+                .map_err(|error| error.to_string())?,
+            None => current.version(),
+        };
+        let revision = Taxonomy::new(
+            id.clone(),
+            version,
+            description,
+            current.derived_from().cloned(),
+            commit_types,
+        )
+        .map_err(|error| error.to_string())?;
+        if same_content(&revision, current) {
+            return Ok(false);
         }
-        custom[index] = taxonomy;
-        self.replace_custom(custom)
+        custom[index] = match persisted {
+            Some(persisted) if same_content(&revision, persisted) => persisted.clone(),
+            _ => revision,
+        };
+        self.replace_custom(custom)?;
+        Ok(true)
     }
 
     /// Removes an unselected custom taxonomy.
@@ -447,19 +477,6 @@ where
     }
 }
 
-/// Builds an edited taxonomy while enforcing immutable identity and version advance.
-pub fn revised_taxonomy(
-    original: &Taxonomy,
-    description: gitserious_core::Description,
-    commit_types: Vec<gitserious_core::CommitTypeDefinition>,
-) -> Result<Taxonomy, String> {
-    Taxonomy::new(
-        original.id().clone(),
-        TaxonomyVersion::new(original.version().get().saturating_add(1))
-            .map_err(|error| error.to_string())?,
-        description,
-        original.derived_from().cloned(),
-        commit_types,
-    )
-    .map_err(|error| error.to_string())
+fn same_content(left: &Taxonomy, right: &Taxonomy) -> bool {
+    left.description() == right.description() && left.commit_types() == right.commit_types()
 }

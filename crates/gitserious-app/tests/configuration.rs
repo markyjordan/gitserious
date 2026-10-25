@@ -9,7 +9,7 @@ use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationError, ConfigurationSession,
     ConfigurationWorkspace, GlobalConfiguration, GlobalConfigurationStore, ProjectConfig,
     ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
-    TaxonomyCatalog, TaxonomyOrigin, edit_configuration, revised_taxonomy,
+    TaxonomyCatalog, TaxonomyOrigin, edit_configuration,
 };
 use gitserious_core::{
     Description, Taxonomy, TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
@@ -28,6 +28,25 @@ fn built_in_ids() -> Vec<TaxonomyId> {
 
 fn custom(name: &str) -> Taxonomy {
     built_in_taxonomies()[0].fork(id(name))
+}
+
+fn at_version(original: &Taxonomy, version: u16, description: &str) -> Taxonomy {
+    Taxonomy::new(
+        original.id().clone(),
+        TaxonomyVersion::new(version).expect("valid test version"),
+        Description::new(description).expect("valid test description"),
+        original.derived_from().cloned(),
+        original.commit_types().to_vec(),
+    )
+    .expect("valid test taxonomy")
+}
+
+fn stage(session: &mut ConfigurationSession, revision: &Taxonomy) -> Result<bool, String> {
+    session.update_taxonomy(
+        revision.id(),
+        revision.description().clone(),
+        revision.commit_types().to_vec(),
+    )
 }
 
 fn library(custom: Vec<Taxonomy>) -> Result<GlobalConfiguration, ConfigurationError> {
@@ -153,40 +172,24 @@ fn failed_create_and_update_leave_the_snapshot_unchanged() -> Result<(), Box<dyn
             Err(format!("taxonomy \"{existing}\" already exists"))
         );
     }
-    assert!(session.update_taxonomy(custom("team")).is_err());
-    assert!(session.update_taxonomy(custom("missing")).is_err());
+    let team = custom("team");
+    assert!(
+        session
+            .update_taxonomy(team.id(), team.description().clone(), Vec::new())
+            .is_err()
+    );
+    assert!(
+        session
+            .update_taxonomy(
+                &id("missing"),
+                team.description().clone(),
+                team.commit_types().to_vec()
+            )
+            .is_err()
+    );
 
     assert_eq!(session.global(), &before);
     assert!(!session.is_dirty());
-    Ok(())
-}
-
-#[test]
-fn updates_must_advance_the_taxonomy_version() -> Result<(), Box<dyn Error>> {
-    let original = custom("team");
-    let mut session = ConfigurationSession::open_global(library(vec![original.clone()])?);
-    let revised = revised_taxonomy(
-        &original,
-        Description::new("Revised team policy.")?,
-        original.commit_types().to_vec(),
-    )?;
-    let skipped = Taxonomy::new(
-        original.id().clone(),
-        TaxonomyVersion::new(3)?,
-        original.description().clone(),
-        original.derived_from().cloned(),
-        original.commit_types().to_vec(),
-    )?;
-
-    let error = session
-        .update_taxonomy(skipped)
-        .expect_err("skipping a version was accepted");
-    assert!(error.contains("version 2"), "{error}");
-    session.update_taxonomy(revised.clone())?;
-
-    assert_eq!(revised.version(), TaxonomyVersion::new(2)?);
-    assert_eq!(revised.derived_from(), original.derived_from());
-    assert_eq!(session.catalog()?.find(&id("team")), Some(&revised));
     Ok(())
 }
 
@@ -227,7 +230,7 @@ fn library_edits_belong_to_the_global_destination() -> Result<(), Box<dyn Error>
     for result in [
         session.create_taxonomy(custom("team")),
         session.fork_taxonomy(&id("conventional"), id("team")),
-        session.update_taxonomy(custom("team")),
+        stage(&mut session, &custom("team")).map(|_| ()),
         session.delete_taxonomy(&id("team")),
         session.configure_global(id("research"), built_in_ids()),
     ] {
@@ -281,9 +284,11 @@ fn fork_rejects_reserved_and_existing_identities_atomically() -> Result<(), Box<
 fn forks_of_custom_taxonomies_preserve_content_and_reset_the_new_version()
 -> Result<(), Box<dyn Error>> {
     let original = custom("team");
-    let revised = revised_taxonomy(
-        &original,
+    let revised = Taxonomy::new(
+        original.id().clone(),
+        TaxonomyVersion::new(2)?,
         Description::new("Second team policy.")?,
+        original.derived_from().cloned(),
         built_in_taxonomies()[2].commit_types().to_vec(),
     )?;
     let mut session = ConfigurationSession::open_global(library(vec![revised.clone()])?);
@@ -494,11 +499,7 @@ fn global_store_failures_are_reported_and_leave_the_library_unchanged() {
 #[test]
 fn recreating_an_original_identity_cannot_reset_its_version() -> Result<(), Box<dyn Error>> {
     let original = custom("team");
-    let revised = revised_taxonomy(
-        &original,
-        original.description().clone(),
-        original.commit_types().to_vec(),
-    )?;
+    let revised = at_version(&original, 2, original.description().as_ref());
     let mut session = ConfigurationSession::open_global(library(vec![revised.clone()])?);
     session.delete_taxonomy(&id("team"))?;
     let deleted = session.global().clone();
