@@ -6257,6 +6257,50 @@ mod tests {
     }
 
     #[test]
+    fn staging_an_unchanged_edit_reports_that_nothing_was_staged()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (workspace, source) = child_editor_workspace()?;
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
+        state.library.select_taxonomy(3);
+        let library = state.global.clone().ok_or("missing global")?;
+        state.handle_event(key(KeyCode::Char('e')), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+
+        assert!(
+            matches!(state.status, Some(Notice::Info(ref message)) if message == "No changes to stage.")
+        );
+        assert!(matches!(state.screen, Screen::Home));
+        assert_eq!(state.category, Category::Library);
+        assert_eq!(
+            state.global.as_ref().map(ConfigurationSession::global),
+            Some(library.global())
+        );
+
+        state.handle_event(key(KeyCode::Char('e')), &workspace);
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        state.handle_event(Event::Paste(" revised".into()), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+
+        assert!(
+            matches!(state.status, Some(Notice::Info(ref message)) if message.starts_with("Staged taxonomy \"original\"."))
+        );
+        let staged = state
+            .global
+            .as_ref()
+            .ok_or("missing global")?
+            .catalog()?
+            .find(source.id())
+            .cloned()
+            .ok_or("missing taxonomy")?;
+        assert_eq!(staged.description().as_ref(), "Original taxonomy revised");
+        assert_eq!(staged.version(), TaxonomyVersion::new(4)?);
+        Ok(())
+    }
+
+    #[test]
     fn property_list_mouse_selection_changes_focus_without_moving_text_cursors()
     -> Result<(), Box<dyn std::error::Error>> {
         let (workspace, _) = child_editor_workspace()?;

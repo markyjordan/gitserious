@@ -17,6 +17,10 @@
 //! reach the parent draft or the staged Library. Without it, a user loses typed work without a
 //! warning.
 //!
+//! P2, an unchanged edit stages nothing. Ctrl+S in the edit editor while the taxonomy draft has no
+//! unsaved changes leaves the staged Library as it was. Without it, an edit that changes nothing
+//! advances the taxonomy's version and rewrites the user's configuration on apply.
+//!
 //! Scope limits:
 //! - Only the keyboard events in [`INPUTS`]. Mouse, paste, and resize events are out of scope.
 //! - One terminal of `MINIMUM_WIDTH` by `MINIMUM_HEIGHT` cells. Mouse hit areas that rendering
@@ -363,7 +367,13 @@ impl Snapshot {
 /// Judges one transition. `after` is `None` when the input quit the editor.
 type Check = fn(&Snapshot, &Event, Option<&Snapshot>) -> Result<(), String>;
 
-const PROPERTIES: &[(&str, Check)] = &[("P1, no silent draft loss", no_silent_draft_loss)];
+const PROPERTIES: &[(&str, Check)] = &[
+    ("P1, no silent draft loss", no_silent_draft_loss),
+    (
+        "P2, an unchanged edit stages nothing",
+        unchanged_edit_stages_nothing,
+    ),
+];
 
 struct ChildEditor {
     name: &'static str,
@@ -419,6 +429,22 @@ fn no_silent_draft_loss(
                 child.name
             ));
         }
+    }
+    Ok(())
+}
+
+fn unchanged_edit_stages_nothing(
+    before: &Snapshot,
+    input: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    let stage = Event::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    if matches!(before.screen, Screen::TaxonomyEditor(EditorMode::Edit))
+        && !before.draft_dirty
+        && *input == stage
+        && after.is_some_and(|after| after.staged_library() != before.staged_library())
+    {
+        return Err("Ctrl+S staged a change from an edit draft with no unsaved changes.".into());
     }
     Ok(())
 }
