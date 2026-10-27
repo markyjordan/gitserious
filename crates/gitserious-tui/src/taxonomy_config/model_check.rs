@@ -402,7 +402,7 @@ struct Snapshot {
     project: Option<ConfigurationSession>,
     load_errors: [String; 2],
     saved: [ConfigurationSession; 2],
-    discard_dialog: String,
+    dialog: String,
     too_small: bool,
     frame: String,
 }
@@ -477,7 +477,7 @@ impl Snapshot {
                 workspace.global.borrow().clone(),
                 workspace.project.borrow().clone(),
             ],
-            discard_dialog: format!("{:?}", state.discard_dialog),
+            dialog: format!("{:?}", state.dialog),
             too_small: state.too_small,
             frame: buffer
                 .content

@@ -1,7 +1,10 @@
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 
-use crate::confirmation::{Answer, ConfirmDialog, Confirmation, DISCARD};
+use crate::confirmation::{
+    self, APPLY_OR_DISCARD, Answer, ConfirmDialog, Confirmation, DISCARD, DISCARD_AND_QUIT,
+    STAGE_DELETION,
+};
 use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
     ProjectConfig, RepositoryRoot, TaxonomyOrigin, resolve_effective_configuration,
@@ -19,8 +22,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState,
-    Wrap,
+    Block, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap,
 };
 use tui_textarea::{CursorMove, CursorRenderMode, TextArea, WrapMode};
 use unicode_segmentation::UnicodeSegmentation;
@@ -507,7 +509,7 @@ struct State {
     status: Option<Notice>,
     editor: Option<TaxonomyDraft>,
     initial_editor: Option<TaxonomyDraft>,
-    discard_dialog: ConfirmDialog,
+    dialog: ConfirmDialog,
     editor_mode: EditorMode,
     type_editor: Option<TypeEditorState>,
     property_editor: Option<PropertyEditorState>,
@@ -549,7 +551,7 @@ impl State {
             status: None,
             editor: None,
             initial_editor: None,
-            discard_dialog: ConfirmDialog::default(),
+            dialog: ConfirmDialog::default(),
             editor_mode: EditorMode::Create,
             type_editor: None,
             property_editor: None,
@@ -601,7 +603,7 @@ impl State {
     fn leave_create_taxonomy(&mut self) {
         self.editor = None;
         self.initial_editor = None;
-        self.discard_dialog.invalidate();
+        self.dialog.invalidate();
         self.create_text = None;
         self.fork_source = None;
         self.type_editor = None;
@@ -624,7 +626,7 @@ impl State {
     }
 
     fn open_discard(&mut self, screen: Screen) {
-        self.discard_dialog.invalidate();
+        self.dialog.invalidate();
         self.screen = screen;
     }
 
@@ -644,21 +646,114 @@ impl State {
         }
     }
 
-    fn handle_discard_event(&mut self, event: Event) -> bool {
-        let Some(choice) = self.discard_dialog.handle_event(DISCARD, &event) else {
+    /// The question the current screen asks, if it is a confirmation. Its choices drive the
+    /// dialog's keys and buttons and the footer's hints.
+    fn confirmation(&self) -> Option<Confirmation<'static>> {
+        let (title, message, choices) = match &self.screen {
+            Screen::ConfirmDiscardCreate(_) => {
+                let message = match (&self.editor_mode, &self.fork_source, &self.initial_editor) {
+                    (EditorMode::Edit, _, Some(initial)) => {
+                        format!(
+                            "Discard changes to \"{}\" and return to Library?",
+                            initial.id
+                        )
+                    }
+                    (_, Some(source), _) => format!(
+                        "Discard this fork of \"{}\" and return to Library?",
+                        source.id()
+                    ),
+                    _ => "Discard new taxonomy and return to Library?".to_owned(),
+                };
+                ("Discard Taxonomy", message, DISCARD)
+            }
+            Screen::ConfirmDiscardChild(return_to)
+                if matches!(**return_to, Screen::PropertyEditor) =>
+            {
+                let existing = self
+                    .property_editor
+                    .as_ref()
+                    .and_then(|editor| editor.target)
+                    .zip(self.type_editor.as_ref())
+                    .and_then(|(index, kind)| kind.draft.properties.get(index));
+                let message = existing.map_or_else(
+                    || "Discard the new property?".to_owned(),
+                    |property| format!("Discard changes to property \"{}\"?", property.key),
+                );
+                ("Discard Property", message, DISCARD)
+            }
+            Screen::ConfirmDiscardChild(_) => {
+                let message = match self.type_editor.as_ref() {
+                    Some(editor) if editor.target.is_some() => {
+                        format!("Discard changes to type \"{}\"?", editor.draft.id)
+                    }
+                    _ => "Discard the new type?".to_owned(),
+                };
+                ("Discard Type", message, DISCARD)
+            }
+            Screen::Delete => {
+                let id = self
+                    .selected_taxonomy()
+                    .map(|taxonomy| taxonomy.id().to_string())
+                    .unwrap_or_default();
+                (
+                    "Delete Taxonomy",
+                    format!("Stage the deletion of \"{id}\"? Ctrl+S reviews it before applying."),
+                    STAGE_DELETION,
+                )
+            }
+            Screen::Leave => (
+                "Quit",
+                "Discard unapplied changes and quit?".to_owned(),
+                DISCARD_AND_QUIT,
+            ),
+            Screen::ScopeChange(_) => {
+                let scope = match self.active_scope {
+                    ConfigurationDestination::Global => "The Library",
+                    ConfigurationDestination::Project => "This project",
+                };
+                (
+                    "Unapplied Changes",
+                    format!("{scope} has unapplied changes. Apply or discard them first?"),
+                    APPLY_OR_DISCARD,
+                )
+            }
+            _ => return None,
+        };
+        Some(Confirmation {
+            title,
+            message,
+            choices,
+        })
+    }
+
+    fn handle_confirmation_event(
+        &mut self,
+        choices: &[confirmation::Choice],
+        event: &Event,
+        workspace: &dyn ConfigurationWorkspace,
+    ) -> bool {
+        let Some(answer) = self.dialog.handle_event(choices, event) else {
             return false;
         };
-        self.discard_dialog.invalidate();
-        match self.screen.clone() {
-            Screen::ConfirmDiscardCreate(return_to) => match choice {
-                Answer::Confirm => self.leave_create_taxonomy(),
-                Answer::Keep | Answer::Alternate => self.screen = *return_to,
-            },
-            Screen::ConfirmDiscardChild(return_to) => match choice {
-                Answer::Confirm => self.close_child(matches!(*return_to, Screen::PropertyEditor)),
-                Answer::Keep | Answer::Alternate => self.screen = *return_to,
-            },
-            _ => {}
+        self.dialog.invalidate();
+        match (self.screen.clone(), answer) {
+            (Screen::ConfirmDiscardCreate(_), Answer::Confirm) => self.leave_create_taxonomy(),
+            (Screen::ConfirmDiscardChild(return_to), Answer::Confirm) => {
+                self.close_child(matches!(*return_to, Screen::PropertyEditor));
+            }
+            (
+                Screen::ConfirmDiscardCreate(return_to) | Screen::ConfirmDiscardChild(return_to),
+                Answer::Keep | Answer::Alternate,
+            ) => self.screen = *return_to,
+            (Screen::Delete, Answer::Confirm) => self.stage_deletion(),
+            (Screen::Leave, Answer::Confirm) => return true,
+            (Screen::ScopeChange(action), Answer::Confirm) => {
+                self.apply_scope_then(action, workspace)
+            }
+            (Screen::ScopeChange(action), Answer::Alternate) => {
+                self.discard_scope_then(action, workspace);
+            }
+            _ => self.screen = Screen::Home,
         }
         false
     }
@@ -670,14 +765,11 @@ impl State {
         if self.home_overlay.is_some() {
             return self.handle_home_overlay(event, workspace);
         }
-        if matches!(
-            self.screen,
-            Screen::ConfirmDiscardCreate(_) | Screen::ConfirmDiscardChild(_)
-        ) {
-            return self.handle_discard_event(event);
+        if let Some(question) = self.confirmation() {
+            return self.handle_confirmation_event(question.choices, &event, workspace);
         }
         if matches!(event, Event::Resize(_, _)) {
-            self.discard_dialog.invalidate();
+            self.dialog.invalidate();
         }
         if matches!(
             &event,
@@ -828,18 +920,12 @@ impl State {
             Screen::TaxonomyEditor => self.taxonomy_editor_key(key),
             Screen::TypeEditor => self.type_editor_key(key),
             Screen::PropertyEditor => self.property_editor_key(key),
-            Screen::Delete => self.delete_key(key),
             Screen::Review(destination) => self.review_key(key, destination, workspace),
-            Screen::Leave => match key.code {
-                KeyCode::Char('y') => true,
-                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('n') => {
-                    self.screen = Screen::Home;
-                    false
-                }
-                _ => false,
-            },
-            Screen::ScopeChange(target) => self.scope_change_key(key, target, workspace),
-            Screen::ConfirmDiscardCreate(_) | Screen::ConfirmDiscardChild(_) => false,
+            Screen::Delete
+            | Screen::Leave
+            | Screen::ScopeChange(_)
+            | Screen::ConfirmDiscardCreate(_)
+            | Screen::ConfirmDiscardChild(_) => false,
         }
     }
 
@@ -1538,7 +1624,7 @@ impl State {
     }
 
     fn close_child(&mut self, property: bool) {
-        self.discard_dialog.invalidate();
+        self.dialog.invalidate();
         if property {
             self.property_editor = None;
             self.screen = Screen::TypeEditor;
@@ -1553,41 +1639,33 @@ impl State {
         }
     }
 
-    fn delete_key(&mut self, key: KeyEvent) -> bool {
-        match key.code {
-            KeyCode::Char('y') => {
-                let result = self
-                    .selected_taxonomy()
-                    .map(|taxonomy| taxonomy.id().clone())
-                    .ok_or("select a taxonomy".to_owned())
-                    .and_then(|id| {
-                        self.global
-                            .as_mut()
-                            .ok_or("global configuration unavailable".to_owned())
-                            .and_then(|session| session.delete_taxonomy(&id))
-                    });
-                match result {
-                    Ok(()) => {
-                        self.library.browse_selected =
-                            self.library.browse_selected.saturating_sub(1);
-                        self.library.type_selected = 0;
-                        self.library.type_offset = 0;
-                        self.library.property_scroll = 0;
-                        self.screen = Screen::Home;
-                        self.status = Some(Notice::info(
-                            "Deletion staged. Ctrl+S reviews before applying.".into(),
-                        ));
-                    }
-                    Err(error) => {
-                        self.screen = Screen::Home;
-                        self.status = Some(Notice::error(error));
-                    }
-                }
+    fn stage_deletion(&mut self) {
+        let result = self
+            .selected_taxonomy()
+            .map(|taxonomy| taxonomy.id().clone())
+            .ok_or("Select a taxonomy first.".to_owned())
+            .and_then(|id| {
+                self.global
+                    .as_mut()
+                    .ok_or("The Library is unavailable.".to_owned())
+                    .and_then(|session| session.delete_taxonomy(&id))
+            });
+        match result {
+            Ok(()) => {
+                self.library.browse_selected = self.library.browse_selected.saturating_sub(1);
+                self.library.type_selected = 0;
+                self.library.type_offset = 0;
+                self.library.property_scroll = 0;
+                self.screen = Screen::Home;
+                self.status = Some(Notice::info(
+                    "Deletion staged. Ctrl+S reviews before applying.".into(),
+                ));
             }
-            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('n') => self.screen = Screen::Home,
-            _ => {}
+            Err(error) => {
+                self.screen = Screen::Home;
+                self.status = Some(Notice::error(error));
+            }
         }
-        false
     }
 
     fn review_key(
@@ -1630,53 +1708,46 @@ impl State {
         false
     }
 
-    fn scope_change_key(
-        &mut self,
-        key: KeyEvent,
-        action: PendingAction,
-        workspace: &dyn ConfigurationWorkspace,
-    ) -> bool {
-        match key.code {
-            KeyCode::Char('a') => {
-                let destination = self.active_scope;
-                let Some(session) = self.session(destination).cloned() else {
-                    return false;
-                };
-                match workspace.save(&session) {
-                    Ok(saved) => {
-                        match destination {
-                            ConfigurationDestination::Global => self.global = Some(saved),
-                            ConfigurationDestination::Project => self.project = Some(saved),
-                        };
-                        self.screen = Screen::Home;
-                        self.perform_pending_action(action);
-                    }
-                    Err(error) => {
-                        self.screen = Screen::Home;
-                        self.status = Some(Notice::error(error));
-                    }
-                }
-            }
-            KeyCode::Char('d') => {
-                let destination = self.active_scope;
-                let (session, error) = split_result(workspace.load(destination));
+    fn apply_scope_then(&mut self, action: PendingAction, workspace: &dyn ConfigurationWorkspace) {
+        let destination = self.active_scope;
+        let Some(session) = self.session(destination).cloned() else {
+            return;
+        };
+        match workspace.save(&session) {
+            Ok(saved) => {
                 match destination {
-                    ConfigurationDestination::Global => {
-                        self.global = session;
-                        self.global_error = error;
-                    }
-                    ConfigurationDestination::Project => {
-                        self.project = session;
-                        self.project_error = error;
-                    }
-                }
+                    ConfigurationDestination::Global => self.global = Some(saved),
+                    ConfigurationDestination::Project => self.project = Some(saved),
+                };
                 self.screen = Screen::Home;
                 self.perform_pending_action(action);
             }
-            KeyCode::Esc | KeyCode::Enter => self.screen = Screen::Home,
-            _ => {}
+            Err(error) => {
+                self.screen = Screen::Home;
+                self.status = Some(Notice::error(error));
+            }
         }
-        false
+    }
+
+    fn discard_scope_then(
+        &mut self,
+        action: PendingAction,
+        workspace: &dyn ConfigurationWorkspace,
+    ) {
+        let destination = self.active_scope;
+        let (session, error) = split_result(workspace.load(destination));
+        match destination {
+            ConfigurationDestination::Global => {
+                self.global = session;
+                self.global_error = error;
+            }
+            ConfigurationDestination::Project => {
+                self.project = session;
+                self.project_error = error;
+            }
+        }
+        self.screen = Screen::Home;
+        self.perform_pending_action(action);
     }
 
     fn request_global_action(&mut self, action: PendingAction) {
@@ -1770,7 +1841,7 @@ impl State {
         self.active_scope = ConfigurationDestination::Global;
         self.create_text = Some(CreateTextEditors::from_draft(&draft));
         self.initial_editor = Some(draft.clone());
-        self.discard_dialog.invalidate();
+        self.dialog.invalidate();
         self.editor = Some(draft);
         self.fork_source = source;
         self.type_editor = None;
@@ -1827,7 +1898,7 @@ impl State {
         self.fork_source = None;
         self.type_editor = None;
         self.property_editor = None;
-        self.discard_dialog.invalidate();
+        self.dialog.invalidate();
         self.editor_mode = EditorMode::Edit;
         self.child_selected = 0;
         self.create_focus = CreateFocus::Types;
@@ -1976,7 +2047,7 @@ impl State {
             let session = self
                 .global
                 .as_mut()
-                .ok_or("global configuration unavailable".to_owned())?;
+                .ok_or("The Library is unavailable.".to_owned())?;
             match mode {
                 EditorMode::Create => {
                     if session.catalog()?.find(&id).is_some() {
@@ -2025,7 +2096,7 @@ impl State {
         self.global.as_ref().map_or_else(
             || {
                 Some(if self.global_error.is_empty() {
-                    "global configuration unavailable".into()
+                    "The Library is unavailable.".into()
                 } else {
                     self.global_error.clone()
                 })
@@ -2068,7 +2139,7 @@ impl State {
     }
 
     fn render_at(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        self.discard_dialog.invalidate();
+        self.dialog.invalidate();
         frame.render_widget(
             Block::default().style(Style::default().bg(JET_BLACK).fg(Color::White)),
             area,
@@ -2081,11 +2152,8 @@ impl State {
         if self.too_small {
             self.breadcrumb_area = Rect::default();
             self.tab_areas = [Rect::default(); 2];
-            if matches!(
-                self.screen,
-                Screen::ConfirmDiscardCreate(_) | Screen::ConfirmDiscardChild(_)
-            ) {
-                self.render_discard_dialog(frame, area);
+            if let Some(question) = self.confirmation() {
+                self.dialog.render(frame, area, &question);
             } else {
                 frame.render_widget(
                     Paragraph::new("Terminal too small\n\nResize or press esc/q to cancel")
@@ -2111,97 +2179,83 @@ impl State {
             self.breadcrumb_area = Rect::default();
             content
         };
-        let hints = match self.screen.clone() {
-            Screen::Home => {
-                if self.category == Category::Project {
-                    self.render_project(frame, body);
-                } else {
-                    self.render_library(frame, body);
+        let hints = if let Some(question) = self.confirmation() {
+            match self.screen.clone() {
+                Screen::ConfirmDiscardCreate(return_to)
+                | Screen::ConfirmDiscardChild(return_to) => {
+                    self.render_editor_background(frame, body, &return_to);
                 }
-                let mut hints = vec![
-                    ("←/→", "focus"),
-                    ("↑/↓", "move"),
-                    ("/", "commands"),
-                    ("?", "help"),
-                ];
-                if self.embedded {
-                    hints.insert(0, ("tab/shift+tab", "switch"));
+                _ if self.category == Category::Project => self.render_project(frame, body),
+                _ => self.render_library(frame, body),
+            }
+            self.dialog.render(frame, body, &question);
+            confirmation::hints(question.choices)
+        } else {
+            match self.screen.clone() {
+                Screen::Home => {
+                    if self.category == Category::Project {
+                        self.render_project(frame, body);
+                    } else {
+                        self.render_library(frame, body);
+                    }
+                    let mut hints = vec![
+                        ("←/→", "focus"),
+                        ("↑/↓", "move"),
+                        ("/", "commands"),
+                        ("?", "help"),
+                    ];
+                    if self.embedded {
+                        hints.insert(0, ("tab/shift+tab", "switch"));
+                    }
+                    hints
                 }
-                hints
-            }
-            Screen::Settings(destination) => {
-                self.render_settings(frame, body, destination);
-                vec![
-                    ("space", "available"),
-                    ("enter", "default"),
-                    ("alt+↑/↓", "reorder"),
-                    ("d/a/r", "inherit"),
-                    ("ctrl+s", "stage"),
-                    ("esc", "back"),
-                ]
-            }
-            Screen::TaxonomyEditor => {
-                self.render_taxonomy_editor(frame, body);
-                vec![
-                    ("esc", "back"),
-                    ("enter", "next/open"),
-                    ("ctrl+s", "stage"),
-                    ("/", "commands"),
-                ]
-            }
-            Screen::TypeEditor => {
-                self.render_type_editor(frame, body);
-                vec![
-                    ("esc", "back"),
-                    ("↑/↓", "move"),
-                    ("enter", "next/open"),
-                    ("ctrl+s", "complete"),
-                ]
-            }
-            Screen::PropertyEditor => {
-                self.render_property_editor(frame, body);
-                vec![
-                    ("esc", "back"),
-                    ("↑/↓", "move"),
-                    ("←/→", "choice"),
-                    ("ctrl+s", "complete"),
-                ]
-            }
-            Screen::Delete => {
-                self.render_confirmation(
-                    frame,
-                    body,
-                    "Delete this custom taxonomy?",
-                    "y: stage deletion    enter/esc/n: keep",
-                );
-                vec![("y", "delete"), ("esc/n", "keep")]
-            }
-            Screen::Review(destination) => {
-                self.render_review(frame, body, destination);
-                vec![("enter", "apply"), ("esc", "back"), ("↑/↓", "scroll")]
-            }
-            Screen::Leave => {
-                self.render_confirmation(
-                    frame,
-                    body,
-                    "Discard all unapplied configuration changes?",
-                    "y: discard and quit    enter/esc/n: keep",
-                );
-                vec![("y", "discard"), ("esc/n", "keep")]
-            }
-            Screen::ScopeChange(_) => {
-                self.render_confirmation(
-                    frame,
-                    body,
-                    "This scope has unapplied changes.",
-                    "a: apply    d: discard    enter/esc: cancel",
-                );
-                vec![("a", "apply"), ("d", "discard"), ("esc", "cancel")]
-            }
-            Screen::ConfirmDiscardCreate(return_to) | Screen::ConfirmDiscardChild(return_to) => {
-                self.render_editor_background(frame, body, &return_to);
-                self.render_discard_dialog(frame, body);
-                vec![("y", "discard"), ("enter/esc/n", "keep editing")]
+                Screen::Settings(destination) => {
+                    self.render_settings(frame, body, destination);
+                    vec![
+                        ("space", "available"),
+                        ("enter", "default"),
+                        ("alt+↑/↓", "reorder"),
+                        ("d/a/r", "inherit"),
+                        ("ctrl+s", "stage"),
+                        ("esc", "back"),
+                    ]
+                }
+                Screen::TaxonomyEditor => {
+                    self.render_taxonomy_editor(frame, body);
+                    vec![
+                        ("esc", "back"),
+                        ("enter", "next/open"),
+                        ("ctrl+s", "stage"),
+                        ("/", "commands"),
+                    ]
+                }
+                Screen::TypeEditor => {
+                    self.render_type_editor(frame, body);
+                    vec![
+                        ("esc", "back"),
+                        ("↑/↓", "move"),
+                        ("enter", "next/open"),
+                        ("ctrl+s", "complete"),
+                    ]
+                }
+                Screen::PropertyEditor => {
+                    self.render_property_editor(frame, body);
+                    vec![
+                        ("esc", "back"),
+                        ("↑/↓", "move"),
+                        ("←/→", "choice"),
+                        ("ctrl+s", "complete"),
+                    ]
+                }
+                Screen::Review(destination) => {
+                    self.render_review(frame, body, destination);
+                    vec![("enter", "apply"), ("esc", "back"), ("↑/↓", "scroll")]
+                }
+                Screen::Delete
+                | Screen::Leave
+                | Screen::ScopeChange(_)
+                | Screen::ConfirmDiscardCreate(_)
+                | Screen::ConfirmDiscardChild(_) => Vec::new(),
             }
         };
         render_navigation_row(frame, footer, &hints);
@@ -2294,35 +2348,6 @@ impl State {
             Screen::PropertyEditor => self.render_property_editor(frame, area),
             _ => self.render_taxonomy_editor(frame, area),
         }
-    }
-
-    fn render_discard_dialog(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let (title, message) = match &self.screen {
-            Screen::ConfirmDiscardCreate(_) => (
-                "Discard Taxonomy",
-                if self.editor_mode == EditorMode::Edit {
-                    "Discard taxonomy changes and return to Library?"
-                } else {
-                    "Discard new taxonomy and return to Library?"
-                },
-            ),
-            Screen::ConfirmDiscardChild(return_to)
-                if matches!(**return_to, Screen::PropertyEditor) =>
-            {
-                ("Discard Property", "Discard property changes?")
-            }
-            Screen::ConfirmDiscardChild(_) => ("Discard Type", "Discard type changes?"),
-            _ => return,
-        };
-        self.discard_dialog.render(
-            frame,
-            area,
-            &Confirmation {
-                title,
-                message: message.into(),
-                choices: DISCARD,
-            },
-        );
     }
 
     fn render_notice(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -2802,33 +2827,6 @@ impl State {
                     .title("Review changes — Enter to apply"),
             ),
             area,
-        );
-    }
-
-    fn render_confirmation(
-        &self,
-        frame: &mut Frame<'_>,
-        area: Rect,
-        message: &str,
-        controls: &str,
-    ) {
-        let popup = centered_rect(58, 9, area);
-        frame.render_widget(Clear, popup);
-        frame.render_widget(
-            Block::bordered()
-                .border_type(BorderType::Double)
-                .border_style(frame_style())
-                .style(Style::default().bg(JET_BLACK)),
-            popup,
-        );
-        frame.render_widget(
-            Paragraph::new(format!("Configuration\n\n{message}\n\n{controls}")).centered(),
-            Rect::new(
-                popup.x + 2,
-                popup.y + 2,
-                popup.width.saturating_sub(4),
-                popup.height.saturating_sub(4),
-            ),
         );
     }
 }
@@ -6302,11 +6300,11 @@ mod tests {
             let cursor = state.create_text.as_ref().map(|text| text.name.cursor());
             state.handle_event(key(KeyCode::Esc), &workspace);
             assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
-            assert!(state.discard_dialog.buttons.is_none());
+            assert!(state.dialog.buttons.is_none());
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| state.render(frame))?;
             assert!(text(&terminal).contains("Discard Taxonomy"));
-            let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
+            let buttons = state.dialog.buttons.ok_or("missing buttons")?;
             state.handle_event(click(Rect::new(0, 0, 1, 1)), &workspace);
             state.handle_event(Event::Paste("ignored".into()), &workspace);
             state.handle_event(key(KeyCode::Down), &workspace);
@@ -6318,7 +6316,7 @@ mod tests {
                 state.create_text.as_ref().map(|text| text.name.cursor()),
                 cursor
             );
-            assert!(state.discard_dialog.buttons.is_none());
+            assert!(state.dialog.buttons.is_none());
             state.handle_event(key(KeyCode::Esc), &workspace);
             state.handle_event(click(buttons.confirm), &workspace);
             assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
@@ -6326,12 +6324,12 @@ mod tests {
             assert!(state.taxonomy_is_dirty());
             state.handle_event(key(KeyCode::Esc), &workspace);
             terminal.draw(|frame| state.render(frame))?;
-            let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
+            let buttons = state.dialog.buttons.ok_or("missing buttons")?;
             state.handle_event(click(buttons.confirm), &workspace);
             assert!(matches!(state.screen, Screen::Home));
             assert!(state.editor.is_none());
             assert!(state.initial_editor.is_none());
-            assert!(state.discard_dialog.buttons.is_none());
+            assert!(state.dialog.buttons.is_none());
             assert_eq!(
                 workspace.global.borrow().catalog()?.find(source.id()),
                 Some(&source)
@@ -6375,7 +6373,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Discard Property"));
-        let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
+        let buttons = state.dialog.buttons.ok_or("missing buttons")?;
         state.handle_event(click(buttons.keep), &workspace);
         assert!(matches!(state.screen, Screen::PropertyEditor));
         assert_eq!(
@@ -6390,7 +6388,7 @@ mod tests {
         );
         state.handle_event(key(KeyCode::Esc), &workspace);
         terminal.draw(|frame| state.render(frame))?;
-        let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
+        let buttons = state.dialog.buttons.ok_or("missing buttons")?;
         state.handle_event(click(buttons.confirm), &workspace);
         assert!(state.property_editor.is_none());
         assert!(
@@ -6415,7 +6413,7 @@ mod tests {
         state.handle_event(key(KeyCode::Esc), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Discard Type"));
-        let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
+        let buttons = state.dialog.buttons.ok_or("missing buttons")?;
         state.handle_event(click(buttons.keep), &workspace);
         assert_eq!(
             state
@@ -6429,7 +6427,7 @@ mod tests {
         );
         state.handle_event(key(KeyCode::Esc), &workspace);
         terminal.draw(|frame| state.render(frame))?;
-        let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
+        let buttons = state.dialog.buttons.ok_or("missing buttons")?;
         state.handle_event(click(buttons.confirm), &workspace);
         assert!(
             state
@@ -6461,7 +6459,7 @@ mod tests {
         state.handle_event(click(breadcrumb), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Discard Taxonomy"));
-        let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
+        let buttons = state.dialog.buttons.ok_or("missing buttons")?;
         state.handle_event(click(buttons.keep), &workspace);
         assert!(matches!(state.screen, Screen::PropertyEditor));
         assert_eq!(
@@ -6476,7 +6474,7 @@ mod tests {
         );
         state.handle_event(click(breadcrumb), &workspace);
         terminal.draw(|frame| state.render(frame))?;
-        let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
+        let buttons = state.dialog.buttons.ok_or("missing buttons")?;
         state.handle_event(click(buttons.confirm), &workspace);
         assert!(matches!(state.screen, Screen::Home));
         assert!(
@@ -6500,14 +6498,14 @@ mod tests {
         state.handle_event(key(KeyCode::Esc), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        let old = state.discard_dialog.buttons.ok_or("missing buttons")?;
+        let old = state.dialog.buttons.ok_or("missing buttons")?;
         state.handle_event(Event::Resize(30, 7), &workspace);
-        assert!(state.discard_dialog.buttons.is_none());
+        assert!(state.dialog.buttons.is_none());
         state.handle_event(click(old.confirm), &workspace);
         assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
         let mut tiny = Terminal::new(TestBackend::new(30, 7))?;
         tiny.draw(|frame| state.render(frame))?;
-        assert!(state.discard_dialog.buttons.is_none());
+        assert!(state.dialog.buttons.is_none());
         state.handle_event(click(old.keep), &workspace);
         assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
         state.handle_event(key(KeyCode::Esc), &workspace);
