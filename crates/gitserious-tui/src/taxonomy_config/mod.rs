@@ -276,6 +276,8 @@ impl CreateTextEditors {
             area.set_style(Style::default().fg(Color::White).bg(JET_BLACK));
             area.set_cursor_line_style(Style::default());
             area.set_cursor_render_mode(CursorRenderMode::Hidden);
+            area.move_cursor(CursorMove::Bottom);
+            area.move_cursor(CursorMove::End);
         }
         description.set_wrap_mode(WrapMode::WordOrGlyph);
         Self {
@@ -1430,7 +1432,12 @@ impl State {
                     self.child_selected = self.child_selected.saturating_sub(1);
                 }
             }
-            KeyCode::Backspace | KeyCode::Delete | KeyCode::Left | KeyCode::Right
+            KeyCode::Backspace
+            | KeyCode::Delete
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End
                 if self.create_focus != CreateFocus::Types =>
             {
                 self.create_text_input(key)
@@ -4473,7 +4480,7 @@ mod tests {
                     .ok_or("missing text")?
                     .name
                     .cursor(),
-                (0, 0)
+                (0, source.id().as_str().chars().count())
             );
             assert_eq!(
                 state.editor.as_ref().ok_or("missing draft")?.build()?,
@@ -6228,7 +6235,7 @@ mod tests {
                     .text
                     .name
                     .cursor(),
-                (0, 0)
+                (0, "existing".len())
             );
             state.handle_event(key(KeyCode::Enter), &workspace);
             terminal.draw(|frame| state.render(frame))?;

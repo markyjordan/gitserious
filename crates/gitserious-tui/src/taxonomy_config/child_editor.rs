@@ -344,6 +344,8 @@ impl PropertyEditorState {
             area.set_style(Style::default().fg(Color::White).bg(JET_BLACK));
             area.set_cursor_line_style(Style::default());
             area.set_cursor_render_mode(CursorRenderMode::Hidden);
+            area.move_cursor(CursorMove::Bottom);
+            area.move_cursor(CursorMove::End);
         }
         condition_rationale.set_wrap_mode(WrapMode::WordOrGlyph);
         Self {
@@ -722,6 +724,8 @@ fn text_key(key: KeyEvent) -> bool {
             | KeyCode::Delete
             | KeyCode::Left
             | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End
             | KeyCode::PageUp
             | KeyCode::PageDown
     ) || matches!(key.code, KeyCode::Char(_) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
@@ -957,8 +961,7 @@ mod tests {
         };
         let mut loaded = PropertyEditorState::new(Some(0), draft.clone());
         loaded.focus = PropertyFocus::ConditionRationale;
-        loaded.key(key(KeyCode::Down));
-        assert_eq!(loaded.focus, PropertyFocus::ConditionRationale);
+        assert_eq!(loaded.condition_rationale.cursor(), (1, 6));
         loaded.key(key(KeyCode::Down));
         assert_eq!(loaded.focus, PropertyFocus::Multiplicity);
         assert!(!loaded.is_dirty());
@@ -1117,7 +1120,10 @@ mod tests {
                 property.key(key(KeyCode::Down));
             }
         }
+        property.key(key(KeyCode::Up));
+        property.key(key(KeyCode::Up));
         let data_cursor = property.condition_rationale.cursor();
+        assert_eq!(data_cursor.0, 0);
         property.key(key(KeyCode::Up));
         property.key(key(KeyCode::Up));
         assert_eq!(property.focus, PropertyFocus::Policy);
