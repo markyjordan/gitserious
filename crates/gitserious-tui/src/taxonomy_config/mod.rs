@@ -2,7 +2,7 @@ use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 
 use crate::confirmation::{
-    self, APPLY_OR_DISCARD, Answer, ConfirmDialog, Confirmation, DISCARD, DISCARD_AND_QUIT,
+    self, APPLY_OR_DISCARD, Answer, ConfirmDialog, Confirmation, DISCARD, DISCARD_AND_QUIT, REMOVE,
     STAGE_DELETION,
 };
 use gitserious_app::{
@@ -260,6 +260,8 @@ enum Screen {
     ScopeChange(PendingAction),
     ConfirmDiscardCreate(Box<Screen>),
     ConfirmDiscardChild(Box<Screen>),
+    ConfirmRemoveType(usize),
+    ConfirmRemoveProperty(usize),
 }
 
 const MENU_WIDTH: u16 = 12;
@@ -571,6 +573,8 @@ impl State {
                     | Screen::PropertyEditor
                     | Screen::ConfirmDiscardCreate(_)
                     | Screen::ConfirmDiscardChild(_)
+                    | Screen::ConfirmRemoveType(_)
+                    | Screen::ConfirmRemoveProperty(_)
             )
     }
 
@@ -690,6 +694,39 @@ impl State {
                 };
                 ("Discard Type", message, DISCARD)
             }
+            Screen::ConfirmRemoveType(index) => {
+                let id = self
+                    .editor
+                    .as_ref()
+                    .and_then(|draft| draft.types.get(*index))
+                    .map(|kind| kind.id.clone())
+                    .unwrap_or_default();
+                (
+                    "Remove Type",
+                    format!("Remove type \"{id}\" from this taxonomy?"),
+                    REMOVE,
+                )
+            }
+            Screen::ConfirmRemoveProperty(index) => {
+                let (kind, key) = self
+                    .type_editor
+                    .as_ref()
+                    .map(|editor| {
+                        let key = editor
+                            .draft
+                            .properties
+                            .get(*index)
+                            .map(|property| property.key.clone())
+                            .unwrap_or_default();
+                        (editor.draft.id.clone(), key)
+                    })
+                    .unwrap_or_default();
+                (
+                    "Remove Property",
+                    format!("Remove property \"{key}\" from type \"{kind}\"?"),
+                    REMOVE,
+                )
+            }
             Screen::Delete => {
                 let id = self
                     .selected_taxonomy()
@@ -745,6 +782,23 @@ impl State {
                 Screen::ConfirmDiscardCreate(return_to) | Screen::ConfirmDiscardChild(return_to),
                 Answer::Keep | Answer::Alternate,
             ) => self.screen = *return_to,
+            (Screen::ConfirmRemoveType(index), Answer::Confirm) => {
+                if let Some(draft) = &mut self.editor
+                    && index < draft.types.len()
+                {
+                    draft.types.remove(index);
+                    self.child_selected = index;
+                }
+                self.screen = Screen::TaxonomyEditor;
+            }
+            (Screen::ConfirmRemoveType(_), _) => self.screen = Screen::TaxonomyEditor,
+            (Screen::ConfirmRemoveProperty(index), Answer::Confirm) => {
+                if let Some(editor) = &mut self.type_editor {
+                    editor.remove_property(index);
+                }
+                self.screen = Screen::TypeEditor;
+            }
+            (Screen::ConfirmRemoveProperty(_), _) => self.screen = Screen::TypeEditor,
             (Screen::Delete, Answer::Confirm) => self.stage_deletion(),
             (Screen::Leave, Answer::Confirm) => return true,
             (Screen::ScopeChange(action), Answer::Confirm) => {
@@ -925,7 +979,9 @@ impl State {
             | Screen::Leave
             | Screen::ScopeChange(_)
             | Screen::ConfirmDiscardCreate(_)
-            | Screen::ConfirmDiscardChild(_) => false,
+            | Screen::ConfirmDiscardChild(_)
+            | Screen::ConfirmRemoveType(_)
+            | Screen::ConfirmRemoveProperty(_) => false,
         }
     }
 
@@ -1531,10 +1587,7 @@ impl State {
                     && key.modifiers.is_empty()
                     && self.child_selected > 0 =>
             {
-                if let Some(editor) = &mut self.editor {
-                    editor.types.remove(self.child_selected - 1);
-                    self.child_selected = self.child_selected.saturating_sub(1);
-                }
+                self.screen = Screen::ConfirmRemoveType(self.child_selected - 1);
             }
             KeyCode::Backspace
             | KeyCode::Delete
@@ -1620,6 +1673,9 @@ impl State {
             }
             ChildAction::AddProperty => self.open_property_editor(None),
             ChildAction::EditProperty(index) => self.open_property_editor(Some(index)),
+            ChildAction::RemoveProperty(index) => {
+                self.screen = Screen::ConfirmRemoveProperty(index)
+            }
         }
     }
 
@@ -2185,6 +2241,12 @@ impl State {
                 | Screen::ConfirmDiscardChild(return_to) => {
                     self.render_editor_background(frame, body, &return_to);
                 }
+                Screen::ConfirmRemoveType(_) => {
+                    self.render_editor_background(frame, body, &Screen::TaxonomyEditor);
+                }
+                Screen::ConfirmRemoveProperty(_) => {
+                    self.render_editor_background(frame, body, &Screen::TypeEditor);
+                }
                 _ if self.category == Category::Project => self.render_project(frame, body),
                 _ => self.render_library(frame, body),
             }
@@ -2255,7 +2317,9 @@ impl State {
                 | Screen::Leave
                 | Screen::ScopeChange(_)
                 | Screen::ConfirmDiscardCreate(_)
-                | Screen::ConfirmDiscardChild(_) => Vec::new(),
+                | Screen::ConfirmDiscardChild(_)
+                | Screen::ConfirmRemoveType(_)
+                | Screen::ConfirmRemoveProperty(_) => Vec::new(),
             }
         };
         render_navigation_row(frame, footer, &hints);
@@ -6949,6 +7013,8 @@ mod tests {
         state.handle_event(key(KeyCode::Down), &workspace);
         assert_eq!(state.child_selected, 1);
         state.handle_event(key(KeyCode::Char('d')), &workspace);
+        assert!(matches!(state.screen, Screen::ConfirmRemoveType(0)));
+        state.handle_event(key(KeyCode::Char('y')), &workspace);
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
         assert_eq!(
             error_text(&state),

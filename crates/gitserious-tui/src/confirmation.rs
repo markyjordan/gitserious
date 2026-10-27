@@ -51,6 +51,7 @@ const fn keep(label: &'static str) -> Choice {
 }
 
 pub(crate) const DISCARD: &[Choice] = &[confirm("discard"), keep("keep editing")];
+pub(crate) const REMOVE: &[Choice] = &[confirm("remove"), keep("keep")];
 pub(crate) const STAGE_DELETION: &[Choice] = &[confirm("stage deletion"), keep("keep")];
 pub(crate) const DISCARD_AND_QUIT: &[Choice] = &[confirm("discard and quit"), keep("stay")];
 pub(crate) const APPLY_OR_DISCARD: &[Choice] = &[
