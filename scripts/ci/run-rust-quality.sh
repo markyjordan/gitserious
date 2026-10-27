@@ -27,6 +27,11 @@ run_check() {
     *) bash scripts/ci/check-compiled-sources.sh "$messages" ;;
   esac
   rm -f "$messages"
+  case "$(uname -s)" in
+    Linux) CARGO="$CARGO" bash scripts/ci/check-dead-code.sh ;;
+    # The scan rebuilds the workspace several times; one leg is enough.
+    *) echo "Skipping the dead-code check; it runs on the Linux leg." ;;
+  esac
 }
 
 run_fmt() {
