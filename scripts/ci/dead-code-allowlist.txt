@@ -20,4 +20,3 @@ crates/gitserious-core/src/property.rs	as_slice
 crates/gitserious-core/src/property.rs	into_values
 crates/gitserious-core/src/property.rs	is_empty
 crates/gitserious-core/src/property.rs	len
-crates/gitserious-tui/src/lib.rs	RatatuiCommitDraftAuthorError

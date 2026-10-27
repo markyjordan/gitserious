@@ -16,7 +16,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use tui_textarea::{CursorMove, CursorRenderMode, TextArea, WrapMode};
 
-use crate::{RatatuiCommitDraftAuthor, RatatuiCommitDraftAuthorError};
+use crate::RatatuiCommitDraftAuthor;
+use crate::author::RatatuiCommitDraftAuthorError;
 
 mod author_harness {
     pub(crate) mod state {
