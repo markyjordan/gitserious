@@ -6,19 +6,17 @@ The Rust API exposed here is unstable and may have breaking changes in any
 release. The supported public interface is the `gitserious` command-line tool.
 
 This crate implements the application-owned global path-resolution and
-directory-creation ports. Global user storage follows XDG Base Directory
-conventions on Unix-family targets and native AppData conventions on Windows.
+directory-creation ports. The global configuration directory follows the XDG
+Base Directory convention on Unix-family targets and the native AppData
+convention on Windows.
 
 | Purpose | Unix-family targets | Native Windows |
 | --- | --- | --- |
 | Config | `$XDG_CONFIG_HOME/gitserious` | `%APPDATA%\gitserious\config` |
-| Data | `$XDG_DATA_HOME/gitserious` | `%APPDATA%\gitserious\data` |
-| State | `$XDG_STATE_HOME/gitserious` | `%LOCALAPPDATA%\gitserious\state` |
-| Cache | `$XDG_CACHE_HOME/gitserious` | `%LOCALAPPDATA%\gitserious\cache` |
 
-Unset, empty, and relative XDG homes fall back beneath `HOME` to `.config`,
-`.local/share`, `.local/state`, and `.cache`, respectively. Native Windows
-ignores XDG variables and uses Known Folders.
+An unset, empty, or relative `XDG_CONFIG_HOME` falls back to
+`$HOME/.config/gitserious`. Native Windows ignores XDG variables and uses the
+Roaming AppData Known Folder.
 
 The global `config.toml` stores the default taxonomy, ordered available set,
 and global-only custom taxonomy aggregates. Repository `gitserious.toml` stores

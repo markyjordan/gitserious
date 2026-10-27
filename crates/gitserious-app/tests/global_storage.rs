@@ -49,30 +49,17 @@ impl GlobalPathResolver for RecordingResolver {
 }
 
 fn sample_paths() -> GlobalPaths {
-    GlobalPaths::new(
-        PathBuf::from("config"),
-        PathBuf::from("data"),
-        PathBuf::from("state"),
-        PathBuf::from("cache"),
-    )
+    GlobalPaths::new(PathBuf::from("config"))
 }
 
 #[test]
-fn global_paths_preserve_owned_purpose_specific_directories() {
+fn global_paths_own_their_config_directory() {
     let mut source = PathBuf::from("original");
-    let paths = GlobalPaths::new(
-        source.join("config"),
-        source.join("data"),
-        source.join("state"),
-        source.join("cache"),
-    );
+    let paths = GlobalPaths::new(source.join("config"));
 
     source.push("changed");
 
     assert_eq!(paths.config().as_path(), PathBuf::from("original/config"));
-    assert_eq!(paths.data().as_path(), PathBuf::from("original/data"));
-    assert_eq!(paths.state().as_path(), PathBuf::from("original/state"));
-    assert_eq!(paths.cache().as_path(), PathBuf::from("original/cache"));
 }
 
 #[test]

@@ -12,12 +12,7 @@ use gitserious_fs::{TomlGlobalConfigurationStore, TomlProjectStateStore};
 #[test]
 fn absent_global_config_uses_all_built_ins_and_round_trips() -> Result<(), Box<dyn Error>> {
     let directory = tempfile::tempdir()?;
-    let paths = GlobalPaths::new(
-        directory.path().to_path_buf(),
-        directory.path().join("data"),
-        directory.path().join("state"),
-        directory.path().join("cache"),
-    );
+    let paths = GlobalPaths::new(directory.path().to_path_buf());
     let store = TomlGlobalConfigurationStore::new(paths.config().clone());
     let original = store.load()?;
     assert_eq!(original.available_taxonomies().len(), 3);
@@ -37,12 +32,7 @@ fn legacy_global_shape_fails_with_actionable_message() -> Result<(), Box<dyn Err
         directory.path().join("config.toml"),
         "config-version = 1\ntemplates = []\ntypesets = []\n",
     )?;
-    let paths = GlobalPaths::new(
-        directory.path().to_path_buf(),
-        directory.path().join("d"),
-        directory.path().join("s"),
-        directory.path().join("c"),
-    );
+    let paths = GlobalPaths::new(directory.path().to_path_buf());
     let error = TomlGlobalConfigurationStore::new(paths.config().clone())
         .load()
         .expect_err("legacy shape must fail");

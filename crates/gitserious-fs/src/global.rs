@@ -23,7 +23,7 @@ pub enum GlobalPathError {
     HomeUnavailable,
     /// HOME was relative and therefore cannot anchor an XDG fallback.
     RelativeHome(PathBuf),
-    /// Windows did not provide the required Roaming or Local `AppData` roots.
+    /// Windows did not provide the Roaming `AppData` root.
     NativeDirectoriesUnavailable,
     /// A Windows Known Folder root was unexpectedly relative.
     RelativeNativeDirectory(PathBuf),
@@ -42,7 +42,7 @@ impl Display for GlobalPathError {
                 path.display()
             ),
             Self::NativeDirectoriesUnavailable => {
-                formatter.write_str("Windows Roaming and Local AppData directories are required")
+                formatter.write_str("the Windows Roaming AppData directory is required")
             }
             Self::RelativeNativeDirectory(path) => write!(
                 formatter,

@@ -27,22 +27,12 @@ pub(crate) fn resolve() -> Result<GlobalPaths, GlobalPathError> {
 pub(crate) fn resolve_from(environment: &impl Environment) -> Result<GlobalPaths, GlobalPathError> {
     let home = environment.variable("HOME").map(PathBuf::from);
 
-    Ok(GlobalPaths::new(
-        resolve_directory(environment, "XDG_CONFIG_HOME", home.as_deref(), ".config")?,
-        resolve_directory(
-            environment,
-            "XDG_DATA_HOME",
-            home.as_deref(),
-            ".local/share",
-        )?,
-        resolve_directory(
-            environment,
-            "XDG_STATE_HOME",
-            home.as_deref(),
-            ".local/state",
-        )?,
-        resolve_directory(environment, "XDG_CACHE_HOME", home.as_deref(), ".cache")?,
-    ))
+    Ok(GlobalPaths::new(resolve_directory(
+        environment,
+        "XDG_CONFIG_HOME",
+        home.as_deref(),
+        ".config",
+    )?))
 }
 
 fn resolve_directory(

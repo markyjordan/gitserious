@@ -1,7 +1,4 @@
-# Dead code in crate sources when check-dead-code.sh landed. Each entry is
-# deleted under https://github.com/markyjordan/gitserious/issues/120 or kept
-# until #117, #118, or #119 decides it; the check fails on new offenders and
-# on stale entries.
-crates/gitserious-app/src/global_paths.rs	cache
-crates/gitserious-app/src/global_paths.rs	data
-crates/gitserious-app/src/global_paths.rs	state
+# Dead code that check-dead-code.sh accepts, one tab-separated "file<TAB>item"
+# row each. Every entry from the #120 audit is resolved, so the list is empty.
+# Add a row only with an issue that decides it; the check fails on new
+# offenders and on stale entries.

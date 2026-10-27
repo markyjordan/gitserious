@@ -1,17 +1,10 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
-use gitserious_app::{GlobalPaths, resolve_global_paths};
+use gitserious_app::resolve_global_paths;
 
 use crate::platform::windows;
 use crate::{GlobalPathError, SystemGlobalPathResolver};
-
-fn assert_paths(paths: &GlobalPaths, config: &Path, data: &Path, state: &Path, cache: &Path) {
-    assert_eq!(paths.config().as_path(), config);
-    assert_eq!(paths.data().as_path(), data);
-    assert_eq!(paths.state().as_path(), state);
-    assert_eq!(paths.cache().as_path(), cache);
-}
 
 fn absolute_test_root(name: &str) -> PathBuf {
     #[cfg(windows)]
@@ -26,48 +19,32 @@ fn absolute_test_root(name: &str) -> PathBuf {
 }
 
 #[test]
-fn windows_roots_map_to_roaming_and_local_purposes() -> Result<(), Box<dyn Error>> {
+fn windows_config_lives_under_roaming_app_data() -> Result<(), Box<dyn Error>> {
     let roaming = absolute_test_root("Roaming");
-    let local = absolute_test_root("Local");
 
-    let paths = windows::resolve_from_roots(Some(&roaming), Some(&local))?;
+    let paths = windows::resolve_from_root(Some(&roaming))?;
 
-    assert_paths(
-        &paths,
-        &roaming.join("gitserious/config"),
-        &roaming.join("gitserious/data"),
-        &local.join("gitserious/state"),
-        &local.join("gitserious/cache"),
+    assert_eq!(
+        paths.config().as_path(),
+        roaming.join("gitserious").join("config")
     );
     Ok(())
 }
 
 #[test]
-fn windows_resolution_requires_both_known_folder_roots() {
-    let roaming = absolute_test_root("Roaming");
-    let local = absolute_test_root("Local");
-
+fn windows_resolution_requires_the_roaming_root() {
     assert_eq!(
-        windows::resolve_from_roots(None, Some(&local)),
-        Err(GlobalPathError::NativeDirectoriesUnavailable)
-    );
-    assert_eq!(
-        windows::resolve_from_roots(Some(&roaming), None),
+        windows::resolve_from_root(None),
         Err(GlobalPathError::NativeDirectoriesUnavailable)
     );
 }
 
 #[test]
-fn windows_resolution_rejects_relative_known_folder_roots() {
-    let absolute = absolute_test_root("AppData");
+fn windows_resolution_rejects_a_relative_roaming_root() {
     let relative = PathBuf::from("relative-app-data");
 
     assert_eq!(
-        windows::resolve_from_roots(Some(&relative), Some(&absolute)),
-        Err(GlobalPathError::RelativeNativeDirectory(relative.clone()))
-    );
-    assert_eq!(
-        windows::resolve_from_roots(Some(&absolute), Some(&relative)),
+        windows::resolve_from_root(Some(&relative)),
         Err(GlobalPathError::RelativeNativeDirectory(relative))
     );
 }
@@ -78,9 +55,6 @@ fn native_windows_adapter_returns_absolute_known_folder_paths() -> Result<(), Bo
     let paths = resolve_global_paths(&SystemGlobalPathResolver)?;
 
     assert!(paths.config().as_path().is_absolute());
-    assert!(paths.data().as_path().is_absolute());
-    assert!(paths.state().as_path().is_absolute());
-    assert!(paths.cache().as_path().is_absolute());
     Ok(())
 }
 
@@ -121,88 +95,41 @@ mod xdg_contract {
     }
 
     #[test]
-    fn absolute_xdg_overrides_do_not_require_home() -> Result<(), Box<dyn Error>> {
-        let environment = FakeEnvironment::default()
-            .with("XDG_CONFIG_HOME", "/xdg/config")
-            .with("XDG_DATA_HOME", "/xdg/data")
-            .with("XDG_STATE_HOME", "/xdg/state")
-            .with("XDG_CACHE_HOME", "/xdg/cache");
+    fn an_absolute_xdg_config_home_does_not_require_home() -> Result<(), Box<dyn Error>> {
+        let environment = FakeEnvironment::default().with("XDG_CONFIG_HOME", "/xdg/config");
 
         let paths = xdg::resolve_from(&environment)?;
 
-        assert_paths(
-            &paths,
-            Path::new("/xdg/config/gitserious"),
-            Path::new("/xdg/data/gitserious"),
-            Path::new("/xdg/state/gitserious"),
-            Path::new("/xdg/cache/gitserious"),
+        assert_eq!(
+            paths.config().as_path(),
+            Path::new("/xdg/config/gitserious")
         );
         Ok(())
     }
 
     #[test]
-    fn unset_xdg_homes_use_specified_home_fallbacks() -> Result<(), Box<dyn Error>> {
+    fn an_unset_xdg_config_home_falls_back_beneath_home() -> Result<(), Box<dyn Error>> {
         let paths = xdg::resolve_from(&environment_with_home())?;
 
-        assert_paths(
-            &paths,
-            Path::new("/home/example/.config/gitserious"),
-            Path::new("/home/example/.local/share/gitserious"),
-            Path::new("/home/example/.local/state/gitserious"),
-            Path::new("/home/example/.cache/gitserious"),
+        assert_eq!(
+            paths.config().as_path(),
+            Path::new("/home/example/.config/gitserious")
         );
         Ok(())
     }
 
     #[test]
-    fn each_xdg_override_is_resolved_independently() -> Result<(), Box<dyn Error>> {
-        let cases = [
-            ("XDG_CONFIG_HOME", 0),
-            ("XDG_DATA_HOME", 1),
-            ("XDG_STATE_HOME", 2),
-            ("XDG_CACHE_HOME", 3),
-        ];
+    fn empty_and_relative_xdg_config_homes_are_ignored() -> Result<(), Box<dyn Error>> {
+        for value in ["", "relative/config"] {
+            let environment = environment_with_home().with("XDG_CONFIG_HOME", value);
 
-        for (variable, selected) in cases {
-            let environment = environment_with_home().with(variable, "/override");
             let paths = xdg::resolve_from(&environment)?;
-            let actual = [paths.config(), paths.data(), paths.state(), paths.cache()];
-            let fallbacks = [
-                Path::new("/home/example/.config/gitserious"),
-                Path::new("/home/example/.local/share/gitserious"),
-                Path::new("/home/example/.local/state/gitserious"),
-                Path::new("/home/example/.cache/gitserious"),
-            ];
 
-            for (index, directory) in actual.into_iter().enumerate() {
-                if index == selected {
-                    assert_eq!(directory.as_path(), Path::new("/override/gitserious"));
-                } else {
-                    assert_eq!(directory.as_path(), fallbacks[index]);
-                }
-            }
+            assert_eq!(
+                paths.config().as_path(),
+                Path::new("/home/example/.config/gitserious")
+            );
         }
-
-        Ok(())
-    }
-
-    #[test]
-    fn empty_and_relative_xdg_overrides_are_ignored() -> Result<(), Box<dyn Error>> {
-        let environment = environment_with_home()
-            .with("XDG_CONFIG_HOME", "")
-            .with("XDG_DATA_HOME", "relative/data")
-            .with("XDG_STATE_HOME", "")
-            .with("XDG_CACHE_HOME", "relative/cache");
-
-        let paths = xdg::resolve_from(&environment)?;
-
-        assert_paths(
-            &paths,
-            Path::new("/home/example/.config/gitserious"),
-            Path::new("/home/example/.local/share/gitserious"),
-            Path::new("/home/example/.local/state/gitserious"),
-            Path::new("/home/example/.cache/gitserious"),
-        );
         Ok(())
     }
 
@@ -252,18 +179,12 @@ mod xdg_contract {
         let root = TestDirectory::new("resolution-no-io")?;
         let base = root.path().join("not-created");
         let environment = FakeEnvironment::default()
-            .with("XDG_CONFIG_HOME", base.join("config").into_os_string())
-            .with("XDG_DATA_HOME", base.join("data").into_os_string())
-            .with("XDG_STATE_HOME", base.join("state").into_os_string())
-            .with("XDG_CACHE_HOME", base.join("cache").into_os_string());
+            .with("XDG_CONFIG_HOME", base.join("config").into_os_string());
 
         let paths = xdg::resolve_from(&environment)?;
 
         assert!(!base.exists());
         assert!(!paths.config().as_path().exists());
-        assert!(!paths.data().as_path().exists());
-        assert!(!paths.state().as_path().exists());
-        assert!(!paths.cache().as_path().exists());
         Ok(())
     }
 
@@ -272,11 +193,8 @@ mod xdg_contract {
         use std::os::unix::ffi::OsStringExt;
 
         let base = PathBuf::from(OsString::from_vec(vec![b'/', b'x', 0xff]));
-        let environment = FakeEnvironment::default()
-            .with("XDG_CONFIG_HOME", base.clone().into_os_string())
-            .with("XDG_DATA_HOME", "/xdg/data")
-            .with("XDG_STATE_HOME", "/xdg/state")
-            .with("XDG_CACHE_HOME", "/xdg/cache");
+        let environment =
+            FakeEnvironment::default().with("XDG_CONFIG_HOME", base.clone().into_os_string());
 
         let paths = xdg::resolve_from(&environment)?;
 
@@ -289,9 +207,6 @@ mod xdg_contract {
         let paths = resolve_global_paths(&SystemGlobalPathResolver)?;
 
         assert!(paths.config().as_path().is_absolute());
-        assert!(paths.data().as_path().is_absolute());
-        assert!(paths.state().as_path().is_absolute());
-        assert!(paths.cache().as_path().is_absolute());
         Ok(())
     }
 }
