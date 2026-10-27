@@ -36,6 +36,10 @@
 //! conditional, optional) and a multiplicity (single, multiple). Without it, a property needs a
 //! hand edit of `config.toml` to take a level or multiplicity the editor cannot set.
 //!
+//! P5, an edit keeps the taxonomy's name. While the editor edits an existing taxonomy, its Name
+//! field holds the name the taxonomy was opened with. Without it, a user could rename a taxonomy
+//! that projects pin by name, and staging would fail or address the wrong taxonomy.
+//!
 //! Scope limits:
 //! - Only the keyboard events in [`INPUTS`]. Mouse, paste, and resize events are out of scope.
 //! - One terminal of `MINIMUM_WIDTH` by `MINIMUM_HEIGHT` cells. Mouse hit areas that rendering
@@ -469,6 +473,7 @@ const PROPERTIES: &[(&str, Check)] = &[
         "P3, the review names every taxonomy change",
         review_names_every_taxonomy_change,
     ),
+    ("P5, an edit keeps the taxonomy's name", edit_keeps_the_name),
 ];
 
 struct ChildEditor {
@@ -523,6 +528,22 @@ fn no_silent_draft_loss(
                 child.name
             ));
         }
+    }
+    Ok(())
+}
+
+fn edit_keeps_the_name(_: &Snapshot, _: &Event, after: Option<&Snapshot>) -> Result<(), String> {
+    let Some(after) = after.filter(|after| after.editor_mode == EditorMode::Edit) else {
+        return Ok(());
+    };
+    if let (Some([name, _]), Some(initial)) = (&after.create_text, &after.initial_draft)
+        && name.lines.join("\n") != initial.id
+    {
+        return Err(format!(
+            "The edit editor's Name field reads {:?}, not the taxonomy's name {:?}.",
+            name.lines.join("\n"),
+            initial.id
+        ));
     }
     Ok(())
 }

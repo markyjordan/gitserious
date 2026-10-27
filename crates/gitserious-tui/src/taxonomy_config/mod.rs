@@ -6731,6 +6731,43 @@ mod tests {
     }
 
     #[test]
+    fn edit_opens_the_create_editor_with_its_name_fixed() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (workspace, source) = child_editor_workspace()?;
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
+        state.library.select_taxonomy(3);
+        state.handle_event(key(KeyCode::Char('e')), &workspace);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let rendered = text(&terminal);
+        assert!(rendered.contains("fixed after creation"));
+        assert!(rendered.contains("Original taxonomy"));
+        assert!(rendered.contains(CREATE_TYPES_ADD_LABEL));
+        assert!(rendered.contains("existing"));
+        assert!(!rendered.contains("Metadata"));
+        assert_eq!(state.create_focus, CreateFocus::Types);
+
+        for _ in 0..3 {
+            state.handle_event(key(KeyCode::Up), &workspace);
+        }
+        assert_eq!(state.create_focus, CreateFocus::Description);
+        state.handle_event(Event::Paste("renamed".into()), &workspace);
+        assert_eq!(
+            state
+                .create_text
+                .as_ref()
+                .ok_or("missing text")?
+                .name
+                .lines()
+                .join("\n"),
+            source.id().as_str()
+        );
+        Ok(())
+    }
+
+    #[test]
     fn failed_staging_keeps_the_edited_description_as_typed()
     -> Result<(), Box<dyn std::error::Error>> {
         let (workspace, _) = child_editor_workspace()?;
