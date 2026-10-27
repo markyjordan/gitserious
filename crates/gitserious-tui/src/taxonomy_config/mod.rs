@@ -2092,28 +2092,22 @@ impl State {
             );
         }
         let result = candidate.build().and_then(|taxonomy| {
-            if self
-                .fork_source
-                .as_ref()
-                .is_some_and(|source| source.id() == taxonomy.id())
-            {
-                return Err("Choose a new taxonomy name before staging the fork.".into());
-            }
             let id = taxonomy.id().clone();
             let session = self
                 .global
                 .as_mut()
                 .ok_or("The Library is unavailable.".to_owned())?;
-            match mode {
-                EditorMode::Create => {
-                    if session.catalog()?.find(&id).is_some() {
-                        return Err(format!(
-                            "A taxonomy named \"{id}\" already exists in the Library."
-                        ));
-                    }
-                    session.create_taxonomy(taxonomy).map(|()| true)
-                }
-                EditorMode::Edit => session.update_taxonomy(
+            match (mode, &self.fork_source) {
+                (EditorMode::Create, Some(source)) => session
+                    .fork_taxonomy(
+                        source.id(),
+                        id.clone(),
+                        taxonomy.description().clone(),
+                        taxonomy.commit_types().to_vec(),
+                    )
+                    .map(|()| true),
+                (EditorMode::Create, None) => session.create_taxonomy(taxonomy).map(|()| true),
+                (EditorMode::Edit, _) => session.update_taxonomy(
                     &id,
                     taxonomy.description().clone(),
                     taxonomy.commit_types().to_vec(),
@@ -3162,6 +3156,32 @@ mod tests {
         }
     }
 
+    /// Stages a fork without edits, as staging the fork editor unchanged does.
+    trait ForkUnchanged {
+        fn fork_unchanged(&mut self, source: &TaxonomyId, target: TaxonomyId)
+        -> Result<(), String>;
+    }
+
+    impl ForkUnchanged for ConfigurationSession {
+        fn fork_unchanged(
+            &mut self,
+            source: &TaxonomyId,
+            target: TaxonomyId,
+        ) -> Result<(), String> {
+            let source_taxonomy = self
+                .catalog()?
+                .find(source)
+                .cloned()
+                .ok_or("the fork source is not installed")?;
+            self.fork_taxonomy(
+                source,
+                target,
+                source_taxonomy.description().clone(),
+                source_taxonomy.commit_types().to_vec(),
+            )
+        }
+    }
+
     fn child_editor_workspace() -> Result<(Workspace, Taxonomy), Box<dyn std::error::Error>> {
         let source = Taxonomy::new(
             TaxonomyId::new("original")?,
@@ -3478,7 +3498,7 @@ mod tests {
 
         let mut authored = ConfigurationSession::open_global(GlobalConfiguration::default());
         let team = TaxonomyId::new("team")?;
-        authored.fork_taxonomy(&TaxonomyId::new("conventional")?, team.clone())?;
+        authored.fork_unchanged(&TaxonomyId::new("conventional")?, team.clone())?;
         let config = ProjectConfig::new(1, Some(team.clone()), Some(vec![team]))?;
         let lock = ProjectLock::capture(
             &config,
@@ -3854,7 +3874,7 @@ mod tests {
         state.home_focus = HomeFocus::Content;
         let target = TaxonomyId::new("team")?;
         let session = state.global.as_mut().ok_or("missing global")?;
-        session.fork_taxonomy(&TaxonomyId::new("conventional")?, target.clone())?;
+        session.fork_unchanged(&TaxonomyId::new("conventional")?, target.clone())?;
         let original = session
             .catalog()?
             .find(&target)
@@ -3883,7 +3903,7 @@ mod tests {
         state.home_focus = HomeFocus::Content;
         let session = state.global.as_mut().ok_or("missing global")?;
         for index in 0..8 {
-            session.fork_taxonomy(
+            session.fork_unchanged(
                 &TaxonomyId::new("conventional")?,
                 TaxonomyId::new(format!("team-{index}"))?,
             )?;
@@ -3930,7 +3950,7 @@ mod tests {
             .global
             .as_mut()
             .ok_or("missing global")?
-            .fork_taxonomy(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
+            .fork_unchanged(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
         let list = state.library.browser_area;
@@ -4017,7 +4037,7 @@ mod tests {
             .global
             .as_mut()
             .ok_or("missing global")?
-            .fork_taxonomy(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
+            .fork_unchanged(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
         terminal.draw(|frame| state.render(frame))?;
         assert!(!state.library.create_selected);
         assert_eq!(state.library.browse_selected, 3);
@@ -5537,13 +5557,13 @@ mod tests {
             .global
             .as_mut()
             .ok_or("missing global")?
-            .fork_taxonomy(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
+            .fork_unchanged(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
         for index in 0..40 {
             state
                 .global
                 .as_mut()
                 .ok_or("missing global")?
-                .fork_taxonomy(
+                .fork_unchanged(
                     &TaxonomyId::new("conventional")?,
                     TaxonomyId::new(format!("more-{index}"))?,
                 )?;
@@ -5682,7 +5702,7 @@ mod tests {
             .global
             .as_mut()
             .ok_or("missing global")?
-            .fork_taxonomy(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
+            .fork_unchanged(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
         state.library.browse_selected = 3;
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
@@ -5774,7 +5794,7 @@ mod tests {
             .global
             .as_mut()
             .ok_or("missing global")?
-            .fork_taxonomy(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
+            .fork_unchanged(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
         state.open_review();
         assert!(matches!(
             state.screen,

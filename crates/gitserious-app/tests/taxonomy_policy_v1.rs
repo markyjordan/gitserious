@@ -40,7 +40,13 @@ fn portable_lock_keeps_complete_taxonomies() -> Result<(), Box<dyn Error>> {
 #[test]
 fn fork_creation_is_separate_from_availability() -> Result<(), Box<dyn Error>> {
     let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
-    session.fork_taxonomy(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
+    let conventional = &built_in_taxonomies()[0];
+    session.fork_taxonomy(
+        conventional.id(),
+        TaxonomyId::new("team")?,
+        conventional.description().clone(),
+        conventional.commit_types().to_vec(),
+    )?;
     assert!(session.catalog()?.find(&TaxonomyId::new("team")?).is_some());
     assert!(
         !session
@@ -56,7 +62,13 @@ fn fork_creation_is_separate_from_availability() -> Result<(), Box<dyn Error>> {
 fn selected_custom_taxonomy_cannot_be_deleted() -> Result<(), Box<dyn Error>> {
     let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
     let team = TaxonomyId::new("team")?;
-    session.fork_taxonomy(&TaxonomyId::new("conventional")?, team.clone())?;
+    let conventional = &built_in_taxonomies()[0];
+    session.fork_taxonomy(
+        conventional.id(),
+        team.clone(),
+        conventional.description().clone(),
+        conventional.commit_types().to_vec(),
+    )?;
     let mut available = session.global().available_taxonomies().to_vec();
     available.push(team.clone());
     session.configure_global(team.clone(), available)?;

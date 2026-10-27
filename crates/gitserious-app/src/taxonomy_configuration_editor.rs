@@ -208,7 +208,10 @@ impl ConfigurationSession {
     pub fn create_taxonomy(&mut self, taxonomy: Taxonomy) -> Result<(), String> {
         self.require_global()?;
         if self.catalog()?.find(taxonomy.id()).is_some() {
-            return Err(format!("taxonomy \"{}\" already exists", taxonomy.id()));
+            return Err(format!(
+                "a taxonomy named \"{}\" already exists in the Library",
+                taxonomy.id()
+            ));
         }
         if let Some(original) = self
             .global_original
@@ -226,17 +229,33 @@ impl ConfigurationSession {
         self.replace_custom(custom)
     }
 
-    /// Forks any installed taxonomy into the custom library.
-    pub fn fork_taxonomy(&mut self, source: &TaxonomyId, target: TaxonomyId) -> Result<(), String> {
+    /// Forks any installed taxonomy into the custom library under a new, free name, with
+    /// lineage to the source's version and the description and commit types authored for the
+    /// fork.
+    pub fn fork_taxonomy(
+        &mut self,
+        source: &TaxonomyId,
+        target: TaxonomyId,
+        description: Description,
+        commit_types: Vec<CommitTypeDefinition>,
+    ) -> Result<(), String> {
         self.require_global()?;
-        let catalog = self.catalog()?;
-        if catalog.find(&target).is_some() {
-            return Err(format!("taxonomy \"{target}\" already exists"));
+        if &target == source {
+            return Err("choose a new taxonomy name before staging the fork".into());
         }
-        let fork = catalog
+        let copy = self
+            .catalog()?
             .find(source)
             .ok_or_else(|| format!("taxonomy \"{source}\" is not installed"))?
             .fork(target);
+        let fork = Taxonomy::new(
+            copy.id().clone(),
+            copy.version(),
+            description,
+            copy.derived_from().cloned(),
+            commit_types,
+        )
+        .map_err(|error| error.to_string())?;
         self.create_taxonomy(fork)
     }
 
