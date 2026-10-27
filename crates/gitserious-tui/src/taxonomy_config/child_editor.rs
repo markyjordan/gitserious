@@ -27,6 +27,7 @@ pub(super) enum ChildAction {
     Back,
     AddProperty,
     EditProperty(usize),
+    RemoveProperty(usize),
     Error(String),
 }
 
@@ -77,6 +78,13 @@ impl TypeEditorState {
         self.current() != self.initial
     }
 
+    pub fn remove_property(&mut self, index: usize) {
+        if index < self.draft.properties.len() {
+            self.draft.properties.remove(index);
+            self.selected = index;
+        }
+    }
+
     pub fn paste(&mut self, text: &str) -> ChildAction {
         if self.focus == CreateFocus::Types {
             return ChildAction::Continue;
@@ -118,8 +126,7 @@ impl TypeEditorState {
                 KeyCode::Enter => return ChildAction::EditProperty(self.selected - 1),
                 KeyCode::Char('n') if key.modifiers.is_empty() => return ChildAction::AddProperty,
                 KeyCode::Char('d') if key.modifiers.is_empty() && self.selected > 0 => {
-                    self.draft.properties.remove(self.selected - 1);
-                    self.selected -= 1;
+                    return ChildAction::RemoveProperty(self.selected - 1);
                 }
                 _ => {}
             }

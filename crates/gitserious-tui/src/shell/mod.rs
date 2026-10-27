@@ -9,7 +9,7 @@ use gitserious_app::{
     CommitAuthoringContext, HelpPage, InteractiveEntry, InteractiveUi, InteractiveWorkspace,
 };
 use ratatui::crossterm::event::{
-    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+    self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -18,6 +18,7 @@ use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap}
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::author::{AuthoringCheckpoint, embedded_author};
+use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT};
 use crate::taxonomy_config::ConfigView;
 use crate::theme::{
     JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, centered_rect, command_hints, frame_style,
@@ -25,6 +26,14 @@ use crate::theme::{
 };
 use commit_view::CommitView;
 use home_logo::{HomeLogo, render_home_logo, resolve_dev_theme};
+
+fn quit_question() -> Confirmation<'static> {
+    Confirmation {
+        title: "Quit",
+        message: "Discard unapplied changes and quit?".into(),
+        choices: DISCARD_AND_QUIT,
+    }
+}
 
 /// Unified Home, Commit, Config, and Help terminal adapter.
 #[derive(Clone, Debug, Default)]
@@ -147,6 +156,7 @@ struct Shell {
     pending_author: Option<PendingAuthor>,
     pending_navigation: Option<Action>,
     overlay: Option<Overlay>,
+    quit_dialog: ConfirmDialog,
     help_page: usize,
     help_scroll: u16,
     root_areas: [Rect; Section::ALL.len()],
@@ -171,6 +181,7 @@ impl Shell {
             pending_author: None,
             pending_navigation: None,
             overlay: None,
+            quit_dialog: ConfirmDialog::default(),
             help_page: 0,
             help_scroll: 0,
             root_areas: [Rect::default(); Section::ALL.len()],
@@ -413,26 +424,11 @@ impl Shell {
                 }
                 self.overlay = Some(Overlay::Result(scroll));
             }
-            Overlay::QuitConfirm => {
-                if matches!(
-                    event,
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Char('y'),
-                        ..
-                    })
-                ) {
-                    return Some(Action::Quit);
-                }
-                if !matches!(
-                    event,
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Esc | KeyCode::Char('n') | KeyCode::Enter,
-                        ..
-                    })
-                ) {
-                    self.overlay = Some(Overlay::QuitConfirm);
-                }
-            }
+            Overlay::QuitConfirm => match self.quit_dialog.handle_event(DISCARD_AND_QUIT, &event) {
+                Some(Answer::Confirm) => return Some(Action::Quit),
+                Some(Answer::Keep | Answer::Alternate) => self.quit_dialog.invalidate(),
+                None => self.overlay = Some(Overlay::QuitConfirm),
+            },
             Overlay::Palette(mut palette) => {
                 if let Event::Key(key) = event {
                     let commands: Vec<_> = self
@@ -593,6 +589,11 @@ impl Shell {
             self.config.render(frame, area);
         }
         self.render_overlay(frame, area);
+        if matches!(self.overlay, Some(Overlay::QuitConfirm)) {
+            let footer = Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1);
+            frame.render_widget(Clear, footer);
+            render_navigation_row(frame, footer, &confirmation::hints(DISCARD_AND_QUIT));
+        }
         normalize_background(frame, area);
     }
 
@@ -648,6 +649,11 @@ impl Shell {
     }
 
     fn render_overlay(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        self.quit_dialog.invalidate();
+        if matches!(self.overlay, Some(Overlay::QuitConfirm)) {
+            self.quit_dialog.render(frame, area, &quit_question());
+            return;
+        }
         let commands = self.commands();
         let Some(overlay) = &mut self.overlay else {
             return;
@@ -681,15 +687,7 @@ impl Shell {
                     footer,
                 );
             }
-            Overlay::QuitConfirm => frame.render_widget(
-                Paragraph::new(vec![
-                    Line::from("Discard pending changes and quit?"),
-                    Line::default(),
-                    command_hints(&[("y", "discard and quit"), ("esc/n/enter", "stay")]),
-                ])
-                .wrap(Wrap { trim: false }),
-                inner,
-            ),
+            Overlay::QuitConfirm => {}
             Overlay::Palette(palette) => {
                 let [search, list, footer] = Layout::vertical([
                     Constraint::Length(3),
@@ -733,6 +731,8 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::crossterm::event::KeyEvent;
+
     use super::*;
     use gitserious_app::{
         BranchState, CommitOutput, ConfigurationDestination, ConfigurationSession,
@@ -1011,6 +1011,32 @@ mod tests {
             Some(Action::Quit)
         );
     }
+
+    #[test]
+    fn quit_confirmation_footer_shows_only_the_dialogs_choices()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let services = Services;
+        let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
+        shell.handle_event(key(KeyCode::Char('i')), &services, &[]);
+        shell.handle_event(key(KeyCode::Esc), &services, &[]);
+        shell.handle_event(key(KeyCode::Char('q')), &services, &[]);
+        assert!(matches!(shell.overlay, Some(Overlay::QuitConfirm)));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        assert!(rendered(&terminal).contains("Discard unapplied changes and quit?"));
+        let buffer = terminal.backend().buffer();
+        let footer = (0..100)
+            .map(|x| buffer[(x, 29)].symbol())
+            .collect::<String>();
+        assert_eq!(footer.trim_end(), "y: discard and quit  enter/esc/n: stay");
+        assert_eq!(
+            shell.handle_event(key(KeyCode::Char('n')), &services, &[]),
+            None
+        );
+        assert!(shell.overlay.is_none());
+        Ok(())
+    }
+
     #[test]
     fn centered_root_header_keeps_positions_and_mouse_targets_after_resize()
     -> Result<(), Box<dyn std::error::Error>> {

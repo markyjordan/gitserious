@@ -51,6 +51,14 @@
 //! configuration`), and appears in the frame in full. Without it, raw domain errors and clipped
 //! toasts reach the screen.
 //!
+//! P8, removals go through their dialog. A type leaves the taxonomy draft, or a property leaves its
+//! type, only when the user answers y on the Remove Type or Remove Property dialog. Without it, one
+//! stray d drops a type with all of its properties.
+//!
+//! P9, the footer shows the dialog's choices. While any confirmation is open, the footer row shows
+//! each of its choices as `key: label`, the same pairs as the dialog's buttons. Without it, the
+//! footer and the dialog disagree about which key does what.
+//!
 //! Scope limits:
 //! - Only the keyboard events in [`INPUTS`]. Mouse, paste, and resize events are out of scope.
 //! - One terminal of `MINIMUM_WIDTH` by `MINIMUM_HEIGHT` cells. Mouse hit areas that rendering
@@ -87,7 +95,7 @@ use super::child_editor::PropertyFocus;
 use super::library_view::LibraryFocus;
 use super::tests::Workspace;
 use super::*;
-use crate::confirmation::{DiscardChoice, DiscardDialog};
+use crate::confirmation::{self, Answer, ConfirmDialog, DISCARD, REMOVE};
 
 const fn press(code: KeyCode, modifiers: KeyModifiers) -> Event {
     Event::Key(KeyEvent::new(code, modifiers))
@@ -402,7 +410,8 @@ struct Snapshot {
     project: Option<ConfigurationSession>,
     load_errors: [String; 2],
     saved: [ConfigurationSession; 2],
-    discard_dialog: String,
+    dialog: String,
+    dialog_hints: Option<Vec<String>>,
     too_small: bool,
     frame: String,
 }
@@ -477,7 +486,13 @@ impl Snapshot {
                 workspace.global.borrow().clone(),
                 workspace.project.borrow().clone(),
             ],
-            discard_dialog: format!("{:?}", state.discard_dialog),
+            dialog: format!("{:?}", state.dialog),
+            dialog_hints: state.confirmation().map(|question| {
+                confirmation::hints(question.choices)
+                    .into_iter()
+                    .map(|(hint, label)| format!("{hint}: {label}"))
+                    .collect()
+            }),
             too_small: state.too_small,
             frame: buffer
                 .content
@@ -515,7 +530,67 @@ const PROPERTIES: &[(&str, Check)] = &[
         "P7, every alert is a whole sentence",
         every_alert_is_a_whole_sentence,
     ),
+    (
+        "P8, removals go through their dialog",
+        removals_go_through_their_dialog,
+    ),
+    (
+        "P9, the footer shows the dialog's choices",
+        the_footer_shows_the_dialogs_choices,
+    ),
 ];
+
+fn removals_go_through_their_dialog(
+    before: &Snapshot,
+    input: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    let Some(after) = after else {
+        return Ok(());
+    };
+    let confirmed = ConfirmDialog::default().handle_event(REMOVE, input) == Some(Answer::Confirm);
+    let types = |snapshot: &Snapshot| snapshot.draft.as_ref().map(|draft| draft.types.len());
+    let properties = |snapshot: &Snapshot| {
+        snapshot
+            .type_editor
+            .as_ref()
+            .map(|editor| editor.draft.properties.len())
+    };
+    if let (Some(old), Some(new)) = (types(before), types(after))
+        && new < old
+        && !(matches!(before.screen, Screen::ConfirmRemoveType(_)) && confirmed)
+    {
+        return Err("A type left the draft without a confirmed Remove Type dialog.".into());
+    }
+    if let (Some(old), Some(new)) = (properties(before), properties(after))
+        && new < old
+        && !(matches!(before.screen, Screen::ConfirmRemoveProperty(_)) && confirmed)
+    {
+        return Err("A property left the type without a confirmed Remove Property dialog.".into());
+    }
+    Ok(())
+}
+
+fn the_footer_shows_the_dialogs_choices(
+    _: &Snapshot,
+    _: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    let Some((after, hints)) = after.and_then(|after| Some((after, after.dialog_hints.as_ref()?)))
+    else {
+        return Ok(());
+    };
+    let footer = after.frame.lines().last().unwrap_or_default();
+    hints
+        .iter()
+        .find(|hint| !footer.contains(hint.as_str()))
+        .map_or(Ok(()), |hint| {
+            Err(format!(
+                "The footer {:?} does not show the dialog's {hint:?}.",
+                footer.trim_end()
+            ))
+        })
+}
 
 /// Words from the application's vocabulary that the editor never shows: it applies changes and
 /// calls the global configuration the Library.
@@ -573,7 +648,7 @@ fn no_silent_draft_loss(
     after: Option<&Snapshot>,
 ) -> Result<(), String> {
     let chose_discard =
-        DiscardDialog::default().handle_event(input) == Some(DiscardChoice::Discard);
+        ConfirmDialog::default().handle_event(DISCARD, input) == Some(Answer::Confirm);
     let staged_nothing =
         after.is_some_and(|after| after.status.as_deref() == Some("info: No changes to stage."));
     if before.draft_dirty

@@ -11,6 +11,7 @@ use super::state::{
     AuthoringSession, CatalogTab, ConfirmationAction, FieldId, FieldKind, FieldStatus,
     SCOPE_VALUE_LINE, Stage,
 };
+use crate::confirmation::{Confirmation, DISCARD};
 use crate::theme::{JET_BLACK, ZEBRA_BACKGROUND};
 
 const MINIMUM_WIDTH: u16 = 60;
@@ -105,9 +106,15 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
     session.too_small = area.width < minimum_width || area.height < minimum_height;
     if session.too_small {
         if session.stage == Stage::Confirm {
-            session
-                .discard_dialog
-                .render(frame, area, "Discard Message", "Discard this draft?");
+            session.discard_dialog.render(
+                frame,
+                area,
+                &Confirmation {
+                    title: "Discard Message",
+                    message: "Discard this draft?".into(),
+                    choices: DISCARD,
+                },
+            );
         } else {
             render_centered_notice(
                 frame,
@@ -963,9 +970,15 @@ fn render_confirmation(frame: &mut Frame<'_>, area: Rect, session: &mut Authorin
         ConfirmationAction::Cancel => "Discard this draft and cancel the commit?",
         ConfirmationAction::ChangeType => "Discard this draft and choose another type?",
     };
-    session
-        .discard_dialog
-        .render(frame, area, "Discard Message", message);
+    session.discard_dialog.render(
+        frame,
+        area,
+        &Confirmation {
+            title: "Discard Message",
+            message: message.into(),
+            choices: DISCARD,
+        },
+    );
 }
 
 fn field_columns(id: FieldId, definition: &CommitTypeDefinition) -> (String, &'static str) {
