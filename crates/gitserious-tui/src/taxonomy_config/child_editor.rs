@@ -45,12 +45,7 @@ impl TypeEditorState {
     pub fn new(target: Option<usize>, draft: TypeDraft) -> Self {
         Self {
             target,
-            text: CreateTextEditors::from_values(
-                &draft.id,
-                &draft.description,
-                TYPE_LIMIT,
-                target.is_none(),
-            ),
+            text: CreateTextEditors::from_values(&draft.id, &draft.description, TYPE_LIMIT),
             initial: draft.clone(),
             draft,
             focus: CreateFocus::Name,
@@ -349,16 +344,13 @@ impl PropertyEditorState {
             area.set_style(Style::default().fg(Color::White).bg(JET_BLACK));
             area.set_cursor_line_style(Style::default());
             area.set_cursor_render_mode(CursorRenderMode::Hidden);
+            area.move_cursor(CursorMove::Bottom);
+            area.move_cursor(CursorMove::End);
         }
         condition_rationale.set_wrap_mode(WrapMode::WordOrGlyph);
         Self {
             target,
-            text: CreateTextEditors::from_values(
-                &draft.key,
-                &draft.description,
-                PROPERTY_LIMIT,
-                target.is_none(),
-            ),
+            text: CreateTextEditors::from_values(&draft.key, &draft.description, PROPERTY_LIMIT),
             focus: PropertyFocus::Name,
             condition_name,
             condition_rationale,
@@ -732,6 +724,8 @@ fn text_key(key: KeyEvent) -> bool {
             | KeyCode::Delete
             | KeyCode::Left
             | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End
             | KeyCode::PageUp
             | KeyCode::PageDown
     ) || matches!(key.code, KeyCode::Char(_) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
@@ -795,7 +789,8 @@ mod tests {
             },
         );
         copied.focus = CreateFocus::Description;
-        assert!(matches!(copied.paste("extra"), ChildAction::Continue));
+        assert!(matches!(copied.paste("extra"), ChildAction::Error(_)));
+        assert_eq!(copied.text.used(), 124);
         assert!(copied.candidate().is_err());
         copied.text.description.select_all();
         copied.paste("Edited feature");
@@ -859,7 +854,8 @@ mod tests {
             },
         );
         copied.focus = PropertyFocus::Description;
-        assert!(matches!(copied.paste("extra"), ChildAction::Continue));
+        assert!(matches!(copied.paste("extra"), ChildAction::Error(_)));
+        assert_eq!(copied.text.used(), 145);
         assert!(copied.candidate().is_err());
         copied.text.description.select_all();
         copied.paste("Edited notes");
@@ -965,8 +961,7 @@ mod tests {
         };
         let mut loaded = PropertyEditorState::new(Some(0), draft.clone());
         loaded.focus = PropertyFocus::ConditionRationale;
-        loaded.key(key(KeyCode::Down));
-        assert_eq!(loaded.focus, PropertyFocus::ConditionRationale);
+        assert_eq!(loaded.condition_rationale.cursor(), (1, 6));
         loaded.key(key(KeyCode::Down));
         assert_eq!(loaded.focus, PropertyFocus::Multiplicity);
         assert!(!loaded.is_dirty());
@@ -1125,7 +1120,10 @@ mod tests {
                 property.key(key(KeyCode::Down));
             }
         }
+        property.key(key(KeyCode::Up));
+        property.key(key(KeyCode::Up));
         let data_cursor = property.condition_rationale.cursor();
+        assert_eq!(data_cursor.0, 0);
         property.key(key(KeyCode::Up));
         property.key(key(KeyCode::Up));
         assert_eq!(property.focus, PropertyFocus::Policy);
