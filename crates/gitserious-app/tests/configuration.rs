@@ -361,6 +361,46 @@ fn fork_copies_a_built_in_under_a_new_identity_with_lineage() -> Result<(), Box<
 }
 
 #[test]
+fn a_fork_takes_its_authored_content_and_refuses_its_source_name() -> Result<(), Box<dyn Error>> {
+    let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
+    let source = &built_in_taxonomies()[0];
+    let before = session.global().clone();
+
+    assert_eq!(
+        session.fork_taxonomy(
+            source.id(),
+            source.id().clone(),
+            source.description().clone(),
+            source.commit_types().to_vec(),
+        ),
+        Err("choose a new taxonomy name before staging the fork".to_owned())
+    );
+    assert_eq!(session.global(), &before);
+
+    let description = Description::new("A team policy.")?;
+    let commit_types = source.commit_types()[..2].to_vec();
+    session.fork_taxonomy(
+        source.id(),
+        id("team"),
+        description.clone(),
+        commit_types.clone(),
+    )?;
+    let fork = session
+        .catalog()?
+        .find(&id("team"))
+        .cloned()
+        .ok_or("fork is missing")?;
+    assert_eq!(fork.version(), TaxonomyVersion::V1);
+    assert_eq!(fork.description(), &description);
+    assert_eq!(fork.commit_types(), commit_types.as_slice());
+    assert_eq!(
+        fork.derived_from(),
+        Some(&TaxonomyLineage::new(source.id().clone(), source.version()))
+    );
+    Ok(())
+}
+
+#[test]
 fn fork_rejects_reserved_and_existing_identities_atomically() -> Result<(), Box<dyn Error>> {
     let mut session = ConfigurationSession::open_global(library(vec![custom("team")])?);
     let before = session.global().clone();
