@@ -261,16 +261,15 @@ const CREATE_TYPES_ADD_LABEL: &str = "+ add type";
 struct CreateTextEditors {
     name: TextArea<'static>,
     description: TextArea<'static>,
-    hard_limit: bool,
     limit: usize,
 }
 
 impl CreateTextEditors {
-    fn from_draft(draft: &TaxonomyDraft, hard_limit: bool) -> Self {
-        Self::from_values(&draft.id, &draft.description, CREATE_TEXT_LIMIT, hard_limit)
+    fn from_draft(draft: &TaxonomyDraft) -> Self {
+        Self::from_values(&draft.id, &draft.description, CREATE_TEXT_LIMIT)
     }
 
-    fn from_values(name: &str, description: &str, limit: usize, hard_limit: bool) -> Self {
+    fn from_values(name: &str, description: &str, limit: usize) -> Self {
         let mut name = TextArea::new(vec![name.to_owned()]);
         let mut description = TextArea::new(description.split('\n').map(str::to_owned).collect());
         for area in [&mut name, &mut description] {
@@ -282,7 +281,6 @@ impl CreateTextEditors {
         Self {
             name,
             description,
-            hard_limit,
             limit,
         }
     }
@@ -300,6 +298,8 @@ impl CreateTextEditors {
         area.lines().join("\n").graphemes(true).count()
     }
 
+    /// Applies `edit` unless it would leave the entry over its budget and longer than before, so
+    /// an entry loaded over budget can still shrink.
     fn edit(&mut self, focus: CreateFocus, edit: impl FnOnce(&mut TextArea<'static>)) -> bool {
         let (target, other) = match focus {
             CreateFocus::Name => (&mut self.name, &self.description),
@@ -308,7 +308,9 @@ impl CreateTextEditors {
         };
         let mut candidate = target.clone();
         edit(&mut candidate);
-        if self.hard_limit && Self::length(&candidate) + Self::length(other) > self.limit {
+        let before = Self::length(target) + Self::length(other);
+        let after = Self::length(&candidate) + Self::length(other);
+        if after > self.limit && after > before {
             return false;
         }
         *target = candidate;
@@ -316,11 +318,6 @@ impl CreateTextEditors {
     }
 
     fn paste(&mut self, focus: CreateFocus, text: &str) -> bool {
-        if !self.hard_limit {
-            return !self.edit(focus, |area| {
-                area.insert_str(text);
-            });
-        }
         for grapheme in text.graphemes(true) {
             if !self.edit(focus, |area| {
                 area.insert_str(grapheme);
@@ -1746,7 +1743,7 @@ impl State {
 
     fn open_creation(&mut self, draft: TaxonomyDraft, source: Option<TaxonomyLineage>) {
         self.active_scope = ConfigurationDestination::Global;
-        self.create_text = Some(CreateTextEditors::from_draft(&draft, source.is_none()));
+        self.create_text = Some(CreateTextEditors::from_draft(&draft));
         self.initial_editor = Some(draft.clone());
         self.discard_dialog.invalidate();
         self.editor = Some(draft);
@@ -1799,7 +1796,7 @@ impl State {
             return;
         }
         let draft = TaxonomyDraft::from_taxonomy(&taxonomy);
-        self.create_text = Some(CreateTextEditors::from_draft(&draft, false));
+        self.create_text = Some(CreateTextEditors::from_draft(&draft));
         self.initial_editor = Some(draft.clone());
         self.editor = Some(draft);
         self.fork_source = None;
@@ -4654,7 +4651,6 @@ mod tests {
                 .join("\n"),
             source.description().as_str()
         );
-        rename_creation(&mut state, &workspace, "forked-team")?;
         stage_creation(&mut state, &workspace);
         assert!(matches!(state.status, Some(Notice::Error(ref message)) if message.contains("80")));
         assert!(!state.scope_dirty(ConfigurationDestination::Global));
@@ -4663,12 +4659,19 @@ mod tests {
         state.handle_event(key(KeyCode::Char('x')), &workspace);
         assert_eq!(
             state.create_text.as_ref().ok_or("missing text")?.used(),
-            before_edit + 1
+            before_edit
         );
+        assert!(matches!(state.status, Some(Notice::Info(ref message)) if message.contains("80")));
+        state
+            .create_text
+            .as_mut()
+            .ok_or("missing text")?
+            .description
+            .move_cursor(CursorMove::End);
         state.handle_event(key(KeyCode::Backspace), &workspace);
         assert_eq!(
             state.create_text.as_ref().ok_or("missing text")?.used(),
-            before_edit
+            before_edit - 1
         );
         state
             .create_text
@@ -4677,6 +4680,7 @@ mod tests {
             .description
             .select_all();
         state.handle_event(Event::Paste("Edited snapshot".into()), &workspace);
+        rename_creation(&mut state, &workspace, "forked-team")?;
         state.library.select_taxonomy(0);
         stage_creation(&mut state, &workspace);
         assert!(matches!(state.screen, Screen::Home));

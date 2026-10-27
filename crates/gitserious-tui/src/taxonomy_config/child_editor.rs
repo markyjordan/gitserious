@@ -45,12 +45,7 @@ impl TypeEditorState {
     pub fn new(target: Option<usize>, draft: TypeDraft) -> Self {
         Self {
             target,
-            text: CreateTextEditors::from_values(
-                &draft.id,
-                &draft.description,
-                TYPE_LIMIT,
-                target.is_none(),
-            ),
+            text: CreateTextEditors::from_values(&draft.id, &draft.description, TYPE_LIMIT),
             initial: draft.clone(),
             draft,
             focus: CreateFocus::Name,
@@ -353,12 +348,7 @@ impl PropertyEditorState {
         condition_rationale.set_wrap_mode(WrapMode::WordOrGlyph);
         Self {
             target,
-            text: CreateTextEditors::from_values(
-                &draft.key,
-                &draft.description,
-                PROPERTY_LIMIT,
-                target.is_none(),
-            ),
+            text: CreateTextEditors::from_values(&draft.key, &draft.description, PROPERTY_LIMIT),
             focus: PropertyFocus::Name,
             condition_name,
             condition_rationale,
@@ -795,7 +785,8 @@ mod tests {
             },
         );
         copied.focus = CreateFocus::Description;
-        assert!(matches!(copied.paste("extra"), ChildAction::Continue));
+        assert!(matches!(copied.paste("extra"), ChildAction::Error(_)));
+        assert_eq!(copied.text.used(), 124);
         assert!(copied.candidate().is_err());
         copied.text.description.select_all();
         copied.paste("Edited feature");
@@ -859,7 +850,8 @@ mod tests {
             },
         );
         copied.focus = PropertyFocus::Description;
-        assert!(matches!(copied.paste("extra"), ChildAction::Continue));
+        assert!(matches!(copied.paste("extra"), ChildAction::Error(_)));
+        assert_eq!(copied.text.used(), 145);
         assert!(copied.candidate().is_err());
         copied.text.description.select_all();
         copied.paste("Edited notes");
