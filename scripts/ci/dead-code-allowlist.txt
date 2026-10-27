@@ -7,16 +7,3 @@ crates/gitserious-app/src/global_paths.rs	data
 crates/gitserious-app/src/global_paths.rs	state
 crates/gitserious-app/src/taxonomy_configuration_editor.rs	fork_taxonomy
 crates/gitserious-core/src/commit_message.rs	errors
-crates/gitserious-core/src/fingerprint.rs	as_bytes
-crates/gitserious-core/src/identifier.rs	kind
-crates/gitserious-core/src/identifier.rs	value
-crates/gitserious-core/src/lib.rs	FingerprintError
-crates/gitserious-core/src/lib.rs	IdentifierErrorKind
-crates/gitserious-core/src/lib.rs	PropertyValidationReport
-crates/gitserious-core/src/lib.rs	SchemaVersionError
-crates/gitserious-core/src/lib.rs	validate_commit_draft
-crates/gitserious-core/src/property_validation.rs	has_errors
-crates/gitserious-core/src/property.rs	as_slice
-crates/gitserious-core/src/property.rs	into_values
-crates/gitserious-core/src/property.rs	is_empty
-crates/gitserious-core/src/property.rs	len

@@ -6,7 +6,7 @@ use gitserious_core::{
     CommitTypeDefinitionError, CommitTypeId, CommitValidationError, PropertyDefinition,
     PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyValidationIssueKind,
     PropertyValue, PropertyValues, SchemaVersion, TaxonomyError, TaxonomyId, built_in_commit_types,
-    render_commit_message, validate_commit_draft,
+    render_commit_message,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -124,7 +124,12 @@ fn canonical_prose_wraps_at_80_columns_without_mutating_authored_values()
         )
     );
     assert_eq!(
-        draft.properties()[0].values().as_slice()[0].as_str(),
+        draft.properties()[0]
+            .values()
+            .iter()
+            .next()
+            .ok_or("missing value")?
+            .as_str(),
         intent
     );
     assert!(
@@ -289,7 +294,7 @@ fn validation_reports_type_unknown_required_and_multiplicity_failures() -> Resul
     let feat = &built_in_commit_types()[0];
     let unknown = authored("unknown", PropertyValues::single(value("value")?))?;
     let missing = feat_draft(vec![unknown])?;
-    let Err(errors) = validate_commit_draft(feat, &missing) else {
+    let Err(errors) = render_commit_message(feat, &missing) else {
         return Err("invalid draft accepted".into());
     };
     assert!(
@@ -316,7 +321,7 @@ fn validation_reports_type_unknown_required_and_multiplicity_failures() -> Resul
         Vec::new(),
     )?;
     assert!(matches!(
-        validate_commit_draft(feat, &fix_draft),
+        render_commit_message(feat, &fix_draft),
         Err(errors) if matches!(
             errors.as_slice().first(),
             Some(CommitValidationError::TypeMismatch { .. })
@@ -332,7 +337,7 @@ fn validation_reports_type_unknown_required_and_multiplicity_failures() -> Resul
         authored("decision", PropertyValues::single(value("decision")?))?,
     ])?;
     assert!(matches!(
-        validate_commit_draft(feat, &mismatch),
+        render_commit_message(feat, &mismatch),
         Err(errors) if errors.as_slice().contains(&CommitValidationError::Multiplicity {
             key: PropertyKey::new("intent")?,
             expected: PropertyMultiplicity::Single,
@@ -495,7 +500,7 @@ fn recommended_optional_and_conditional_properties_may_be_absent() -> Result<(),
             CommitSubject::new("minimal valid draft")?,
             properties,
         )?;
-        validate_commit_draft(definition, &draft)?;
+        render_commit_message(definition, &draft)?;
     }
     Ok(())
 }

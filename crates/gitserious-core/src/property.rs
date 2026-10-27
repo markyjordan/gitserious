@@ -133,36 +133,9 @@ impl PropertyValues {
         self.multiplicity
     }
 
-    /// Returns the number of values.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    /// Returns whether the collection contains no values.
-    ///
-    /// This always returns `false`; it is provided alongside [`Self::len`] for
-    /// conventional collection access.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        false
-    }
-
-    /// Returns the values in authored order.
-    #[must_use]
-    pub fn as_slice(&self) -> &[PropertyValue] {
-        &self.values
-    }
-
     /// Iterates over values in authored order.
     pub fn iter(&self) -> slice::Iter<'_, PropertyValue> {
         self.values.iter()
-    }
-
-    /// Consumes the collection and returns its values.
-    #[must_use]
-    pub fn into_values(self) -> Vec<PropertyValue> {
-        self.values
     }
 }
 
@@ -389,9 +362,6 @@ mod tests {
         let values = PropertyValues::single(PropertyValue::new("one")?);
 
         assert_eq!(values.multiplicity(), PropertyMultiplicity::Single);
-        assert_eq!(values.len(), 1);
-        assert!(!values.is_empty());
-        assert_eq!(values.as_slice()[0].as_str(), "one");
         assert_eq!(
             values.iter().map(PropertyValue::as_str).collect::<Vec<_>>(),
             ["one"]
@@ -403,7 +373,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["one"]
         );
-        assert_eq!(values.into_values().len(), 1);
 
         Ok(())
     }
@@ -421,7 +390,7 @@ mod tests {
 
         let one = PropertyValues::multiple([PropertyValue::new("one")?])?;
         assert_eq!(one.multiplicity(), PropertyMultiplicity::Multiple);
-        assert_eq!(one.len(), 1);
+        assert_eq!(one.iter().count(), 1);
 
         let many = PropertyValues::multiple([
             PropertyValue::new("first")?,

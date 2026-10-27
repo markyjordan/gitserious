@@ -2530,7 +2530,12 @@ fn compose_review_and_final_encoding_share_the_80_column_boundary() -> Result<()
         return Err("review unexpectedly cancelled".into());
     };
     assert_eq!(
-        draft.properties()[0].values().as_slice()[0].as_str(),
+        draft.properties()[0]
+            .values()
+            .iter()
+            .next()
+            .ok_or("missing value")?
+            .as_str(),
         intent
     );
     assert_eq!(

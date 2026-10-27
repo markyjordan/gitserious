@@ -31,20 +31,6 @@ pub struct IdentifierError {
     kind: IdentifierErrorKind,
 }
 
-impl IdentifierError {
-    /// Returns the rejected identifier text.
-    #[must_use]
-    pub fn value(&self) -> &str {
-        &self.value
-    }
-
-    /// Returns the validation failure.
-    #[must_use]
-    pub const fn kind(&self) -> IdentifierErrorKind {
-        self.kind
-    }
-}
-
 impl Display for IdentifierError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self.kind {
@@ -388,21 +374,19 @@ mod tests {
             let condition_error = ConditionId::new(value).err();
 
             assert_eq!(
-                commit_type_error.as_ref().map(super::IdentifierError::kind),
+                commit_type_error.as_ref().map(|error| error.kind),
                 Some(expected_kind)
             );
             assert_eq!(
-                property_error.as_ref().map(super::IdentifierError::kind),
+                property_error.as_ref().map(|error| error.kind),
                 Some(expected_kind)
             );
             assert_eq!(
-                condition_error.as_ref().map(super::IdentifierError::kind),
+                condition_error.as_ref().map(|error| error.kind),
                 Some(expected_kind)
             );
             assert_eq!(
-                commit_type_error
-                    .as_ref()
-                    .map(super::IdentifierError::value),
+                commit_type_error.as_ref().map(|error| &*error.value),
                 Some(value)
             );
         }
