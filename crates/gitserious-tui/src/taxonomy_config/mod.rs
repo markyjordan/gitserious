@@ -6761,6 +6761,58 @@ mod tests {
     }
 
     #[test]
+    fn notices_read_as_sentences_and_name_the_blank_field() {
+        assert_eq!(sentence("global load failed"), "Global load failed.");
+        assert_eq!(sentence(" Already a sentence. "), "Already a sentence.");
+        assert_eq!(sentence("Apply now?"), "Apply now?");
+        assert_eq!(sentence(""), "");
+
+        let kind = TypeDraft {
+            id: "release".into(),
+            description: " ".into(),
+            schema_version: 1,
+            properties: Vec::new(),
+        };
+        assert_eq!(kind.build(), Err("Type description is required.".into()));
+        let property = PropertyDraft {
+            key: "notes".into(),
+            description: " ".into(),
+            ..PropertyDraft::empty()
+        };
+        assert_eq!(
+            property.build(),
+            Err("Property description is required.".into())
+        );
+        let taxonomy = TaxonomyDraft {
+            id: "team".into(),
+            description: "Team changes".into(),
+            ..TaxonomyDraft::empty()
+        };
+        assert_eq!(
+            taxonomy.build(),
+            Err("Add a type before staging the taxonomy.".into())
+        );
+    }
+
+    #[test]
+    fn a_long_notice_shows_in_full_at_the_smallest_size() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        let message = "invalid global configuration /home/someone/.config/gitserious/config.toml: \
+                       TOML parse error at line 10, column 1: missing field properties in the \
+                       commit type release of taxonomy team";
+        state.status = Some(Notice::error(message.into()));
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let rendered = text(&terminal);
+        for word in ["Invalid", "parse", "properties", "team."] {
+            assert!(rendered.contains(word), "{word} is cut off");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn every_built_in_entry_fits_its_editor_budget() {
         fn length(text: &str) -> usize {
             text.graphemes(true).count()

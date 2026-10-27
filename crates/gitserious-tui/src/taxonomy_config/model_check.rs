@@ -46,6 +46,11 @@
 //! before. Without it, a user can type text that misshapes the editor's rows or that staging later
 //! refuses.
 //!
+//! P7, every alert is a whole sentence. Every notice a reachable state shows starts with a capital
+//! letter, ends a sentence, avoids the application's own words (`session`, `save`, `global
+//! configuration`), and appears in the frame in full. Without it, raw domain errors and clipped
+//! toasts reach the screen.
+//!
 //! Scope limits:
 //! - Only the keyboard events in [`INPUTS`]. Mouse, paste, and resize events are out of scope.
 //! - One terminal of `MINIMUM_WIDTH` by `MINIMUM_HEIGHT` cells. Mouse hit areas that rendering
@@ -506,7 +511,42 @@ const PROPERTIES: &[(&str, Check)] = &[
         "P6, no key grows an entry past its budget",
         no_key_grows_past_the_budget,
     ),
+    (
+        "P7, every alert is a whole sentence",
+        every_alert_is_a_whole_sentence,
+    ),
 ];
+
+/// Words from the application's vocabulary that the editor never shows: it applies changes and
+/// calls the global configuration the Library.
+const FOREIGN_WORDS: [&str; 3] = ["session", "save ", "global configuration"];
+
+fn every_alert_is_a_whole_sentence(
+    _: &Snapshot,
+    _: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    let Some((after, status)) = after.and_then(|after| Some((after, after.status.as_deref()?)))
+    else {
+        return Ok(());
+    };
+    let text = status.split_once(": ").map_or(status, |(_, text)| text);
+    let lowered = text.to_lowercase();
+    let problem = if !text.chars().next().is_some_and(char::is_uppercase) {
+        Some("does not start with a capital letter".to_owned())
+    } else if !text.ends_with(['.', '?', '!']) {
+        Some("does not end a sentence".to_owned())
+    } else if let Some(word) = FOREIGN_WORDS.iter().find(|word| lowered.contains(*word)) {
+        Some(format!("uses {:?}", word.trim()))
+    } else {
+        text.split_whitespace()
+            .find(|word| !after.frame.contains(word))
+            .map(|word| format!("is cut off before {word:?}"))
+    };
+    problem.map_or(Ok(()), |problem| {
+        Err(format!("The alert {text:?} {problem}."))
+    })
+}
 
 struct ChildEditor {
     name: &'static str,
