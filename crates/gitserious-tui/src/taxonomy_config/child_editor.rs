@@ -17,8 +17,8 @@ use super::{
 };
 use crate::theme::{JET_BLACK, focus_frame_style, row_style, selected_style};
 
-const TYPE_LIMIT: usize = 80;
-const PROPERTY_LIMIT: usize = 100;
+pub(super) const TYPE_LIMIT: usize = 80;
+pub(super) const PROPERTY_LIMIT: usize = 100;
 const ADD_PROPERTY: &str = "+ add property";
 
 pub(super) enum ChildAction {

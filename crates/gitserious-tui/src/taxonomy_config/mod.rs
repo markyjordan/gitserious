@@ -6731,6 +6731,48 @@ mod tests {
     }
 
     #[test]
+    fn every_built_in_entry_fits_its_editor_budget() {
+        fn length(text: &str) -> usize {
+            text.graphemes(true).count()
+        }
+        let mut over = Vec::new();
+        for taxonomy in gitserious_core::built_in_taxonomies() {
+            let used = length(taxonomy.id().as_str()) + length(taxonomy.description().as_str());
+            if used > CREATE_TEXT_LIMIT {
+                over.push(format!("{} {used}/{CREATE_TEXT_LIMIT}", taxonomy.id()));
+            }
+            for kind in taxonomy.commit_types() {
+                let used = length(kind.id().as_str()) + length(kind.description());
+                if used > child_editor::TYPE_LIMIT {
+                    over.push(format!(
+                        "{}/{} {used}/{}",
+                        taxonomy.id(),
+                        kind.id(),
+                        child_editor::TYPE_LIMIT
+                    ));
+                }
+                for property in kind.properties() {
+                    let used = length(property.key().as_str()) + length(property.description());
+                    if used > child_editor::PROPERTY_LIMIT {
+                        over.push(format!(
+                            "{}/{}/{} {used}/{}",
+                            taxonomy.id(),
+                            kind.id(),
+                            property.key(),
+                            child_editor::PROPERTY_LIMIT
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            over.is_empty(),
+            "built-in entries over their editor budget:\n{}",
+            over.join("\n")
+        );
+    }
+
+    #[test]
     fn edit_opens_the_create_editor_with_its_name_fixed() -> Result<(), Box<dyn std::error::Error>>
     {
         let (workspace, source) = child_editor_workspace()?;
