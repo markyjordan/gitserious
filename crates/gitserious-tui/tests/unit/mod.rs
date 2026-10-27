@@ -4,7 +4,7 @@ use gitserious_app::{CommitDraftAuthor, CommitDraftAuthorOutcome};
 use gitserious_core::{
     COMMIT_MESSAGE_WIDTH, CommitTypeDefinition, CommitTypeId, ConditionId, PropertyCondition,
     PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, SchemaVersion,
-    built_in_commit_types, built_in_taxonomies, render_commit_message,
+    built_in_commit_types, built_in_taxonomies, validate_commit_draft,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -137,7 +137,10 @@ fn context_review_includes_provenance_and_returns_the_latest_approved_bytes()
     let review = session.review.as_ref().ok_or("review missing")?;
     assert_eq!(
         review.message,
-        context.initial_taxonomy().render(&review.draft)?
+        context
+            .initial_taxonomy()
+            .validate(&review.draft)
+            .into_message()?
     );
     assert!(
         review
@@ -731,6 +734,56 @@ fn schema_form_is_prepopulated_in_order_and_starts_under_scope() -> Result<(), B
 }
 
 #[test]
+fn a_blocked_draft_shows_its_error_and_recommendation_on_their_fields() -> Result<(), Box<dyn Error>>
+{
+    let definitions = vec![presentation_definition()?];
+    let mut session = AuthoringSession::new(&definitions, Some(0));
+    let document = "scope:\n\ndescription:\nshow both\n\nrequired-field:\n\n\nrecommended-field:\n\n\noptional-field:\n\n\nconditional-field:\n\n";
+    set_document(&mut session, document, 15);
+    modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
+
+    assert_eq!(session.stage, Stage::Compose);
+    let fields =
+        |issues: &[ValidationIssue]| issues.iter().map(|issue| issue.field).collect::<Vec<_>>();
+    assert_eq!(
+        fields(&session.composer.issues),
+        [Some(FieldId::Property(0))]
+    );
+    assert_eq!(
+        fields(&session.composer.warnings),
+        [Some(FieldId::Property(1))]
+    );
+
+    let (width, height) = (120, 32);
+    let buffer = rendered_buffer(&mut session, width, height)?;
+    let error = find_ascii(&buffer, width, height, "!  required-field").ok_or("missing error")?;
+    assert_eq!(buffer[error].fg, Color::Red);
+    let recommendation = find_ascii(&buffer, width, height, "?  recommended-field")
+        .ok_or("missing recommendation")?;
+    assert_eq!(buffer[recommendation].fg, Color::Yellow);
+    let notice = find_ascii(
+        &buffer,
+        width,
+        height,
+        "complete required property \"required-field\"",
+    )
+    .ok_or("missing error notice")?;
+    assert_eq!(buffer[notice].fg, Color::Red);
+
+    session.composer.editor.move_cursor(CursorMove::Jump(9, 0));
+    let buffer = rendered_buffer(&mut session, width, height)?;
+    let notice = find_ascii(
+        &buffer,
+        width,
+        height,
+        "consider completing recommended property \"recommended-field\"",
+    )
+    .ok_or("missing recommendation notice")?;
+    assert_eq!(buffer[notice].fg, Color::Yellow);
+    Ok(())
+}
+
+#[test]
 fn invalid_review_marks_every_blocker_and_moves_to_the_first() {
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
     modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
@@ -784,7 +837,9 @@ fn review_is_exact_backtracking_is_lossless_and_enter_returns_the_typed_draft()
         return Err("review unexpectedly cancelled".into());
     };
     assert_eq!(
-        render_commit_message(&built_in_commit_types()[0], &draft)?.as_str(),
+        validate_commit_draft(&built_in_commit_types()[0], &draft)
+            .into_message()?
+            .as_str(),
         expected
     );
     Ok(())
@@ -2539,7 +2594,9 @@ fn compose_review_and_final_encoding_share_the_80_column_boundary() -> Result<()
         intent
     );
     assert_eq!(
-        render_commit_message(&built_in_commit_types()[0], &draft)?.as_str(),
+        validate_commit_draft(&built_in_commit_types()[0], &draft)
+            .into_message()?
+            .as_str(),
         expected
     );
     Ok(())

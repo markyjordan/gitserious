@@ -16,7 +16,7 @@ use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionalApplicability, Description, PropertyDefinition,
     PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyResponse, PropertyValue,
     PropertyValues, SchemaVersion, Taxonomy, TaxonomyId, TaxonomyVersion, built_in_commit_types,
-    built_in_taxonomies, render_commit_message, render_commit_message_with_provenance,
+    built_in_taxonomies, validate_commit_draft, validate_commit_draft_with_provenance,
 };
 
 type Trace = Rc<RefCell<Vec<&'static str>>>;
@@ -125,7 +125,7 @@ impl CommitDraftAuthor for FakeAuthor {
             .map(|outcome| match outcome {
                 CommitDraftAuthorOutcome::Cancelled => CommitAuthoringOutcome::Cancelled,
                 CommitDraftAuthorOutcome::Authored(draft) => {
-                    let authored = match taxonomy.render(&draft) {
+                    let authored = match taxonomy.validate(&draft).into_message() {
                         Ok(message) => {
                             AuthoredCommit::reviewed(taxonomy.id().clone(), draft, message)
                         }
@@ -597,8 +597,10 @@ impl CommitDraftAuthor for ContextAuthor<'_> {
         let draft = valid_draft(definition).map_err(|_| FakeError("invalid draft"))?;
         let message = match self.review_mode {
             ReviewMode::Missing => None,
-            ReviewMode::Plain => render_commit_message(definition, &draft).ok(),
-            ReviewMode::WrongFingerprint => render_commit_message_with_provenance(
+            ReviewMode::Plain => validate_commit_draft(definition, &draft)
+                .into_message()
+                .ok(),
+            ReviewMode::WrongFingerprint => validate_commit_draft_with_provenance(
                 &CommitProvenance::new(
                     built_in_taxonomies()
                         .iter()
@@ -609,8 +611,9 @@ impl CommitDraftAuthor for ContextAuthor<'_> {
                 ),
                 &draft,
             )
+            .into_message()
             .ok(),
-            ReviewMode::Canonical => taxonomy.render(&draft).ok(),
+            ReviewMode::Canonical => taxonomy.validate(&draft).into_message().ok(),
         };
         let id = self.forged.clone().unwrap_or_else(|| taxonomy.id().clone());
         let authored = match message {
@@ -847,7 +850,9 @@ fn taxonomy_render_binds_the_application_fingerprint_into_provenance() -> Result
         )],
     )?;
 
-    let message: CommitMessage = CommitTaxonomy::new(conventional).render(&draft)?;
+    let message: CommitMessage = CommitTaxonomy::new(conventional)
+        .validate(&draft)
+        .into_message()?;
 
     assert_eq!(
         message.as_str(),

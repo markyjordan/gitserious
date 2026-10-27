@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 use gitserious_core::{
     CommitDraft, CommitSubject, CommitValidationError, PropertyMultiplicity, PropertyRequirement,
     PropertyResponse, PropertyValue, PropertyValues, Taxonomy, TaxonomyVersion,
-    built_in_taxonomies, render_commit_message, validate_commit_draft_report,
+    built_in_taxonomies, validate_commit_draft,
 };
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -65,10 +65,10 @@ fn verify_taxonomy(id: &str, expected: &[(&str, &str)]) -> TestResult {
             CommitSubject::new("record context")?,
             responses.clone(),
         )?;
-        let report = validate_commit_draft_report(definition, &complete);
-        assert!(!report.has_errors());
+        let report = validate_commit_draft(definition, &complete);
+        assert!(report.errors().is_empty());
         assert!(report.warnings().is_empty());
-        let rendered = render_commit_message(definition, &complete)?;
+        let rendered = report.into_message()?;
         let mut expected_message = format!("{expected_type}: record context\n");
         for property in change.properties() {
             write!(
@@ -90,7 +90,7 @@ fn verify_taxonomy(id: &str, expected: &[(&str, &str)]) -> TestResult {
                     .cloned()
                     .collect(),
             )?;
-            let report = validate_commit_draft_report(definition, &missing);
+            let report = validate_commit_draft(definition, &missing);
             match property.requirement() {
                 PropertyRequirement::Required => {
                     assert_eq!(
@@ -99,12 +99,11 @@ fn verify_taxonomy(id: &str, expected: &[(&str, &str)]) -> TestResult {
                             property.key().clone()
                         )]
                     );
-                    assert!(render_commit_message(definition, &missing).is_err());
                 }
                 PropertyRequirement::Recommended => {
-                    assert!(!report.has_errors());
+                    assert!(report.errors().is_empty());
                     assert_eq!(report.warnings().len(), 1);
-                    assert!(render_commit_message(definition, &missing).is_ok());
+                    assert!(report.into_message().is_ok());
                 }
                 other => return Err(format!("unexpected requirement: {other:?}").into()),
             }

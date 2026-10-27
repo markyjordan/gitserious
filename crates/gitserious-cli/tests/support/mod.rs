@@ -200,7 +200,8 @@ impl CommitDraftAuthor for Author {
                     .unwrap_or(&taxonomy.definitions()[0]);
                 let draft = valid_draft(definition).map_err(|_| FakeError("invalid draft"))?;
                 let message = taxonomy
-                    .render(&draft)
+                    .validate(&draft)
+                    .into_message()
                     .map_err(|_| FakeError("unrenderable draft"))?;
                 Ok(CommitAuthoringOutcome::Authored(AuthoredCommit::reviewed(
                     taxonomy.id().clone(),

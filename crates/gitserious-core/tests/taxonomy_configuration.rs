@@ -5,8 +5,7 @@ use gitserious_core::{
     ConditionId, ConditionalApplicability, Description, DescriptionError, PropertyCondition,
     PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyResponse,
     PropertyValidationIssueKind, PropertyValue, PropertyValues, SchemaVersion, Taxonomy,
-    TaxonomyError, TaxonomyId, TaxonomyVersion, built_in_commit_types,
-    validate_commit_draft_report,
+    TaxonomyError, TaxonomyId, TaxonomyVersion, built_in_commit_types, validate_commit_draft,
 };
 
 fn commit_type(
@@ -147,8 +146,8 @@ fn requirement_validation_reports_errors_and_recommendations_from_the_schema()
         ],
     )?;
 
-    let report = validate_commit_draft_report(&definition, &draft("change", Vec::new())?);
-    assert!(report.has_errors());
+    let report = validate_commit_draft(&definition, &draft("change", Vec::new())?);
+    assert!(!report.errors().is_empty());
     assert_eq!(
         report.errors(),
         [
@@ -181,8 +180,8 @@ fn requirement_validation_reports_errors_and_recommendations_from_the_schema()
             ),
         ],
     )?;
-    let report = validate_commit_draft_report(&definition, &answered);
-    assert!(!report.has_errors());
+    let report = validate_commit_draft(&definition, &answered);
+    assert!(report.errors().is_empty());
     assert_eq!(report.warnings().len(), 1);
     Ok(())
 }
@@ -207,9 +206,9 @@ fn conditional_and_multiplicity_contradictions_are_blocking() -> Result<(), Box<
         PropertyResponse::new(PropertyKey::new("unknown")?, None, None),
     ];
 
-    let report = validate_commit_draft_report(feat, &draft("feat", responses)?);
+    let report = validate_commit_draft(feat, &draft("feat", responses)?);
 
-    assert!(report.has_errors());
+    assert!(!report.errors().is_empty());
     let errors = report.errors();
     assert!(
         errors

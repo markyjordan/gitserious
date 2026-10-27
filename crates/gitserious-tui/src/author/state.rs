@@ -2,8 +2,9 @@ use crate::confirmation::{Answer, ConfirmDialog, DISCARD};
 use gitserious_app::{CommitAuthoringContext, CommitDraftAuthorOutcome, CommitTaxonomy};
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
-    ConditionalApplicability, PropertyMultiplicity, PropertyRequirement, PropertyResponse,
-    PropertyValue, PropertyValues, render_commit_message, validate_commit_draft_report,
+    ConditionalApplicability, PropertyKey, PropertyMultiplicity, PropertyRequirement,
+    PropertyResponse, PropertyValidationIssueKind, PropertyValue, PropertyValues,
+    ValidationSeverity, validate_commit_draft,
 };
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -69,6 +70,7 @@ impl FieldKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FieldStatus {
     Incomplete,
+    Recommended,
     Complete,
     Invalid,
 }
@@ -141,7 +143,7 @@ pub(crate) struct ComposerState {
     pristine: Vec<String>,
     pub(crate) issues: Vec<ValidationIssue>,
     pub(crate) applicability: Vec<Option<ConditionalApplicability>>,
-    pub(crate) warnings: Vec<String>,
+    pub(crate) warnings: Vec<ValidationIssue>,
 }
 
 impl ComposerState {
@@ -219,12 +221,43 @@ impl ComposerState {
                     FieldStatus::Invalid
                 } else if complete {
                     FieldStatus::Complete
+                } else if self
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.field == Some(id))
+                {
+                    FieldStatus::Recommended
                 } else {
                     FieldStatus::Incomplete
                 },
             });
         }
         fields
+    }
+
+    /// The issue the validation row shows: the cursor field's error, then its
+    /// recommendation, then the first error.
+    pub(crate) fn notice(
+        &self,
+        definition: &CommitTypeDefinition,
+    ) -> Option<(&ValidationIssue, ValidationSeverity)> {
+        let current = self.current_field(definition).map(FieldKind::id);
+        let on_current = |issue: &&ValidationIssue| current.is_some() && issue.field == current;
+        self.issues
+            .iter()
+            .find(on_current)
+            .map(|issue| (issue, ValidationSeverity::Error))
+            .or_else(|| {
+                self.warnings
+                    .iter()
+                    .find(on_current)
+                    .map(|warning| (warning, ValidationSeverity::Warning))
+            })
+            .or_else(|| {
+                self.issues
+                    .first()
+                    .map(|issue| (issue, ValidationSeverity::Error))
+            })
     }
 
     fn parse(&self, definition: &CommitTypeDefinition) -> ParsedDocument {
@@ -313,6 +346,7 @@ impl ComposerState {
     fn validate(
         &mut self,
         definition: &CommitTypeDefinition,
+        taxonomy: Option<&CommitTaxonomy>,
     ) -> Option<(CommitDraft, CommitMessage)> {
         let parsed = self.parse(definition);
         let mut issues = parsed.issues.clone();
@@ -320,16 +354,11 @@ impl ComposerState {
         let subject = parse_description(&parsed, &mut issues);
         let authored = build_properties(&parsed, definition, &mut issues);
         let breaking_change = parse_breaking_change(&parsed, &mut issues);
+        self.warnings.clear();
 
-        if !issues.is_empty() {
-            issues.sort_by_key(|issue| issue.line);
-            let first_line = issues[0].line;
-            self.issues = issues;
-            self.editor
-                .move_cursor(CursorMove::Jump(terminal_line(first_line), 0));
-            return None;
-        }
-        let subject = subject?;
+        let Some(subject) = subject else {
+            return self.reject(issues);
+        };
         let responses = definition
             .properties()
             .iter()
@@ -349,53 +378,74 @@ impl ComposerState {
             match CommitDraft::from_responses(definition.id().clone(), scope, subject, responses) {
                 Ok(draft) => draft,
                 Err(error) => {
-                    self.issues = vec![ValidationIssue {
+                    issues.push(ValidationIssue {
                         field: self.current_field(definition).map(FieldKind::id),
                         line: self.editor.cursor().0,
                         message: error.to_string(),
-                    }];
-                    return None;
+                    });
+                    return self.reject(issues);
                 }
             };
         let draft = match breaking_change {
             Some(value) => draft.with_breaking_change(value),
             None => draft,
         };
-        let report = validate_commit_draft_report(definition, &draft);
+        let report = taxonomy.map_or_else(
+            || validate_commit_draft(definition, &draft),
+            |taxonomy| taxonomy.validate(&draft),
+        );
+        // The report would repeat the issue of a field the composer already
+        // flagged, which it sees as empty.
+        let flagged = issues
+            .iter()
+            .filter_map(|issue| issue.field)
+            .collect::<Vec<_>>();
+        let cursor = self.editor.cursor().0;
+        let on_field = |field: Option<FieldId>, message: String| ValidationIssue {
+            field,
+            line: parsed
+                .sections
+                .iter()
+                .find(|section| Some(section.kind.id()) == field)
+                .map_or(cursor, |section| section.heading_line + 1),
+            message,
+        };
+        let unrepeated =
+            |issue: &ValidationIssue| issue.field.is_none_or(|field| !flagged.contains(&field));
+        issues.extend(
+            report
+                .errors()
+                .iter()
+                .map(|error| on_field(validation_field(error, definition), error.to_string()))
+                .filter(unrepeated),
+        );
         self.warnings = report
             .warnings()
             .iter()
-            .map(|issue| issue.kind().to_string())
+            .map(|warning| {
+                on_field(
+                    property_field(issue_key(warning.kind()), definition),
+                    warning.kind().to_string(),
+                )
+            })
+            .filter(unrepeated)
             .collect();
-        match render_commit_message(definition, &draft) {
-            Ok(message) => {
-                self.issues.clear();
-                Some((draft, message))
-            }
-            Err(errors) => {
-                self.issues = errors
-                    .as_slice()
-                    .iter()
-                    .map(|error| {
-                        let field = validation_field(error, definition);
-                        ValidationIssue {
-                            field,
-                            line: parsed
-                                .sections
-                                .iter()
-                                .find(|section| Some(section.kind.id()) == field)
-                                .map_or(self.editor.cursor().0, |section| section.heading_line + 1),
-                            message: error.to_string(),
-                        }
-                    })
-                    .collect();
-                if let Some(issue) = self.issues.first() {
-                    self.editor
-                        .move_cursor(CursorMove::Jump(terminal_line(issue.line), 0));
-                }
-                None
-            }
+        if !issues.is_empty() {
+            return self.reject(issues);
         }
+        let message = report.into_message().ok()?;
+        self.issues.clear();
+        Some((draft, message))
+    }
+
+    fn reject(&mut self, mut issues: Vec<ValidationIssue>) -> Option<(CommitDraft, CommitMessage)> {
+        issues.sort_by_key(|issue| issue.line);
+        if let Some(issue) = issues.first() {
+            self.editor
+                .move_cursor(CursorMove::Jump(terminal_line(issue.line), 0));
+        }
+        self.issues = issues;
+        None
     }
 
     fn edit_preserving_headings(
@@ -481,22 +531,31 @@ fn validation_field(
     error: &gitserious_core::CommitValidationError,
     definition: &CommitTypeDefinition,
 ) -> Option<FieldId> {
-    use gitserious_core::{CommitValidationError as E, PropertyValidationIssueKind as P};
+    use gitserious_core::CommitValidationError as E;
     let key = match error {
         E::UnknownProperty(key) | E::MissingRequired(key) | E::Multiplicity { key, .. } => key,
-        E::PropertyResponse(kind) => match kind {
-            P::UnknownProperty(key)
-            | P::DuplicateProperty(key)
-            | P::MissingRequired(key)
-            | P::MissingRecommended(key)
-            | P::MissingConditionalDecision(key)
-            | P::MissingApplicableValue(key)
-            | P::ValueForNonApplicableProperty(key)
-            | P::UnexpectedConditionalDecision(key)
-            | P::Multiplicity { key, .. } => key,
-        },
+        E::PropertyResponse(kind) => issue_key(kind),
         E::UnknownCommitType { .. } | E::TypeMismatch { .. } => return None,
     };
+    property_field(key, definition)
+}
+
+fn issue_key(kind: &PropertyValidationIssueKind) -> &PropertyKey {
+    use PropertyValidationIssueKind as P;
+    match kind {
+        P::UnknownProperty(key)
+        | P::DuplicateProperty(key)
+        | P::MissingRequired(key)
+        | P::MissingRecommended(key)
+        | P::MissingConditionalDecision(key)
+        | P::MissingApplicableValue(key)
+        | P::ValueForNonApplicableProperty(key)
+        | P::UnexpectedConditionalDecision(key)
+        | P::Multiplicity { key, .. } => key,
+    }
+}
+
+fn property_field(key: &PropertyKey, definition: &CommitTypeDefinition) -> Option<FieldId> {
     definition
         .properties()
         .iter()
@@ -1382,22 +1441,7 @@ impl<'a> AuthoringSession<'a> {
         }
         if control(key, 's') {
             let definition = self.definition().clone();
-            if let Some((draft, message)) = self.composer.validate(&definition) {
-                let message = if let Some(taxonomy) = self.taxonomy {
-                    match taxonomy.render(&draft) {
-                        Ok(message) => message,
-                        Err(error) => {
-                            self.composer.issues = vec![ValidationIssue {
-                                field: None,
-                                line: self.composer.editor.cursor().0,
-                                message: error.to_string(),
-                            }];
-                            return None;
-                        }
-                    }
-                } else {
-                    message
-                };
+            if let Some((draft, message)) = self.composer.validate(&definition, self.taxonomy) {
                 self.approved_message = None;
                 self.review = Some(ReviewState {
                     draft,
@@ -1699,6 +1743,7 @@ mod confirmation_tests {
             [
                 "complete required property \"intent\"",
                 "complete required property \"decision\"",
+                "choose whether conditional property \"constraints\" applies",
             ]
         );
     }
@@ -1823,7 +1868,7 @@ mod tests {
             CommitSubject::new("review this")?,
             Vec::new(),
         )?;
-        let message = context.initial_taxonomy().render(&draft)?;
+        let message = context.initial_taxonomy().validate(&draft).into_message()?;
         session.composer.editor.move_cursor(CursorMove::Jump(5, 0));
         session.composer.editor.insert_str("review this");
         session.review = Some(ReviewState {

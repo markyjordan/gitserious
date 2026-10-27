@@ -38,18 +38,7 @@ impl Display for CommitMessage {
     }
 }
 
-/// Validates and canonically renders an authored draft.
-///
-/// # Errors
-///
-/// Returns [`CommitValidationErrors`] when the draft does not satisfy the
-/// selected commit-type schema.
-pub fn render_commit_message(
-    definition: &CommitTypeDefinition,
-    draft: &CommitDraft,
-) -> Result<CommitMessage, CommitValidationErrors> {
-    validate_commit_draft(definition, draft)?;
-
+fn render_valid_draft(definition: &CommitTypeDefinition, draft: &CommitDraft) -> CommitMessage {
     let mut message = draft.commit_type().to_string();
     if let Some(scope) = draft.scope() {
         let _ = write!(message, "({})", normalized_scope(scope.as_str()));
@@ -86,46 +75,51 @@ pub fn render_commit_message(
         }
     }
 
-    Ok(CommitMessage(message.into_boxed_str()))
+    CommitMessage(message.into_boxed_str())
 }
 
-/// Validates against the provenance schema and appends its canonical trailers.
+/// Validates against the provenance schema and, when nothing blocks the
+/// draft, renders it with its canonical trailers.
 ///
 /// The schema used for validation also supplies every identity and version in
 /// the trailers. Fingerprint computation and verification belong to the caller
 /// that resolves project policy; this function does not read mutable state.
-/// Legacy drafts retain the validation behavior of [`render_commit_message`].
-///
-/// # Errors
-///
-/// Returns [`CommitValidationErrors`] if the draft type is absent from the
-/// provenance schema or its properties do not satisfy the selected definition.
-pub fn render_commit_message_with_provenance(
+/// Legacy drafts retain the validation behavior of [`validate_commit_draft`].
+#[must_use]
+pub fn validate_commit_draft_with_provenance(
     provenance: &CommitProvenance,
     draft: &CommitDraft,
-) -> Result<CommitMessage, CommitValidationErrors> {
+) -> CommitValidationReport {
     let taxonomy = provenance.taxonomy();
-    let definition = taxonomy
+    let Some(definition) = taxonomy
         .commit_types()
         .iter()
         .find(|definition| definition.id() == draft.commit_type())
-        .ok_or_else(|| {
-            CommitValidationErrors::new(vec![CommitValidationError::UnknownCommitType {
-                taxonomy: taxonomy.id().clone(),
-                actual: draft.commit_type().clone(),
-            }])
-        })?;
-    let rendered = render_commit_message(definition, draft)?;
-    let mut message = rendered.as_str().to_owned();
-    message.push('\n');
-    let _ = writeln!(
-        message,
-        "Gitserious-Taxonomy: {}@{}",
-        taxonomy.id(),
-        taxonomy.version()
-    );
-    let _ = writeln!(message, "Gitserious-Schema: {}", provenance.fingerprint());
-    Ok(CommitMessage(message.into_boxed_str()))
+    else {
+        return CommitValidationReport {
+            message: Err(CommitValidationErrors::new(vec![
+                CommitValidationError::UnknownCommitType {
+                    taxonomy: taxonomy.id().clone(),
+                    actual: draft.commit_type().clone(),
+                },
+            ])),
+            warnings: Vec::new(),
+        };
+    };
+    let mut report = validate_commit_draft(definition, draft);
+    if let Ok(rendered) = &mut report.message {
+        let mut message = rendered.as_str().to_owned();
+        message.push('\n');
+        let _ = writeln!(
+            message,
+            "Gitserious-Taxonomy: {}@{}",
+            taxonomy.id(),
+            taxonomy.version()
+        );
+        let _ = writeln!(message, "Gitserious-Schema: {}", provenance.fingerprint());
+        *rendered = CommitMessage(message.into_boxed_str());
+    }
+    report
 }
 
 fn write_wrapped_line(message: &mut String, line: &str) {
@@ -178,27 +172,11 @@ fn normalized_scope(scope: &str) -> String {
     scope.split_whitespace().collect::<Vec<_>>().join("-")
 }
 
-/// Validates a draft against a selected commit-type schema.
-///
-/// # Errors
-///
-/// Returns all type, property, requiredness, and multiplicity violations.
-pub fn validate_commit_draft(
-    definition: &CommitTypeDefinition,
-    draft: &CommitDraft,
-) -> Result<(), CommitValidationErrors> {
-    let report = validate_commit_draft_report(definition, draft);
-    if report.has_errors() {
-        Err(CommitValidationErrors::new(report.errors))
-    } else {
-        Ok(())
-    }
-}
-
-/// Errors and nonblocking recommendations for one authored draft.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+/// The rendered message or the errors that block it, and the nonblocking
+/// recommendations, from one validation of an authored draft.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommitValidationReport {
-    errors: Vec<CommitValidationError>,
+    message: Result<CommitMessage, CommitValidationErrors>,
     warnings: Vec<PropertyValidationIssue>,
 }
 
@@ -206,7 +184,9 @@ impl CommitValidationReport {
     /// Returns blocking errors, with any header mismatch before property errors.
     #[must_use]
     pub fn errors(&self) -> &[CommitValidationError] {
-        &self.errors
+        self.message
+            .as_ref()
+            .map_or_else(CommitValidationErrors::as_slice, |_| &[])
     }
 
     /// Returns nonblocking recommendations in schema order.
@@ -215,26 +195,32 @@ impl CommitValidationReport {
         &self.warnings
     }
 
-    /// Returns whether the draft must be repaired before rendering.
-    #[must_use]
-    pub fn has_errors(&self) -> bool {
-        !self.errors.is_empty()
+    /// Returns the canonical message, which exists only for a draft without
+    /// blocking errors.
+    ///
+    /// # Errors
+    ///
+    /// Returns the blocking errors when the draft does not satisfy its schema.
+    pub fn into_message(self) -> Result<CommitMessage, CommitValidationErrors> {
+        self.message
     }
 }
 
-/// Validates a draft and retains nonblocking recommended-property warnings.
+/// Validates a draft against a selected commit-type schema, renders it when
+/// nothing blocks it, and retains nonblocking recommended-property warnings.
 ///
 /// Drafts created with [`CommitDraft::from_responses`] require explicit
 /// applicability. Legacy drafts still permit omitted conditional properties;
 /// adapters opt into the stricter contract when they can capture decisions.
 #[must_use]
-pub fn validate_commit_draft_report(
+pub fn validate_commit_draft(
     definition: &CommitTypeDefinition,
     draft: &CommitDraft,
 ) -> CommitValidationReport {
-    let mut report = CommitValidationReport::default();
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
     if definition.id() != draft.commit_type() {
-        report.errors.push(CommitValidationError::TypeMismatch {
+        errors.push(CommitValidationError::TypeMismatch {
             expected: definition.id().clone(),
             actual: draft.commit_type().clone(),
         });
@@ -269,8 +255,8 @@ pub fn validate_commit_draft_report(
             continue;
         }
         match issue.severity() {
-            ValidationSeverity::Warning => report.warnings.push(issue.clone()),
-            ValidationSeverity::Error => report.errors.push(match issue.kind() {
+            ValidationSeverity::Warning => warnings.push(issue.clone()),
+            ValidationSeverity::Error => errors.push(match issue.kind() {
                 PropertyValidationIssueKind::UnknownProperty(key) => {
                     CommitValidationError::UnknownProperty(key.clone())
                 }
@@ -290,7 +276,12 @@ pub fn validate_commit_draft_report(
             }),
         }
     }
-    report
+    let message = if errors.is_empty() {
+        Ok(render_valid_draft(definition, draft))
+    } else {
+        Err(CommitValidationErrors::new(errors))
+    };
+    CommitValidationReport { message, warnings }
 }
 
 /// One violation between an authored draft and its selected schema.

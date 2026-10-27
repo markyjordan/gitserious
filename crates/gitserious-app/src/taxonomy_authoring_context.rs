@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use gitserious_core::{
     CommitDraft, CommitMessage, CommitProvenance, CommitTypeDefinition, CommitTypeId,
-    CommitValidationErrors, Taxonomy, TaxonomyId, render_commit_message_with_provenance,
+    CommitValidationReport, Taxonomy, TaxonomyId, validate_commit_draft_with_provenance,
 };
 
 use crate::fingerprint_taxonomy;
@@ -20,11 +20,13 @@ impl CommitTaxonomy {
         Self { taxonomy }
     }
 
-    /// Renders canonical content and taxonomy provenance.
-    pub fn render(&self, draft: &CommitDraft) -> Result<CommitMessage, CommitValidationErrors> {
+    /// Validates a draft and, when nothing blocks it, renders canonical content
+    /// and taxonomy provenance.
+    #[must_use]
+    pub fn validate(&self, draft: &CommitDraft) -> CommitValidationReport {
         let provenance =
             CommitProvenance::new(self.taxonomy.clone(), fingerprint_taxonomy(&self.taxonomy));
-        render_commit_message_with_provenance(&provenance, draft)
+        validate_commit_draft_with_provenance(&provenance, draft)
     }
 
     /// Returns the taxonomy identity.

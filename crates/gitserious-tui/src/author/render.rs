@@ -1,4 +1,6 @@
-use gitserious_core::{COMMIT_MESSAGE_WIDTH, CommitTypeDefinition, PropertyRequirement};
+use gitserious_core::{
+    COMMIT_MESSAGE_WIDTH, CommitTypeDefinition, PropertyRequirement, ValidationSeverity,
+};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -316,7 +318,7 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     render_validation_row(
         frame,
         composer_frame.validation.content,
-        session.composer.issues.first(),
+        session.composer.notice(session.definition()),
         cursor_status,
     );
     render_navigation_row(frame, shell.navigation, help);
@@ -533,6 +535,9 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
         .map(|(index, field)| {
             let marker = match field.status {
                 FieldStatus::Invalid => Cell::from("!").style(Style::default().fg(Color::Red)),
+                FieldStatus::Recommended => {
+                    Cell::from("?").style(Style::default().fg(Color::Yellow))
+                }
                 FieldStatus::Complete => Cell::from("✓").style(Style::default().fg(Color::Green)),
                 FieldStatus::Incomplete => {
                     Cell::from("○").style(Style::default().fg(Color::DarkGray))
@@ -744,16 +749,20 @@ fn meaningful_editor_rows(editor: &TextArea<'_>) -> u16 {
 fn render_validation_row(
     frame: &mut Frame<'_>,
     area: Rect,
-    issue: Option<&super::state::ValidationIssue>,
+    notice: Option<(&super::state::ValidationIssue, ValidationSeverity)>,
     cursor: CursorStatus,
 ) {
     let status = format!("col {}/{}", cursor.column, cursor.wrap_width);
     let status_width = u16::try_from(Line::from(status.as_str()).width()).unwrap_or(u16::MAX);
     let columns =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(status_width)]).split(area);
-    if let Some(issue) = issue {
+    if let Some((issue, severity)) = notice {
+        let color = match severity {
+            ValidationSeverity::Error => Color::Red,
+            ValidationSeverity::Warning => Color::Yellow,
+        };
         frame.render_widget(
-            Paragraph::new(issue.message.as_str()).style(Style::default().fg(Color::Red)),
+            Paragraph::new(issue.message.as_str()).style(Style::default().fg(color)),
             columns[0],
         );
     }
@@ -938,7 +947,13 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
         let mut preview = review.message.as_str().to_owned();
         if !session.composer.warnings.is_empty() {
             preview.push_str("\nRecommendations (nonblocking; not included in commit):\n");
-            preview.push_str(&session.composer.warnings.join("\n"));
+            let warnings = session.composer.warnings.iter();
+            preview.push_str(
+                &warnings
+                    .map(|warning| warning.message.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
         }
         let mut measured_message = TextArea::new(preview.lines().map(str::to_owned).collect());
         measured_message.set_wrap_mode(WrapMode::WordOrGlyph);

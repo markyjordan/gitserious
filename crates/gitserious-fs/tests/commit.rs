@@ -6,7 +6,7 @@ use std::process::{Command, Output};
 use gitserious_app::{CommitWriter, RepositoryRoot};
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, PropertyKey,
-    PropertyValue, PropertyValues, built_in_commit_types, render_commit_message,
+    PropertyValue, PropertyValues, built_in_commit_types, validate_commit_draft,
 };
 use gitserious_fs::{GitCommitError, GitCommitWriter};
 use tempfile::TempDir;
@@ -69,7 +69,7 @@ fn feat_message_with_intent(intent: &str) -> Result<CommitMessage, Box<dyn Error
             property("decision", "record the staged index")?,
         ],
     )?;
-    Ok(render_commit_message(definition, &draft)?)
+    Ok(validate_commit_draft(definition, &draft).into_message()?)
 }
 
 fn committed_message(directory: &Path) -> Result<String, Box<dyn Error>> {

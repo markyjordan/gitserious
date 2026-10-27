@@ -31,8 +31,8 @@ pub trait CommitDraftAuthor {
     ///
     /// The compatibility implementation delegates to the initial taxonomy's
     /// definitions but cannot certify a provenance-bearing preview. Override
-    /// this method to display `CommitTaxonomy::render` and return that approved
-    /// message with `AuthoredCommit::reviewed`. The workflow rejects successful
+    /// this method to display the message from `CommitTaxonomy::validate` and
+    /// return that approved message with `AuthoredCommit::reviewed`. The workflow rejects successful
     /// draft-only results; cancellations and interaction errors still pass through.
     ///
     /// # Errors

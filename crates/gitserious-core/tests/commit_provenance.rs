@@ -6,7 +6,7 @@ use gitserious_core::{
     CommitValidationError, ConditionalApplicability, Description, Fingerprint, PropertyDefinition,
     PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyResponse, PropertyValue,
     PropertyValues, SchemaVersion, Taxonomy, TaxonomyId, TaxonomyVersion, built_in_taxonomies,
-    render_commit_message, render_commit_message_with_provenance,
+    validate_commit_draft, validate_commit_draft_with_provenance,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -69,7 +69,7 @@ fn trailers_preserve_qualified_identities_versions_and_exact_order() -> TestResu
     let draft = draft(Some(("cause", "The sample split leaked speaker identity.")))?;
     let before = draft.clone();
 
-    let message = render_commit_message_with_provenance(&provenance, &draft)?;
+    let message = validate_commit_draft_with_provenance(&provenance, &draft).into_message()?;
 
     assert_eq!(
         message.as_str(),
@@ -81,7 +81,7 @@ fn trailers_preserve_qualified_identities_versions_and_exact_order() -> TestResu
         )
     );
     assert_eq!(
-        render_commit_message_with_provenance(&provenance, &draft)?,
+        validate_commit_draft_with_provenance(&provenance, &draft).into_message()?,
         message
     );
     assert_eq!(draft, before);
@@ -99,9 +99,14 @@ fn overlapping_types_are_validated_against_the_provenance_taxonomy() -> TestResu
         Fingerprint::from_bytes([2; 32]),
     );
     let draft = draft(Some(("cause", "The sample split leaked speaker identity.")))?;
-    assert!(render_commit_message_with_provenance(&research, &draft).is_ok());
+    assert!(
+        validate_commit_draft_with_provenance(&research, &draft)
+            .into_message()
+            .is_ok()
+    );
 
-    let errors = render_commit_message_with_provenance(&ops, &draft)
+    let errors = validate_commit_draft_with_provenance(&ops, &draft)
+        .into_message()
         .err()
         .ok_or("wrong taxonomy accepted")?;
     assert_eq!(
@@ -118,7 +123,8 @@ fn overlapping_types_are_validated_against_the_provenance_taxonomy() -> TestResu
         CommitSubject::new("reject unknown type")?,
         vec![],
     )?;
-    let errors = render_commit_message_with_provenance(&research, &unknown)
+    let errors = validate_commit_draft_with_provenance(&research, &unknown)
+        .into_message()
         .err()
         .ok_or("unknown type accepted")?;
     assert_eq!(
@@ -140,8 +146,9 @@ fn provenance_does_not_change_wrapped_body_or_breaking_change_bytes() -> TestRes
     let draft = draft(Some(("cause", &"Context 界 🦀 e\u{301} ".repeat(30))))?
         .with_breaking_change(PropertyValue::new("Clients must migrate. ".repeat(20))?);
 
-    let canonical = render_commit_message(&definition, &draft)?;
-    let with_provenance = render_commit_message_with_provenance(&provenance, &draft)?;
+    let canonical = validate_commit_draft(&definition, &draft).into_message()?;
+    let with_provenance =
+        validate_commit_draft_with_provenance(&provenance, &draft).into_message()?;
 
     assert!(
         canonical
@@ -170,7 +177,8 @@ fn empty_schemas_render_header_and_provenance_without_empty_properties() -> Test
     let provenance =
         CommitProvenance::new(taxonomy("empty", None)?, Fingerprint::from_bytes([0; 32]));
 
-    let message = render_commit_message_with_provenance(&provenance, &draft(None)?)?;
+    let message =
+        validate_commit_draft_with_provenance(&provenance, &draft(None)?).into_message()?;
 
     assert!(
         message.as_str().starts_with(
@@ -203,7 +211,11 @@ fn provenance_rendering_keeps_explicit_applicability_validation() -> TestResult 
         CommitSubject::new("enforce applicability")?,
         responses.clone(),
     )?;
-    assert!(render_commit_message_with_provenance(&provenance, &unanswered).is_err());
+    assert!(
+        validate_commit_draft_with_provenance(&provenance, &unanswered)
+            .into_message()
+            .is_err()
+    );
 
     responses.push(PropertyResponse::new(
         PropertyKey::new("constraints")?,
@@ -216,7 +228,7 @@ fn provenance_rendering_keeps_explicit_applicability_validation() -> TestResult 
         unanswered.subject().clone(),
         responses,
     )?;
-    let message = render_commit_message_with_provenance(&provenance, &answered)?;
+    let message = validate_commit_draft_with_provenance(&provenance, &answered).into_message()?;
     assert!(
         message
             .as_str()
@@ -231,7 +243,7 @@ fn provenance_rendering_keeps_explicit_applicability_validation() -> TestResult 
         answered.properties().to_vec(),
     )?;
     assert_eq!(
-        render_commit_message_with_provenance(&provenance, &without_responses)?,
+        validate_commit_draft_with_provenance(&provenance, &without_responses).into_message()?,
         message
     );
     Ok(())
