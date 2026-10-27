@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 
 use crate::{
     CommitTypeDefinition, CommitTypeId, Description, TaxonomyId, TaxonomyVersion,
-    built_in_configuration,
+    built_in_commit_types,
 };
 
 /// Informational source recorded when one taxonomy is forked from another.
@@ -143,38 +143,39 @@ impl Display for TaxonomyError {
 impl Error for TaxonomyError {}
 
 static BUILT_INS: LazyLock<Vec<Taxonomy>> = LazyLock::new(|| {
-    built_in_configuration()
-        .templates()
-        .iter()
-        .map(|template| {
-            let taxonomy = built_in_configuration()
-                .find_taxonomy(template.taxonomy())
-                .unwrap_or_else(|| unreachable!("compiled template taxonomy must exist"));
-            let typeset = built_in_configuration()
-                .find_typeset(template.taxonomy(), template.typeset())
-                .unwrap_or_else(|| unreachable!("compiled template typeset must exist"));
-            let resolved = crate::ResolvedTaxonomy::resolve(template, taxonomy, typeset)
-                .unwrap_or_else(|_| unreachable!("compiled taxonomy must resolve"));
-            let id = if resolved.taxonomy_id().as_str() == "ml-research" {
-                TaxonomyId::from_trusted("research")
-            } else {
-                resolved.taxonomy_id().clone()
-            };
-            Taxonomy::new(
-                id,
-                resolved.taxonomy_version(),
-                resolved.taxonomy_description().clone(),
-                None,
-                resolved
-                    .change_types()
-                    .iter()
-                    .map(crate::ResolvedChangeType::commit_type_definition)
-                    .collect(),
-            )
-            .unwrap_or_else(|_| unreachable!("compiled taxonomy must be valid"))
-        })
-        .collect()
+    vec![
+        built_in(
+            "conventional",
+            "The Conventional Commits classification system for software changes.",
+            built_in_commit_types(),
+        ),
+        built_in(
+            "research",
+            "Change categories for empirical machine-learning research.",
+            crate::built_in_ml_research::commit_types(),
+        ),
+        built_in(
+            "infra-ops",
+            "Change categories for infrastructure and operational systems.",
+            crate::built_in_infra_ops::commit_types(),
+        ),
+    ]
 });
+
+fn built_in(
+    id: &'static str,
+    description: &'static str,
+    commit_types: &[CommitTypeDefinition],
+) -> Taxonomy {
+    Taxonomy::new(
+        TaxonomyId::from_trusted(id),
+        TaxonomyVersion::V1,
+        Description::from_trusted(description),
+        None,
+        commit_types.to_vec(),
+    )
+    .unwrap_or_else(|_| unreachable!("compiled taxonomy must be valid"))
+}
 
 /// Returns the immutable built-in taxonomy library.
 #[must_use]

@@ -83,19 +83,6 @@ impl CommitTypeDefinition {
             properties,
         }
     }
-
-    pub(crate) fn from_resolved(
-        id: CommitTypeId,
-        description: String,
-        properties: Vec<PropertyDefinition>,
-    ) -> Self {
-        Self {
-            schema_version: SchemaVersion::V1,
-            id,
-            description: description.into_boxed_str(),
-            properties,
-        }
-    }
 }
 
 /// A structural invariant violation in a commit-type definition.

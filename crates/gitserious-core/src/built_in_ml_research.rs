@@ -1,7 +1,7 @@
 use std::sync::LazyLock;
 
 use crate::CommitTypeDefinition;
-use crate::built_in_domain::{BuiltInBundle, bundle, change_type, recommended, required};
+use crate::built_in_domain::{change_type, recommended, required};
 
 static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
     vec![
@@ -272,12 +272,6 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
     ]
 });
 
-pub(crate) fn ml_research() -> BuiltInBundle {
-    bundle(
-        "ml-research",
-        "Change categories for empirical machine-learning research.",
-        "Durable hypotheses, experimental decisions, and evidence for ML research.",
-        "The ML Research taxonomy with its default durable-property typeset.",
-        &DEFINITIONS,
-    )
+pub(crate) fn commit_types() -> &'static [CommitTypeDefinition] {
+    DEFINITIONS.as_slice()
 }
