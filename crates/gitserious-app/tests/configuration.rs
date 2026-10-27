@@ -19,6 +19,27 @@ fn id(value: &str) -> TaxonomyId {
     TaxonomyId::new(value).expect("valid test identity")
 }
 
+/// Stages a fork without edits, as staging the fork editor unchanged does.
+trait ForkUnchanged {
+    fn fork_unchanged(&mut self, source: &TaxonomyId, target: TaxonomyId) -> Result<(), String>;
+}
+
+impl ForkUnchanged for ConfigurationSession {
+    fn fork_unchanged(&mut self, source: &TaxonomyId, target: TaxonomyId) -> Result<(), String> {
+        let source_taxonomy = self
+            .catalog()?
+            .find(source)
+            .cloned()
+            .ok_or("the fork source is not installed")?;
+        self.fork_taxonomy(
+            source,
+            target,
+            source_taxonomy.description().clone(),
+            source_taxonomy.commit_types().to_vec(),
+        )
+    }
+}
+
 fn built_in_ids() -> Vec<TaxonomyId> {
     built_in_taxonomies()
         .iter()
@@ -173,7 +194,9 @@ fn failed_create_and_update_leave_the_snapshot_unchanged() -> Result<(), Box<dyn
     for existing in ["team", "research"] {
         assert_eq!(
             session.create_taxonomy(custom(existing)),
-            Err(format!("taxonomy \"{existing}\" already exists"))
+            Err(format!(
+                "a taxonomy named \"{existing}\" already exists in the Library"
+            ))
         );
     }
     let team = custom("team");
@@ -254,7 +277,7 @@ fn each_applied_edit_advances_the_version_by_one() -> Result<(), Box<dyn Error>>
 fn edits_to_a_taxonomy_created_in_the_session_keep_its_first_version() -> Result<(), Box<dyn Error>>
 {
     let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
-    session.fork_taxonomy(&id("conventional"), id("team"))?;
+    session.fork_unchanged(&id("conventional"), id("team"))?;
     let fork = custom("team");
 
     assert!(stage(&mut session, &at_version(&fork, 1, "Team policy."))?);
@@ -302,7 +325,7 @@ fn library_edits_belong_to_the_global_destination() -> Result<(), Box<dyn Error>
 
     for result in [
         session.create_taxonomy(custom("team")),
-        session.fork_taxonomy(&id("conventional"), id("team")),
+        session.fork_unchanged(&id("conventional"), id("team")),
         stage(&mut session, &custom("team")).map(|_| ()),
         session.delete_taxonomy(&id("team")),
         session.configure_global(id("research"), built_in_ids()),
@@ -318,7 +341,7 @@ fn library_edits_belong_to_the_global_destination() -> Result<(), Box<dyn Error>
 fn fork_copies_a_built_in_under_a_new_identity_with_lineage() -> Result<(), Box<dyn Error>> {
     let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
 
-    session.fork_taxonomy(&id("research"), id("lab"))?;
+    session.fork_unchanged(&id("research"), id("lab"))?;
 
     let source = &built_in_taxonomies()[1];
     let fork = session
@@ -338,15 +361,58 @@ fn fork_copies_a_built_in_under_a_new_identity_with_lineage() -> Result<(), Box<
 }
 
 #[test]
+fn a_fork_takes_its_authored_content_and_refuses_its_source_name() -> Result<(), Box<dyn Error>> {
+    let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
+    let source = &built_in_taxonomies()[0];
+    let before = session.global().clone();
+
+    assert_eq!(
+        session.fork_taxonomy(
+            source.id(),
+            source.id().clone(),
+            source.description().clone(),
+            source.commit_types().to_vec(),
+        ),
+        Err("choose a new taxonomy name before staging the fork".to_owned())
+    );
+    assert_eq!(session.global(), &before);
+
+    let description = Description::new("A team policy.")?;
+    let commit_types = source.commit_types()[..2].to_vec();
+    session.fork_taxonomy(
+        source.id(),
+        id("team"),
+        description.clone(),
+        commit_types.clone(),
+    )?;
+    let fork = session
+        .catalog()?
+        .find(&id("team"))
+        .cloned()
+        .ok_or("fork is missing")?;
+    assert_eq!(fork.version(), TaxonomyVersion::V1);
+    assert_eq!(fork.description(), &description);
+    assert_eq!(fork.commit_types(), commit_types.as_slice());
+    assert_eq!(
+        fork.derived_from(),
+        Some(&TaxonomyLineage::new(source.id().clone(), source.version()))
+    );
+    Ok(())
+}
+
+#[test]
 fn fork_rejects_reserved_and_existing_identities_atomically() -> Result<(), Box<dyn Error>> {
     let mut session = ConfigurationSession::open_global(library(vec![custom("team")])?);
     let before = session.global().clone();
 
     for target in ["conventional", "infra-ops", "team"] {
         let error = session
-            .fork_taxonomy(&id("research"), id(target))
+            .fork_unchanged(&id("research"), id(target))
             .expect_err("fork overwrote an existing identity");
-        assert_eq!(error, format!("taxonomy \"{target}\" already exists"));
+        assert_eq!(
+            error,
+            format!("a taxonomy named \"{target}\" already exists in the Library")
+        );
     }
 
     assert_eq!(session.global(), &before);
@@ -366,7 +432,7 @@ fn forks_of_custom_taxonomies_preserve_content_and_reset_the_new_version()
     )?;
     let mut session = ConfigurationSession::open_global(library(vec![revised.clone()])?);
 
-    session.fork_taxonomy(&id("team"), id("team-copy"))?;
+    session.fork_unchanged(&id("team"), id("team-copy"))?;
 
     let fork = session
         .catalog()?
@@ -387,8 +453,14 @@ fn forks_of_custom_taxonomies_preserve_content_and_reset_the_new_version()
 fn forks_reject_unavailable_sources() {
     let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
 
+    let content = &built_in_taxonomies()[0];
     let error = session
-        .fork_taxonomy(&id("missing"), id("team"))
+        .fork_taxonomy(
+            &id("missing"),
+            id("team"),
+            content.description().clone(),
+            content.commit_types().to_vec(),
+        )
         .expect_err("fork of a missing source was accepted");
 
     assert_eq!(error, "taxonomy \"missing\" is not installed");
@@ -528,7 +600,7 @@ fn reviewed_global_sessions_save_one_snapshot_and_reject_concurrent_changes()
     let store = FakeGlobalStore::new(GlobalConfiguration::default());
     edit_global(&store, |workspace| {
         let mut session = workspace.load(ConfigurationDestination::Global)?;
-        session.fork_taxonomy(&id("conventional"), id("team"))?;
+        session.fork_unchanged(&id("conventional"), id("team"))?;
         let saved = workspace.save(&session)?;
         assert!(!saved.is_dirty());
         workspace.save(&saved)?;
@@ -541,7 +613,7 @@ fn reviewed_global_sessions_save_one_snapshot_and_reject_concurrent_changes()
     let error = edit_global(&stale, |workspace| {
         let mut session = workspace.load(ConfigurationDestination::Global)?;
         *stale.current.borrow_mut() = library(vec![custom("other")]).map_err(|e| e.to_string())?;
-        session.fork_taxonomy(&id("conventional"), id("team"))?;
+        session.fork_unchanged(&id("conventional"), id("team"))?;
         workspace.save(&session).map(|_| ())
     })
     .expect_err("a stale session overwrote a newer library");
@@ -560,7 +632,7 @@ fn global_store_failures_are_reported_and_leave_the_library_unchanged() {
 
     let error = edit_global(&store, |workspace| {
         let mut session = workspace.load(ConfigurationDestination::Global)?;
-        session.fork_taxonomy(&id("conventional"), id("team"))?;
+        session.fork_unchanged(&id("conventional"), id("team"))?;
         workspace.save(&session).map(|_| ())
     })
     .expect_err("a failed save was reported as success");
@@ -581,7 +653,7 @@ fn recreating_an_original_identity_cannot_reset_its_version() -> Result<(), Box<
         .create_taxonomy(original)
         .expect_err("recreating team reset it to version 1");
     let forked = session
-        .fork_taxonomy(&id("research"), id("team"))
+        .fork_unchanged(&id("research"), id("team"))
         .expect_err("forking into team reset it to version 1");
 
     let expected =
