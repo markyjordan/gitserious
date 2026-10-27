@@ -35,7 +35,7 @@ mod tests {
     use crate::{
         CommitDraft, CommitSubject, CommitTypeDefinition, CommitTypeId, Description, Fingerprint,
         SchemaVersion, Taxonomy, TaxonomyId, TaxonomyVersion,
-        render_commit_message_with_provenance,
+        validate_commit_draft_with_provenance,
     };
 
     use super::CommitProvenance;
@@ -64,10 +64,11 @@ mod tests {
             Vec::new(),
         )
         .unwrap_or_else(|_| unreachable!());
-        let message = render_commit_message_with_provenance(
+        let message = validate_commit_draft_with_provenance(
             &CommitProvenance::new(taxonomy, Fingerprint::from_bytes([0; 32])),
             &draft,
         )
+        .into_message()
         .unwrap_or_else(|_| unreachable!());
         assert!(message.as_str().contains("Gitserious-Taxonomy: plain@1"));
         assert!(message.as_str().contains("Gitserious-Schema: sha256:"));

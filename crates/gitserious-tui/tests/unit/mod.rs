@@ -4,7 +4,7 @@ use gitserious_app::{CommitDraftAuthor, CommitDraftAuthorOutcome};
 use gitserious_core::{
     COMMIT_MESSAGE_WIDTH, CommitTypeDefinition, CommitTypeId, ConditionId, PropertyCondition,
     PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, SchemaVersion,
-    built_in_commit_types, built_in_taxonomies, render_commit_message,
+    built_in_commit_types, built_in_taxonomies, validate_commit_draft,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -137,7 +137,10 @@ fn context_review_includes_provenance_and_returns_the_latest_approved_bytes()
     let review = session.review.as_ref().ok_or("review missing")?;
     assert_eq!(
         review.message,
-        context.initial_taxonomy().render(&review.draft)?
+        context
+            .initial_taxonomy()
+            .validate(&review.draft)
+            .into_message()?
     );
     assert!(
         review
@@ -784,7 +787,9 @@ fn review_is_exact_backtracking_is_lossless_and_enter_returns_the_typed_draft()
         return Err("review unexpectedly cancelled".into());
     };
     assert_eq!(
-        render_commit_message(&built_in_commit_types()[0], &draft)?.as_str(),
+        validate_commit_draft(&built_in_commit_types()[0], &draft)
+            .into_message()?
+            .as_str(),
         expected
     );
     Ok(())
@@ -2539,7 +2544,9 @@ fn compose_review_and_final_encoding_share_the_80_column_boundary() -> Result<()
         intent
     );
     assert_eq!(
-        render_commit_message(&built_in_commit_types()[0], &draft)?.as_str(),
+        validate_commit_draft(&built_in_commit_types()[0], &draft)
+            .into_message()?
+            .as_str(),
         expected
     );
     Ok(())

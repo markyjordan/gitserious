@@ -84,7 +84,10 @@ impl CommitDraftAuthor for ReviewedAuthor {
             properties,
         )
         .map_err(io::Error::other)?;
-        let message = taxonomy.render(&draft).map_err(io::Error::other)?;
+        let message = taxonomy
+            .validate(&draft)
+            .into_message()
+            .map_err(io::Error::other)?;
         message.as_str().clone_into(&mut self.0.borrow_mut());
         Ok(CommitAuthoringOutcome::Authored(AuthoredCommit::reviewed(
             taxonomy.id().clone(),

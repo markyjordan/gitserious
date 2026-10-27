@@ -6,7 +6,7 @@ use gitserious_core::{
     CommitTypeDefinitionError, CommitTypeId, CommitValidationError, PropertyDefinition,
     PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyValidationIssueKind,
     PropertyValue, PropertyValues, SchemaVersion, TaxonomyError, TaxonomyId, built_in_commit_types,
-    render_commit_message,
+    validate_commit_draft,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -95,7 +95,7 @@ fn canonical_render_uses_schema_order_and_preserves_multiline_values() -> Result
         )?,
     ])?;
 
-    let message = render_commit_message(&built_in_commit_types()[0], &draft)?;
+    let message = validate_commit_draft(&built_in_commit_types()[0], &draft).into_message()?;
 
     assert_eq!(
         message.as_str(),
@@ -115,7 +115,7 @@ fn canonical_prose_wraps_at_80_columns_without_mutating_authored_values()
         authored("decision", PropertyValues::single(value(&decision)?))?,
     ])?;
 
-    let message = render_commit_message(&built_in_commit_types()[0], &draft)?;
+    let message = validate_commit_draft(&built_in_commit_types()[0], &draft).into_message()?;
     assert_eq!(
         message.as_str(),
         format!(
@@ -151,7 +151,7 @@ fn canonical_wrapping_splits_long_unicode_tokens_only_at_grapheme_boundaries()
         authored("decision", PropertyValues::single(value(&combined)?))?,
     ])?;
 
-    let message = render_commit_message(&built_in_commit_types()[0], &draft)?;
+    let message = validate_commit_draft(&built_in_commit_types()[0], &draft).into_message()?;
     assert_eq!(
         message.as_str(),
         format!(
@@ -184,7 +184,7 @@ fn breaking_change_prefix_and_continuations_share_the_80_column_contract()
     ])?
     .with_breaking_change(value(&format!("{breaking}\n{}", "z".repeat(81)))?);
 
-    let message = render_commit_message(&built_in_commit_types()[0], &draft)?;
+    let message = validate_commit_draft(&built_in_commit_types()[0], &draft).into_message()?;
     let footer = message
         .as_str()
         .split_once("BREAKING CHANGE: ")
@@ -228,7 +228,8 @@ fn canonical_render_hyphenates_scope_whitespace() -> Result<(), Box<dyn Error>> 
             ],
         )?;
         assert!(
-            render_commit_message(definition, &draft)?
+            validate_commit_draft(definition, &draft)
+                .into_message()?
                 .as_str()
                 .starts_with(&format!("feat({expected}): normalize scope\n"))
         );
@@ -249,7 +250,9 @@ fn breaking_change_adds_header_bang_and_uppercase_multiline_footer() -> Result<(
     .with_breaking_change(value("remove the old API\nuse the replacement")?);
 
     assert_eq!(
-        render_commit_message(definition, &draft)?.as_str(),
+        validate_commit_draft(definition, &draft)
+            .into_message()?
+            .as_str(),
         "feat(core)!: render typed drafts\n\nintent:\nreplace API\n\ndecision:\nrequire migration\n\nBREAKING CHANGE: remove the old API\nuse the replacement\n"
     );
     assert_eq!(
@@ -282,7 +285,9 @@ fn breaking_change_without_scope_or_body_preserves_canonical_separation()
     .with_breaking_change(value("new contract")?);
 
     assert_eq!(
-        render_commit_message(&definition, &draft)?.as_str(),
+        validate_commit_draft(&definition, &draft)
+            .into_message()?
+            .as_str(),
         "custom!: change contract\n\nBREAKING CHANGE: new contract\n"
     );
     Ok(())
@@ -294,7 +299,7 @@ fn validation_reports_type_unknown_required_and_multiplicity_failures() -> Resul
     let feat = &built_in_commit_types()[0];
     let unknown = authored("unknown", PropertyValues::single(value("value")?))?;
     let missing = feat_draft(vec![unknown])?;
-    let Err(errors) = render_commit_message(feat, &missing) else {
+    let Err(errors) = validate_commit_draft(feat, &missing).into_message() else {
         return Err("invalid draft accepted".into());
     };
     assert!(
@@ -321,7 +326,7 @@ fn validation_reports_type_unknown_required_and_multiplicity_failures() -> Resul
         Vec::new(),
     )?;
     assert!(matches!(
-        render_commit_message(feat, &fix_draft),
+        validate_commit_draft(feat, &fix_draft).into_message(),
         Err(errors) if matches!(
             errors.as_slice().first(),
             Some(CommitValidationError::TypeMismatch { .. })
@@ -337,7 +342,7 @@ fn validation_reports_type_unknown_required_and_multiplicity_failures() -> Resul
         authored("decision", PropertyValues::single(value("decision")?))?,
     ])?;
     assert!(matches!(
-        render_commit_message(feat, &mismatch),
+        validate_commit_draft(feat, &mismatch).into_message(),
         Err(errors) if errors.as_slice().contains(&CommitValidationError::Multiplicity {
             key: PropertyKey::new("intent")?,
             expected: PropertyMultiplicity::Single,
@@ -474,7 +479,9 @@ fn repeatable_values_render_as_ordered_canonical_property_blocks() -> Result<(),
     )?;
 
     assert_eq!(
-        render_commit_message(&repeatable, &draft)?.as_str(),
+        validate_commit_draft(&repeatable, &draft)
+            .into_message()?
+            .as_str(),
         "custom: retain evidence\n\nevidence:\nfirst\n\nevidence:\nsecond\nline\n"
     );
     Ok(())
@@ -500,7 +507,7 @@ fn recommended_optional_and_conditional_properties_may_be_absent() -> Result<(),
             CommitSubject::new("minimal valid draft")?,
             properties,
         )?;
-        render_commit_message(definition, &draft)?;
+        validate_commit_draft(definition, &draft).into_message()?;
     }
     Ok(())
 }

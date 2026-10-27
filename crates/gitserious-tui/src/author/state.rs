@@ -3,7 +3,7 @@ use gitserious_app::{CommitAuthoringContext, CommitDraftAuthorOutcome, CommitTax
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
     ConditionalApplicability, PropertyMultiplicity, PropertyRequirement, PropertyResponse,
-    PropertyValue, PropertyValues, render_commit_message, validate_commit_draft_report,
+    PropertyValue, PropertyValues, validate_commit_draft,
 };
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -313,6 +313,7 @@ impl ComposerState {
     fn validate(
         &mut self,
         definition: &CommitTypeDefinition,
+        taxonomy: Option<&CommitTaxonomy>,
     ) -> Option<(CommitDraft, CommitMessage)> {
         let parsed = self.parse(definition);
         let mut issues = parsed.issues.clone();
@@ -361,13 +362,16 @@ impl ComposerState {
             Some(value) => draft.with_breaking_change(value),
             None => draft,
         };
-        let report = validate_commit_draft_report(definition, &draft);
+        let report = taxonomy.map_or_else(
+            || validate_commit_draft(definition, &draft),
+            |taxonomy| taxonomy.validate(&draft),
+        );
         self.warnings = report
             .warnings()
             .iter()
             .map(|issue| issue.kind().to_string())
             .collect();
-        match render_commit_message(definition, &draft) {
+        match report.into_message() {
             Ok(message) => {
                 self.issues.clear();
                 Some((draft, message))
@@ -1382,22 +1386,7 @@ impl<'a> AuthoringSession<'a> {
         }
         if control(key, 's') {
             let definition = self.definition().clone();
-            if let Some((draft, message)) = self.composer.validate(&definition) {
-                let message = if let Some(taxonomy) = self.taxonomy {
-                    match taxonomy.render(&draft) {
-                        Ok(message) => message,
-                        Err(error) => {
-                            self.composer.issues = vec![ValidationIssue {
-                                field: None,
-                                line: self.composer.editor.cursor().0,
-                                message: error.to_string(),
-                            }];
-                            return None;
-                        }
-                    }
-                } else {
-                    message
-                };
+            if let Some((draft, message)) = self.composer.validate(&definition, self.taxonomy) {
                 self.approved_message = None;
                 self.review = Some(ReviewState {
                     draft,
@@ -1823,7 +1812,7 @@ mod tests {
             CommitSubject::new("review this")?,
             Vec::new(),
         )?;
-        let message = context.initial_taxonomy().render(&draft)?;
+        let message = context.initial_taxonomy().validate(&draft).into_message()?;
         session.composer.editor.move_cursor(CursorMove::Jump(5, 0));
         session.composer.editor.insert_str("review this");
         session.review = Some(ReviewState {

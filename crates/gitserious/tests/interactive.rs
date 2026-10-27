@@ -63,7 +63,10 @@ impl InteractiveUi for ExerciseUi<'_> {
         )
         .map_err(|error| error.to_string())?;
         let taxonomy = context.initial_taxonomy();
-        let message = taxonomy.render(&draft).map_err(|error| error.to_string())?;
+        let message = taxonomy
+            .validate(&draft)
+            .into_message()
+            .map_err(|error| error.to_string())?;
         let unreviewed = AuthoredCommit::new(taxonomy.id().clone(), draft.clone());
         assert!(workspace.submit_commit(&unreviewed).is_err());
         let other_draft = CommitDraft::new(
@@ -77,7 +80,8 @@ impl InteractiveUi for ExerciseUi<'_> {
             taxonomy.id().clone(),
             draft.clone(),
             taxonomy
-                .render(&other_draft)
+                .validate(&other_draft)
+                .into_message()
                 .map_err(|error| error.to_string())?,
         );
         assert!(workspace.submit_commit(&mismatch).is_err());

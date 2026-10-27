@@ -5,7 +5,7 @@ use gitserious_core::{
     CommitValidationError, ConditionId, ConditionalApplicability, PropertyCondition,
     PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyResponse,
     PropertyValidationIssueKind, PropertyValue, PropertyValues, SchemaVersion, ValidationSeverity,
-    built_in_commit_types, render_commit_message, validate_commit_draft_report,
+    built_in_commit_types, validate_commit_draft,
 };
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -98,8 +98,8 @@ fn explicit_decisions_survive_cloning_and_nonblocking_warnings() -> TestResult {
         draft(responses.clone())?.with_breaking_change(PropertyValue::new("Use the new API.")?);
     assert_eq!(draft.clone().responses(), Some(responses.as_slice()));
     assert_eq!(draft.properties().len(), 1);
-    let report = validate_commit_draft_report(&definition()?, &draft);
-    assert!(!report.has_errors());
+    let report = validate_commit_draft(&definition()?, &draft);
+    assert!(report.errors().is_empty());
     assert_eq!(report.warnings().len(), 1);
     assert_eq!(report.warnings()[0].severity(), ValidationSeverity::Warning);
     assert_eq!(
@@ -107,7 +107,7 @@ fn explicit_decisions_survive_cloning_and_nonblocking_warnings() -> TestResult {
         &PropertyValidationIssueKind::MissingRecommended(PropertyKey::new("evidence")?)
     );
     assert_eq!(
-        render_commit_message(&definition()?, &draft)?.as_str(),
+        report.into_message()?.as_str(),
         "change!: retain decisions\n\nintent:\npreserve context\n\nBREAKING CHANGE: Use the new API.\n"
     );
     Ok(())
@@ -143,23 +143,20 @@ fn response_drafts_block_each_invalid_applicability_state() -> TestResult {
             response("intent", Some("reason"), None)?,
             response("constraints", value, applicability)?,
         ])?;
-        let report = validate_commit_draft_report(&definition()?, &draft);
+        let report = validate_commit_draft(&definition()?, &draft);
         assert_eq!(
             report.errors(),
             &[CommitValidationError::PropertyResponse(expected)]
         );
-        assert_eq!(
-            render_commit_message(&definition()?, &draft)
-                .err()
-                .as_ref()
-                .map(gitserious_core::CommitValidationErrors::as_slice),
-            Some(report.errors())
-        );
-        assert!(render_commit_message(&definition()?, &draft).is_err());
+        assert!(report.into_message().is_err());
     }
     // Omitting a conditional response entirely is also an unanswered decision.
     let omitted = draft(vec![response("intent", Some("reason"), None)?])?;
-    assert!(validate_commit_draft_report(&definition()?, &omitted).has_errors());
+    assert!(
+        !validate_commit_draft(&definition()?, &omitted)
+            .errors()
+            .is_empty()
+    );
     let applicable = draft(vec![
         response("intent", Some("reason"), None)?,
         response(
@@ -169,7 +166,8 @@ fn response_drafts_block_each_invalid_applicability_state() -> TestResult {
         )?,
     ])?;
     assert!(
-        render_commit_message(&definition()?, &applicable)?
+        validate_commit_draft(&definition()?, &applicable)
+            .into_message()?
             .as_str()
             .ends_with("constraints:\nlimit\n")
     );
@@ -180,7 +178,7 @@ fn response_drafts_block_each_invalid_applicability_state() -> TestResult {
 fn explicit_empty_responses_and_legacy_drafts_keep_distinct_contracts() -> TestResult {
     let explicit = draft(vec![])?;
     assert_eq!(explicit.responses(), Some([].as_slice()));
-    let report = validate_commit_draft_report(&definition()?, &explicit);
+    let report = validate_commit_draft(&definition()?, &explicit);
     assert_eq!(report.errors().len(), 2);
     assert_eq!(
         report.errors()[0],
@@ -194,10 +192,9 @@ fn explicit_empty_responses_and_legacy_drafts_keep_distinct_contracts() -> TestR
         explicit.properties().to_vec(),
     )?;
     assert!(legacy.responses().is_none());
-    assert!(render_commit_message(&definition()?, &legacy).is_ok());
     assert_eq!(
-        render_commit_message(&definition()?, &legacy)?,
-        render_commit_message(&definition()?, &explicit)?
+        validate_commit_draft(&definition()?, &legacy).into_message()?,
+        validate_commit_draft(&definition()?, &explicit).into_message()?
     );
     Ok(())
 }
@@ -230,7 +227,7 @@ fn unknown_valueless_responses_and_unexpected_decisions_are_rejected() -> TestRe
         Some(ConditionalApplicability::DoesNotApply),
     )?);
     let draft = draft(responses)?;
-    let report = validate_commit_draft_report(&definition()?, &draft);
+    let report = validate_commit_draft(&definition()?, &draft);
     assert_eq!(
         report.errors(),
         &[
@@ -242,7 +239,7 @@ fn unknown_valueless_responses_and_unexpected_decisions_are_rejected() -> TestRe
             ),
         ]
     );
-    assert!(render_commit_message(&definition()?, &draft).is_err());
+    assert!(report.into_message().is_err());
     Ok(())
 }
 
@@ -262,7 +259,9 @@ fn repeatable_values_preserve_authored_order_and_enforce_multiplicity() -> TestR
     );
     let draft = draft(responses)?;
     assert_eq!(
-        render_commit_message(&definition()?, &draft)?.as_str(),
+        validate_commit_draft(&definition()?, &draft)
+            .into_message()?
+            .as_str(),
         "change: retain decisions\n\nintent:\npreserve context\n\nreferences:\nsecond\ncontinued\n\nreferences:\nfirst\n"
     );
     for (key, values, expected, actual) in [
@@ -292,7 +291,7 @@ fn repeatable_values_preserve_authored_order_and_enforce_multiplicity() -> TestR
             responses,
         )?;
         assert_eq!(
-            validate_commit_draft_report(&definition()?, &invalid).errors(),
+            validate_commit_draft(&definition()?, &invalid).errors(),
             &[CommitValidationError::Multiplicity {
                 key: PropertyKey::new(key)?,
                 expected,
@@ -330,12 +329,12 @@ fn draft_validation_reports_the_header_mismatch_before_response_diagnostics() ->
         responses,
     )?;
 
-    let expected: Vec<_> = validate_commit_draft_report(feat, &matching)
+    let expected: Vec<_> = validate_commit_draft(feat, &matching)
         .errors()
         .iter()
         .map(ToString::to_string)
         .collect();
-    let report = validate_commit_draft_report(feat, &mismatched);
+    let report = validate_commit_draft(feat, &mismatched);
 
     assert!(!expected.is_empty());
     assert!(matches!(
@@ -347,6 +346,6 @@ fn draft_validation_reports_the_header_mismatch_before_response_diagnostics() ->
         .map(ToString::to_string)
         .collect();
     assert_eq!(rest, expected);
-    assert!(render_commit_message(feat, &mismatched).is_err());
+    assert!(report.into_message().is_err());
     Ok(())
 }

@@ -266,7 +266,8 @@ pub fn validate_reviewed_commit<L, S, A, W>(
     }
     find_definition::<L, S, A, W>(taxonomy.definitions(), authored.draft().commit_type())?;
     let message = taxonomy
-        .render(authored.draft())
+        .validate(authored.draft())
+        .into_message()
         .map_err(CreateCommitError::InvalidDraft)?;
     let reviewed = authored
         .reviewed_message()

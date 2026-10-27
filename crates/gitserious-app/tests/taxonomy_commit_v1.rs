@@ -84,7 +84,10 @@ impl CommitDraftAuthor for Author {
             Vec::new(),
         )
         .unwrap_or_else(|_| unreachable!());
-        let message = selected.render(&draft).unwrap_or_else(|_| unreachable!());
+        let message = selected
+            .validate(&draft)
+            .into_message()
+            .unwrap_or_else(|_| unreachable!());
         Ok(CommitAuthoringOutcome::Authored(AuthoredCommit::reviewed(
             selected.id().clone(),
             draft,
