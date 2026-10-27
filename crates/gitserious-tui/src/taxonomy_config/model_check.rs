@@ -40,6 +40,12 @@
 //! field holds the name the taxonomy was opened with. Without it, a user could rename a taxonomy
 //! that projects pin by name, and staging would fail or address the wrong taxonomy.
 //!
+//! P6, no key grows an entry past its budget. A taxonomy, type, or property's name and description
+//! share one budget sized to the element that shows them: 80 characters for a taxonomy or type and
+//! 100 for a property. No key leaves an open editor's entry longer than its budget and longer than
+//! before. Without it, a user can type text that misshapes the editor's rows or that staging later
+//! refuses.
+//!
 //! Scope limits:
 //! - Only the keyboard events in [`INPUTS`]. Mouse, paste, and resize events are out of scope.
 //! - One terminal of `MINIMUM_WIDTH` by `MINIMUM_HEIGHT` cells. Mouse hit areas that rendering
@@ -170,6 +176,15 @@ const SEEDS: &[Seed] = &[
         reaches: &[],
     },
     Seed {
+        name: "a fork of conventional open at its full budget",
+        workspace: built_ins,
+        keys: &["down", "right", "f"],
+        ready: forking,
+        depth: 2,
+        alphabet: Alphabet::Every,
+        reaches: &[],
+    },
+    Seed {
         name: "team with the edit editor open",
         workspace: team_library,
         keys: &["down", "right", "down", "down", "down", "e"],
@@ -248,6 +263,10 @@ fn team_selected(snapshot: &Snapshot) -> bool {
 
 fn creating(snapshot: &Snapshot) -> bool {
     matches!(snapshot.screen, Screen::TaxonomyEditor) && snapshot.editor_mode == EditorMode::Create
+}
+
+fn forking(snapshot: &Snapshot) -> bool {
+    creating(snapshot) && snapshot.fork_source.is_some()
 }
 
 fn editing(snapshot: &Snapshot) -> bool {
@@ -483,6 +502,10 @@ const PROPERTIES: &[(&str, Check)] = &[
         review_names_every_taxonomy_change,
     ),
     ("P5, an edit keeps the taxonomy's name", edit_keeps_the_name),
+    (
+        "P6, no key grows an entry past its budget",
+        no_key_grows_past_the_budget,
+    ),
 ];
 
 struct ChildEditor {
@@ -536,6 +559,80 @@ fn no_silent_draft_loss(
                  to its parent draft.",
                 child.name
             ));
+        }
+    }
+    Ok(())
+}
+
+/// One editor's name and description, and the budget they share.
+struct Budgeted {
+    owner: &'static str,
+    fields: fn(&Snapshot) -> Option<[&Text; 2]>,
+    limit: usize,
+}
+
+const BUDGETED: [Budgeted; 3] = [
+    Budgeted {
+        owner: "taxonomy",
+        fields: |snapshot| {
+            snapshot
+                .create_text
+                .as_ref()
+                .map(|[name, description]| [name, description])
+        },
+        limit: CREATE_TEXT_LIMIT,
+    },
+    Budgeted {
+        owner: "type",
+        fields: |snapshot| {
+            snapshot
+                .type_editor
+                .as_ref()
+                .map(|editor| [&editor.name, &editor.description])
+        },
+        limit: child_editor::TYPE_LIMIT,
+    },
+    Budgeted {
+        owner: "property",
+        fields: |snapshot| {
+            snapshot
+                .property_editor
+                .as_ref()
+                .map(|editor| [&editor.name, &editor.description])
+        },
+        limit: child_editor::PROPERTY_LIMIT,
+    },
+];
+
+fn used(fields: [&Text; 2]) -> usize {
+    fields
+        .iter()
+        .map(|field| field.lines.join("\n").graphemes(true).count())
+        .sum()
+}
+
+fn no_key_grows_past_the_budget(
+    before: &Snapshot,
+    _: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    let Some(after) = after else {
+        return Ok(());
+    };
+    for Budgeted {
+        owner,
+        fields,
+        limit,
+    } in BUDGETED
+    {
+        if let (Some(old), Some(new)) = (fields(before), fields(after)) {
+            let (old, new) = (used(old), used(new));
+            if new > limit && new > old {
+                return Err(format!(
+                    "The {owner} name and description grew from {old} to {new} characters, past \
+                     its budget of {limit}."
+                ));
+            }
         }
     }
     Ok(())

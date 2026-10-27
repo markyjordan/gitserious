@@ -6784,6 +6784,38 @@ mod tests {
     }
 
     #[test]
+    fn text_fields_open_at_the_end_and_take_home_and_end() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (workspace, _) = child_editor_workspace()?;
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
+        state.library.select_taxonomy(3);
+        state.handle_event(key(KeyCode::Char('e')), &workspace);
+        state.handle_event(key(KeyCode::Up), &workspace);
+        let description = |state: &State| -> Result<_, Box<dyn std::error::Error>> {
+            let text = &state
+                .create_text
+                .as_ref()
+                .ok_or("missing text")?
+                .description;
+            Ok((text.lines().join("\n"), text.cursor()))
+        };
+        assert_eq!(description(&state)?, ("Original taxonomy".into(), (0, 17)));
+        state.handle_event(key(KeyCode::Home), &workspace);
+        assert_eq!(description(&state)?.1, (0, 0));
+        state.handle_event(key(KeyCode::End), &workspace);
+        for character in " notes".chars() {
+            state.handle_event(key(KeyCode::Char(character)), &workspace);
+        }
+        assert_eq!(
+            description(&state)?,
+            ("Original taxonomy notes".into(), (0, 23))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn edit_opens_the_create_editor_with_its_name_fixed() -> Result<(), Box<dyn std::error::Error>>
     {
         let (workspace, source) = child_editor_workspace()?;
