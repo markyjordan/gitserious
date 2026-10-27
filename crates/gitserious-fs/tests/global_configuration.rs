@@ -8,12 +8,7 @@ use gitserious_fs::{GlobalConfigurationError, TomlGlobalConfigurationStore};
 use tempfile::TempDir;
 
 fn store(root: &Path) -> TomlGlobalConfigurationStore {
-    let paths = GlobalPaths::new(
-        root.join("config"),
-        root.join("data"),
-        root.join("state"),
-        root.join("cache"),
-    );
+    let paths = GlobalPaths::new(root.join("config"));
     TomlGlobalConfigurationStore::new(paths.config().clone())
 }
 
