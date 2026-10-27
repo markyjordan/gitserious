@@ -2343,7 +2343,6 @@ impl State {
         let lines = Paragraph::new(message.as_str()).wrap(Wrap { trim: false });
         let height = u16::try_from(lines.line_count(width.saturating_sub(2)))
             .unwrap_or(u16::MAX)
-            .min(3)
             .saturating_add(2)
             .min(area.height);
         let popup = Rect::new(
