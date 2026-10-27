@@ -7,9 +7,9 @@ use gitserious_app::{
     ProjectConfig, RepositoryRoot, TaxonomyOrigin, resolve_effective_configuration,
 };
 use gitserious_core::{
-    CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
-    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, SchemaVersion,
-    Taxonomy, TaxonomyId, TaxonomyLineage, TaxonomyVersion,
+    CommitTypeDefinition, CommitTypeDefinitionError, CommitTypeId, ConditionId, Description,
+    PropertyCondition, PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement,
+    SchemaVersion, Taxonomy, TaxonomyError, TaxonomyId, TaxonomyLineage, TaxonomyVersion,
 };
 use ratatui::Frame;
 use ratatui::crossterm::event::{
@@ -41,7 +41,8 @@ use child_editor::{ChildAction, PropertyEditorState, TypeEditorState};
 use home_overlay::{CommandPaletteState, CreateCommand, HomeCommand, HomeOverlay};
 use library_view::{LibraryFocus, LibraryViewState};
 use naming::{
-    NameField, edited_prose, name_error, name_heading_line, noted_heading_line, single_line,
+    NameField, description_required, edited_prose, name_error, name_heading_line,
+    noted_heading_line, sentence, single_line,
 };
 
 /// Taxonomy-first terminal configuration adapter.
@@ -219,6 +220,16 @@ enum PendingAction {
 enum Notice {
     Error(String),
     Info(String),
+}
+
+impl Notice {
+    fn error(message: String) -> Self {
+        Self::Error(sentence(&message))
+    }
+
+    fn info(message: String) -> Self {
+        Self::Info(sentence(&message))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -402,15 +413,20 @@ impl TaxonomyDraft {
     fn build(&self) -> Result<Taxonomy, String> {
         let id = TaxonomyId::from_label(&self.id)
             .map_err(|error| name_error(NameField::Taxonomy, &self.id, &error))?;
-        let description = Description::new(&self.description).map_err(|error| error.to_string())?;
+        let description =
+            Description::new(&self.description).map_err(|_| description_required("Taxonomy"))?;
         let version = TaxonomyVersion::new(self.version).map_err(|error| error.to_string())?;
         let types = self
             .types
             .iter()
             .map(TypeDraft::build)
             .collect::<Result<Vec<_>, _>>()?;
-        Taxonomy::new(id, version, description, self.derived_from.clone(), types)
-            .map_err(|error| error.to_string())
+        Taxonomy::new(id, version, description, self.derived_from.clone(), types).map_err(|error| {
+            match error {
+                TaxonomyError::EmptyCommitTypes => "Add a type before staging the taxonomy.".into(),
+                TaxonomyError::DuplicateCommitType(_) => sentence(&error.to_string()),
+            }
+        })
     }
 }
 
@@ -424,8 +440,12 @@ impl TypeDraft {
             .iter()
             .map(PropertyDraft::build)
             .collect::<Result<Vec<_>, _>>()?;
-        CommitTypeDefinition::new(version, id, self.description.clone(), properties)
-            .map_err(|error| error.to_string())
+        CommitTypeDefinition::new(version, id, self.description.clone(), properties).map_err(
+            |error| match error {
+                CommitTypeDefinitionError::EmptyDescription => description_required("Type"),
+                CommitTypeDefinitionError::DuplicateProperty(_) => sentence(&error.to_string()),
+            },
+        )
     }
 }
 
@@ -448,7 +468,7 @@ impl PropertyDraft {
             self.requirement.clone(),
             self.multiplicity,
         )
-        .map_err(|error| error.to_string())
+        .map_err(|_| description_required("Property"))
     }
 }
 
@@ -694,7 +714,7 @@ impl State {
                     CreateFocus::Types => return false,
                 };
                 if editors.paste(self.create_focus, &text) {
-                    self.status = Some(Notice::Info(CREATE_TEXT_LIMIT_NOTICE.into()));
+                    self.status = Some(Notice::info(CREATE_TEXT_LIMIT_NOTICE.into()));
                 }
             }
             return false;
@@ -1119,18 +1139,18 @@ impl State {
     fn request_project_action(&mut self, action: PendingAction) {
         self.status = None;
         let Some(session) = &self.project else {
-            self.status = Some(Notice::Error(self.project_error.clone()));
+            self.status = Some(Notice::error(self.project_error.clone()));
             return;
         };
         match action {
             PendingAction::EditProject if session.project_config().is_none() => {
-                self.status = Some(Notice::Error(
+                self.status = Some(Notice::error(
                     "Initialize the project before editing.".into(),
                 ));
                 return;
             }
             PendingAction::InitializeProject if session.project_config().is_some() => {
-                self.status = Some(Notice::Info("Project is already initialized.".into()));
+                self.status = Some(Notice::info("Project is already initialized.".into()));
                 return;
             }
             _ => {}
@@ -1216,7 +1236,7 @@ impl State {
                 if let Some(id) = selected_id {
                     settings.inherit_available = false;
                     if id == settings.default {
-                        self.status = Some(Notice::Error(
+                        self.status = Some(Notice::error(
                             "Choose another default before removing this taxonomy.".into(),
                         ));
                     } else if let Some(index) =
@@ -1285,11 +1305,11 @@ impl State {
                     Ok(()) => {
                         self.settings = None;
                         self.screen = Screen::Home;
-                        self.status = Some(Notice::Info(
+                        self.status = Some(Notice::info(
                             "Configuration change staged. Ctrl+S reviews before applying.".into(),
                         ));
                     }
-                    Err(error) => self.status = Some(Notice::Error(error)),
+                    Err(error) => self.status = Some(Notice::error(error)),
                 }
             }
             KeyCode::Esc => {
@@ -1320,7 +1340,7 @@ impl State {
                         area.insert_char('/');
                     })
                 {
-                    self.status = Some(Notice::Info(CREATE_TEXT_LIMIT_NOTICE.into()));
+                    self.status = Some(Notice::info(CREATE_TEXT_LIMIT_NOTICE.into()));
                 }
             }
             KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1403,7 +1423,7 @@ impl State {
                         area.insert_newline();
                     })
                 {
-                    self.status = Some(Notice::Info(CREATE_TEXT_LIMIT_NOTICE.into()));
+                    self.status = Some(Notice::info(CREATE_TEXT_LIMIT_NOTICE.into()));
                 }
             }
             KeyCode::Enter if key.modifiers.is_empty() => match self.create_focus {
@@ -1462,7 +1482,7 @@ impl State {
                 area.input(key);
             })
         {
-            self.status = Some(Notice::Info(CREATE_TEXT_LIMIT_NOTICE.into()));
+            self.status = Some(Notice::info(CREATE_TEXT_LIMIT_NOTICE.into()));
         }
     }
 
@@ -1487,7 +1507,7 @@ impl State {
     fn child_action(&mut self, action: ChildAction, property: bool) {
         match action {
             ChildAction::Continue => {}
-            ChildAction::Error(message) => self.status = Some(Notice::Error(message)),
+            ChildAction::Error(message) => self.status = Some(Notice::error(message)),
             ChildAction::Complete => {
                 let result = if property {
                     self.complete_property()
@@ -1495,7 +1515,7 @@ impl State {
                     self.complete_type()
                 };
                 if let Err(message) = result {
-                    self.status = Some(Notice::Error(message));
+                    self.status = Some(Notice::error(message));
                 }
             }
             ChildAction::Back => {
@@ -1556,13 +1576,13 @@ impl State {
                         self.library.type_offset = 0;
                         self.library.property_scroll = 0;
                         self.screen = Screen::Home;
-                        self.status = Some(Notice::Info(
+                        self.status = Some(Notice::info(
                             "Deletion staged. Ctrl+S reviews before applying.".into(),
                         ));
                     }
                     Err(error) => {
                         self.screen = Screen::Home;
-                        self.status = Some(Notice::Error(error));
+                        self.status = Some(Notice::error(error));
                     }
                 }
             }
@@ -1596,11 +1616,11 @@ impl State {
                             self.project_error = error;
                         }
                         self.screen = Screen::Home;
-                        self.status = Some(Notice::Info("Configuration applied.".into()));
+                        self.status = Some(Notice::info("Configuration applied.".into()));
                     }
                     Err(error) => {
                         self.screen = Screen::Home;
-                        self.status = Some(Notice::Error(error));
+                        self.status = Some(Notice::error(error));
                     }
                 }
             }
@@ -1635,7 +1655,7 @@ impl State {
                     }
                     Err(error) => {
                         self.screen = Screen::Home;
-                        self.status = Some(Notice::Error(error));
+                        self.status = Some(Notice::error(error));
                     }
                 }
             }
@@ -1663,13 +1683,13 @@ impl State {
 
     fn request_global_action(&mut self, action: PendingAction) {
         if let Some(error) = self.catalog_error() {
-            self.status = Some(Notice::Error(error));
+            self.status = Some(Notice::error(error));
             return;
         }
         if !matches!(action, PendingAction::Create | PendingAction::ReviewGlobal)
             && self.selected_taxonomy().is_none()
         {
-            self.status = Some(Notice::Error("select a taxonomy".into()));
+            self.status = Some(Notice::error("Select a taxonomy first.".into()));
             return;
         }
         if matches!(action, PendingAction::Edit | PendingAction::Delete)
@@ -1681,7 +1701,7 @@ impl State {
                     != Some(TaxonomyOrigin::Custom)
             })
         {
-            self.status = Some(Notice::Error(
+            self.status = Some(Notice::error(
                 "Built-in taxonomies are read-only; fork one to customize it.".into(),
             ));
             return;
@@ -1706,7 +1726,7 @@ impl State {
             PendingAction::InitializeProject => {
                 self.active_scope = ConfigurationDestination::Project;
                 let Some(session) = &mut self.project else {
-                    self.status = Some(Notice::Error(self.project_error.clone()));
+                    self.status = Some(Notice::error(self.project_error.clone()));
                     return;
                 };
                 match session
@@ -1714,7 +1734,7 @@ impl State {
                     .and_then(|()| session.review().map(|_| ()))
                 {
                     Ok(()) => self.screen = Screen::Review(ConfigurationDestination::Project),
-                    Err(error) => self.status = Some(Notice::Error(error)),
+                    Err(error) => self.status = Some(Notice::error(error)),
                 }
             }
             PendingAction::ReviewProject => {
@@ -1774,13 +1794,13 @@ impl State {
                 .session(destination)
                 .and_then(|session| session.review().err())
             {
-                self.status = Some(Notice::Error(error));
+                self.status = Some(Notice::error(error));
             } else {
                 self.scroll = 0;
                 self.screen = Screen::Review(destination);
             }
         } else {
-            self.status = Some(Notice::Info(
+            self.status = Some(Notice::info(
                 "No changes or taxonomy updates to apply.".into(),
             ));
         }
@@ -1797,7 +1817,7 @@ impl State {
             .and_then(|catalog| catalog.origin(taxonomy.id()))
             != Some(TaxonomyOrigin::Custom)
         {
-            self.status = Some(Notice::Error(
+            self.status = Some(Notice::error(
                 "Built-in taxonomies are read-only; fork one to customize it.".into(),
             ));
             return;
@@ -1932,7 +1952,7 @@ impl State {
     fn stage_editor(&mut self, mode: EditorMode) {
         if let (Some(editors), Some(draft)) = (&self.create_text, &mut self.editor) {
             if editors.used() > CREATE_TEXT_LIMIT {
-                self.status = Some(Notice::Error(CREATE_TEXT_LIMIT_NOTICE.into()));
+                self.status = Some(Notice::error(CREATE_TEXT_LIMIT_NOTICE.into()));
                 return;
             }
             editors.sync_draft(draft);
@@ -1979,12 +1999,12 @@ impl State {
         match result {
             Ok(staged) => {
                 self.leave_create_taxonomy();
-                self.status = Some(Notice::Info(staged.map_or_else(
+                self.status = Some(Notice::info(staged.map_or_else(
                     || "No changes to stage.".into(),
                     |id| format!("Staged taxonomy \"{id}\". Ctrl+S reviews before applying."),
                 )));
             }
-            Err(error) => self.status = Some(Notice::Error(error)),
+            Err(error) => self.status = Some(Notice::error(error)),
         }
     }
 
@@ -2316,7 +2336,7 @@ impl State {
             (Some(Notice::Info(message)), _) => {
                 (message.clone(), Style::default().fg(Color::White))
             }
-            (None, Some(message)) => (message, Style::default().fg(Color::Red)),
+            (None, Some(message)) => (sentence(&message), Style::default().fg(Color::Red)),
             (None, None) => return,
         };
         let width = area.width.min(56);
@@ -5522,7 +5542,7 @@ mod tests {
         state.global_error = "global load failed".into();
         terminal.draw(|frame| state.render(frame))?;
         assert_eq!(terminal.backend().buffer()[(45, 27)].fg, Color::Red);
-        assert!(text(&terminal).contains("global load failed"));
+        assert!(text(&terminal).contains("Global load failed."));
         Ok(())
     }
 
@@ -5646,7 +5666,7 @@ mod tests {
         assert!(rendered.contains("No commit types."));
         assert!(rendered.contains("No type selected."));
         assert!(rendered.contains("/: commands  ?: help"));
-        assert!(rendered.contains("global load failed"));
+        assert!(rendered.contains("Global load failed."));
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
         assert!(matches!(state.status, Some(Notice::Error(_))));
@@ -6706,7 +6726,7 @@ mod tests {
         stage_creation(&mut state, &workspace);
         assert_eq!(
             error_text(&state),
-            Some("description must contain non-whitespace text")
+            Some("Taxonomy description is required.")
         );
         assert!(
             matches!(state.screen, Screen::TaxonomyEditor)
@@ -6877,7 +6897,7 @@ mod tests {
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
         assert_eq!(
             error_text(&state),
-            Some("taxonomy must contain at least one commit type")
+            Some("Add a type before staging the taxonomy.")
         );
         assert!(
             matches!(state.screen, Screen::TaxonomyEditor) && state.editor_mode == EditorMode::Edit
