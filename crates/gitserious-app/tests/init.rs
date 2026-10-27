@@ -206,7 +206,7 @@ fn assert_resolution(status: InitStatus, outcome: &InitOutcome) {
     assert_eq!(outcome.status(), status);
     assert_eq!(outcome.root().as_path(), repository_path());
     assert_eq!(outcome.taxonomy().as_str(), "conventional");
-    assert_eq!(outcome.version(), TaxonomyVersion::V1);
+    assert_eq!(Ok(outcome.version()), TaxonomyVersion::new(2));
 }
 
 #[test]

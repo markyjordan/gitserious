@@ -3779,7 +3779,7 @@ mod tests {
             terminal.draw(|frame| state.render(frame))?;
         }
         assert!(state.library.taxonomy_scroll > 0);
-        assert!(text(&terminal).contains("Forked from conventional@1"));
+        assert!(text(&terminal).contains("Forked from conventional@2"));
         Ok(())
     }
 
@@ -5589,7 +5589,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Forked from"));
-        assert!(text(&terminal).contains("conventional@1"));
+        assert!(text(&terminal).contains("conventional@2"));
         let list = state.library.browser_area;
         assert!(
             row_text(&terminal, list.x, list.y + 4, list.width)
@@ -6728,6 +6728,48 @@ mod tests {
         assert_eq!(staged.description().as_str(), "Team changes");
         assert_eq!(staged.commit_types()[0].id().as_str(), "feat");
         Ok(())
+    }
+
+    #[test]
+    fn every_built_in_entry_fits_its_editor_budget() {
+        fn length(text: &str) -> usize {
+            text.graphemes(true).count()
+        }
+        let mut over = Vec::new();
+        for taxonomy in gitserious_core::built_in_taxonomies() {
+            let used = length(taxonomy.id().as_str()) + length(taxonomy.description().as_str());
+            if used > CREATE_TEXT_LIMIT {
+                over.push(format!("{} {used}/{CREATE_TEXT_LIMIT}", taxonomy.id()));
+            }
+            for kind in taxonomy.commit_types() {
+                let used = length(kind.id().as_str()) + length(kind.description());
+                if used > child_editor::TYPE_LIMIT {
+                    over.push(format!(
+                        "{}/{} {used}/{}",
+                        taxonomy.id(),
+                        kind.id(),
+                        child_editor::TYPE_LIMIT
+                    ));
+                }
+                for property in kind.properties() {
+                    let used = length(property.key().as_str()) + length(property.description());
+                    if used > child_editor::PROPERTY_LIMIT {
+                        over.push(format!(
+                            "{}/{}/{} {used}/{}",
+                            taxonomy.id(),
+                            kind.id(),
+                            property.key(),
+                            child_editor::PROPERTY_LIMIT
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            over.is_empty(),
+            "built-in entries over their editor budget:\n{}",
+            over.join("\n")
+        );
     }
 
     #[test]

@@ -20,7 +20,7 @@ fn nested_first_run_creates_exact_version_control_artifacts() -> Result<(), Box<
     assert_eq!(
         stdout(&output),
         format!(
-            "Initialized gitserious in {} (conventional@1).\n",
+            "Initialized gitserious in {} (conventional@2).\n",
             git_root.trim()
         )
     );

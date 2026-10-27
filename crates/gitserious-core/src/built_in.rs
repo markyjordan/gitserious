@@ -13,15 +13,15 @@ static BUILT_IN_COMMIT_TYPES: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::ne
             vec![
                 required(
                     "intent",
-                    "Why the product or system needs this capability. The implementation shows how it works, not why it should exist.",
+                    "Why the product or system needs this capability. The code shows how it works, not why.",
                 ),
                 required(
                     "decision",
-                    "Why this implementation was selected among reasonable alternatives. The diff records only the winner.",
+                    "Why this implementation beat reasonable alternatives. The diff records only the winner.",
                 ),
                 conditional(
                     "constraints",
-                    "Non-obvious requirements that bounded the change and cannot be recovered from the implementation with confidence.",
+                    "Non-obvious requirements that bounded the change and cannot be recovered from the code.",
                     "non-obvious-requirements",
                     "Required when non-obvious requirements bounded the change.",
                 ),
@@ -33,7 +33,7 @@ static BUILT_IN_COMMIT_TYPES: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::ne
             vec![
                 required(
                     "cause",
-                    "The causal model established while debugging. The diff shows the condition that changed, not why it was the cause.",
+                    "The causal model found while debugging. The diff shows what changed, not why it was the cause.",
                 ),
                 required(
                     "decision",
@@ -83,7 +83,7 @@ static BUILT_IN_COMMIT_TYPES: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::ne
             vec![
                 required(
                     "risk",
-                    "The future regression important enough to permanently encode this test. Often not obvious from the assertion.",
+                    "The future regression worth encoding in a permanent test. Often not obvious from the assertion.",
                 ),
                 conditional(
                     "rationale",
@@ -98,7 +98,7 @@ static BUILT_IN_COMMIT_TYPES: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::ne
             "A correction or expansion of the repository's knowledge surface.",
             vec![conditional(
                 "reason",
-                "Why existing documentation was insufficient, misleading, or stale. A typo correction needs no body.",
+                "Why existing documentation was insufficient, misleading, or stale. A typo fix needs no body.",
                 "insufficient-documentation",
                 "Required when existing documentation was insufficient, misleading, or stale.",
             )],
@@ -122,7 +122,7 @@ static BUILT_IN_COMMIT_TYPES: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::ne
             vec![
                 required(
                     "intent",
-                    "Why the build needed to change. Often a response to the environment rather than a product design.",
+                    "Why the build needed to change. Often a response to the environment, not a product design.",
                 ),
                 conditional(
                     "constraint",
@@ -163,7 +163,7 @@ static BUILT_IN_COMMIT_TYPES: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::ne
             "A non-behavioral source-presentation change.",
             vec![conditional(
                 "reason",
-                "Why a purely non-behavioral rewrite was worth recording. Most style commits should have no body.",
+                "Why a purely non-behavioral rewrite was worth recording. Most style commits need no body.",
                 "non-behavioral-rewrite-justification",
                 "Required when a purely non-behavioral rewrite is worth recording.",
             )],
@@ -270,17 +270,17 @@ mod tests {
             properties: &[
                 ExpectedProperty {
                     key: "intent",
-                    description: "Why the product or system needs this capability. The implementation shows how it works, not why it should exist.",
+                    description: "Why the product or system needs this capability. The code shows how it works, not why.",
                     requirement: Required,
                 },
                 ExpectedProperty {
                     key: "decision",
-                    description: "Why this implementation was selected among reasonable alternatives. The diff records only the winner.",
+                    description: "Why this implementation beat reasonable alternatives. The diff records only the winner.",
                     requirement: Required,
                 },
                 ExpectedProperty {
                     key: "constraints",
-                    description: "Non-obvious requirements that bounded the change and cannot be recovered from the implementation with confidence.",
+                    description: "Non-obvious requirements that bounded the change and cannot be recovered from the code.",
                     requirement: Conditional {
                         id: "non-obvious-requirements",
                         rationale: "Required when non-obvious requirements bounded the change.",
@@ -294,7 +294,7 @@ mod tests {
             properties: &[
                 ExpectedProperty {
                     key: "cause",
-                    description: "The causal model established while debugging. The diff shows the condition that changed, not why it was the cause.",
+                    description: "The causal model found while debugging. The diff shows what changed, not why it was the cause.",
                     requirement: Required,
                 },
                 ExpectedProperty {
@@ -368,7 +368,7 @@ mod tests {
             properties: &[
                 ExpectedProperty {
                     key: "risk",
-                    description: "The future regression important enough to permanently encode this test. Often not obvious from the assertion.",
+                    description: "The future regression worth encoding in a permanent test. Often not obvious from the assertion.",
                     requirement: Required,
                 },
                 ExpectedProperty {
@@ -386,7 +386,7 @@ mod tests {
             description: "A correction or expansion of the repository's knowledge surface.",
             properties: &[ExpectedProperty {
                 key: "reason",
-                description: "Why existing documentation was insufficient, misleading, or stale. A typo correction needs no body.",
+                description: "Why existing documentation was insufficient, misleading, or stale. A typo fix needs no body.",
                 requirement: Conditional {
                     id: "insufficient-documentation",
                     rationale: "Required when existing documentation was insufficient, misleading, or stale.",
@@ -418,7 +418,7 @@ mod tests {
             properties: &[
                 ExpectedProperty {
                     key: "intent",
-                    description: "Why the build needed to change. Often a response to the environment rather than a product design.",
+                    description: "Why the build needed to change. Often a response to the environment, not a product design.",
                     requirement: Required,
                 },
                 ExpectedProperty {
@@ -468,7 +468,7 @@ mod tests {
             description: "A non-behavioral source-presentation change.",
             properties: &[ExpectedProperty {
                 key: "reason",
-                description: "Why a purely non-behavioral rewrite was worth recording. Most style commits should have no body.",
+                description: "Why a purely non-behavioral rewrite was worth recording. Most style commits need no body.",
                 requirement: Conditional {
                     id: "non-behavioral-rewrite-justification",
                     rationale: "Required when a purely non-behavioral rewrite is worth recording.",

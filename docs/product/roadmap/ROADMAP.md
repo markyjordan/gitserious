@@ -151,7 +151,7 @@ the existing Conventional bundle still exercise conditional requirements.
 | Type | Meaning | Ordered properties |
 | --- | --- | --- |
 | `hypothesis` | Introduce or revise a falsifiable research hypothesis. | claim (R), motivation (R), prediction (R), falsifier (rec), assumptions (rec) |
-| `data` | Change data, sampling, labels, splits, filtering, preprocessing, or augmentation. | objective (R), population (rec), transformation (R), assumptions (rec), leakage-risk (rec), validation (rec) |
+| `data` | Change sampling, labels, splits, filtering, preprocessing, or augmentation. | objective (R), population (rec), transformation (R), assumptions (rec), leakage-risk (rec), validation (rec) |
 | `model` | Change representation, architecture, objective, or inference formulation. | objective (R), change (R), rationale (R), assumptions (rec), tradeoffs (rec) |
 | `experiment` | Introduce or modify an intervention or controlled comparison. | question (R), intervention (R), control (R), prediction (rec), confounders (rec), result (rec) |
 | `eval` | Change how performance or behavior is measured. | target (R), protocol (R), metrics (R), rationale (rec), limitations (rec) |

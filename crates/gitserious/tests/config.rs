@@ -119,7 +119,7 @@ fn assert_domain_initialization(domain: &str, representative: &str) -> Result<()
 
     let initialized = home.run(repository.path(), &["init", "--taxonomy", domain])?;
     assert!(initialized.status.success(), "{}", stderr(&initialized));
-    assert!(stdout(&initialized).ends_with(&format!(" ({domain}@1).\n")));
+    assert!(stdout(&initialized).ends_with(&format!(" ({domain}@2).\n")));
     assert!(!home.library_path().exists());
     let config_path = repository.path().join("gitserious.toml");
     let lock_path = repository.path().join("gitserious.lock");
