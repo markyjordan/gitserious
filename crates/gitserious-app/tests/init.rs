@@ -7,8 +7,7 @@ use std::path::{Path, PathBuf};
 use gitserious_app::{
     Fingerprint, GlobalConfiguration, InitOutcome, InitStatus, InitializeProjectError,
     ProjectConfig, ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
-    fingerprint_project_config, fingerprint_taxonomy, initialize_project,
-    resolve_effective_configuration,
+    fingerprint_taxonomy, initialize_project, resolve_effective_configuration,
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
@@ -541,31 +540,6 @@ fn taxonomy_fingerprint_changes_for_every_semantic_dimension() -> Result<(), Box
     assert_eq!(
         fingerprint_taxonomy(&base),
         fingerprint_taxonomy(&taxonomy(vec![variants[0].clone()])?)
-    );
-    Ok(())
-}
-
-#[test]
-fn config_fingerprints_are_stable_and_order_sensitive() -> Result<(), Box<dyn Error>> {
-    let conventional = TaxonomyId::new("conventional")?;
-    let research = TaxonomyId::new("research")?;
-    let forward = ProjectConfig::new(1, None, Some(vec![conventional.clone(), research.clone()]))?;
-    let backward = ProjectConfig::new(1, None, Some(vec![research.clone(), conventional]))?;
-    let selected = ProjectConfig::new(1, Some(research), None)?;
-
-    assert_eq!(
-        fingerprint_project_config(&ProjectConfig::inherited()).to_string(),
-        "sha256:ae803a06a548de790893fbcd733e0033ea7c04167b3a70c2ab2a7d219893fa37",
-        "an existing gitserious.lock would read as stale"
-    );
-    let fingerprints = [&ProjectConfig::inherited(), &forward, &backward, &selected]
-        .map(fingerprint_project_config)
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-    assert_eq!(fingerprints.len(), 4);
-    assert_eq!(
-        fingerprint_project_config(&forward),
-        fingerprint_project_config(&forward.clone())
     );
     Ok(())
 }

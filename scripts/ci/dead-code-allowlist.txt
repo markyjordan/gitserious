@@ -2,25 +2,15 @@
 # deleted under https://github.com/markyjordan/gitserious/issues/120 or kept
 # until #117, #118, or #119 decides it; the check fails on new offenders and
 # on stale entries.
-crates/gitserious-app/src/create_taxonomy_commit.rs	create_commit
 crates/gitserious-app/src/global_paths.rs	cache
 crates/gitserious-app/src/global_paths.rs	data
 crates/gitserious-app/src/global_paths.rs	state
-crates/gitserious-app/src/lib.rs	CommitPolicyError
-crates/gitserious-app/src/lib.rs	CommitPreparationResult
-crates/gitserious-app/src/lib.rs	create_commit
-crates/gitserious-app/src/lib.rs	CreateCommitResult
-crates/gitserious-app/src/lib.rs	fingerprint_project_config
-crates/gitserious-app/src/lib.rs	FingerprintError
-crates/gitserious-app/src/lib.rs	GLOBAL_CONFIG_VERSION
-crates/gitserious-app/src/lib.rs	PROJECT_CONFIG_VERSION
-crates/gitserious-app/src/lib.rs	PROJECT_LOCK_VERSION
-crates/gitserious-app/src/taxonomy_authoring_context.rs	taxonomy
 crates/gitserious-app/src/taxonomy_configuration_editor.rs	fork_taxonomy
 crates/gitserious-core/src/commit_message.rs	errors
 crates/gitserious-core/src/fingerprint.rs	as_bytes
 crates/gitserious-core/src/identifier.rs	kind
 crates/gitserious-core/src/identifier.rs	value
+crates/gitserious-core/src/lib.rs	FingerprintError
 crates/gitserious-core/src/lib.rs	IdentifierErrorKind
 crates/gitserious-core/src/lib.rs	PropertyValidationReport
 crates/gitserious-core/src/lib.rs	SchemaVersionError

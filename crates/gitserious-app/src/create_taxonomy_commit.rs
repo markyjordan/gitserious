@@ -145,24 +145,6 @@ fn display_ids<T: Display>(ids: &[T]) -> String {
         .join(", ")
 }
 
-/// Authors with the pinned default taxonomy.
-pub fn create_commit<L, S, A, W>(
-    locator: &L,
-    store: &S,
-    author: &A,
-    writer: &W,
-    start: &Path,
-    requested_type: Option<&CommitTypeId>,
-) -> CreateCommitResult<L::Error, S::Error, A::Error, W::Error>
-where
-    L: RepositoryLocator + ?Sized,
-    S: ProjectStateStore + ?Sized,
-    A: CommitDraftAuthor + ?Sized,
-    W: CommitWriter + ?Sized,
-{
-    create_commit_with_taxonomy(locator, store, author, writer, start, None, requested_type)
-}
-
 /// Authors with an explicit taxonomy or the pinned project default.
 pub fn create_commit_with_taxonomy<L, S, A, W>(
     locator: &L,

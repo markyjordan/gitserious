@@ -1734,8 +1734,8 @@ mod tests {
     };
     use ratatui::{Terminal, backend::TestBackend};
 
-    fn context() -> Result<CommitAuthoringContext, Box<dyn std::error::Error>> {
-        let taxonomy = Taxonomy::new(
+    fn notes_taxonomy() -> Result<Taxonomy, Box<dyn std::error::Error>> {
+        Ok(Taxonomy::new(
             TaxonomyId::new("notes")?,
             TaxonomyVersion::V1,
             Description::new("Notes")?,
@@ -1746,9 +1746,12 @@ mod tests {
                 "Record a note",
                 Vec::new(),
             )?],
-        )?;
+        )?)
+    }
+
+    fn context() -> Result<CommitAuthoringContext, Box<dyn std::error::Error>> {
         Ok(CommitAuthoringContext::new(
-            vec![taxonomy],
+            vec![notes_taxonomy()?],
             &TaxonomyId::new("notes")?,
             None,
         )?)
@@ -1851,7 +1854,7 @@ mod tests {
     #[test]
     fn taxonomy_picker_cycles_forward_and_backward_with_wrapping()
     -> Result<(), Box<dyn std::error::Error>> {
-        let first = context()?.initial_taxonomy().taxonomy().clone();
+        let first = notes_taxonomy()?;
         let second = Taxonomy::new(
             TaxonomyId::new("second")?,
             TaxonomyVersion::V1,
@@ -1866,11 +1869,9 @@ mod tests {
             None,
             first.commit_types().to_vec(),
         )?;
-        let context = CommitAuthoringContext::new(
-            vec![first, second, third],
-            &TaxonomyId::new("notes")?,
-            None,
-        )?;
+        let taxonomies = vec![first, second, third];
+        let context =
+            CommitAuthoringContext::new(taxonomies.clone(), &TaxonomyId::new("notes")?, None)?;
         let mut session = AuthoringSession::with_context(&context);
         session.handle_event(Event::Key(KeyEvent::new(
             KeyCode::BackTab,
@@ -1899,15 +1900,8 @@ mod tests {
             "notes"
         );
         let selected = CommitTypeId::new("note")?;
-        let preselected = CommitAuthoringContext::new(
-            context
-                .taxonomies()
-                .iter()
-                .map(|taxonomy| taxonomy.taxonomy().clone())
-                .collect(),
-            &TaxonomyId::new("notes")?,
-            Some(&selected),
-        )?;
+        let preselected =
+            CommitAuthoringContext::new(taxonomies, &TaxonomyId::new("notes")?, Some(&selected))?;
         let mut session = AuthoringSession::with_context(&preselected);
         session.stage = Stage::SelectType;
         session.handle_event(Event::Key(KeyEvent::new(

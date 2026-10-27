@@ -23,12 +23,11 @@ mod taxonomy_ports;
 pub use commit_draft_author::{CommitDraftAuthor, CommitDraftAuthorOutcome};
 pub use commit_writer::{CommitOutput, CommitWriter};
 pub use create_taxonomy_commit::{
-    CommitOutcome, CommitPolicyError, CommitPreparationResult, CreateCommitError,
-    CreateCommitResult, create_commit, create_commit_with_taxonomy, prepare_commit_with_taxonomy,
+    CommitOutcome, CreateCommitError, create_commit_with_taxonomy, prepare_commit_with_taxonomy,
     validate_reviewed_commit,
 };
 pub use directory_creator::DirectoryCreator;
-pub use gitserious_core::{Fingerprint, FingerprintError};
+pub use gitserious_core::Fingerprint;
 pub use global_path_resolver::GlobalPathResolver;
 pub use global_paths::GlobalPaths;
 pub use initialize_taxonomy_project::{
@@ -45,9 +44,8 @@ pub use taxonomy_configuration_editor::{
     edit_configuration,
 };
 pub use taxonomy_policy::{
-    ConfigurationError, EffectiveConfiguration, GLOBAL_CONFIG_VERSION, GlobalConfiguration,
-    PROJECT_CONFIG_VERSION, PROJECT_LOCK_VERSION, ProjectConfig, ProjectLock, ProjectState,
-    TaxonomyCatalog, TaxonomyOrigin, fingerprint_project_config, fingerprint_taxonomy,
+    ConfigurationError, EffectiveConfiguration, GlobalConfiguration, ProjectConfig, ProjectLock,
+    ProjectState, TaxonomyCatalog, TaxonomyOrigin, fingerprint_taxonomy,
     resolve_effective_configuration,
 };
 pub use taxonomy_ports::{GlobalConfigurationStore, ProjectStateStore};
