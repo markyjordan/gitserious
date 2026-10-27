@@ -1013,6 +1013,31 @@ mod tests {
     }
 
     #[test]
+    fn quit_confirmation_footer_shows_only_the_dialogs_choices()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let services = Services;
+        let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
+        shell.handle_event(key(KeyCode::Char('i')), &services, &[]);
+        shell.handle_event(key(KeyCode::Esc), &services, &[]);
+        shell.handle_event(key(KeyCode::Char('q')), &services, &[]);
+        assert!(matches!(shell.overlay, Some(Overlay::QuitConfirm)));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        assert!(rendered(&terminal).contains("Discard unapplied changes and quit?"));
+        let buffer = terminal.backend().buffer();
+        let footer = (0..100)
+            .map(|x| buffer[(x, 29)].symbol())
+            .collect::<String>();
+        assert_eq!(footer.trim_end(), "y: discard and quit  enter/esc/n: stay");
+        assert_eq!(
+            shell.handle_event(key(KeyCode::Char('n')), &services, &[]),
+            None
+        );
+        assert!(shell.overlay.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn centered_root_header_keeps_positions_and_mouse_targets_after_resize()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
