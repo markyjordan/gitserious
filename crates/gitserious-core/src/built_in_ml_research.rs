@@ -19,7 +19,7 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
                 ),
                 required(
                     "prediction",
-                    "The observable outcome expected if the claim holds, including the comparison that gives it meaning.",
+                    "The outcome expected if the claim holds, and the comparison that gives it meaning.",
                 ),
                 recommended(
                     "falsifier",
@@ -33,7 +33,7 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
         ),
         change_type(
             "data",
-            "Change data, sampling, labels, splits, filtering, preprocessing, or augmentation.",
+            "Change sampling, labels, splits, filtering, preprocessing, or augmentation.",
             vec![
                 required(
                     "objective",
@@ -41,7 +41,7 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
                 ),
                 recommended(
                     "population",
-                    "The population represented after the change and the groups now excluded or underrepresented.",
+                    "The population represented after the change and groups now excluded or underrepresented.",
                 ),
                 required(
                     "transformation",
@@ -53,11 +53,11 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
                 ),
                 recommended(
                     "leakage-risk",
-                    "How the change affects independence between training and evaluation, including known unresolved leakage risks.",
+                    "How the change affects train and evaluation independence, and known unresolved leakage.",
                 ),
                 recommended(
                     "validation",
-                    "Checks performed on the changed data, their observed outcomes, and what remains unverified.",
+                    "Checks run on the changed data, their observed outcomes, and what remains unverified.",
                 ),
             ],
         ),
@@ -101,7 +101,7 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
                 ),
                 required(
                     "control",
-                    "The baseline or comparison used to interpret the intervention, including what is held constant.",
+                    "The baseline or comparison used to interpret the intervention, and what is held constant.",
                 ),
                 recommended(
                     "prediction",
@@ -109,11 +109,11 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
                 ),
                 recommended(
                     "confounders",
-                    "Other factors that could explain a difference and how they are controlled or left unresolved.",
+                    "Other factors that could explain a difference and how they are controlled or left open.",
                 ),
                 recommended(
                     "result",
-                    "Observed outcomes, including null or inconclusive findings; distinguish them from the prediction.",
+                    "Observed outcomes, including null or inconclusive ones; distinguish them from the prediction.",
                 ),
             ],
         ),
@@ -157,7 +157,7 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
                 ),
                 required(
                     "interpretation",
-                    "The explanation inferred from the finding and plausible alternatives still consistent with the evidence.",
+                    "The explanation inferred from the finding, and alternatives the evidence still allows.",
                 ),
                 recommended(
                     "confidence",
@@ -187,7 +187,7 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
                 ),
                 required(
                     "result",
-                    "The observed reproduction outcome, including failed or inconclusive attempts; distinguish it from the target result.",
+                    "The reproduction outcome, failed or inconclusive included; distinguish it from the target.",
                 ),
                 recommended(
                     "discrepancy",
@@ -209,7 +209,7 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
                 ),
                 recommended(
                     "affected-results",
-                    "Prior experiments, measurements, or conclusions invalidated or put in doubt by this defect.",
+                    "Prior experiments, measurements, or conclusions the defect voids or puts in doubt.",
                 ),
                 required(
                     "decision",
@@ -235,15 +235,15 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
                 ),
                 recommended(
                     "experimental-impact",
-                    "Whether execution changes may affect the intended scientific comparison or observed behavior.",
+                    "Whether execution changes may alter the intended comparison or observed behavior.",
                 ),
                 recommended(
                     "reproducibility-impact",
-                    "Effects on repeatability, determinism, environment recovery, or comparability with prior runs.",
+                    "Effects on repeatability, determinism, environment recovery, or comparability.",
                 ),
                 recommended(
                     "validation",
-                    "Checks performed to establish operational behavior and experimental equivalence, including remaining gaps.",
+                    "Checks of operational behavior and experimental equivalence, and remaining gaps.",
                 ),
             ],
         ),
@@ -265,7 +265,7 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
                 ),
                 recommended(
                     "validation",
-                    "Sources, examples, or procedures checked for accuracy and any unresolved documentation claims.",
+                    "Sources, examples, or procedures checked for accuracy, and any claims still unverified.",
                 ),
             ],
         ),

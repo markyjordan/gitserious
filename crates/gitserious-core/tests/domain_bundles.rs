@@ -19,7 +19,7 @@ fn built_in(id: &str) -> Result<&'static Taxonomy, Box<dyn Error>> {
 fn verify_taxonomy(id: &str, expected: &[(&str, &str)]) -> TestResult {
     let taxonomy = built_in(id)?;
     assert_eq!(taxonomy.id().as_str(), id);
-    assert_eq!(taxonomy.version(), TaxonomyVersion::V1);
+    assert_eq!(taxonomy.version(), TaxonomyVersion::new(2)?);
     assert!(!taxonomy.description().as_str().trim().is_empty());
     assert_eq!(taxonomy.derived_from(), None);
     assert_eq!(taxonomy.commit_types().len(), expected.len());

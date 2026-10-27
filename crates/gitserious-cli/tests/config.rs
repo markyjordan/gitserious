@@ -35,9 +35,9 @@ fn list_reports_each_installed_taxonomy_with_origin_and_selection() {
     assert!(stderr.is_empty());
     assert_eq!(
         stdout,
-        "conventional\tbuilt-in\tv1 default available\n\
-         research\tbuilt-in\tv1 available\n\
-         infra-ops\tbuilt-in\tv1 available\n"
+        "conventional\tbuilt-in\tv2 default available\n\
+         research\tbuilt-in\tv2 available\n\
+         infra-ops\tbuilt-in\tv2 available\n"
     );
 }
 
@@ -51,7 +51,7 @@ fn show_renders_a_taxonomy_in_detail() {
     assert_eq!(exit, ExitCode::SUCCESS);
     assert!(stderr.is_empty());
     assert!(stdout.starts_with(&format!(
-        "conventional\nv1\n{}\n\nfeat\t",
+        "conventional\nv2\n{}\n\nfeat\t",
         conventional.description()
     )));
     assert!(
@@ -88,7 +88,7 @@ fn list_and_show_include_user_forks() -> Result<(), Box<dyn Error>> {
 
     let (exit, listing, stderr) = harness.run(&["gitserious", "config", "list"]);
     assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
-    assert!(listing.starts_with("conventional\tbuilt-in\tv1 available\n"));
+    assert!(listing.starts_with("conventional\tbuilt-in\tv2 available\n"));
     assert!(
         listing.ends_with("team\tcustom\tv1 default available\n"),
         "{listing}"
@@ -97,7 +97,7 @@ fn list_and_show_include_user_forks() -> Result<(), Box<dyn Error>> {
     let (exit, shown, stderr) = harness.run(&["gitserious", "config", "show", "team"]);
     assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
     assert!(shown.starts_with("team\nv1\n"));
-    assert!(shown.contains("\nforked from conventional@1\n"), "{shown}");
+    assert!(shown.contains("\nforked from conventional@2\n"), "{shown}");
     Ok(())
 }
 
@@ -187,12 +187,12 @@ fn domain_taxonomies_are_listed_and_inspectable() {
         let (exit, listing, stderr) = harness.run(&["gitserious", "config", "list"]);
         assert_eq!(exit, ExitCode::SUCCESS);
         assert!(stderr.is_empty());
-        assert!(listing.contains(&format!("{identity}\tbuilt-in\tv1")));
+        assert!(listing.contains(&format!("{identity}\tbuilt-in\tv2")));
 
         let (exit, shown, stderr) = harness.run(&["gitserious", "config", "show", identity]);
         assert_eq!(exit, ExitCode::SUCCESS);
         assert!(stderr.is_empty());
-        assert!(shown.starts_with(&format!("{identity}\nv1\n")));
+        assert!(shown.starts_with(&format!("{identity}\nv2\n")));
         assert!(shown.contains(&format!("\n\n{first_type}\t")), "{shown}");
     }
 }

@@ -27,7 +27,7 @@ fn taxonomy_option_selects_a_locked_taxonomy_without_changing_policy() -> Result
     let messages = harness.writer.messages.borrow();
     assert!(messages[0].starts_with("hypothesis(tui-editor)!: expose command\n"));
     assert!(messages[0].contains("prediction:\n"));
-    assert!(messages[0].contains("Gitserious-Taxonomy: research@1\n"));
+    assert!(messages[0].contains("Gitserious-Taxonomy: research@2\n"));
     assert_eq!(*harness.project.state.borrow(), Some(initialized_state()?));
 
     let invalid = initialized()?;
@@ -78,7 +78,7 @@ fn type_option_is_a_preselection_and_forwards_exact_git_output() -> Result<(), B
     assert_eq!(
         harness.writer.messages.borrow()[0],
         format!(
-            "feat(tui-editor)!: expose command\n\nintent:\nauthored intent\n\ndecision:\nauthored decision\n\nBREAKING CHANGE: replace CLI contract\n\nGitserious-Taxonomy: conventional@1\nGitserious-Schema: {fingerprint}\n"
+            "feat(tui-editor)!: expose command\n\nintent:\nauthored intent\n\ndecision:\nauthored decision\n\nBREAKING CHANGE: replace CLI contract\n\nGitserious-Taxonomy: conventional@2\nGitserious-Schema: {fingerprint}\n"
         )
     );
     Ok(())

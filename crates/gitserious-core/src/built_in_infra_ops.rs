@@ -15,7 +15,7 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
                 ),
                 required(
                     "topology",
-                    "The chosen placement and relationships, including why this arrangement fits the operational need.",
+                    "The chosen placement and relationships, and why this arrangement fits the operational need.",
                 ),
                 recommended(
                     "capacity-assumption",
@@ -156,7 +156,7 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
                 ),
                 recommended(
                     "validation",
-                    "Observed capacity and service behavior after the change, including assumptions not yet tested.",
+                    "Observed capacity and service behavior after the change, and assumptions not yet tested.",
                 ),
             ],
         ),
@@ -276,7 +276,7 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
                 ),
                 recommended(
                     "validation",
-                    "Checks performed on the control and their observed results; do not treat the description itself as proof of protection.",
+                    "Checks run on the control and their results; a description is not proof of protection.",
                 ),
             ],
         ),

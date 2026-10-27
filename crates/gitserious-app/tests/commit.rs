@@ -315,7 +315,7 @@ fn requested_type_is_resolved_before_authoring_and_commits_once_in_port_order()
     let messages = harness.writer.messages.borrow();
     assert_eq!(messages.len(), 1);
     assert!(messages[0].starts_with("feat: create durable commit\n"));
-    assert!(messages[0].contains("Gitserious-Taxonomy: conventional@1\n"));
+    assert!(messages[0].contains("Gitserious-Taxonomy: conventional@2\n"));
     Ok(())
 }
 
@@ -665,7 +665,7 @@ fn approved_message_uses_the_captured_policy_even_if_the_project_changes()
     harness.run_with(&author, None, None)?;
 
     assert_eq!(*harness.writer.messages.borrow(), *author.reviewed.borrow());
-    assert!(harness.writer.messages.borrow()[0].contains("Gitserious-Taxonomy: conventional@1\n"));
+    assert!(harness.writer.messages.borrow()[0].contains("Gitserious-Taxonomy: conventional@2\n"));
     assert!(matches!(
         &*harness.store.state.borrow(),
         Ok(ProjectState::Initialized { config, .. })
@@ -734,7 +734,7 @@ fn explicit_and_authored_taxonomy_choices_use_their_own_schema_without_policy_wr
         let messages = harness.writer.messages.borrow();
         assert_eq!(messages.len(), 1);
         assert!(messages[0].contains("symptom:\n"));
-        assert!(messages[0].contains("Gitserious-Taxonomy: research@1\n"));
+        assert!(messages[0].contains("Gitserious-Taxonomy: research@2\n"));
         assert_eq!(*harness.store.state.borrow(), Ok(initial));
     }
     Ok(())
@@ -846,7 +846,7 @@ fn taxonomy_render_binds_the_application_fingerprint_into_provenance() -> Result
     assert_eq!(
         message.as_str(),
         format!(
-            "docs: correct a typo\n\nGitserious-Taxonomy: conventional@1\nGitserious-Schema: {fingerprint}\n"
+            "docs: correct a typo\n\nGitserious-Taxonomy: conventional@2\nGitserious-Schema: {fingerprint}\n"
         )
     );
     assert_eq!(fingerprint.to_string().parse::<Fingerprint>()?, fingerprint);

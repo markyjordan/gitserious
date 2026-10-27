@@ -3779,7 +3779,7 @@ mod tests {
             terminal.draw(|frame| state.render(frame))?;
         }
         assert!(state.library.taxonomy_scroll > 0);
-        assert!(text(&terminal).contains("Forked from conventional@1"));
+        assert!(text(&terminal).contains("Forked from conventional@2"));
         Ok(())
     }
 
@@ -5589,7 +5589,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Forked from"));
-        assert!(text(&terminal).contains("conventional@1"));
+        assert!(text(&terminal).contains("conventional@2"));
         let list = state.library.browser_area;
         assert!(
             row_text(&terminal, list.x, list.y + 4, list.width)

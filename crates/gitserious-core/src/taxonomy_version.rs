@@ -10,6 +10,10 @@ impl TaxonomyVersion {
     /// The first taxonomy version.
     pub const V1: Self = Self(NonZeroU16::MIN);
 
+    /// The second taxonomy version, which the built-ins reached when their descriptions were
+    /// shortened to fit the configuration editor.
+    pub(crate) const V2: Self = Self(NonZeroU16::MIN.saturating_add(1));
+
     /// Creates a positive taxonomy version.
     ///
     /// # Errors
