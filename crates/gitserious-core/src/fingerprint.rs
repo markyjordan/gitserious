@@ -12,12 +12,6 @@ impl Fingerprint {
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
-
-    /// Returns the digest bytes without the textual algorithm prefix.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
 }
 
 impl Display for Fingerprint {
@@ -35,17 +29,16 @@ impl FromStr for Fingerprint {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let Some(hex) = value.strip_prefix("sha256:") else {
-            return Err(FingerprintError::InvalidPrefix);
+            return Err(FingerprintError::Prefix);
         };
         if hex.len() != 64 {
-            return Err(FingerprintError::InvalidLength(hex.len()));
+            return Err(FingerprintError::Length(hex.len()));
         }
 
         let mut bytes = [0_u8; 32];
         for (index, pair) in hex.as_bytes().chunks_exact(2).enumerate() {
-            let high = decode_hex(pair[0]).ok_or(FingerprintError::InvalidCharacter(index * 2))?;
-            let low =
-                decode_hex(pair[1]).ok_or(FingerprintError::InvalidCharacter(index * 2 + 1))?;
+            let high = decode_hex(pair[0]).ok_or(FingerprintError::Character(index * 2))?;
+            let low = decode_hex(pair[1]).ok_or(FingerprintError::Character(index * 2 + 1))?;
             bytes[index] = high << 4 | low;
         }
         Ok(Self(bytes))
@@ -64,22 +57,22 @@ fn decode_hex(byte: u8) -> Option<u8> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FingerprintError {
     /// The fingerprint does not begin with `sha256:`.
-    InvalidPrefix,
+    Prefix,
     /// The hexadecimal payload is not exactly 64 characters.
-    InvalidLength(usize),
+    Length(usize),
     /// The payload contains a non-lowercase-hex character at this byte index.
-    InvalidCharacter(usize),
+    Character(usize),
 }
 
 impl Display for FingerprintError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidPrefix => formatter.write_str("fingerprint must begin with sha256:"),
-            Self::InvalidLength(length) => write!(
+            Self::Prefix => formatter.write_str("fingerprint must begin with sha256:"),
+            Self::Length(length) => write!(
                 formatter,
                 "fingerprint must contain exactly 64 hexadecimal characters, found {length}"
             ),
-            Self::InvalidCharacter(index) => write!(
+            Self::Character(index) => write!(
                 formatter,
                 "fingerprint contains invalid lowercase hexadecimal at byte index {index}"
             ),

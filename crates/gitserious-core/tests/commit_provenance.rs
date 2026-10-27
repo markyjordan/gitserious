@@ -1,11 +1,12 @@
 use std::error::Error;
+use std::fmt::Write;
 
 use gitserious_core::{
     CommitDraft, CommitProvenance, CommitScope, CommitSubject, CommitTypeDefinition, CommitTypeId,
-    CommitValidationError, ConditionalApplicability, Description, Fingerprint, FingerprintError,
-    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyResponse,
-    PropertyValue, PropertyValues, SchemaVersion, Taxonomy, TaxonomyId, TaxonomyVersion,
-    built_in_taxonomies, render_commit_message, render_commit_message_with_provenance,
+    CommitValidationError, ConditionalApplicability, Description, Fingerprint, PropertyDefinition,
+    PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyResponse, PropertyValue,
+    PropertyValues, SchemaVersion, Taxonomy, TaxonomyId, TaxonomyVersion, built_in_taxonomies,
+    render_commit_message, render_commit_message_with_provenance,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -240,36 +241,44 @@ fn provenance_rendering_keeps_explicit_applicability_validation() -> TestResult 
 fn fingerprint_representation_rejects_malformed_or_injectable_values() -> TestResult {
     for bytes in [[0; 32], [0xab; 32], [0xff; 32]] {
         let fingerprint = Fingerprint::from_bytes(bytes);
-        assert_eq!(fingerprint.as_bytes(), bytes);
+        let hex = bytes.iter().fold(String::new(), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        });
+        assert_eq!(fingerprint.to_string(), format!("sha256:{hex}"));
         assert_eq!(fingerprint.to_string().parse::<Fingerprint>()?, fingerprint);
     }
     for (text, expected) in [
         (
             format!("SHA256:{}", "0".repeat(64)),
-            FingerprintError::InvalidPrefix,
+            "fingerprint must begin with sha256:".to_owned(),
         ),
         (
             format!("sha256:{}", "0".repeat(63)),
-            FingerprintError::InvalidLength(63),
+            "fingerprint must contain exactly 64 hexadecimal characters, found 63".to_owned(),
         ),
         (
             format!("sha256:{}", "0".repeat(65)),
-            FingerprintError::InvalidLength(65),
+            "fingerprint must contain exactly 64 hexadecimal characters, found 65".to_owned(),
         ),
         (
             format!("sha256:A{}", "0".repeat(63)),
-            FingerprintError::InvalidCharacter(0),
+            "fingerprint contains invalid lowercase hexadecimal at byte index 0".to_owned(),
         ),
         (
             format!("sha256:é{}", "0".repeat(62)),
-            FingerprintError::InvalidCharacter(0),
+            "fingerprint contains invalid lowercase hexadecimal at byte index 0".to_owned(),
         ),
         (
             format!("sha256:{}\n", "0".repeat(63)),
-            FingerprintError::InvalidCharacter(63),
+            "fingerprint contains invalid lowercase hexadecimal at byte index 63".to_owned(),
         ),
     ] {
-        assert_eq!(text.parse::<Fingerprint>(), Err(expected));
+        assert_eq!(
+            text.parse::<Fingerprint>()
+                .map_err(|error| error.to_string()),
+            Err(expected)
+        );
     }
     Ok(())
 }

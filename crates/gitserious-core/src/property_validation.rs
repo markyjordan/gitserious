@@ -128,14 +128,6 @@ impl PropertyValidationReport {
     pub fn issues(&self) -> &[PropertyValidationIssue] {
         &self.issues
     }
-
-    /// Returns whether at least one blocking issue exists.
-    #[must_use]
-    pub fn has_errors(&self) -> bool {
-        self.issues
-            .iter()
-            .any(|issue| issue.severity == ValidationSeverity::Error)
-    }
 }
 
 pub(crate) fn validate_property_definitions(

@@ -25,15 +25,15 @@ pub use commit_draft::{
 pub use commit_message::{
     COMMIT_MESSAGE_WIDTH, CommitMessage, CommitValidationError, CommitValidationErrors,
     CommitValidationReport, render_commit_message, render_commit_message_with_provenance,
-    validate_commit_draft, validate_commit_draft_report,
+    validate_commit_draft_report,
 };
 pub use commit_type::{CommitTypeDefinition, CommitTypeDefinitionError};
 pub use configured_taxonomy::{Taxonomy, TaxonomyError, TaxonomyLineage, built_in_taxonomies};
 pub use description::{Description, DescriptionError};
-pub use fingerprint::{Fingerprint, FingerprintError};
+pub use fingerprint::Fingerprint;
 pub use identifier::{
-    CommitTypeId, ConditionId, IdentifierError, IdentifierErrorKind, LabelError, PropertyKey,
-    TaxonomyId, normalize_identifier,
+    CommitTypeId, ConditionId, IdentifierError, LabelError, PropertyKey, TaxonomyId,
+    normalize_identifier,
 };
 pub use property::{
     PropertyCondition, PropertyConditionError, PropertyDefinition, PropertyDefinitionError,
@@ -42,8 +42,8 @@ pub use property::{
 };
 pub use property_validation::{
     ConditionalApplicability, PropertyResponse, PropertyValidationIssue,
-    PropertyValidationIssueKind, PropertyValidationReport, ValidationSeverity,
+    PropertyValidationIssueKind, ValidationSeverity,
 };
-pub use schema_version::{SchemaVersion, SchemaVersionError};
+pub use schema_version::SchemaVersion;
 pub use taxonomy_provenance::CommitProvenance;
 pub use taxonomy_version::{TaxonomyVersion, TaxonomyVersionError};

@@ -5,8 +5,7 @@ use gitserious_core::{
     CommitValidationError, ConditionId, ConditionalApplicability, PropertyCondition,
     PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyResponse,
     PropertyValidationIssueKind, PropertyValue, PropertyValues, SchemaVersion, ValidationSeverity,
-    built_in_commit_types, render_commit_message, validate_commit_draft,
-    validate_commit_draft_report,
+    built_in_commit_types, render_commit_message, validate_commit_draft_report,
 };
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -150,7 +149,7 @@ fn response_drafts_block_each_invalid_applicability_state() -> TestResult {
             &[CommitValidationError::PropertyResponse(expected)]
         );
         assert_eq!(
-            validate_commit_draft(&definition()?, &draft)
+            render_commit_message(&definition()?, &draft)
                 .err()
                 .as_ref()
                 .map(gitserious_core::CommitValidationErrors::as_slice),
@@ -195,7 +194,7 @@ fn explicit_empty_responses_and_legacy_drafts_keep_distinct_contracts() -> TestR
         explicit.properties().to_vec(),
     )?;
     assert!(legacy.responses().is_none());
-    assert!(validate_commit_draft(&definition()?, &legacy).is_ok());
+    assert!(render_commit_message(&definition()?, &legacy).is_ok());
     assert_eq!(
         render_commit_message(&definition()?, &legacy)?,
         render_commit_message(&definition()?, &explicit)?
