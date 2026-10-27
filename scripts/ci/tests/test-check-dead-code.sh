@@ -34,8 +34,10 @@ cat >"$repo/crates/gitserious-core/src/lib.rs" <<'EOF'
 mod values;
 
 pub use values::{
+    Failure,
     Grouped,
     Listed,
+    Unlisted,
 };
 
 macro_rules! identifier {
@@ -53,15 +55,21 @@ pub fn reached() -> u8 {
 pub fn unreached() -> u8 {
     2
 }
+
+pub fn attempt() -> Result<u8, Failure<u8>> {
+    Err(Failure(3))
+}
 EOF
 cat >"$repo/crates/gitserious-core/src/values.rs" <<'EOF'
+pub struct Failure<E>(pub E);
 pub struct Grouped;
 pub struct Listed;
+pub struct Unlisted;
 EOF
 cat >"$repo/crates/gitserious-app/src/lib.rs" <<'EOF'
 pub fn run() -> u8 {
     let _ = (gitserious_core::Grouped, gitserious_core::Listed, gitserious_core::Generated);
-    gitserious_core::reached()
+    gitserious_core::reached() + gitserious_core::attempt().unwrap_or(0)
 }
 EOF
 printf '\n' >"$repo/crates/gitserious-tui/src/lib.rs"
@@ -99,24 +107,27 @@ expect_fail_naming() {
 }
 
 expect_fail_naming "a public function no target calls" \
-  "crates/gitserious-core/src/lib.rs declares unreached, which no workspace target uses"
-for used in reached Grouped Listed Generated; do
+  "crates/gitserious-core/src/lib.rs declares unreached, which no workspace target uses" \
+  "crates/gitserious-core/src/values.rs declares Unlisted, which no workspace target uses"
+for used in reached Grouped Listed Generated Failure attempt; do
   if grep -qF "declares $used," "$fixture_dir/stderr"; then
     echo "A used item was reported as unused: $used" >&2
     exit 1
   fi
 done
 
-printf 'crates/gitserious-core/src/lib.rs\tunreached\n' >"$repo/scripts/ci/dead-code-allowlist.txt"
+printf 'crates/gitserious-core/src/%s\t%s\n' lib.rs Unlisted lib.rs unreached values.rs Unlisted \
+  >"$repo/scripts/ci/dead-code-allowlist.txt"
 expect_pass "the unused function is allowlisted"
 
 printf '#[allow(dead_code)]\nfn hidden() {}\n' >>"$repo/crates/gitserious-app/src/lib.rs"
 expect_fail_naming "a dead-code suppression in crate sources" \
   "crates/gitserious-app/src/lib.rs suppresses a dead-code warning (allow(dead_code) fn hidden() {})"
 
-printf 'pub fn run() -> u8 {\n    let _ = (gitserious_core::Grouped, gitserious_core::Listed, gitserious_core::Generated);\n    gitserious_core::reached() + gitserious_core::unreached()\n}\n' \
+printf 'pub fn run() -> u8 {\n    let _ = (gitserious_core::Grouped, gitserious_core::Listed, gitserious_core::Generated, gitserious_core::Unlisted);\n    gitserious_core::reached() + gitserious_core::unreached() + gitserious_core::attempt().unwrap_or(0)\n}\n' \
   >"$repo/crates/gitserious-app/src/lib.rs"
-expect_fail_naming "an allowlist entry that no longer offends" \
-  "lists unreached in crates/gitserious-core/src/lib.rs, which no longer offends"
+expect_fail_naming "allowlist entries that no longer offend" \
+  "lists unreached in crates/gitserious-core/src/lib.rs, which no longer offends" \
+  "lists Unlisted in crates/gitserious-core/src/values.rs, which no longer offends"
 
 echo "check-dead-code.sh fixtures passed."
