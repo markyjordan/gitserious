@@ -18,23 +18,6 @@ crates/gitserious-core/src/commit_message.rs	errors
 crates/gitserious-core/src/fingerprint.rs	as_bytes
 crates/gitserious-core/src/identifier.rs	kind
 crates/gitserious-core/src/identifier.rs	value
-crates/gitserious-core/src/lib.rs	allow(dead_code) mod built_in_configuration;
-crates/gitserious-core/src/lib.rs	allow(dead_code) mod built_in_domain;
-crates/gitserious-core/src/lib.rs	allow(dead_code) mod built_in_infra_ops;
-crates/gitserious-core/src/lib.rs	allow(dead_code) mod built_in_ml_research;
-crates/gitserious-core/src/lib.rs	allow(dead_code) mod configuration_template;
-crates/gitserious-core/src/lib.rs	allow(dead_code) mod resolved_taxonomy;
-crates/gitserious-core/src/lib.rs	allow(dead_code) mod taxonomy;
-crates/gitserious-core/src/lib.rs	allow(dead_code) mod template_version;
-crates/gitserious-core/src/lib.rs	allow(dead_code) mod typeset_version;
-crates/gitserious-core/src/lib.rs	allow(dead_code) mod typeset;
-crates/gitserious-core/src/lib.rs	allow(unused_imports) pub(crate) use built_in_configuration::{BuiltInConfiguration, built_in_configuration};
-crates/gitserious-core/src/lib.rs	allow(unused_imports) pub(crate) use configuration_template::TemplateDefinition;
-crates/gitserious-core/src/lib.rs	allow(unused_imports) pub(crate) use resolved_taxonomy::{ResolveTaxonomyError, ResolvedChangeType, ResolvedTaxonomy};
-crates/gitserious-core/src/lib.rs	allow(unused_imports) pub(crate) use taxonomy::{ChangeTypeDefinition, TaxonomyDefinition, TaxonomyDefinitionError};
-crates/gitserious-core/src/lib.rs	allow(unused_imports) pub(crate) use template_version::{TemplateVersion, TemplateVersionError};
-crates/gitserious-core/src/lib.rs	allow(unused_imports) pub(crate) use typeset_version::{TypesetVersion, TypesetVersionError};
-crates/gitserious-core/src/lib.rs	allow(unused_imports) pub(crate) use typeset::
 crates/gitserious-core/src/property_validation.rs	has_errors
 crates/gitserious-core/src/property.rs	as_slice
 crates/gitserious-core/src/property.rs	into_values

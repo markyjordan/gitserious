@@ -28,10 +28,6 @@ impl Description {
     pub(crate) fn from_trusted(value: &'static str) -> Self {
         Self(Box::from(value))
     }
-
-    pub(crate) fn from_validated(value: impl Into<String>) -> Self {
-        Self(value.into().into_boxed_str())
-    }
 }
 
 impl AsRef<str> for Description {

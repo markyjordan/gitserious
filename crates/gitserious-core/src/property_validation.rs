@@ -3,7 +3,6 @@ use std::fmt::{self, Display, Formatter};
 
 use crate::{
     PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyValues,
-    ResolvedChangeType,
 };
 
 /// An author's applicability decision for a conditional property.
@@ -137,15 +136,6 @@ impl PropertyValidationReport {
             .iter()
             .any(|issue| issue.severity == ValidationSeverity::Error)
     }
-}
-
-/// Validates authored durable-property responses from one resolved change type.
-#[must_use]
-pub fn validate_property_responses(
-    definition: &ResolvedChangeType,
-    responses: &[PropertyResponse],
-) -> PropertyValidationReport {
-    validate_property_definitions(definition.properties(), responses)
 }
 
 pub(crate) fn validate_property_definitions(

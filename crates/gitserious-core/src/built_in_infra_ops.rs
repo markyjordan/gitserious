@@ -1,7 +1,7 @@
 use std::sync::LazyLock;
 
 use crate::CommitTypeDefinition;
-use crate::built_in_domain::{BuiltInBundle, bundle, change_type, recommended, required};
+use crate::built_in_domain::{change_type, recommended, required};
 
 static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
     vec![
@@ -313,12 +313,6 @@ static DEFINITIONS: LazyLock<Vec<CommitTypeDefinition>> = LazyLock::new(|| {
     ]
 });
 
-pub(crate) fn infra_ops() -> BuiltInBundle {
-    bundle(
-        "infra-ops",
-        "Change categories for infrastructure and operational systems.",
-        "Durable operational decisions, assumptions, and recovery context.",
-        "The Infra Ops taxonomy with its default durable-property typeset.",
-        &DEFINITIONS,
-    )
+pub(crate) fn commit_types() -> &'static [CommitTypeDefinition] {
+    DEFINITIONS.as_slice()
 }

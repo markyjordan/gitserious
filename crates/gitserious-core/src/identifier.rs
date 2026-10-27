@@ -317,14 +317,6 @@ define_identifier!(
     "An open, validated identifier for a software change taxonomy."
 );
 define_identifier!(
-    TypesetId,
-    "An open, validated identifier for a durable-property typeset."
-);
-define_identifier!(
-    TemplateId,
-    "An open, validated identifier for a commit-message template."
-);
-define_identifier!(
     PropertyKey,
     "An open, validated identifier for a durable message property."
 );
