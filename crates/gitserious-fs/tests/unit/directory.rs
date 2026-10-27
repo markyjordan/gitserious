@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fs;
 use std::io;
 
-use gitserious_app::{GlobalPaths, ensure_storage_directory};
+use gitserious_app::{DirectoryCreator, GlobalPaths};
 
 use crate::LocalDirectoryCreator;
 use crate::tests::support::TestDirectory;
@@ -21,7 +21,7 @@ fn creating_one_directory_does_not_create_its_siblings() -> Result<(), Box<dyn E
     let root = TestDirectory::new("selected-directory")?;
     let paths = paths_beneath(&root);
 
-    ensure_storage_directory(&LocalDirectoryCreator, paths.state())?;
+    LocalDirectoryCreator.ensure(paths.state())?;
 
     assert!(paths.state().as_path().is_dir());
     assert!(!paths.config().as_path().exists());
@@ -40,8 +40,8 @@ fn creation_is_recursive_and_idempotent() -> Result<(), Box<dyn Error>> {
         root.path().join("parent/cache"),
     );
 
-    ensure_storage_directory(&LocalDirectoryCreator, paths.state())?;
-    ensure_storage_directory(&LocalDirectoryCreator, paths.state())?;
+    LocalDirectoryCreator.ensure(paths.state())?;
+    LocalDirectoryCreator.ensure(paths.state())?;
 
     assert!(paths.state().as_path().is_dir());
     Ok(())
@@ -53,7 +53,7 @@ fn a_file_collision_is_reported_by_the_adapter() -> Result<(), Box<dyn Error>> {
     let paths = paths_beneath(&root);
     fs::write(paths.cache().as_path(), b"not a directory")?;
 
-    let error = match ensure_storage_directory(&LocalDirectoryCreator, paths.cache()) {
+    let error = match LocalDirectoryCreator.ensure(paths.cache()) {
         Ok(()) => {
             return Err(io::Error::other("a file was accepted as a directory").into());
         }
@@ -77,7 +77,7 @@ fn new_directories_request_private_permissions() -> Result<(), Box<dyn Error>> {
         root.path().join("parent/cache"),
     );
 
-    ensure_storage_directory(&LocalDirectoryCreator, paths.state())?;
+    LocalDirectoryCreator.ensure(paths.state())?;
 
     let parent_mode = fs::metadata(root.path().join("parent"))?
         .permissions()
@@ -99,7 +99,7 @@ fn existing_directory_permissions_are_unchanged() -> Result<(), Box<dyn Error>> 
     fs::create_dir(paths.config().as_path())?;
     fs::set_permissions(paths.config().as_path(), fs::Permissions::from_mode(0o750))?;
 
-    ensure_storage_directory(&LocalDirectoryCreator, paths.config())?;
+    LocalDirectoryCreator.ensure(paths.config())?;
 
     let mode = fs::metadata(paths.config().as_path())?.permissions().mode() & 0o777;
     assert_eq!(mode, 0o750);

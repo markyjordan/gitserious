@@ -6,11 +6,10 @@ use std::rc::Rc;
 
 use gitserious_app::{
     AuthoredCommit, CommitAuthoringContext, CommitAuthoringOutcome, CommitDraftAuthor,
-    CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitPolicyError, CommitTaxonomy,
-    CommitWriter, CreateCommitError, Fingerprint, GlobalConfiguration, ProjectConfig, ProjectLock,
-    ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot, create_commit,
-    create_commit_with_taxonomy, fingerprint_project_config, fingerprint_taxonomy,
-    resolve_effective_configuration,
+    CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitTaxonomy, CommitWriter,
+    CreateCommitError, Fingerprint, GlobalConfiguration, ProjectConfig, ProjectLock, ProjectState,
+    ProjectStateStore, RepositoryLocator, RepositoryRoot, create_commit_with_taxonomy,
+    fingerprint_taxonomy, resolve_effective_configuration,
 };
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitProvenance, CommitSubject,
@@ -258,12 +257,13 @@ impl Harness {
         &self,
         requested: Option<&CommitTypeId>,
     ) -> Result<CommitOutcome, CreateCommitError<FakeError, FakeError, FakeError, FakeError>> {
-        create_commit(
+        create_commit_with_taxonomy(
             &self.locator,
             &self.store,
             &self.author,
             &self.writer,
             &repository_path(),
+            None,
             requested,
         )
     }
@@ -366,24 +366,27 @@ fn every_incomplete_project_state_is_rejected_before_authoring() -> Result<(), B
         lock.taxonomies().to_vec(),
     )?;
     for (state, expected) in [
-        (ProjectState::Absent, CommitPolicyError::NotInitialized),
+        (
+            ProjectState::Absent,
+            "run `gitserious init` before committing",
+        ),
         (
             ProjectState::ConfigOnly(config.clone()),
-            CommitPolicyError::MissingLock,
+            "gitserious.lock is missing",
         ),
-        (ProjectState::LockOnly, CommitPolicyError::OrphanLock),
+        (ProjectState::LockOnly, "exists without gitserious.toml"),
         (
             ProjectState::Initialized {
                 config,
                 lock: stale,
             },
-            CommitPolicyError::StaleLock,
+            "gitserious.toml and gitserious.lock disagree",
         ),
     ] {
         let harness = Harness::new(state);
         assert!(matches!(
             harness.run(None),
-            Err(CreateCommitError::Policy(actual)) if actual == expected
+            Err(error @ CreateCommitError::Policy(_)) if error.to_string().contains(expected)
         ));
         assert!(harness.author.seen.borrow().is_empty());
     }
@@ -518,11 +521,10 @@ fn custom_taxonomy_commits_with_its_own_schema() -> Result<(), Box<dyn Error>> {
         )?],
     )?;
     let config = ProjectConfig::new(1, Some(ops.id().clone()), Some(vec![ops.id().clone()]))?;
-    let lock = ProjectLock::new(
-        1,
-        fingerprint_project_config(&config),
-        ops.id().clone(),
-        vec![ops],
+    let library = GlobalConfiguration::new(1, ops.id().clone(), vec![ops.id().clone()], vec![ops])?;
+    let lock = ProjectLock::capture(
+        &config,
+        &resolve_effective_configuration(&library, &config)?,
     )?;
     let harness = Harness::new(ProjectState::Initialized { config, lock });
 
@@ -598,7 +600,11 @@ impl CommitDraftAuthor for ContextAuthor<'_> {
             ReviewMode::Plain => render_commit_message(definition, &draft).ok(),
             ReviewMode::WrongFingerprint => render_commit_message_with_provenance(
                 &CommitProvenance::new(
-                    taxonomy.taxonomy().clone(),
+                    built_in_taxonomies()
+                        .iter()
+                        .find(|built_in| built_in.id() == taxonomy.id())
+                        .ok_or(FakeError("missing built-in"))?
+                        .clone(),
                     Fingerprint::from_bytes([0; 32]),
                 ),
                 &draft,

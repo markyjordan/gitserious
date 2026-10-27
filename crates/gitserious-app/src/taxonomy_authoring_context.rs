@@ -33,12 +33,6 @@ impl CommitTaxonomy {
         self.taxonomy.id()
     }
 
-    /// Returns the complete taxonomy snapshot.
-    #[must_use]
-    pub const fn taxonomy(&self) -> &Taxonomy {
-        &self.taxonomy
-    }
-
     /// Returns commit types in taxonomy order.
     #[must_use]
     pub fn definitions(&self) -> &[CommitTypeDefinition] {

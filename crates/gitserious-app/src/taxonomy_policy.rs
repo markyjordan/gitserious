@@ -9,11 +9,11 @@ use gitserious_core::{
 use sha2::{Digest, Sha256};
 
 /// The canonical unreleased global-configuration format.
-pub const GLOBAL_CONFIG_VERSION: u16 = 1;
+pub(crate) const GLOBAL_CONFIG_VERSION: u16 = 1;
 /// The canonical unreleased project-configuration format.
-pub const PROJECT_CONFIG_VERSION: u16 = 1;
+pub(crate) const PROJECT_CONFIG_VERSION: u16 = 1;
 /// The canonical unreleased portable-lock format.
-pub const PROJECT_LOCK_VERSION: u16 = 1;
+pub(crate) const PROJECT_LOCK_VERSION: u16 = 1;
 
 /// Whether a taxonomy is compiled in or belongs to the user library.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -478,7 +478,7 @@ impl Error for ConfigurationError {}
 
 /// Fingerprints authored project overrides independently of TOML layout.
 #[must_use]
-pub fn fingerprint_project_config(config: &ProjectConfig) -> Fingerprint {
+pub(crate) fn fingerprint_project_config(config: &ProjectConfig) -> Fingerprint {
     let mut canonical = CanonicalHasher::new(b"gitserious.project-config.taxonomy.v1");
     canonical.u16(config.version());
     match config.default_taxonomy() {
@@ -583,6 +583,33 @@ impl CanonicalHasher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_fingerprints_are_stable_and_order_sensitive() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let conventional = TaxonomyId::new("conventional")?;
+        let research = TaxonomyId::new("research")?;
+        let forward =
+            ProjectConfig::new(1, None, Some(vec![conventional.clone(), research.clone()]))?;
+        let backward = ProjectConfig::new(1, None, Some(vec![research.clone(), conventional]))?;
+        let selected = ProjectConfig::new(1, Some(research), None)?;
+
+        assert_eq!(
+            fingerprint_project_config(&ProjectConfig::inherited()).to_string(),
+            "sha256:ae803a06a548de790893fbcd733e0033ea7c04167b3a70c2ab2a7d219893fa37",
+            "an existing gitserious.lock would read as stale"
+        );
+        let fingerprints = [&ProjectConfig::inherited(), &forward, &backward, &selected]
+            .map(fingerprint_project_config)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(fingerprints.len(), 4);
+        assert_eq!(
+            fingerprint_project_config(&forward),
+            fingerprint_project_config(&forward.clone())
+        );
+        Ok(())
+    }
 
     #[test]
     fn defaults_expose_all_built_ins_in_order() {

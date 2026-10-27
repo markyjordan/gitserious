@@ -5,9 +5,9 @@ use std::path::Path;
 
 use gitserious_app::{
     AuthoredCommit, CommitAuthoringContext, CommitAuthoringOutcome, CommitDraftAuthor,
-    CommitDraftAuthorOutcome, CommitOutput, CommitWriter, ProjectConfig, ProjectLock, ProjectState,
-    ProjectStateStore, RepositoryLocator, RepositoryRoot, create_commit_with_taxonomy,
-    fingerprint_project_config,
+    CommitDraftAuthorOutcome, CommitOutput, CommitWriter, GlobalConfiguration, ProjectConfig,
+    ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
+    create_commit_with_taxonomy, resolve_effective_configuration,
 };
 use gitserious_core::{
     CommitDraft, CommitMessage, CommitSubject, CommitTypeDefinition, CommitTypeId, Description,
@@ -126,11 +126,15 @@ fn commit_uses_only_the_portable_lock_snapshot() -> Result<(), Box<dyn Error>> {
         Some(taxonomy.id().clone()),
         Some(vec![taxonomy.id().clone()]),
     )?;
-    let lock = ProjectLock::new(
+    let library = GlobalConfiguration::new(
         1,
-        fingerprint_project_config(&config),
         taxonomy.id().clone(),
+        vec![taxonomy.id().clone()],
         vec![taxonomy],
+    )?;
+    let lock = ProjectLock::capture(
+        &config,
+        &resolve_effective_configuration(&library, &config)?,
     )?;
     let root = RepositoryRoot::new(std::env::temp_dir())?;
     let writer = Writer::default();

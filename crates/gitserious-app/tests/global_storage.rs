@@ -1,12 +1,9 @@
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::PathBuf;
 
-use gitserious_app::{
-    DirectoryCreator, GlobalPathResolver, GlobalPaths, StorageDirectory, ensure_storage_directory,
-    resolve_global_paths,
-};
+use gitserious_app::{GlobalPathResolver, GlobalPaths, resolve_global_paths};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum FakeError {
@@ -48,42 +45,6 @@ impl GlobalPathResolver for RecordingResolver {
     fn resolve(&self) -> Result<GlobalPaths, Self::Error> {
         self.calls.set(self.calls.get() + 1);
         self.result.clone()
-    }
-}
-
-struct RecordingCreator {
-    error: Option<FakeError>,
-    requests: RefCell<Vec<PathBuf>>,
-}
-
-impl RecordingCreator {
-    fn available() -> Self {
-        Self {
-            error: None,
-            requests: RefCell::new(Vec::new()),
-        }
-    }
-
-    fn failing() -> Self {
-        Self {
-            error: Some(FakeError::Unavailable),
-            requests: RefCell::new(Vec::new()),
-        }
-    }
-}
-
-impl DirectoryCreator for RecordingCreator {
-    type Error = FakeError;
-
-    fn ensure(&self, directory: &StorageDirectory) -> Result<(), Self::Error> {
-        self.requests
-            .borrow_mut()
-            .push(directory.as_path().to_path_buf());
-
-        match &self.error {
-            Some(error) => Err(error.clone()),
-            None => Ok(()),
-        }
     }
 }
 
@@ -132,33 +93,4 @@ fn resolve_use_case_preserves_the_adapter_error() {
 
     assert_eq!(resolve_global_paths(&resolver), Err(FakeError::Unavailable));
     assert_eq!(resolver.calls.get(), 1);
-}
-
-#[test]
-fn ensure_use_case_forwards_only_the_selected_directory() -> Result<(), Box<dyn Error>> {
-    let paths = sample_paths();
-    let creator = RecordingCreator::available();
-
-    ensure_storage_directory(&creator, paths.state())?;
-
-    assert_eq!(
-        creator.requests.borrow().as_slice(),
-        [PathBuf::from("state")]
-    );
-    Ok(())
-}
-
-#[test]
-fn ensure_use_case_preserves_the_adapter_error_after_forwarding() {
-    let paths = sample_paths();
-    let creator = RecordingCreator::failing();
-
-    assert_eq!(
-        ensure_storage_directory(&creator, paths.cache()),
-        Err(FakeError::Unavailable)
-    );
-    assert_eq!(
-        creator.requests.borrow().as_slice(),
-        [PathBuf::from("cache")]
-    );
 }
