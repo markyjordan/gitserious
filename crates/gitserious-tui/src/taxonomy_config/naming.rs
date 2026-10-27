@@ -81,6 +81,26 @@ pub(super) fn noted_heading_line(title: &str, note: Option<String>, width: u16) 
     ])
 }
 
+/// The notice for an entry whose description is blank, such as `Type description is required.`
+pub(super) fn description_required(owner: &str) -> String {
+    format!("{owner} description is required.")
+}
+
+/// Renders text from the domain or the application as a sentence: a capital first letter and
+/// closing punctuation, so every notice reads the same way.
+pub(super) fn sentence(message: &str) -> String {
+    let message = message.trim();
+    let mut characters = message.chars();
+    let Some(first) = characters.next() else {
+        return String::new();
+    };
+    let mut text = first.to_uppercase().chain(characters).collect::<String>();
+    if !text.ends_with(['.', '?', '!']) {
+        text.push('.');
+    }
+    text
+}
+
 /// Replaces each run of line breaks with one space so a pasted name stays on one line.
 pub(super) fn single_line(text: &str) -> Cow<'_, str> {
     if !text.contains(['\n', '\r']) {

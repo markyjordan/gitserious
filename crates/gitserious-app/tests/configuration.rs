@@ -584,8 +584,8 @@ fn recreating_an_original_identity_cannot_reset_its_version() -> Result<(), Box<
         .fork_taxonomy(&id("research"), id("team"))
         .expect_err("forking into team reset it to version 1");
 
-    let expected = "taxonomy \"team\" was deleted in this session at version 2; save before \
-                    reusing its name";
+    let expected =
+        "taxonomy \"team\" is staged for deletion; apply the deletion before reusing its name";
     assert_eq!(recreated, expected);
     assert_eq!(forked, expected);
     assert_eq!(session.global(), &deleted);

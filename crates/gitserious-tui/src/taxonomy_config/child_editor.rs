@@ -386,7 +386,7 @@ impl PropertyEditorState {
                 );
                 PropertyRequirement::Conditional(
                     PropertyCondition::new(id, rationale)
-                        .map_err(|error| format!("Condition rationale: {error}"))?,
+                        .map_err(|_| "Condition rationale is required.".to_owned())?,
                 )
             }
         };
