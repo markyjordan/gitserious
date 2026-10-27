@@ -2324,7 +2324,7 @@ impl State {
                 vec![
                     ("esc", "back"),
                     ("↑/↓", "move"),
-                    ("←/→", "policy"),
+                    ("←/→", "choice"),
                     ("ctrl+s", "complete"),
                 ]
             }
@@ -3151,12 +3151,16 @@ fn project_guidance(status: &str) -> &'static str {
     }
 }
 
-const fn requirement_label(value: &PropertyRequirement) -> &'static str {
-    match value {
+fn policy_label(requirement: &PropertyRequirement, multiplicity: PropertyMultiplicity) -> String {
+    let requirement = match requirement {
         PropertyRequirement::Required => "required",
         PropertyRequirement::Recommended => "recommended",
         PropertyRequirement::Optional => "optional",
         PropertyRequirement::Conditional(_) => "conditional",
+    };
+    match multiplicity {
+        PropertyMultiplicity::Single => requirement.to_owned(),
+        PropertyMultiplicity::Multiple => format!("{requirement}, multiple"),
     }
 }
 
@@ -6395,6 +6399,51 @@ mod tests {
             .ok_or("missing taxonomy")?;
         assert_eq!(staged.description().as_ref(), "Original taxonomy revised");
         assert_eq!(staged.version(), TaxonomyVersion::new(4)?);
+        Ok(())
+    }
+
+    #[test]
+    fn property_lists_name_multiple_only_for_multiple_properties()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (workspace, _) = child_editor_workspace()?;
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
+        state.library.select_taxonomy(3);
+        let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(text(&terminal).contains("notes  optional, multiple"));
+
+        state.handle_event(key(KeyCode::Char('e')), &workspace);
+        state.open_type_editor(Some(0));
+        state
+            .type_editor
+            .as_mut()
+            .ok_or("missing type")?
+            .draft
+            .properties
+            .push(PropertyDraft {
+                key: "summary".into(),
+                description: "What shipped".into(),
+                requirement: PropertyRequirement::Required,
+                multiplicity: PropertyMultiplicity::Single,
+            });
+        terminal.draw(|frame| state.render(frame))?;
+        let properties = state.type_editor.as_ref().ok_or("missing type")?.areas[1];
+        let row = |offset| {
+            row_text(
+                &terminal,
+                properties.x,
+                properties.y + offset,
+                properties.width,
+            )
+        };
+        assert!(
+            row(2)
+                .trim_end_matches([' ', '│'])
+                .ends_with("optional, multiple")
+        );
+        assert!(row(3).trim_end_matches([' ', '│']).ends_with("required"));
         Ok(())
     }
 
