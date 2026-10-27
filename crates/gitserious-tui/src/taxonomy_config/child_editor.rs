@@ -180,7 +180,7 @@ impl TypeEditorState {
         let [metadata, properties] =
             Layout::vertical([Constraint::Length(8), Constraint::Min(4)]).areas(area);
         self.areas = [metadata, properties];
-        render_metadata_frame(frame, metadata, "Type", &mut self.text, self.focus);
+        render_metadata_frame(frame, metadata, "Type", &mut self.text, self.focus, false);
         let focused = self.focus == CreateFocus::Types;
         let mut rows = vec![
             Row::new(vec![

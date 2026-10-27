@@ -40,7 +40,9 @@ mod naming;
 use child_editor::{ChildAction, PropertyEditorState, TypeEditorState};
 use home_overlay::{CommandPaletteState, CreateCommand, HomeCommand, HomeOverlay};
 use library_view::{LibraryFocus, LibraryViewState};
-use naming::{NameField, edited_prose, name_error, name_heading_line, single_line};
+use naming::{
+    NameField, edited_prose, name_error, name_heading_line, noted_heading_line, single_line,
+};
 
 /// Taxonomy-first terminal configuration adapter.
 #[derive(Clone, Debug, Default)]
@@ -236,10 +238,9 @@ enum CreateFocus {
 enum Screen {
     Home,
     Settings(ConfigurationDestination),
-    TaxonomyEditor(EditorMode),
+    TaxonomyEditor,
     TypeEditor,
     PropertyEditor,
-    Form(FormKind),
     Delete,
     Review(ConfigurationDestination),
     Leave,
@@ -331,11 +332,6 @@ impl CreateTextEditors {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FormKind {
-    TaxonomyMetadata,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PropertyDraft {
     key: String,
@@ -404,15 +400,11 @@ impl TaxonomyDraft {
         }
     }
 
-    fn build(&self, mode: EditorMode) -> Result<Taxonomy, String> {
+    fn build(&self) -> Result<Taxonomy, String> {
         let id = TaxonomyId::from_label(&self.id)
             .map_err(|error| name_error(NameField::Taxonomy, &self.id, &error))?;
         let description = Description::new(&self.description).map_err(|error| error.to_string())?;
-        let version = match mode {
-            EditorMode::Create => TaxonomyVersion::V1,
-            EditorMode::Edit => TaxonomyVersion::new(self.version.saturating_add(1))
-                .map_err(|error| error.to_string())?,
-        };
+        let version = TaxonomyVersion::new(self.version).map_err(|error| error.to_string())?;
         let types = self
             .types
             .iter()
@@ -462,21 +454,6 @@ impl PropertyDraft {
 }
 
 #[derive(Clone, Debug)]
-struct FormState {
-    fields: Vec<String>,
-    selected: usize,
-}
-
-impl FormState {
-    fn metadata(id: String, description: String) -> Self {
-        Self {
-            fields: vec![id, description],
-            selected: 0,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
 struct SettingsDraft {
     selected: usize,
     default: TaxonomyId,
@@ -508,14 +485,11 @@ struct State {
     create_type_offset: usize,
     scroll: u16,
     project_scroll: u16,
-    form_scroll: u16,
-    form_viewport_height: u16,
     status: Option<Notice>,
     editor: Option<TaxonomyDraft>,
     initial_editor: Option<TaxonomyDraft>,
     discard_dialog: DiscardDialog,
     editor_mode: EditorMode,
-    form: Option<FormState>,
     type_editor: Option<TypeEditorState>,
     property_editor: Option<PropertyEditorState>,
     settings: Option<SettingsDraft>,
@@ -553,14 +527,11 @@ impl State {
             create_type_offset: 0,
             scroll: 0,
             project_scroll: 0,
-            form_scroll: 0,
-            form_viewport_height: 1,
             status: None,
             editor: None,
             initial_editor: None,
             discard_dialog: DiscardDialog::default(),
             editor_mode: EditorMode::Create,
-            form: None,
             type_editor: None,
             property_editor: None,
             settings: None,
@@ -574,10 +545,9 @@ impl State {
         self.editor.is_some()
             && matches!(
                 self.screen,
-                Screen::TaxonomyEditor(_)
+                Screen::TaxonomyEditor
                     | Screen::TypeEditor
                     | Screen::PropertyEditor
-                    | Screen::Form(_)
                     | Screen::ConfirmDiscardCreate(_)
                     | Screen::ConfirmDiscardChild(_)
             )
@@ -615,7 +585,6 @@ impl State {
         self.discard_dialog.invalidate();
         self.create_text = None;
         self.fork_source = None;
-        self.form = None;
         self.type_editor = None;
         self.property_editor = None;
         self.screen = Screen::Home;
@@ -649,7 +618,7 @@ impl State {
     }
 
     fn request_leave_editor(&mut self) {
-        if matches!(self.screen, Screen::TaxonomyEditor(_)) {
+        if matches!(self.screen, Screen::TaxonomyEditor) {
             self.request_taxonomy_back();
         } else {
             self.open_discard(Screen::ConfirmDiscardCreate(Box::new(self.screen.clone())));
@@ -717,15 +686,7 @@ impl State {
                 self.child_action(action, matches!(self.screen, Screen::PropertyEditor));
                 return false;
             }
-            if let Some(form) = &mut self.form {
-                let identity_locked =
-                    matches!(self.screen, Screen::Form(FormKind::TaxonomyMetadata))
-                        && self.editor_mode == EditorMode::Edit
-                        && form.selected == 0;
-                if !identity_locked && let Some(field) = form.fields.get_mut(form.selected) {
-                    field.push_str(text);
-                }
-            } else if matches!(self.screen, Screen::TaxonomyEditor(EditorMode::Create))
+            if matches!(self.screen, Screen::TaxonomyEditor)
                 && let Some(editors) = &mut self.create_text
             {
                 let text = match self.create_focus {
@@ -814,7 +775,7 @@ impl State {
                             editor.selected = index;
                         }
                     }
-                } else if matches!(self.screen, Screen::TaxonomyEditor(EditorMode::Create)) {
+                } else if matches!(self.screen, Screen::TaxonomyEditor) {
                     let pane = self.create_areas[1];
                     let list = Rect::new(
                         pane.x.saturating_add(1),
@@ -847,10 +808,9 @@ impl State {
         match self.screen.clone() {
             Screen::Home => self.home_key(key, workspace),
             Screen::Settings(destination) => self.settings_key(key, destination),
-            Screen::TaxonomyEditor(mode) => self.taxonomy_editor_key(key, mode),
+            Screen::TaxonomyEditor => self.taxonomy_editor_key(key),
             Screen::TypeEditor => self.type_editor_key(key),
             Screen::PropertyEditor => self.property_editor_key(key),
-            Screen::Form(kind) => self.form_key(key, kind),
             Screen::Delete => self.delete_key(key),
             Screen::Review(destination) => self.review_key(key, destination, workspace),
             Screen::Leave => match key.code {
@@ -973,7 +933,7 @@ impl State {
     fn dispatch_create_command(&mut self, command: CreateCommand) {
         match command {
             CreateCommand::AddType => self.open_new_type_form(),
-            CreateCommand::ValidateAndStage => self.stage_editor(EditorMode::Create),
+            CreateCommand::ValidateAndStage => self.stage_editor(self.editor_mode),
         }
     }
 
@@ -1342,63 +1302,7 @@ impl State {
         false
     }
 
-    fn taxonomy_editor_key(&mut self, key: KeyEvent, mode: EditorMode) -> bool {
-        if mode == EditorMode::Create {
-            return self.create_taxonomy_key(key);
-        }
-        let count = self
-            .editor
-            .as_ref()
-            .map_or(1, |draft| draft.types.len() + 1);
-        match key.code {
-            KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) && self.child_selected > 1 => {
-                if let Some(editor) = &mut self.editor {
-                    editor
-                        .types
-                        .swap(self.child_selected - 1, self.child_selected - 2);
-                    self.child_selected -= 1;
-                }
-            }
-            KeyCode::Down
-                if key.modifiers.contains(KeyModifiers::ALT)
-                    && self.child_selected > 0
-                    && self.child_selected < count - 1 =>
-            {
-                if let Some(editor) = &mut self.editor {
-                    editor
-                        .types
-                        .swap(self.child_selected - 1, self.child_selected);
-                    self.child_selected += 1;
-                }
-            }
-            KeyCode::Up => self.child_selected = self.child_selected.saturating_sub(1),
-            KeyCode::Down => {
-                self.child_selected = (self.child_selected + 1).min(count.saturating_sub(1))
-            }
-            KeyCode::Enter if self.child_selected == 0 => self.open_taxonomy_metadata(mode),
-            KeyCode::Enter => {
-                let index = self.child_selected - 1;
-                self.open_type_editor(Some(index));
-            }
-            KeyCode::Char('n') => {
-                self.open_new_type_form();
-            }
-            KeyCode::Char('d') if self.child_selected > 0 => {
-                if let Some(editor) = &mut self.editor {
-                    editor.types.remove(self.child_selected - 1);
-                    self.child_selected = self.child_selected.saturating_sub(1);
-                }
-            }
-            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.stage_editor(mode)
-            }
-            KeyCode::Esc => self.request_taxonomy_back(),
-            _ => {}
-        }
-        false
-    }
-
-    fn create_taxonomy_key(&mut self, key: KeyEvent) -> bool {
+    fn taxonomy_editor_key(&mut self, key: KeyEvent) -> bool {
         let count = self
             .editor
             .as_ref()
@@ -1424,7 +1328,7 @@ impl State {
                 self.open_new_type_form();
             }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.stage_editor(EditorMode::Create);
+                self.stage_editor(self.editor_mode);
             }
             KeyCode::Up
                 if self.create_focus == CreateFocus::Types
@@ -1465,7 +1369,9 @@ impl State {
                 if let Some(editors) = &mut self.create_text {
                     let before = editors.description.cursor();
                     editors.description.move_cursor(CursorMove::Up);
-                    if editors.description.cursor() == before {
+                    if editors.description.cursor() == before
+                        && self.editor_mode == EditorMode::Create
+                    {
                         self.create_focus = CreateFocus::Name;
                     }
                 }
@@ -1621,59 +1527,8 @@ impl State {
                 .and_then(|editor| editor.target)
                 .map_or(0, |index| index + 1);
             self.type_editor = None;
-            self.form = None;
-            self.screen = Screen::TaxonomyEditor(self.editor_mode);
+            self.screen = Screen::TaxonomyEditor;
         }
-    }
-
-    fn form_key(&mut self, key: KeyEvent, kind: FormKind) -> bool {
-        let Some(form) = &mut self.form else {
-            return false;
-        };
-        match key.code {
-            KeyCode::Tab => form.selected = (form.selected + 1) % form.fields.len(),
-            KeyCode::BackTab => {
-                form.selected = (form.selected + form.fields.len() - 1) % form.fields.len()
-            }
-            KeyCode::PageUp => {
-                self.form_scroll = self
-                    .form_scroll
-                    .saturating_sub(self.form_viewport_height.max(1))
-            }
-            KeyCode::PageDown => {
-                self.form_scroll = self
-                    .form_scroll
-                    .saturating_add(self.form_viewport_height.max(1))
-            }
-            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.submit_form(kind)
-            }
-            KeyCode::Esc
-                if self.editor.as_ref().is_some_and(|draft| {
-                    form.fields != [draft.id.as_str(), draft.description.as_str()]
-                }) =>
-            {
-                self.open_discard(Screen::ConfirmDiscardChild(Box::new(self.screen.clone())));
-            }
-            KeyCode::Esc => {
-                self.form = None;
-                self.screen = Screen::TaxonomyEditor(self.editor_mode);
-            }
-            KeyCode::Backspace if !(self.editor_mode == EditorMode::Edit && form.selected == 0) => {
-                form.fields[form.selected].pop();
-            }
-            KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) && form.selected == 1 => {
-                form.fields[1].push('\n')
-            }
-            KeyCode::Char(character)
-                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
-                    && !(self.editor_mode == EditorMode::Edit && form.selected == 0) =>
-            {
-                form.fields[form.selected].push(character)
-            }
-            _ => {}
-        }
-        false
     }
 
     fn delete_key(&mut self, key: KeyEvent) -> bool {
@@ -1902,7 +1757,7 @@ impl State {
         self.child_selected = 0;
         self.create_focus = CreateFocus::Name;
         self.create_type_offset = 0;
-        self.screen = Screen::TaxonomyEditor(EditorMode::Create);
+        self.screen = Screen::TaxonomyEditor;
     }
 
     fn open_review(&mut self) {
@@ -1944,28 +1799,18 @@ impl State {
             return;
         }
         let draft = TaxonomyDraft::from_taxonomy(&taxonomy);
+        self.create_text = Some(CreateTextEditors::from_draft(&draft, false));
         self.initial_editor = Some(draft.clone());
         self.editor = Some(draft);
-        self.create_text = None;
         self.fork_source = None;
         self.type_editor = None;
         self.property_editor = None;
         self.discard_dialog.invalidate();
         self.editor_mode = EditorMode::Edit;
         self.child_selected = 0;
-        self.screen = Screen::TaxonomyEditor(EditorMode::Edit);
-    }
-
-    fn open_taxonomy_metadata(&mut self, mode: EditorMode) {
-        if let Some(editor) = &self.editor {
-            let mut form = FormState::metadata(editor.id.clone(), editor.description.clone());
-            if matches!(mode, EditorMode::Edit) {
-                form.selected = 1;
-            }
-            self.form = Some(form);
-            self.form_scroll = 0;
-            self.screen = Screen::Form(FormKind::TaxonomyMetadata);
-        }
+        self.create_focus = CreateFocus::Types;
+        self.create_type_offset = 0;
+        self.screen = Screen::TaxonomyEditor;
     }
 
     fn open_new_type_form(&mut self) {
@@ -2038,7 +1883,7 @@ impl State {
         self.child_selected = index + 1;
         self.create_focus = CreateFocus::Types;
         self.type_editor = None;
-        self.screen = Screen::TaxonomyEditor(self.editor_mode);
+        self.screen = Screen::TaxonomyEditor;
         Ok(())
     }
 
@@ -2080,26 +1925,8 @@ impl State {
         Ok(())
     }
 
-    fn submit_form(&mut self, _kind: FormKind) {
-        let Some(form) = &self.form else {
-            return;
-        };
-        if form.fields[0].trim().is_empty() || form.fields[1].trim().is_empty() {
-            self.status = Some(Notice::Error(
-                "Taxonomy id and description are required.".into(),
-            ));
-        } else if let Some(editor) = &mut self.editor {
-            editor.id.clone_from(&form.fields[0]);
-            editor.description.clone_from(&form.fields[1]);
-            self.form = None;
-            self.screen = Screen::TaxonomyEditor(self.editor_mode);
-        }
-    }
-
     fn stage_editor(&mut self, mode: EditorMode) {
-        if mode == EditorMode::Create
-            && let (Some(editors), Some(draft)) = (&self.create_text, &mut self.editor)
-        {
+        if let (Some(editors), Some(draft)) = (&self.create_text, &mut self.editor) {
             if editors.used() > CREATE_TEXT_LIMIT {
                 self.status = Some(Notice::Error(CREATE_TEXT_LIMIT_NOTICE.into()));
                 return;
@@ -2115,7 +1942,7 @@ impl State {
                 &initial.description,
             );
         }
-        let result = candidate.build(mode).and_then(|taxonomy| {
+        let result = candidate.build().and_then(|taxonomy| {
             if self
                 .fork_source
                 .as_ref()
@@ -2291,24 +2118,14 @@ impl State {
                     ("esc", "back"),
                 ]
             }
-            Screen::TaxonomyEditor(mode) => {
-                self.render_taxonomy_editor(frame, body, mode);
-                if mode == EditorMode::Create {
-                    vec![
-                        ("esc", "back"),
-                        ("enter", "next/open"),
-                        ("ctrl+s", "stage"),
-                        ("/", "commands"),
-                    ]
-                } else {
-                    vec![
-                        ("enter", "open"),
-                        ("n/d", "add/remove"),
-                        ("alt+↑/↓", "reorder"),
-                        ("ctrl+s", "complete"),
-                        ("esc", "back"),
-                    ]
-                }
+            Screen::TaxonomyEditor => {
+                self.render_taxonomy_editor(frame, body);
+                vec![
+                    ("esc", "back"),
+                    ("enter", "next/open"),
+                    ("ctrl+s", "stage"),
+                    ("/", "commands"),
+                ]
             }
             Screen::TypeEditor => {
                 self.render_type_editor(frame, body);
@@ -2326,16 +2143,6 @@ impl State {
                     ("↑/↓", "move"),
                     ("←/→", "choice"),
                     ("ctrl+s", "complete"),
-                ]
-            }
-            Screen::Form(kind) => {
-                self.render_form(frame, body, kind);
-                vec![
-                    ("tab", "field"),
-                    ("←/→", "choice"),
-                    ("alt+enter", "newline"),
-                    ("ctrl+s", "complete"),
-                    ("esc", "back"),
                 ]
             }
             Screen::Delete => {
@@ -2463,8 +2270,7 @@ impl State {
         match screen {
             Screen::TypeEditor => self.render_type_editor(frame, area),
             Screen::PropertyEditor => self.render_property_editor(frame, area),
-            Screen::Form(kind) => self.render_form(frame, area, *kind),
-            _ => self.render_taxonomy_editor(frame, area, self.editor_mode),
+            _ => self.render_taxonomy_editor(frame, area),
         }
     }
 
@@ -2482,9 +2288,6 @@ impl State {
                 if matches!(**return_to, Screen::PropertyEditor) =>
             {
                 ("Discard Property", "Discard property changes?")
-            }
-            Screen::ConfirmDiscardChild(return_to) if matches!(**return_to, Screen::Form(_)) => {
-                ("Discard Details", "Discard id and description changes?")
             }
             Screen::ConfirmDiscardChild(_) => ("Discard Type", "Discard type changes?"),
             _ => return,
@@ -2865,45 +2668,7 @@ impl State {
         );
     }
 
-    fn render_taxonomy_editor(&mut self, frame: &mut Frame<'_>, area: Rect, mode: EditorMode) {
-        if mode == EditorMode::Create {
-            self.render_create_taxonomy(frame, area);
-            return;
-        }
-        let Some(editor) = &self.editor else {
-            return;
-        };
-        let mut rows = vec![ListItem::new(format!(
-            "Metadata  {}  {}",
-            editor.id, editor.description
-        ))];
-        rows.extend(editor.types.iter().map(|kind| {
-            ListItem::new(format!(
-                "{}  {}  ({} properties)",
-                kind.id,
-                kind.description,
-                kind.properties.len()
-            ))
-        }));
-        let mut state = ListState::default();
-        state.select(Some(self.child_selected));
-        frame.render_stateful_widget(
-            List::new(rows)
-                .block(
-                    Block::bordered()
-                        .border_style(frame_style())
-                        .title(match mode {
-                            EditorMode::Create => "Create taxonomy",
-                            EditorMode::Edit => "Edit taxonomy",
-                        }),
-                )
-                .highlight_style(navigation_key_style()),
-            area,
-            &mut state,
-        );
-    }
-
-    fn render_create_taxonomy(&mut self, frame: &mut Frame<'_>, area: Rect) {
+    fn render_taxonomy_editor(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let Some(editor) = &self.editor else {
             return;
         };
@@ -2911,7 +2676,14 @@ impl State {
             Layout::vertical([Constraint::Length(8), Constraint::Min(4)]).areas(area);
         self.create_areas = [taxonomy, types];
         if let Some(text) = &mut self.create_text {
-            render_metadata_frame(frame, taxonomy, "Taxonomy", text, self.create_focus);
+            render_metadata_frame(
+                frame,
+                taxonomy,
+                "Taxonomy",
+                text,
+                self.create_focus,
+                self.editor_mode == EditorMode::Edit,
+            );
         }
 
         let types_focused = self.create_focus == CreateFocus::Types;
@@ -2973,45 +2745,6 @@ impl State {
         if let Some(editor) = &mut self.property_editor {
             editor.render(frame, area);
         }
-    }
-
-    fn render_form(&mut self, frame: &mut Frame<'_>, area: Rect, _kind: FormKind) {
-        let Some(form) = &self.form else {
-            return;
-        };
-        let lines = ["Id", "Description"]
-            .iter()
-            .enumerate()
-            .map(|(index, label)| {
-                Line::from(vec![
-                    Span::styled(
-                        format!("{label}\n"),
-                        if index == form.selected {
-                            navigation_key_style()
-                        } else {
-                            section_heading_style()
-                        },
-                    ),
-                    Span::raw(form.fields[index].as_str()),
-                    Span::raw("\n"),
-                ])
-            })
-            .collect::<Vec<_>>();
-        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
-        self.form_viewport_height = area.height.saturating_sub(2);
-        let rows =
-            u16::try_from(paragraph.line_count(area.width.saturating_sub(2))).unwrap_or(u16::MAX);
-        self.form_scroll = self
-            .form_scroll
-            .min(rows.saturating_sub(self.form_viewport_height));
-        frame.render_widget(
-            paragraph.scroll((self.form_scroll, 0)).block(
-                Block::bordered()
-                    .border_style(frame_style())
-                    .title("Focused editor"),
-            ),
-            area,
-        );
     }
 
     fn render_review(
@@ -3241,6 +2974,7 @@ fn render_metadata_frame(
     title: &str,
     text: &mut CreateTextEditors,
     focus: CreateFocus,
+    name_locked: bool,
 ) {
     let style = focus_frame_style(focus != CreateFocus::Types);
     frame.render_widget(
@@ -3252,14 +2986,12 @@ fn render_metadata_frame(
     );
     let x = area.x + 1;
     let width = area.width.saturating_sub(2);
-    frame.render_widget(
-        Paragraph::new(name_heading_line(
-            "Name",
-            &text.name.lines().join("\n"),
-            width,
-        )),
-        Rect::new(x, area.y + 1, width, 1),
-    );
+    let heading = if name_locked {
+        noted_heading_line("Name", Some("fixed after creation".into()), width)
+    } else {
+        name_heading_line("Name", &text.name.lines().join("\n"), width)
+    };
+    frame.render_widget(Paragraph::new(heading), Rect::new(x, area.y + 1, width, 1));
     render_text_area(
         frame,
         &text.name,
@@ -4182,10 +3914,10 @@ mod tests {
         state.handle_event(key(KeyCode::Left), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
         state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Create)
-        ));
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor)
+                && state.editor_mode == EditorMode::Create
+        );
         assert_eq!(workspace.saves.get(), 0);
         state.handle_event(key(KeyCode::Esc), &workspace);
         assert!(matches!(state.screen, Screen::Home));
@@ -4212,10 +3944,10 @@ mod tests {
         state.library.select_taxonomy(2);
         state.handle_event(key(KeyCode::Down), &workspace);
         state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Create)
-        ));
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor)
+                && state.editor_mode == EditorMode::Create
+        );
         assert_eq!(state.create_focus, CreateFocus::Name);
 
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
@@ -4282,10 +4014,10 @@ mod tests {
         );
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
         assert!(matches!(state.status, Some(Notice::Error(_))));
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Create)
-        ));
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor)
+                && state.editor_mode == EditorMode::Create
+        );
         assert!(!state.scope_dirty(ConfigurationDestination::Global));
 
         state.handle_event(key(KeyCode::Char('/')), &workspace);
@@ -4296,10 +4028,10 @@ mod tests {
         state.handle_event(Event::Paste("stage".into()), &workspace);
         state.handle_event(key(KeyCode::Enter), &workspace);
         assert!(matches!(state.status, Some(Notice::Error(_))));
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Create)
-        ));
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor)
+                && state.editor_mode == EditorMode::Create
+        );
 
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         state.handle_event(Event::Paste("add".into()), &workspace);
@@ -4309,10 +4041,10 @@ mod tests {
         state.handle_event(key(KeyCode::Down), &workspace);
         state.handle_event(Event::Paste("New feature".into()), &workspace);
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Create)
-        ));
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor)
+                && state.editor_mode == EditorMode::Create
+        );
         assert_eq!(state.create_focus, CreateFocus::Types);
         assert_eq!(state.child_selected, 1);
         state.handle_event(key(KeyCode::Enter), &workspace);
@@ -4627,10 +4359,10 @@ mod tests {
             .insert_str("overflow");
         state.stage_editor(EditorMode::Create);
         assert!(matches!(state.status, Some(Notice::Error(ref message)) if message.contains("80")));
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Create)
-        ));
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor)
+                && state.editor_mode == EditorMode::Create
+        );
         assert!(!state.scope_dirty(ConfigurationDestination::Global));
         Ok(())
     }
@@ -4747,11 +4479,7 @@ mod tests {
                 (0, 0)
             );
             assert_eq!(
-                state
-                    .editor
-                    .as_ref()
-                    .ok_or("missing draft")?
-                    .build(EditorMode::Create)?,
+                state.editor.as_ref().ok_or("missing draft")?.build()?,
                 source.fork(source.id().clone())
             );
             assert_eq!(
@@ -4824,7 +4552,7 @@ mod tests {
             .as_ref()
             .ok_or("missing text")?
             .sync_draft(&mut expected_draft);
-        let expected = expected_draft.build(EditorMode::Create)?;
+        let expected = expected_draft.build()?;
         for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| state.render(frame))?;
@@ -4911,11 +4639,7 @@ mod tests {
         state.library.select_taxonomy(3);
         state.handle_event(key(KeyCode::Char('f')), &workspace);
         assert_eq!(
-            state
-                .editor
-                .as_ref()
-                .ok_or("missing draft")?
-                .build(EditorMode::Create)?,
+            state.editor.as_ref().ok_or("missing draft")?.build()?,
             source.fork(source.id().clone())
         );
         let original_count = state.create_text.as_ref().ok_or("missing text")?.used();
@@ -5065,10 +4789,10 @@ mod tests {
         assert_eq!(underline.fg, Color::Yellow);
 
         state.handle_event(click(Rect::new(1, 1, 1, 1)), &workspace);
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Create)
-        ));
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor)
+                && state.editor_mode == EditorMode::Create
+        );
         assert_eq!(state.category, Category::Library);
 
         let mut wide = Terminal::new(TestBackend::new(120, 30))?;
@@ -5252,7 +4976,6 @@ mod tests {
         state.handle_event(key(KeyCode::Char('y')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
         assert!(state.editor.is_none());
-        assert!(state.form.is_none());
         assert_eq!(workspace.saves.get(), 0);
         Ok(())
     }
@@ -5280,10 +5003,10 @@ mod tests {
             row_text(&terminal, 0, 1, 120)
         );
         state.handle_event(key(KeyCode::Esc), &workspace);
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Create)
-        ));
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor)
+                && state.editor_mode == EditorMode::Create
+        );
         terminal.draw(|frame| state.render(frame))?;
         assert!(row_text(&terminal, 0, 1, 120).contains("/ fork taxonomy"));
         assert!(!row_text(&terminal, 0, 1, 120).contains("/ add type"));
@@ -5375,10 +5098,10 @@ mod tests {
             "f"
         );
         state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Create)
-        ));
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor)
+                && state.editor_mode == EditorMode::Create
+        );
         assert!(state.fork_source.is_some());
         assert!(state.home_overlay.is_none());
         assert_eq!(workspace.saves.get(), 0);
@@ -5706,20 +5429,10 @@ mod tests {
     }
 
     #[test]
-    fn form_and_review_text_still_scroll() -> Result<(), Box<dyn std::error::Error>> {
+    fn review_text_still_scrolls() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        state.form = Some(FormState::metadata(
-            "team".into(),
-            "Long description. ".repeat(90),
-        ));
-        state.screen = Screen::Form(FormKind::TaxonomyMetadata);
-        terminal.draw(|frame| state.render(frame))?;
-        state.handle_event(key(KeyCode::PageDown), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(state.form_scroll > 0);
-
         state.category = Category::Library;
         state.home_focus = HomeFocus::Content;
         state
@@ -5840,10 +5553,10 @@ mod tests {
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(key(KeyCode::Char('a')), &workspace);
         assert_eq!(workspace.saves.get(), 1);
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Create)
-        ));
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor)
+                && state.editor_mode == EditorMode::Create
+        );
         assert_eq!(state.active_scope, ConfigurationDestination::Global);
         Ok(())
     }
@@ -5859,10 +5572,10 @@ mod tests {
         assert!(matches!(state.screen, Screen::Home));
         assert!(matches!(state.status, Some(Notice::Error(_))));
         state.handle_event(key(KeyCode::Char('f')), &workspace);
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Create)
-        ));
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor)
+                && state.editor_mode == EditorMode::Create
+        );
         assert!(state.fork_source.is_some());
         state.handle_event(key(KeyCode::Esc), &workspace);
         state.handle_event(key(KeyCode::Char('d')), &workspace);
@@ -5886,10 +5599,9 @@ mod tests {
         assert!(row_text(&terminal, list.x, list.y + 5, list.width).contains("Custom"));
         assert!(row_text(&terminal, list.x, list.y + 6, list.width).contains("team"));
         state.handle_event(key(KeyCode::Char('e')), &workspace);
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Edit)
-        ));
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor) && state.editor_mode == EditorMode::Edit
+        );
         state.handle_event(key(KeyCode::Esc), &workspace);
         state.handle_event(key(KeyCode::Char('d')), &workspace);
         assert!(matches!(state.screen, Screen::Delete));
@@ -6186,7 +5898,7 @@ mod tests {
                 assert!(row_text(&terminal, 0, metadata.bottom() - 1, width).contains("18/80"));
             }
             state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-            assert!(matches!(state.screen, Screen::TaxonomyEditor(_)));
+            assert!(matches!(state.screen, Screen::TaxonomyEditor));
             assert_eq!(
                 state.editor.as_ref().ok_or("missing taxonomy")?.types.len(),
                 initial_types + 1
@@ -6268,7 +5980,7 @@ mod tests {
                 .editor
                 .as_ref()
                 .ok_or("missing taxonomy")?
-                .build(EditorMode::Edit)?
+                .build()?
                 .commit_types()[0],
             source.commit_types()[0]
         );
@@ -6341,16 +6053,15 @@ mod tests {
         );
         state.handle_event(key(KeyCode::Esc), &workspace);
         state.handle_event(key(KeyCode::Char('y')), &workspace);
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Edit)
-        ));
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor) && state.editor_mode == EditorMode::Edit
+        );
         assert_eq!(
             state
                 .editor
                 .as_ref()
                 .ok_or("missing taxonomy")?
-                .build(EditorMode::Edit)?
+                .build()?
                 .commit_types(),
             source.commit_types()
         );
@@ -6381,9 +6092,14 @@ mod tests {
         );
 
         state.handle_event(key(KeyCode::Char('e')), &workspace);
-        state.handle_event(key(KeyCode::Enter), &workspace);
+        state.handle_event(key(KeyCode::Up), &workspace);
+        state
+            .create_text
+            .as_mut()
+            .ok_or("missing text")?
+            .description
+            .move_cursor(CursorMove::End);
         state.handle_event(Event::Paste(" revised".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
 
         assert!(
@@ -6517,10 +6233,10 @@ mod tests {
             state.handle_event(key(KeyCode::Esc), &workspace);
             assert!(matches!(state.screen, Screen::TypeEditor));
             state.handle_event(key(KeyCode::Esc), &workspace);
-            assert!(matches!(
-                state.screen,
-                Screen::TaxonomyEditor(EditorMode::Create)
-            ));
+            assert!(
+                matches!(state.screen, Screen::TaxonomyEditor)
+                    && state.editor_mode == EditorMode::Create
+            );
         }
         Ok(())
     }
@@ -6540,9 +6256,8 @@ mod tests {
             assert!(matches!(state.screen, Screen::Home));
             state.handle_event(key(KeyCode::Char(action)), &workspace);
             if action == 'e' {
-                state.handle_event(key(KeyCode::Enter), &workspace);
+                state.handle_event(key(KeyCode::Up), &workspace);
                 state.handle_event(Event::Paste(" changed".into()), &workspace);
-                state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
             } else {
                 state.handle_event(Event::Paste("x".into()), &workspace);
             }
@@ -6561,7 +6276,7 @@ mod tests {
             state.handle_event(key(KeyCode::Down), &workspace);
             assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
             state.handle_event(click(buttons.keep_editing), &workspace);
-            assert!(matches!(state.screen, Screen::TaxonomyEditor(_)));
+            assert!(matches!(state.screen, Screen::TaxonomyEditor));
             assert_eq!(state.editor, draft);
             assert_eq!(
                 state.create_text.as_ref().map(|text| text.name.cursor()),
@@ -6701,7 +6416,7 @@ mod tests {
         );
         state.handle_event(key(KeyCode::Esc), &workspace);
         state.handle_event(key(KeyCode::Char('n')), &workspace);
-        assert!(matches!(state.screen, Screen::TaxonomyEditor(_)));
+        assert!(matches!(state.screen, Screen::TaxonomyEditor));
         state.handle_event(key(KeyCode::Enter), &workspace);
         state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
         state.handle_event(Event::Paste("new-property".into()), &workspace);
@@ -6760,7 +6475,7 @@ mod tests {
         state.handle_event(click(old.keep_editing), &workspace);
         assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
         state.handle_event(key(KeyCode::Esc), &workspace);
-        assert!(matches!(state.screen, Screen::TaxonomyEditor(_)));
+        assert!(matches!(state.screen, Screen::TaxonomyEditor));
         assert!(state.taxonomy_is_dirty());
         assert_eq!(
             state
@@ -6982,10 +6697,10 @@ mod tests {
             error_text(&state),
             Some("description must contain non-whitespace text")
         );
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Create)
-        ));
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor)
+                && state.editor_mode == EditorMode::Create
+        );
 
         state.create_focus = CreateFocus::Description;
         state
@@ -7016,34 +6731,80 @@ mod tests {
     }
 
     #[test]
-    fn failed_staging_keeps_the_edited_description_as_typed()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn edit_opens_the_create_editor_with_its_name_fixed() -> Result<(), Box<dyn std::error::Error>>
+    {
         let (workspace, source) = child_editor_workspace()?;
         let mut state = State::new(&workspace);
         state.category = Category::Library;
         state.home_focus = HomeFocus::Content;
         state.library.select_taxonomy(3);
         state.handle_event(key(KeyCode::Char('e')), &workspace);
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        for _ in source.description().as_str().chars() {
-            state.handle_event(key(KeyCode::Backspace), &workspace);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let rendered = text(&terminal);
+        assert!(rendered.contains("fixed after creation"));
+        assert!(rendered.contains("Original taxonomy"));
+        assert!(rendered.contains(CREATE_TYPES_ADD_LABEL));
+        assert!(rendered.contains("existing"));
+        assert!(!rendered.contains("Metadata"));
+        assert_eq!(state.create_focus, CreateFocus::Types);
+
+        for _ in 0..3 {
+            state.handle_event(key(KeyCode::Up), &workspace);
         }
+        assert_eq!(state.create_focus, CreateFocus::Description);
+        state.handle_event(Event::Paste("renamed".into()), &workspace);
+        assert_eq!(
+            state
+                .create_text
+                .as_ref()
+                .ok_or("missing text")?
+                .name
+                .lines()
+                .join("\n"),
+            source.id().as_str()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_staging_keeps_the_edited_description_as_typed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (workspace, _) = child_editor_workspace()?;
+        let mut state = State::new(&workspace);
+        state.category = Category::Library;
+        state.home_focus = HomeFocus::Content;
+        state.library.select_taxonomy(3);
+        state.handle_event(key(KeyCode::Char('e')), &workspace);
+        state.handle_event(key(KeyCode::Up), &workspace);
+        assert_eq!(state.create_focus, CreateFocus::Description);
+        state
+            .create_text
+            .as_mut()
+            .ok_or("missing text")?
+            .description
+            .select_all();
         state.handle_event(Event::Paste("  Edited notes \n".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        assert_eq!(state.child_selected, 1);
         state.handle_event(key(KeyCode::Char('d')), &workspace);
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
         assert_eq!(
             error_text(&state),
             Some("taxonomy must contain at least one commit type")
         );
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Edit)
-        ));
-        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor) && state.editor_mode == EditorMode::Edit
+        );
         assert_eq!(
-            state.form.as_ref().ok_or("missing form")?.fields[1],
+            state
+                .create_text
+                .as_ref()
+                .ok_or("missing text")?
+                .description
+                .lines()
+                .join("\n"),
             "  Edited notes \n"
         );
         Ok(())
@@ -7100,10 +6861,10 @@ mod tests {
         send(&mut state, &workspace, ctrl(KeyCode::Char('s')));
         assert!(matches!(state.screen, Screen::TypeEditor));
         send(&mut state, &workspace, ctrl(KeyCode::Char('s')));
-        assert!(matches!(
-            state.screen,
-            Screen::TaxonomyEditor(EditorMode::Create)
-        ));
+        assert!(
+            matches!(state.screen, Screen::TaxonomyEditor)
+                && state.editor_mode == EditorMode::Create
+        );
         send(&mut state, &workspace, ctrl(KeyCode::Char('s')));
         assert!(matches!(state.screen, Screen::Home));
         assert!(matches!(

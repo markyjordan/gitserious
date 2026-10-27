@@ -16,10 +16,11 @@
 //! property of what a seed can reach, add a [`Reach`] to that seed. Add to [`Snapshot`] any field
 //! either one reads that the snapshot does not hold yet.
 //!
-//! P1, no silent draft loss. A taxonomy draft, type editor, property editor, or taxonomy metadata
-//! form with unsaved changes closes only after the user confirms the discard or after its changes
-//! reach the parent draft or the staged Library. Without it, a user loses typed work without a
-//! warning.
+//! P1, no silent draft loss. A taxonomy draft, type editor, or property editor with unsaved changes
+//! closes only after the user confirms the discard or after its changes reach the parent draft or
+//! the staged Library. Without it, a user loses typed work without a warning. A stage that the
+//! session reports as `No changes to stage.` also closes a draft legitimately: its text differs
+//! from the original only in whitespace that staging trims, and the notice says so.
 //!
 //! P2, an unchanged edit stages nothing. Ctrl+S in the edit editor while the taxonomy draft has no
 //! unsaved changes leaves the staged Library as it was. Without it, an edit that changes nothing
@@ -34,6 +35,10 @@
 //! enter alone set the editor to all eight pairs of a requirement level (required, recommended,
 //! conditional, optional) and a multiplicity (single, multiple). Without it, a property needs a
 //! hand edit of `config.toml` to take a level or multiplicity the editor cannot set.
+//!
+//! P5, an edit keeps the taxonomy's name. While the editor edits an existing taxonomy, its Name
+//! field holds the name the taxonomy was opened with. Without it, a user could rename a taxonomy
+//! that projects pin by name, and staging would fail or address the wrong taxonomy.
 //!
 //! Scope limits:
 //! - Only the keyboard events in [`INPUTS`]. Mouse, paste, and resize events are out of scope.
@@ -177,7 +182,7 @@ const SEEDS: &[Seed] = &[
         name: "team edited at Library",
         workspace: team_library,
         keys: &[
-            "down", "right", "down", "down", "down", "e", "enter", "end", "a", "ctrl+s", "ctrl+s",
+            "down", "right", "down", "down", "down", "e", "up", "a", "ctrl+s",
         ],
         ready: team_selected,
         depth: 2,
@@ -233,11 +238,11 @@ fn team_selected(snapshot: &Snapshot) -> bool {
 }
 
 fn creating(snapshot: &Snapshot) -> bool {
-    matches!(snapshot.screen, Screen::TaxonomyEditor(EditorMode::Create))
+    matches!(snapshot.screen, Screen::TaxonomyEditor) && snapshot.editor_mode == EditorMode::Create
 }
 
 fn editing(snapshot: &Snapshot) -> bool {
-    matches!(snapshot.screen, Screen::TaxonomyEditor(EditorMode::Edit))
+    matches!(snapshot.screen, Screen::TaxonomyEditor) && snapshot.editor_mode == EditorMode::Edit
 }
 
 fn adding_property(snapshot: &Snapshot) -> bool {
@@ -350,8 +355,6 @@ struct Snapshot {
     create_type_offset: usize,
     scroll: u16,
     project_scroll: u16,
-    form_scroll: u16,
-    form_viewport_height: u16,
     status: Option<String>,
     editor_mode: EditorMode,
     draft: Option<TaxonomyDraft>,
@@ -359,8 +362,6 @@ struct Snapshot {
     draft_dirty: bool,
     create_text: Option<[Text; 2]>,
     fork_source: Option<String>,
-    form: Option<FormState>,
-    form_dirty: bool,
     type_editor: Option<TypeEditorView>,
     property_editor: Option<PropertyEditorView>,
     settings: Option<SettingsDraft>,
@@ -396,8 +397,6 @@ impl Snapshot {
             create_type_offset: state.create_type_offset,
             scroll: state.scroll,
             project_scroll: state.project_scroll,
-            form_scroll: state.form_scroll,
-            form_viewport_height: state.form_viewport_height,
             status: state.status.as_ref().map(|notice| match notice {
                 Notice::Error(message) => format!("error: {message}"),
                 Notice::Info(message) => format!("info: {message}"),
@@ -414,10 +413,6 @@ impl Snapshot {
                 .fork_source
                 .as_ref()
                 .map(|source| format!("{source:?}")),
-            form: state.form.clone(),
-            form_dirty: state.form.as_ref().zip(state.editor.as_ref()).is_some_and(
-                |(form, draft)| form.fields != [draft.id.as_str(), draft.description.as_str()],
-            ),
             type_editor: state.type_editor.as_ref().map(|editor| TypeEditorView {
                 target: editor.target,
                 draft: editor.draft.clone(),
@@ -478,6 +473,7 @@ const PROPERTIES: &[(&str, Check)] = &[
         "P3, the review names every taxonomy change",
         review_names_every_taxonomy_change,
     ),
+    ("P5, an edit keeps the taxonomy's name", edit_keeps_the_name),
 ];
 
 struct ChildEditor {
@@ -486,7 +482,7 @@ struct ChildEditor {
     parent: fn(&Snapshot) -> String,
 }
 
-const CHILD_EDITORS: [ChildEditor; 3] = [
+const CHILD_EDITORS: [ChildEditor; 2] = [
     ChildEditor {
         name: "type editor",
         dirty: |snapshot| snapshot.type_editor.as_ref().map(|editor| editor.dirty),
@@ -497,11 +493,6 @@ const CHILD_EDITORS: [ChildEditor; 3] = [
         dirty: |snapshot| snapshot.property_editor.as_ref().map(|editor| editor.dirty),
         parent: |snapshot| format!("{:?}", snapshot.type_editor.as_ref().map(|e| &e.draft)),
     },
-    ChildEditor {
-        name: "taxonomy metadata form",
-        dirty: |snapshot| snapshot.form.as_ref().map(|_| snapshot.form_dirty),
-        parent: |snapshot| format!("{:?}", snapshot.draft),
-    },
 ];
 
 fn no_silent_draft_loss(
@@ -511,9 +502,12 @@ fn no_silent_draft_loss(
 ) -> Result<(), String> {
     let chose_discard =
         DiscardDialog::default().handle_event(input) == Some(DiscardChoice::Discard);
+    let staged_nothing =
+        after.is_some_and(|after| after.status.as_deref() == Some("info: No changes to stage."));
     if before.draft_dirty
         && after.is_none_or(|after| after.draft.is_none())
         && !(matches!(before.screen, Screen::ConfirmDiscardCreate(_)) && chose_discard)
+        && !staged_nothing
         && after.is_none_or(|after| after.staged_library() == before.staged_library())
     {
         return Err(
@@ -538,13 +532,30 @@ fn no_silent_draft_loss(
     Ok(())
 }
 
+fn edit_keeps_the_name(_: &Snapshot, _: &Event, after: Option<&Snapshot>) -> Result<(), String> {
+    let Some(after) = after.filter(|after| after.editor_mode == EditorMode::Edit) else {
+        return Ok(());
+    };
+    if let (Some([name, _]), Some(initial)) = (&after.create_text, &after.initial_draft)
+        && name.lines.join("\n") != initial.id
+    {
+        return Err(format!(
+            "The edit editor's Name field reads {:?}, not the taxonomy's name {:?}.",
+            name.lines.join("\n"),
+            initial.id
+        ));
+    }
+    Ok(())
+}
+
 fn unchanged_edit_stages_nothing(
     before: &Snapshot,
     input: &Event,
     after: Option<&Snapshot>,
 ) -> Result<(), String> {
     let stage = Event::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
-    if matches!(before.screen, Screen::TaxonomyEditor(EditorMode::Edit))
+    if matches!(before.screen, Screen::TaxonomyEditor)
+        && before.editor_mode == EditorMode::Edit
         && !before.draft_dirty
         && *input == stage
         && after.is_some_and(|after| after.staged_library() != before.staged_library())

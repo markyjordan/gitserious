@@ -56,8 +56,13 @@ fn name_note(raw: &str) -> Option<String> {
 
 /// A Name heading whose rule ends with the identifier the typed text saves as.
 pub(super) fn name_heading_line(title: &str, raw: &str, width: u16) -> Line<'static> {
+    noted_heading_line(title, name_note(raw), width)
+}
+
+/// A heading whose rule ends with `note`, or a plain heading when there is no room for it.
+pub(super) fn noted_heading_line(title: &str, note: Option<String>, width: u16) -> Line<'static> {
     let available = usize::from(width).saturating_sub(title.len() + 1);
-    let Some(note) = name_note(raw).filter(|_| available >= MINIMUM_NOTE_WIDTH) else {
+    let Some(note) = note.filter(|_| available >= MINIMUM_NOTE_WIDTH) else {
         return taxonomy_heading_line(title, width);
     };
     // Notes are ASCII, so byte length is display width and slicing is safe.
