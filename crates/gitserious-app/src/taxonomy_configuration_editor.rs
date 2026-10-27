@@ -217,9 +217,8 @@ impl ConfigurationSession {
             .find(|original| original.id() == taxonomy.id())
         {
             return Err(format!(
-                "taxonomy \"{}\" was deleted in this session at version {}; save before reusing its name",
-                taxonomy.id(),
-                original.version().get()
+                "taxonomy \"{}\" is staged for deletion; apply the deletion before reusing its name",
+                original.id()
             ));
         }
         let mut custom = self.global_working.custom_taxonomies().to_vec();
