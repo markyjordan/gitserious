@@ -1,4 +1,4 @@
-use crate::confirmation::{DiscardChoice, DiscardDialog};
+use crate::confirmation::{Answer, ConfirmDialog, DISCARD};
 use gitserious_app::{CommitAuthoringContext, CommitDraftAuthorOutcome, CommitTaxonomy};
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
@@ -1060,7 +1060,7 @@ pub(crate) struct AuthoringSession<'a> {
     pub(crate) composer: ComposerState,
     pub(crate) review: Option<ReviewState>,
     pub(crate) confirmation: ConfirmationAction,
-    pub(crate) discard_dialog: DiscardDialog,
+    pub(crate) discard_dialog: ConfirmDialog,
     pub(crate) catalog_tabs: Vec<CatalogTab>,
     pub(crate) commit_breadcrumb: Rect,
     confirmation_resume: ResumeStage,
@@ -1097,7 +1097,7 @@ impl<'a> AuthoringSession<'a> {
             composer: ComposerState::new(&definitions[selected_type]),
             review: None,
             confirmation: ConfirmationAction::Cancel,
-            discard_dialog: DiscardDialog::default(),
+            discard_dialog: ConfirmDialog::default(),
             catalog_tabs: Vec::new(),
             commit_breadcrumb: Rect::default(),
             confirmation_resume: ResumeStage::Compose,
@@ -1550,9 +1550,9 @@ impl<'a> AuthoringSession<'a> {
     }
 
     fn handle_confirmation_event(&mut self, event: Event) -> Option<CommitDraftAuthorOutcome> {
-        match self.discard_dialog.handle_event(&event)? {
-            DiscardChoice::Discard => self.confirm_discard(),
-            DiscardChoice::KeepEditing => {
+        match self.discard_dialog.handle_event(DISCARD, &event)? {
+            Answer::Confirm => self.confirm_discard(),
+            Answer::Keep | Answer::Alternate => {
                 self.resume_after_confirmation();
                 None
             }
@@ -1647,7 +1647,7 @@ mod confirmation_tests {
                 session.handle_event(click(Rect::new(0, 0, 1, 1)));
                 session.handle_event(Event::Paste("ignored".into()));
                 assert_eq!(session.stage, Stage::Confirm);
-                session.handle_event(click(buttons.keep_editing));
+                session.handle_event(click(buttons.keep));
                 assert_eq!(
                     session.stage,
                     match resume {
@@ -1663,14 +1663,14 @@ mod confirmation_tests {
                 let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
                 session.handle_event(Event::Resize(30, 7));
                 assert!(session.discard_dialog.buttons.is_none());
-                assert!(session.handle_event(click(buttons.discard)).is_none());
+                assert!(session.handle_event(click(buttons.confirm)).is_none());
                 assert_eq!(session.stage, Stage::Confirm);
                 session.handle_event(key(KeyCode::Enter));
                 session.request_confirmation(ConfirmationAction::Cancel, resume);
                 terminal.draw(|frame| render::render(frame, &mut session))?;
                 let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
                 assert!(matches!(
-                    session.handle_event(click(buttons.discard)),
+                    session.handle_event(click(buttons.confirm)),
                     Some(CommitDraftAuthorOutcome::Cancelled)
                 ));
                 assert!(session.discard_dialog.buttons.is_none());
@@ -1719,7 +1719,7 @@ mod confirmation_tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 24))?;
         terminal.draw(|frame| render::render(frame, &mut session))?;
         let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
-        assert!(session.handle_event(click(buttons.discard)).is_none());
+        assert!(session.handle_event(click(buttons.confirm)).is_none());
         assert_eq!(session.stage, Stage::SelectType);
         assert!(!session.composer.dirty());
         Ok(())

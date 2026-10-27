@@ -87,7 +87,7 @@ use super::child_editor::PropertyFocus;
 use super::library_view::LibraryFocus;
 use super::tests::Workspace;
 use super::*;
-use crate::confirmation::{DiscardChoice, DiscardDialog};
+use crate::confirmation::{Answer, ConfirmDialog, DISCARD};
 
 const fn press(code: KeyCode, modifiers: KeyModifiers) -> Event {
     Event::Key(KeyEvent::new(code, modifiers))
@@ -573,7 +573,7 @@ fn no_silent_draft_loss(
     after: Option<&Snapshot>,
 ) -> Result<(), String> {
     let chose_discard =
-        DiscardDialog::default().handle_event(input) == Some(DiscardChoice::Discard);
+        ConfirmDialog::default().handle_event(DISCARD, input) == Some(Answer::Confirm);
     let staged_nothing =
         after.is_some_and(|after| after.status.as_deref() == Some("info: No changes to stage."));
     if before.draft_dirty

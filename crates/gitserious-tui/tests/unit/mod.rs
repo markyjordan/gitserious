@@ -1593,7 +1593,7 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
         .discard_dialog
         .buttons
         .ok_or("missing button hitboxes")?;
-    for area in [buttons.discard, buttons.keep_editing] {
+    for area in [buttons.confirm, buttons.keep] {
         assert!((area.x..area.right()).all(|x| buffer[(x, area.y)].bg == Color::Yellow));
     }
     assert!(review.handle_event(left_click(0, 0)).is_none());
@@ -1602,8 +1602,8 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
         review
             .handle_event(Event::Mouse(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Right),
-                column: buttons.discard.x,
-                row: buttons.discard.y,
+                column: buttons.confirm.x,
+                row: buttons.confirm.y,
                 modifiers: KeyModifiers::NONE,
             }))
             .is_none()
@@ -1611,7 +1611,7 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
     assert_eq!(review.stage, Stage::Confirm);
     assert!(
         review
-            .handle_event(left_click(buttons.keep_editing.x, buttons.keep_editing.y))
+            .handle_event(left_click(buttons.keep.x, buttons.keep.y))
             .is_none()
     );
     assert_eq!(review.stage, Stage::Review);
@@ -1623,7 +1623,7 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
         .buttons
         .ok_or("missing rerendered hitboxes")?;
     assert_eq!(
-        review.handle_event(left_click(buttons.discard.x, buttons.discard.y)),
+        review.handle_event(left_click(buttons.confirm.x, buttons.confirm.y)),
         Some(CommitDraftAuthorOutcome::Cancelled)
     );
     assert_black_canvas(&buffer);

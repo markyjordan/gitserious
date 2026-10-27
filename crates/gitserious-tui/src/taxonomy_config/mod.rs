@@ -1,7 +1,7 @@
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 
-use crate::confirmation::{DiscardChoice, DiscardDialog};
+use crate::confirmation::{Answer, ConfirmDialog, Confirmation, DISCARD};
 use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
     ProjectConfig, RepositoryRoot, TaxonomyOrigin, resolve_effective_configuration,
@@ -507,7 +507,7 @@ struct State {
     status: Option<Notice>,
     editor: Option<TaxonomyDraft>,
     initial_editor: Option<TaxonomyDraft>,
-    discard_dialog: DiscardDialog,
+    discard_dialog: ConfirmDialog,
     editor_mode: EditorMode,
     type_editor: Option<TypeEditorState>,
     property_editor: Option<PropertyEditorState>,
@@ -549,7 +549,7 @@ impl State {
             status: None,
             editor: None,
             initial_editor: None,
-            discard_dialog: DiscardDialog::default(),
+            discard_dialog: ConfirmDialog::default(),
             editor_mode: EditorMode::Create,
             type_editor: None,
             property_editor: None,
@@ -645,20 +645,18 @@ impl State {
     }
 
     fn handle_discard_event(&mut self, event: Event) -> bool {
-        let Some(choice) = self.discard_dialog.handle_event(&event) else {
+        let Some(choice) = self.discard_dialog.handle_event(DISCARD, &event) else {
             return false;
         };
         self.discard_dialog.invalidate();
         match self.screen.clone() {
             Screen::ConfirmDiscardCreate(return_to) => match choice {
-                DiscardChoice::Discard => self.leave_create_taxonomy(),
-                DiscardChoice::KeepEditing => self.screen = *return_to,
+                Answer::Confirm => self.leave_create_taxonomy(),
+                Answer::Keep | Answer::Alternate => self.screen = *return_to,
             },
             Screen::ConfirmDiscardChild(return_to) => match choice {
-                DiscardChoice::Discard => {
-                    self.close_child(matches!(*return_to, Screen::PropertyEditor))
-                }
-                DiscardChoice::KeepEditing => self.screen = *return_to,
+                Answer::Confirm => self.close_child(matches!(*return_to, Screen::PropertyEditor)),
+                Answer::Keep | Answer::Alternate => self.screen = *return_to,
             },
             _ => {}
         }
@@ -2316,7 +2314,15 @@ impl State {
             Screen::ConfirmDiscardChild(_) => ("Discard Type", "Discard type changes?"),
             _ => return,
         };
-        self.discard_dialog.render(frame, area, title, message);
+        self.discard_dialog.render(
+            frame,
+            area,
+            &Confirmation {
+                title,
+                message: message.into(),
+                choices: DISCARD,
+            },
+        );
     }
 
     fn render_notice(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -6305,7 +6311,7 @@ mod tests {
             state.handle_event(Event::Paste("ignored".into()), &workspace);
             state.handle_event(key(KeyCode::Down), &workspace);
             assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
-            state.handle_event(click(buttons.keep_editing), &workspace);
+            state.handle_event(click(buttons.keep), &workspace);
             assert!(matches!(state.screen, Screen::TaxonomyEditor));
             assert_eq!(state.editor, draft);
             assert_eq!(
@@ -6314,14 +6320,14 @@ mod tests {
             );
             assert!(state.discard_dialog.buttons.is_none());
             state.handle_event(key(KeyCode::Esc), &workspace);
-            state.handle_event(click(buttons.discard), &workspace);
+            state.handle_event(click(buttons.confirm), &workspace);
             assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
             state.handle_event(key(KeyCode::Enter), &workspace);
             assert!(state.taxonomy_is_dirty());
             state.handle_event(key(KeyCode::Esc), &workspace);
             terminal.draw(|frame| state.render(frame))?;
             let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
-            state.handle_event(click(buttons.discard), &workspace);
+            state.handle_event(click(buttons.confirm), &workspace);
             assert!(matches!(state.screen, Screen::Home));
             assert!(state.editor.is_none());
             assert!(state.initial_editor.is_none());
@@ -6370,7 +6376,7 @@ mod tests {
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Discard Property"));
         let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
-        state.handle_event(click(buttons.keep_editing), &workspace);
+        state.handle_event(click(buttons.keep), &workspace);
         assert!(matches!(state.screen, Screen::PropertyEditor));
         assert_eq!(
             state
@@ -6385,7 +6391,7 @@ mod tests {
         state.handle_event(key(KeyCode::Esc), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
-        state.handle_event(click(buttons.discard), &workspace);
+        state.handle_event(click(buttons.confirm), &workspace);
         assert!(state.property_editor.is_none());
         assert!(
             state
@@ -6410,7 +6416,7 @@ mod tests {
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Discard Type"));
         let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
-        state.handle_event(click(buttons.keep_editing), &workspace);
+        state.handle_event(click(buttons.keep), &workspace);
         assert_eq!(
             state
                 .type_editor
@@ -6424,7 +6430,7 @@ mod tests {
         state.handle_event(key(KeyCode::Esc), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
-        state.handle_event(click(buttons.discard), &workspace);
+        state.handle_event(click(buttons.confirm), &workspace);
         assert!(
             state
                 .editor
@@ -6456,7 +6462,7 @@ mod tests {
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Discard Taxonomy"));
         let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
-        state.handle_event(click(buttons.keep_editing), &workspace);
+        state.handle_event(click(buttons.keep), &workspace);
         assert!(matches!(state.screen, Screen::PropertyEditor));
         assert_eq!(
             state
@@ -6471,7 +6477,7 @@ mod tests {
         state.handle_event(click(breadcrumb), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         let buttons = state.discard_dialog.buttons.ok_or("missing buttons")?;
-        state.handle_event(click(buttons.discard), &workspace);
+        state.handle_event(click(buttons.confirm), &workspace);
         assert!(matches!(state.screen, Screen::Home));
         assert!(
             state.editor.is_none()
@@ -6497,12 +6503,12 @@ mod tests {
         let old = state.discard_dialog.buttons.ok_or("missing buttons")?;
         state.handle_event(Event::Resize(30, 7), &workspace);
         assert!(state.discard_dialog.buttons.is_none());
-        state.handle_event(click(old.discard), &workspace);
+        state.handle_event(click(old.confirm), &workspace);
         assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
         let mut tiny = Terminal::new(TestBackend::new(30, 7))?;
         tiny.draw(|frame| state.render(frame))?;
         assert!(state.discard_dialog.buttons.is_none());
-        state.handle_event(click(old.keep_editing), &workspace);
+        state.handle_event(click(old.keep), &workspace);
         assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
         state.handle_event(key(KeyCode::Esc), &workspace);
         assert!(matches!(state.screen, Screen::TaxonomyEditor));
