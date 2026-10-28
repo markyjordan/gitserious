@@ -154,8 +154,8 @@ mod tests {
     use std::error::Error;
 
     use gitserious_core::{
-        Description, PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement,
-        SchemaVersion, TaxonomyId, TaxonomyVersion,
+        Description, PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion,
+        TaxonomyId, TaxonomyVersion,
     };
 
     use super::*;
@@ -283,7 +283,6 @@ mod tests {
             PropertyKey::new("summary")?,
             "What shipped",
             PropertyRequirement::Required,
-            PropertyMultiplicity::Single,
         )?;
         let release = CommitTypeDefinition::new(
             SchemaVersion::V1,

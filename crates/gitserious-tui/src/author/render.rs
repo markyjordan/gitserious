@@ -10,8 +10,7 @@ use ratatui::widgets::{Block, Cell, Clear, Paragraph, Row, Table, TableState, Wi
 use tui_textarea::{CursorMove, TextArea, WrapMode};
 
 use super::state::{
-    AuthoringSession, CatalogTab, ConfirmationAction, FieldId, FieldKind, FieldStatus,
-    SCOPE_VALUE_LINE, Stage,
+    AuthoringSession, CatalogTab, ConfirmationAction, FieldId, FieldStatus, SCOPE_VALUE_LINE, Stage,
 };
 use crate::confirmation::{Confirmation, DISCARD};
 use crate::theme::{JET_BLACK, ZEBRA_BACKGROUND};
@@ -522,10 +521,7 @@ fn render_partial_frame_rule(frame: &mut Frame<'_>, start: u16, end: u16, y: u16
 
 fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
     let definition = session.definition();
-    let current = session
-        .composer
-        .current_field(definition)
-        .map(FieldKind::id);
+    let current = session.composer.current_field(definition);
     let fields = session.composer.hud_fields(definition);
     let name_width = field_hud_name_width(definition);
     let requirement_width = field_hud_requirement_width(definition);
@@ -1078,20 +1074,17 @@ impl FieldGuidance {
     }
 }
 
-fn field_guidance(kind: FieldKind, definition: &CommitTypeDefinition) -> FieldGuidance {
+fn field_guidance(kind: FieldId, definition: &CommitTypeDefinition) -> FieldGuidance {
     match kind {
-        FieldKind::Scope => FieldGuidance::new(
+        FieldId::Scope => FieldGuidance::new(
             "Optional affected area in a Conventional Commit: type(scope): description. Leave blank for type: description."
                 .to_owned(),
         ),
-        FieldKind::Description => FieldGuidance::new(
+        FieldId::Description => FieldGuidance::new(
             "Required concise description in a Conventional Commit: type(scope): description, or type: description without a scope."
                 .to_owned(),
         ),
-        FieldKind::Property {
-            definition_index,
-            value_index: _,
-        } => {
+        FieldId::Property(definition_index) => {
             let property = &definition.properties()[definition_index];
             let mut guidance = FieldGuidance::new(property.description());
             if let PropertyRequirement::Conditional(condition) = property.requirement() {
@@ -1099,27 +1092,17 @@ fn field_guidance(kind: FieldKind, definition: &CommitTypeDefinition) -> FieldGu
             }
             guidance
         }
-        FieldKind::BreakingChange => FieldGuidance::new(
+        FieldId::BreakingChange => FieldGuidance::new(
             "Describe an incompatible change. Review adds ! before the header colon and renders this value as an uppercase BREAKING CHANGE footer."
                 .to_owned(),
         ),
     }
 }
 
-fn session_field_guidance(kind: FieldKind, session: &AuthoringSession<'_>) -> FieldGuidance {
+fn session_field_guidance(kind: FieldId, session: &AuthoringSession<'_>) -> FieldGuidance {
     let mut guidance = field_guidance(kind, session.definition());
-    if let FieldKind::Property {
-        definition_index,
-        value_index,
-    } = kind
-    {
+    if let FieldId::Property(definition_index) = kind {
         let property = &session.definition().properties()[definition_index];
-        if property.multiplicity() == gitserious_core::PropertyMultiplicity::Multiple {
-            guidance.paragraphs.push(format!(
-                "Value {}. alt+=: add value | alt+-: remove value (ctrl+u: undo)",
-                value_index + 1
-            ));
-        }
         if matches!(property.requirement(), PropertyRequirement::Conditional(_)) {
             let status = match session.composer.applicability[definition_index] {
                 None => "unanswered",

@@ -3,8 +3,8 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
 use gitserious_core::{
-    CommitTypeDefinition, Fingerprint, PropertyMultiplicity, PropertyRequirement, Taxonomy,
-    TaxonomyId, built_in_taxonomies,
+    CommitTypeDefinition, Fingerprint, PropertyRequirement, Taxonomy, TaxonomyId,
+    built_in_taxonomies,
 };
 use sha2::{Digest, Sha256};
 
@@ -530,10 +530,6 @@ fn fingerprint_commit_type(canonical: &mut CanonicalHasher, definition: &CommitT
     for property in definition.properties() {
         canonical.text(property.key().as_str());
         canonical.text(property.description());
-        canonical.text(match property.multiplicity() {
-            PropertyMultiplicity::Single => "single",
-            PropertyMultiplicity::Multiple => "multiple",
-        });
         match property.requirement() {
             PropertyRequirement::Required => canonical.text("required"),
             PropertyRequirement::Recommended => canonical.text("recommended"),

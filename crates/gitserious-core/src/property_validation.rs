@@ -1,9 +1,7 @@
 use std::collections::BTreeSet;
 use std::fmt::{self, Display, Formatter};
 
-use crate::{
-    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyValues,
-};
+use crate::{PropertyDefinition, PropertyKey, PropertyRequirement, PropertyValue};
 
 /// An author's applicability decision for a conditional property.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -18,7 +16,7 @@ pub enum ConditionalApplicability {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PropertyResponse {
     key: PropertyKey,
-    values: Option<PropertyValues>,
+    value: Option<PropertyValue>,
     applicability: Option<ConditionalApplicability>,
 }
 
@@ -27,12 +25,12 @@ impl PropertyResponse {
     #[must_use]
     pub const fn new(
         key: PropertyKey,
-        values: Option<PropertyValues>,
+        value: Option<PropertyValue>,
         applicability: Option<ConditionalApplicability>,
     ) -> Self {
         Self {
             key,
-            values,
+            value,
             applicability,
         }
     }
@@ -43,10 +41,10 @@ impl PropertyResponse {
         &self.key
     }
 
-    /// Returns authored values, when present.
+    /// Returns the authored value, when present.
     #[must_use]
-    pub const fn values(&self) -> Option<&PropertyValues> {
-        self.values.as_ref()
+    pub const fn value(&self) -> Option<&PropertyValue> {
+        self.value.as_ref()
     }
 
     /// Returns the explicit conditional decision, when supplied.
@@ -105,15 +103,6 @@ pub enum PropertyValidationIssueKind {
     ValueForNonApplicableProperty(PropertyKey),
     /// A nonconditional property carries a conditional decision.
     UnexpectedConditionalDecision(PropertyKey),
-    /// Authored multiplicity differs from the resolved typeset.
-    Multiplicity {
-        /// Property with the mismatch.
-        key: PropertyKey,
-        /// Required multiplicity.
-        expected: PropertyMultiplicity,
-        /// Supplied multiplicity.
-        actual: PropertyMultiplicity,
-    },
 }
 
 /// All ordered issues derived from validating property responses.
@@ -154,18 +143,6 @@ pub(crate) fn validate_property_definitions(
             );
             continue;
         };
-        if let Some(values) = response.values()
-            && values.multiplicity() != property.multiplicity()
-        {
-            error(
-                &mut issues,
-                PropertyValidationIssueKind::Multiplicity {
-                    key: response.key().clone(),
-                    expected: property.multiplicity(),
-                    actual: values.multiplicity(),
-                },
-            );
-        }
         if !matches!(property.requirement(), PropertyRequirement::Conditional(_))
             && response.applicability().is_some()
         {
@@ -180,7 +157,7 @@ pub(crate) fn validate_property_definitions(
         let response = responses
             .iter()
             .find(|response| response.key() == property.key());
-        let has_value = response.is_some_and(|response| response.values().is_some());
+        let has_value = response.is_some_and(|response| response.value().is_some());
         match property.requirement() {
             PropertyRequirement::Required if !has_value => error(
                 &mut issues,
@@ -195,7 +172,7 @@ pub(crate) fn validate_property_definitions(
             PropertyRequirement::Conditional(_) => match response.and_then(|value| {
                 value
                     .applicability()
-                    .map(|applicability| (applicability, value.values().is_some()))
+                    .map(|applicability| (applicability, value.value().is_some()))
             }) {
                 None => error(
                     &mut issues,
@@ -261,16 +238,6 @@ impl Display for PropertyValidationIssueKind {
             Self::UnexpectedConditionalDecision(key) => {
                 write!(formatter, "property \"{key}\" is not conditional")
             }
-            Self::Multiplicity {
-                key,
-                expected,
-                actual,
-            } => write!(
-                formatter,
-                "property \"{key}\" takes {}, not {}",
-                expected.values_phrase(),
-                actual.values_phrase()
-            ),
         }
     }
 }

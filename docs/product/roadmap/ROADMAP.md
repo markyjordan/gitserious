@@ -71,7 +71,7 @@ Bare `gitserious config` opens the configuration TUI. Taxonomy-focused
 
 Support browse, create, edit, fork, select, and delete where applicable.
 Provide forms for taxonomy types, property descriptions and ordering, requirement
-levels and condition rationales, and multiplicity. Creation and forking add to
+levels and condition rationales. Creation and forking add to
 the library; separate Global and Project screens manage availability and defaults.
 
 Keep related edits in a session and review the complete change before applying
@@ -103,8 +103,7 @@ Use one requirement model throughout composition, review, and commit creation:
 - Optional omissions pass.
 - Conditional fields require an explicit applicable/not-applicable choice.
   Applicable fields require a value; not-applicable fields reject a value.
-- Repeatable properties allow adding/removing occurrences and preserve authored
-  order. Single-valued properties reject duplicate occurrences.
+- Each property takes one value; a repeated property heading is rejected.
 
 Preserve field identity even when custom names overlap editor labels. Retain exact
 message review, cancellation behavior, canonical Unicode prose wrapping, and
@@ -196,7 +195,7 @@ must not imply that supplying prose proves an experiment or operation succeeded.
   schema, including overlapping type identifiers.
 - [ ] Temporary selection leaves project files unchanged and does not depend on
   later edits to global configuration.
-- [ ] Required, recommended, optional, conditional, and repeatable properties
+- [ ] Required, recommended, optional, and conditional properties
   behave consistently, including custom label collisions and long names.
 - [ ] Git receives exactly the reviewed message, including provenance and
   breaking-change content; cancellation creates no commit.

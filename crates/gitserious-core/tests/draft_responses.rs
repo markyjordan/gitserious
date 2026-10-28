@@ -3,8 +3,8 @@ use std::error::Error;
 use gitserious_core::{
     CommitDraft, CommitDraftError, CommitSubject, CommitTypeDefinition, CommitTypeId,
     CommitValidationError, ConditionId, ConditionalApplicability, PropertyCondition,
-    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyResponse,
-    PropertyValidationIssueKind, PropertyValue, PropertyValues, SchemaVersion, ValidationSeverity,
+    PropertyDefinition, PropertyKey, PropertyRequirement, PropertyResponse,
+    PropertyValidationIssueKind, PropertyValue, SchemaVersion, ValidationSeverity,
     built_in_commit_types, validate_commit_draft,
 };
 
@@ -17,9 +17,7 @@ fn response(
 ) -> Result<PropertyResponse, Box<dyn Error>> {
     Ok(PropertyResponse::new(
         PropertyKey::new(key)?,
-        text.map(PropertyValue::new)
-            .transpose()?
-            .map(PropertyValues::single),
+        text.map(PropertyValue::new).transpose()?,
         applicability,
     ))
 }
@@ -27,39 +25,18 @@ fn response(
 fn definition() -> Result<CommitTypeDefinition, Box<dyn Error>> {
     let condition = PropertyCondition::new(ConditionId::new("bounded")?, "A limit applies.")?;
     let properties = [
-        (
-            "intent",
-            PropertyRequirement::Required,
-            PropertyMultiplicity::Single,
-        ),
-        (
-            "evidence",
-            PropertyRequirement::Recommended,
-            PropertyMultiplicity::Single,
-        ),
-        (
-            "notes",
-            PropertyRequirement::Optional,
-            PropertyMultiplicity::Single,
-        ),
-        (
-            "constraints",
-            PropertyRequirement::Conditional(condition),
-            PropertyMultiplicity::Single,
-        ),
-        (
-            "references",
-            PropertyRequirement::Optional,
-            PropertyMultiplicity::Multiple,
-        ),
+        ("intent", PropertyRequirement::Required),
+        ("evidence", PropertyRequirement::Recommended),
+        ("notes", PropertyRequirement::Optional),
+        ("constraints", PropertyRequirement::Conditional(condition)),
+        ("references", PropertyRequirement::Optional),
     ]
     .into_iter()
-    .map(|(key, requirement, multiplicity)| {
+    .map(|(key, requirement)| {
         Ok(PropertyDefinition::new(
             PropertyKey::new(key)?,
             format!("Meaning of {key}."),
             requirement,
-            multiplicity,
         )?)
     })
     .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
@@ -240,65 +217,6 @@ fn unknown_valueless_responses_and_unexpected_decisions_are_rejected() -> TestRe
         ]
     );
     assert!(report.into_message().is_err());
-    Ok(())
-}
-
-#[test]
-fn repeatable_values_preserve_authored_order_and_enforce_multiplicity() -> TestResult {
-    let mut responses = valid_responses()?;
-    responses.insert(
-        0,
-        PropertyResponse::new(
-            PropertyKey::new("references")?,
-            Some(PropertyValues::multiple([
-                PropertyValue::new("second\ncontinued")?,
-                PropertyValue::new("first")?,
-            ])?),
-            None,
-        ),
-    );
-    let draft = draft(responses)?;
-    assert_eq!(
-        validate_commit_draft(&definition()?, &draft)
-            .into_message()?
-            .as_str(),
-        "change: retain decisions\n\nintent:\npreserve context\n\nreferences:\nsecond\ncontinued\n\nreferences:\nfirst\n"
-    );
-    for (key, values, expected, actual) in [
-        (
-            "references",
-            PropertyValues::single(PropertyValue::new("one")?),
-            PropertyMultiplicity::Multiple,
-            PropertyMultiplicity::Single,
-        ),
-        (
-            "notes",
-            PropertyValues::multiple([PropertyValue::new("one")?])?,
-            PropertyMultiplicity::Single,
-            PropertyMultiplicity::Multiple,
-        ),
-    ] {
-        let mut responses = valid_responses()?;
-        responses.push(PropertyResponse::new(
-            PropertyKey::new(key)?,
-            Some(values),
-            None,
-        ));
-        let invalid = CommitDraft::from_responses(
-            draft.commit_type().clone(),
-            None,
-            draft.subject().clone(),
-            responses,
-        )?;
-        assert_eq!(
-            validate_commit_draft(&definition()?, &invalid).errors(),
-            &[CommitValidationError::Multiplicity {
-                key: PropertyKey::new(key)?,
-                expected,
-                actual
-            },]
-        );
-    }
     Ok(())
 }
 

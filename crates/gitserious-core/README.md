@@ -37,5 +37,5 @@ Gitserious-Schema: sha256:<taxonomy-fingerprint>
 ```
 
 The fingerprint covers taxonomy identity, version, description, fork lineage,
-commit-type schemas, property order, requirements, conditions, descriptions,
-and multiplicity.
+commit-type schemas, property order, requirements, conditions, and
+descriptions.

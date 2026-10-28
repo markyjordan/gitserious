@@ -14,9 +14,9 @@ use gitserious_app::{
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitProvenance, CommitSubject,
     CommitTypeDefinition, CommitTypeId, ConditionalApplicability, Description, PropertyDefinition,
-    PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyResponse, PropertyValue,
-    PropertyValues, SchemaVersion, Taxonomy, TaxonomyId, TaxonomyVersion, built_in_commit_types,
-    built_in_taxonomies, validate_commit_draft, validate_commit_draft_with_provenance,
+    PropertyKey, PropertyRequirement, PropertyResponse, PropertyValue, SchemaVersion, Taxonomy,
+    TaxonomyId, TaxonomyVersion, built_in_commit_types, built_in_taxonomies, validate_commit_draft,
+    validate_commit_draft_with_provenance,
 };
 
 type Trace = Rc<RefCell<Vec<&'static str>>>;
@@ -207,7 +207,7 @@ fn valid_draft(definition: &CommitTypeDefinition) -> Result<CommitDraft, Box<dyn
         .map(|property| {
             Ok(AuthoredProperty::new(
                 property.key().clone(),
-                PropertyValues::single(PropertyValue::new(format!("authored {}", property.key()))?),
+                PropertyValue::new(format!("authored {}", property.key()))?,
             ))
         })
         .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
@@ -516,7 +516,6 @@ fn custom_taxonomy_commits_with_its_own_schema() -> Result<(), Box<dyn Error>> {
                 PropertyKey::new("intent")?,
                 "Why the infrastructure must change.",
                 PropertyRequirement::Required,
-                PropertyMultiplicity::Single,
             )?],
         )?],
     )?;

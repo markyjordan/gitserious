@@ -12,8 +12,8 @@ use tui_textarea::{CursorMove, CursorRenderMode, TextArea, WrapMode};
 use super::naming::{NameField, edited_prose, name_error, name_heading_line, single_line};
 use super::{
     ConditionId, CreateFocus, CreateTextEditors, PropertyCondition, PropertyDraft,
-    PropertyMultiplicity, PropertyRequirement, TypeDraft, contains, policy_label, render_counter,
-    render_metadata_frame, taxonomy_heading_line,
+    PropertyRequirement, TypeDraft, contains, policy_label, render_counter, render_metadata_frame,
+    taxonomy_heading_line,
 };
 use crate::theme::{JET_BLACK, focus_frame_style, row_style, selected_style};
 
@@ -207,7 +207,7 @@ impl TypeEditorState {
                         }),
                         Cell::from(property.key.as_str()),
                         Cell::from(property.description.as_str()),
-                        Cell::from(policy_label(&property.requirement, property.multiplicity)),
+                        Cell::from(policy_label(&property.requirement)),
                     ])
                     .style(row_style(index + 1))
                 }),
@@ -225,7 +225,7 @@ impl TypeEditorState {
             .draft
             .properties
             .iter()
-            .map(|property| policy_label(&property.requirement, property.multiplicity).len())
+            .map(|property| policy_label(&property.requirement).len())
             .fold("recommended".len(), usize::max);
         let policy_width = u16::try_from(policy_width).unwrap_or(u16::MAX);
         let mut state = TableState::default();
@@ -263,7 +263,6 @@ pub(super) enum PropertyFocus {
     Policy,
     ConditionName,
     ConditionRationale,
-    Multiplicity,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -292,16 +291,6 @@ impl Policy {
     }
 }
 
-const MULTIPLICITIES: [PropertyMultiplicity; 2] =
-    [PropertyMultiplicity::Single, PropertyMultiplicity::Multiple];
-
-const fn multiplicity_label(value: PropertyMultiplicity) -> &'static str {
-    match value {
-        PropertyMultiplicity::Single => "single",
-        PropertyMultiplicity::Multiple => "multiple",
-    }
-}
-
 fn cycle<T: Copy + PartialEq>(order: &[T], current: T, forward: bool) -> T {
     let step = if forward { 1 } else { order.len() - 1 };
     order
@@ -317,7 +306,6 @@ pub(super) struct PropertyEditorState {
     pub condition_name: TextArea<'static>,
     pub condition_rationale: TextArea<'static>,
     policy: Policy,
-    multiplicity: PropertyMultiplicity,
     viewport_top: u16,
     initial: PropertyFields,
 }
@@ -327,7 +315,6 @@ struct PropertyFields {
     name: String,
     description: String,
     policy: Policy,
-    multiplicity: PropertyMultiplicity,
     condition_name: String,
     condition_rationale: String,
 }
@@ -362,13 +349,11 @@ impl PropertyEditorState {
             condition_name,
             condition_rationale,
             policy,
-            multiplicity: draft.multiplicity,
             viewport_top: 0,
             initial: PropertyFields {
                 name: draft.key,
                 description: draft.description,
                 policy,
-                multiplicity: draft.multiplicity,
                 condition_name: name,
                 condition_rationale: rationale,
             },
@@ -404,7 +389,6 @@ impl PropertyEditorState {
                 &self.initial.description,
             ),
             requirement,
-            multiplicity: self.multiplicity,
         };
         candidate
             .build()
@@ -412,8 +396,8 @@ impl PropertyEditorState {
     }
 
     #[cfg(test)]
-    pub fn policy_labels(&self) -> [&'static str; 2] {
-        [self.policy.label(), multiplicity_label(self.multiplicity)]
+    pub fn policy_label(&self) -> &'static str {
+        self.policy.label()
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -421,7 +405,6 @@ impl PropertyEditorState {
             name: self.text.name.lines().join("\n"),
             description: self.text.description.lines().join("\n"),
             policy: self.policy,
-            multiplicity: self.multiplicity,
             condition_name: self.condition_name.lines().join("\n"),
             condition_rationale: self.condition_rationale.lines().join("\n"),
         } != self.initial
@@ -451,7 +434,7 @@ impl PropertyEditorState {
                 self.condition_rationale.insert_str(text);
                 ChildAction::Continue
             }
-            PropertyFocus::Policy | PropertyFocus::Multiplicity => ChildAction::Continue,
+            PropertyFocus::Policy => ChildAction::Continue,
         }
     }
 
@@ -465,13 +448,6 @@ impl PropertyEditorState {
         match key.code {
             KeyCode::Left | KeyCode::Right if self.focus == PropertyFocus::Policy => {
                 self.policy = cycle(&Policy::ORDER, self.policy, key.code == KeyCode::Right)
-            }
-            KeyCode::Left | KeyCode::Right if self.focus == PropertyFocus::Multiplicity => {
-                self.multiplicity = cycle(
-                    &MULTIPLICITIES,
-                    self.multiplicity,
-                    key.code == KeyCode::Right,
-                )
             }
             KeyCode::Enter
                 if key.modifiers.contains(KeyModifiers::ALT)
@@ -521,9 +497,7 @@ impl PropertyEditorState {
                 PropertyFocus::ConditionName
             }
             PropertyFocus::ConditionName => PropertyFocus::ConditionRationale,
-            PropertyFocus::Policy
-            | PropertyFocus::ConditionRationale
-            | PropertyFocus::Multiplicity => PropertyFocus::Multiplicity,
+            focus => focus,
         };
     }
 
@@ -549,7 +523,6 @@ impl PropertyEditorState {
             PropertyFocus::Policy if self.policy == Policy::Conditional => {
                 self.focus = PropertyFocus::ConditionName
             }
-            PropertyFocus::Policy => self.focus = PropertyFocus::Multiplicity,
             PropertyFocus::ConditionName => {
                 self.focus = if down {
                     PropertyFocus::ConditionRationale
@@ -564,22 +537,11 @@ impl PropertyEditorState {
                 } else {
                     CursorMove::Up
                 });
-                if self.condition_rationale.cursor() == before {
-                    self.focus = if down {
-                        PropertyFocus::Multiplicity
-                    } else {
-                        PropertyFocus::ConditionName
-                    };
+                if self.condition_rationale.cursor() == before && !down {
+                    self.focus = PropertyFocus::ConditionName;
                 }
             }
-            PropertyFocus::Multiplicity if !down => {
-                self.focus = if self.policy == Policy::Conditional {
-                    PropertyFocus::ConditionRationale
-                } else {
-                    PropertyFocus::Policy
-                }
-            }
-            PropertyFocus::Name | PropertyFocus::Multiplicity => {}
+            PropertyFocus::Name | PropertyFocus::Policy => {}
         }
     }
 
@@ -589,8 +551,7 @@ impl PropertyEditorState {
             area,
         );
         let conditional = self.policy == Policy::Conditional;
-        let multiplicity_row: u16 = if conditional { 16 } else { 9 };
-        let content_height = multiplicity_row + 2;
+        let content_height: u16 = if conditional { 15 } else { 9 };
         let desired_height = content_height + 2;
         let pane = Rect::new(area.x, area.y, area.width, desired_height.min(area.height));
         let style = focus_frame_style(true);
@@ -612,7 +573,6 @@ impl PropertyEditorState {
             PropertyFocus::Policy => (6, 7),
             PropertyFocus::ConditionName => (9, 10),
             PropertyFocus::ConditionRationale => (12, 14),
-            PropertyFocus::Multiplicity => (multiplicity_row, multiplicity_row + 1),
         };
         self.viewport_top = self
             .viewport_top
@@ -637,11 +597,7 @@ impl PropertyEditorState {
             width,
         ))
         .render(Rect::new(0, 0, width, 1), &mut content);
-        for (y, label) in [
-            (3, "Description"),
-            (6, "Policy"),
-            (multiplicity_row, "Multiplicity"),
-        ] {
+        for (y, label) in [(3, "Description"), (6, "Policy")] {
             Paragraph::new(taxonomy_heading_line(label, width))
                 .render(Rect::new(0, y, width, 1), &mut content);
         }
@@ -662,12 +618,6 @@ impl PropertyEditorState {
             Rect::new(0, 7, width, 1),
             self.policy.label(),
             self.focus == PropertyFocus::Policy,
-        );
-        render_choice(
-            &mut content,
-            Rect::new(0, multiplicity_row + 1, width, 1),
-            multiplicity_label(self.multiplicity),
-            self.focus == PropertyFocus::Multiplicity,
         );
         if conditional {
             Paragraph::new(name_heading_line(
@@ -809,7 +759,6 @@ mod tests {
                 key: "intent".into(),
                 description: "x".repeat(94),
                 requirement: PropertyRequirement::Required,
-                multiplicity: PropertyMultiplicity::Single,
             },
         );
         property.focus = PropertyFocus::Description;
@@ -857,7 +806,6 @@ mod tests {
                 key: "notes".into(),
                 description: "x".repeat(140),
                 requirement: PropertyRequirement::Optional,
-                multiplicity: PropertyMultiplicity::Multiple,
             },
         );
         copied.focus = PropertyFocus::Description;
@@ -868,7 +816,6 @@ mod tests {
         copied.paste("Edited notes");
         let candidate = copied.candidate()?;
         assert_eq!(candidate.requirement, PropertyRequirement::Optional);
-        assert_eq!(candidate.multiplicity, PropertyMultiplicity::Multiple);
         copied.focus = PropertyFocus::Policy;
         copied.key(key(KeyCode::Right));
         assert_eq!(
@@ -906,7 +853,6 @@ mod tests {
                 key: "notes".into(),
                 description: "Free-form notes".into(),
                 requirement: PropertyRequirement::Optional,
-                multiplicity: PropertyMultiplicity::Single,
             },
         );
         loaded.focus = PropertyFocus::Policy;
@@ -925,71 +871,6 @@ mod tests {
     }
 
     #[test]
-    fn multiplicity_row_toggles_into_the_completed_draft_and_counts_as_a_change()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let mut property = PropertyEditorState::new(None, PropertyDraft::empty());
-        property.paste("notes");
-        property.key(key(KeyCode::Enter));
-        property.paste("Free-form notes");
-        property.key(key(KeyCode::Enter));
-        property.key(key(KeyCode::Enter));
-        assert_eq!(property.focus, PropertyFocus::Multiplicity);
-        property.key(key(KeyCode::Right));
-        assert_eq!(
-            property.candidate()?.multiplicity,
-            PropertyMultiplicity::Multiple
-        );
-        property.key(key(KeyCode::Left));
-        assert_eq!(
-            property.candidate()?.multiplicity,
-            PropertyMultiplicity::Single
-        );
-        property.key(key(KeyCode::Left));
-        property.key(key(KeyCode::Up));
-        property.key(key(KeyCode::Left));
-        assert_eq!(
-            property.candidate()?,
-            PropertyDraft {
-                key: "notes".into(),
-                description: "Free-form notes".into(),
-                requirement: PropertyRequirement::Optional,
-                multiplicity: PropertyMultiplicity::Multiple,
-            }
-        );
-
-        let draft = PropertyDraft {
-            key: "evidence".into(),
-            description: "Supporting results".into(),
-            requirement: PropertyRequirement::Conditional(PropertyCondition::new(
-                ConditionId::new("changed")?,
-                "first\nsecond",
-            )?),
-            multiplicity: PropertyMultiplicity::Single,
-        };
-        let mut loaded = PropertyEditorState::new(Some(0), draft.clone());
-        loaded.focus = PropertyFocus::ConditionRationale;
-        assert_eq!(loaded.condition_rationale.cursor(), (1, 6));
-        loaded.key(key(KeyCode::Down));
-        assert_eq!(loaded.focus, PropertyFocus::Multiplicity);
-        assert!(!loaded.is_dirty());
-        loaded.key(key(KeyCode::Right));
-        assert!(loaded.is_dirty());
-        assert_eq!(
-            loaded.candidate()?,
-            PropertyDraft {
-                multiplicity: PropertyMultiplicity::Multiple,
-                ..draft.clone()
-            }
-        );
-        loaded.key(key(KeyCode::Right));
-        assert!(!loaded.is_dirty());
-        loaded.key(key(KeyCode::Up));
-        assert_eq!(loaded.focus, PropertyFocus::ConditionRationale);
-        assert_eq!(loaded.candidate()?, draft);
-        Ok(())
-    }
-
-    #[test]
     fn conditional_property_fits_compact_and_wide_views_with_a_single_cursor()
     -> Result<(), Box<dyn std::error::Error>> {
         let draft = PropertyDraft {
@@ -999,7 +880,6 @@ mod tests {
                 ConditionId::new("changed")?,
                 "long rationale\n".repeat(20),
             )?),
-            multiplicity: PropertyMultiplicity::Single,
         };
         let mut property = PropertyEditorState::new(Some(0), draft.clone());
         assert_eq!(property.candidate()?, draft);
@@ -1012,14 +892,14 @@ mod tests {
                 let area = frame.area();
                 property.render(frame, area);
             })?;
-            let pane_height = height.min(20);
+            let pane_height = height.min(17);
             let buffer = terminal.backend().buffer();
             let row = |y| {
                 (1..width - 1)
                     .map(|x| buffer[(x, y)].symbol())
                     .collect::<String>()
             };
-            assert_eq!(property.viewport_top, if height < 20 { 3 } else { 0 });
+            assert_eq!(property.viewport_top, if height < 17 { 3 } else { 0 });
             assert_eq!(buffer[(0, 0)].fg, Color::Yellow);
             assert_eq!(buffer[(0, pane_height - 1)].symbol(), "└");
             for (offset, label) in [
@@ -1028,7 +908,6 @@ mod tests {
                 (7, "Policy"),
                 (10, "Condition name"),
                 (13, "Condition rationale"),
-                (17, "Multiplicity"),
             ] {
                 if let Some(y) = offset.checked_sub(property.viewport_top)
                     && y > 0
@@ -1083,7 +962,6 @@ mod tests {
                 ConditionId::new("changed")?,
                 "first\nsecond\nthird",
             )?),
-            multiplicity: PropertyMultiplicity::Single,
         };
         let mut property = PropertyEditorState::new(Some(0), draft.clone());
         let mut compact = Terminal::new(TestBackend::new(60, 18))?;
@@ -1138,14 +1016,14 @@ mod tests {
         assert_eq!(property.policy, Policy::Optional);
         draw_compact(&mut property, &mut compact)?;
         assert_eq!(property.viewport_top, 0);
-        assert_eq!(compact.backend().buffer()[(0, 15)].symbol(), "└");
-        for y in 16..18 {
+        assert_eq!(compact.backend().buffer()[(0, 13)].symbol(), "└");
+        for y in 14..18 {
             assert!((0..60).all(|x| compact.backend().buffer()[(x, y)].symbol() == " "));
         }
         property.key(key(KeyCode::Right));
         assert_eq!(property.policy, Policy::Required);
         draw_compact(&mut property, &mut compact)?;
-        assert_eq!(compact.backend().buffer()[(0, 15)].symbol(), "└");
+        assert_eq!(compact.backend().buffer()[(0, 13)].symbol(), "└");
         property.key(key(KeyCode::Left));
         property.key(key(KeyCode::Left));
         property.key(key(KeyCode::Down));
@@ -1155,7 +1033,7 @@ mod tests {
         let mut wide = Terminal::new(TestBackend::new(120, 30))?;
         wide.draw(|frame| property.render(frame, Rect::new(0, 3, 120, 26)))?;
         assert_eq!(property.viewport_top, 0);
-        assert_eq!(wide.backend().buffer()[(0, 22)].symbol(), "└");
+        assert_eq!(wide.backend().buffer()[(0, 19)].symbol(), "└");
         assert_eq!(property.condition_rationale.cursor(), data_cursor);
         draw_compact(&mut property, &mut compact)?;
         assert_eq!(property.viewport_top, 3);

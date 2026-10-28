@@ -538,7 +538,7 @@ impl LibraryViewState {
         let requirement_width = definition
             .properties()
             .iter()
-            .map(|property| policy_label(property.requirement(), property.multiplicity()).len())
+            .map(|property| policy_label(property.requirement()).len())
             .max()
             .unwrap_or(1);
         let requirement_width = u16::try_from(requirement_width).unwrap_or(u16::MAX);
@@ -553,10 +553,7 @@ impl LibraryViewState {
             .map(|property| {
                 Row::new(vec![
                     Cell::from(property.key().as_str()),
-                    Cell::from(policy_label(
-                        property.requirement(),
-                        property.multiplicity(),
-                    )),
+                    Cell::from(policy_label(property.requirement())),
                 ])
             })
             .collect::<Vec<_>>();

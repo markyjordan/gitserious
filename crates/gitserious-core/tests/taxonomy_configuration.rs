@@ -3,9 +3,9 @@ use std::error::Error;
 use gitserious_core::{
     CommitDraft, CommitSubject, CommitTypeDefinition, CommitTypeId, CommitValidationError,
     ConditionId, ConditionalApplicability, Description, DescriptionError, PropertyCondition,
-    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyResponse,
-    PropertyValidationIssueKind, PropertyValue, PropertyValues, SchemaVersion, Taxonomy,
-    TaxonomyError, TaxonomyId, TaxonomyVersion, built_in_commit_types, validate_commit_draft,
+    PropertyDefinition, PropertyKey, PropertyRequirement, PropertyResponse,
+    PropertyValidationIssueKind, PropertyValue, SchemaVersion, Taxonomy, TaxonomyError, TaxonomyId,
+    TaxonomyVersion, built_in_commit_types, validate_commit_draft,
 };
 
 fn commit_type(
@@ -23,13 +23,11 @@ fn commit_type(
 fn property(
     key: &str,
     requirement: PropertyRequirement,
-    multiplicity: PropertyMultiplicity,
 ) -> Result<PropertyDefinition, Box<dyn Error>> {
     Ok(PropertyDefinition::new(
         PropertyKey::new(key)?,
         format!("Meaning of {key}."),
         requirement,
-        multiplicity,
     )?)
 }
 
@@ -123,26 +121,10 @@ fn requirement_validation_reports_errors_and_recommendations_from_the_schema()
     let definition = commit_type(
         "change",
         vec![
-            property(
-                "required",
-                PropertyRequirement::Required,
-                PropertyMultiplicity::Single,
-            )?,
-            property(
-                "recommended",
-                PropertyRequirement::Recommended,
-                PropertyMultiplicity::Single,
-            )?,
-            property(
-                "optional",
-                PropertyRequirement::Optional,
-                PropertyMultiplicity::Multiple,
-            )?,
-            property(
-                "conditional",
-                PropertyRequirement::Conditional(condition),
-                PropertyMultiplicity::Single,
-            )?,
+            property("required", PropertyRequirement::Required)?,
+            property("recommended", PropertyRequirement::Recommended)?,
+            property("optional", PropertyRequirement::Optional)?,
+            property("conditional", PropertyRequirement::Conditional(condition))?,
         ],
     )?;
 
@@ -170,7 +152,7 @@ fn requirement_validation_reports_errors_and_recommendations_from_the_schema()
         vec![
             PropertyResponse::new(
                 PropertyKey::new("required")?,
-                Some(PropertyValues::single(PropertyValue::new("value")?)),
+                Some(PropertyValue::new("value")?),
                 None,
             ),
             PropertyResponse::new(
@@ -187,7 +169,7 @@ fn requirement_validation_reports_errors_and_recommendations_from_the_schema()
 }
 
 #[test]
-fn conditional_and_multiplicity_contradictions_are_blocking() -> Result<(), Box<dyn Error>> {
+fn conditional_contradictions_are_blocking() -> Result<(), Box<dyn Error>> {
     let feat = built_in_commit_types()
         .iter()
         .find(|definition| definition.id().as_str() == "feat")
@@ -195,12 +177,12 @@ fn conditional_and_multiplicity_contradictions_are_blocking() -> Result<(), Box<
     let responses = vec![
         PropertyResponse::new(
             PropertyKey::new("intent")?,
-            Some(PropertyValues::multiple([PropertyValue::new("one")?])?),
+            Some(PropertyValue::new("one")?),
             Some(ConditionalApplicability::Applies),
         ),
         PropertyResponse::new(
             PropertyKey::new("constraints")?,
-            Some(PropertyValues::single(PropertyValue::new("constraint")?)),
+            Some(PropertyValue::new("constraint")?),
             Some(ConditionalApplicability::DoesNotApply),
         ),
         PropertyResponse::new(PropertyKey::new("unknown")?, None, None),
@@ -210,11 +192,6 @@ fn conditional_and_multiplicity_contradictions_are_blocking() -> Result<(), Box<
 
     assert!(!report.errors().is_empty());
     let errors = report.errors();
-    assert!(
-        errors
-            .iter()
-            .any(|error| matches!(error, CommitValidationError::Multiplicity { .. }))
-    );
     assert!(errors.iter().any(|error| matches!(
         error,
         CommitValidationError::PropertyResponse(

@@ -1,6 +1,5 @@
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
-use std::slice;
 
 use crate::{ConditionId, PropertyKey};
 
@@ -73,92 +72,6 @@ impl Display for PropertyValueError {
 }
 
 impl Error for PropertyValueError {}
-
-/// Whether a property accepts one value or a non-empty sequence of values.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum PropertyMultiplicity {
-    /// Exactly one value.
-    Single,
-    /// One or more independently represented values.
-    Multiple,
-}
-
-impl PropertyMultiplicity {
-    pub(crate) const fn values_phrase(self) -> &'static str {
-        match self {
-            Self::Single => "a single value",
-            Self::Multiple => "multiple values",
-        }
-    }
-}
-
-/// A non-empty collection of authored values with explicit multiplicity.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PropertyValues {
-    multiplicity: PropertyMultiplicity,
-    values: Vec<PropertyValue>,
-}
-
-impl PropertyValues {
-    /// Creates a single-valued collection.
-    #[must_use]
-    pub fn single(value: PropertyValue) -> Self {
-        Self {
-            multiplicity: PropertyMultiplicity::Single,
-            values: vec![value],
-        }
-    }
-
-    /// Creates a repeatable collection containing at least one value.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PropertyValuesError`] when the iterator yields no values.
-    pub fn multiple(
-        values: impl IntoIterator<Item = PropertyValue>,
-    ) -> Result<Self, PropertyValuesError> {
-        let values = values.into_iter().collect::<Vec<_>>();
-        if values.is_empty() {
-            return Err(PropertyValuesError);
-        }
-        Ok(Self {
-            multiplicity: PropertyMultiplicity::Multiple,
-            values,
-        })
-    }
-
-    /// Returns the collection's declared multiplicity.
-    #[must_use]
-    pub const fn multiplicity(&self) -> PropertyMultiplicity {
-        self.multiplicity
-    }
-
-    /// Iterates over values in authored order.
-    pub fn iter(&self) -> slice::Iter<'_, PropertyValue> {
-        self.values.iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a PropertyValues {
-    type Item = &'a PropertyValue;
-    type IntoIter = slice::Iter<'a, PropertyValue>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
-/// An attempted repeatable property collection with no values.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PropertyValuesError;
-
-impl Display for PropertyValuesError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter.write_str("a property value collection must not be empty")
-    }
-}
-
-impl Error for PropertyValuesError {}
 
 /// Metadata describing when a conditional property becomes required.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -239,7 +152,6 @@ pub struct PropertyDefinition {
     key: PropertyKey,
     description: Box<str>,
     requirement: PropertyRequirement,
-    multiplicity: PropertyMultiplicity,
 }
 
 impl PropertyDefinition {
@@ -253,7 +165,6 @@ impl PropertyDefinition {
         key: PropertyKey,
         description: impl Into<String>,
         requirement: PropertyRequirement,
-        multiplicity: PropertyMultiplicity,
     ) -> Result<Self, PropertyDefinitionError> {
         let description = description.into();
         if is_blank(&description) {
@@ -263,7 +174,6 @@ impl PropertyDefinition {
             key,
             description: description.into_boxed_str(),
             requirement,
-            multiplicity,
         })
     }
 
@@ -285,12 +195,6 @@ impl PropertyDefinition {
         &self.requirement
     }
 
-    /// Returns the property's allowed multiplicity.
-    #[must_use]
-    pub const fn multiplicity(&self) -> PropertyMultiplicity {
-        self.multiplicity
-    }
-
     pub(crate) fn from_trusted(
         key: PropertyKey,
         description: &'static str,
@@ -300,7 +204,6 @@ impl PropertyDefinition {
             key,
             description: Box::from(description),
             requirement,
-            multiplicity: PropertyMultiplicity::Single,
         }
     }
 }
@@ -325,8 +228,7 @@ mod tests {
 
     use super::{
         PropertyCondition, PropertyConditionError, PropertyDefinition, PropertyDefinitionError,
-        PropertyMultiplicity, PropertyRequirement, PropertyValue, PropertyValueError,
-        PropertyValues, PropertyValuesError,
+        PropertyRequirement, PropertyValue, PropertyValueError,
     };
 
     #[test]
@@ -358,54 +260,6 @@ mod tests {
     }
 
     #[test]
-    fn single_property_collections_expose_exactly_one_value() -> Result<(), Box<dyn Error>> {
-        let values = PropertyValues::single(PropertyValue::new("one")?);
-
-        assert_eq!(values.multiplicity(), PropertyMultiplicity::Single);
-        assert_eq!(
-            values.iter().map(PropertyValue::as_str).collect::<Vec<_>>(),
-            ["one"]
-        );
-        assert_eq!(
-            (&values)
-                .into_iter()
-                .map(PropertyValue::as_str)
-                .collect::<Vec<_>>(),
-            ["one"]
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn repeatable_property_collections_are_non_empty_and_ordered() -> Result<(), Box<dyn Error>> {
-        assert_eq!(
-            PropertyValues::multiple(Vec::new()),
-            Err(PropertyValuesError)
-        );
-        assert_eq!(
-            PropertyValuesError.to_string(),
-            "a property value collection must not be empty"
-        );
-
-        let one = PropertyValues::multiple([PropertyValue::new("one")?])?;
-        assert_eq!(one.multiplicity(), PropertyMultiplicity::Multiple);
-        assert_eq!(one.iter().count(), 1);
-
-        let many = PropertyValues::multiple([
-            PropertyValue::new("first")?,
-            PropertyValue::new("second")?,
-        ])?;
-        assert_eq!(many.multiplicity(), PropertyMultiplicity::Multiple);
-        assert_eq!(
-            many.iter().map(PropertyValue::as_str).collect::<Vec<_>>(),
-            ["first", "second"]
-        );
-
-        Ok(())
-    }
-
-    #[test]
     fn conditions_require_rationale_and_preserve_typed_metadata() -> Result<(), Box<dyn Error>> {
         let id = ConditionId::new("known-cost")?;
         let condition = PropertyCondition::new(id.clone(), "A known cost exists.")?;
@@ -429,7 +283,6 @@ mod tests {
             PropertyKey::new("tradeoff")?,
             "The accepted cost.",
             PropertyRequirement::Conditional(condition.clone()),
-            PropertyMultiplicity::Multiple,
         )?;
 
         assert_eq!(definition.key().as_str(), "tradeoff");
@@ -438,7 +291,6 @@ mod tests {
             definition.requirement(),
             &PropertyRequirement::Conditional(condition)
         );
-        assert_eq!(definition.multiplicity(), PropertyMultiplicity::Multiple);
 
         let cloned = definition.clone();
         assert_eq!(cloned, definition);
@@ -452,7 +304,6 @@ mod tests {
             PropertyKey::new("intent")?,
             "\t",
             PropertyRequirement::Required,
-            PropertyMultiplicity::Single,
         );
 
         assert_eq!(result, Err(PropertyDefinitionError));

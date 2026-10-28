@@ -32,9 +32,9 @@
 //! that the review did not show.
 //!
 //! P4, the property editor reaches every policy. From a new property editor, the arrow keys and
-//! enter alone set the editor to all eight pairs of a requirement level (required, recommended,
-//! conditional, optional) and a multiplicity (single, multiple). Without it, a property needs a
-//! hand edit of `config.toml` to take a level or multiplicity the editor cannot set.
+//! enter alone set the editor to every requirement level (required, recommended, conditional,
+//! optional). Without it, a property needs a hand edit of `config.toml` to take a level the
+//! editor cannot set.
 //!
 //! P5, an edit keeps the taxonomy's name. While the editor edits an existing taxonomy, its Name
 //! field holds the name the taxonomy was opened with. Without it, a user could rename a taxonomy
@@ -65,16 +65,15 @@
 //!   records are not projected.
 //! - The property editor's scroll position and the child editors' initial drafts are private to
 //!   `child_editor`. The snapshot sees them only through the rendered frame and each editor's
-//!   `is_dirty`. It reads the property editor's policy and multiplicity through a test-only view
-//!   that returns the labels the editor renders.
+//!   `is_dirty`. It reads the property editor's policy through a test-only view that returns the
+//!   label the editor renders.
 //! - `State` runs standalone, not inside the unified shell, so `ConfigView::request_leave_editor`
 //!   is not driven.
 //! - Workspace saves always succeed, and the project starts uninitialized.
 //! - P3 reads the frame, so it sees only the review rows that fit the viewport. Every seed's review
 //!   fits without scrolling.
 //! - P4 explores only the up, down, left, right, and enter keys from one new property editor. It
-//!   reads the editor's policy and multiplicity, not the frame, because at the minimum size a
-//!   conditional property's Policy and Multiplicity rows never fit the viewport together.
+//!   reads the editor's policy, not the frame.
 //! - A pass covers the seven seeds to their depth bounds, not every reachable state. Every replay
 //!   renders each frame in a debug build, so the bounds keep the check near 45 seconds on six
 //!   cores. The editor seeds get the deeper bound because P1 lives in the editors. The P4 seed's
@@ -249,16 +248,7 @@ const SEEDS: &[Seed] = &[
         reaches: &[Reach {
             name: "P4, the property editor reaches every policy",
             observe: editor_policy,
-            expected: &[
-                "required single",
-                "required multiple",
-                "recommended single",
-                "recommended multiple",
-                "conditional single",
-                "conditional multiple",
-                "optional single",
-                "optional multiple",
-            ],
+            expected: &["required", "recommended", "conditional", "optional"],
         }],
     },
 ];
@@ -323,7 +313,6 @@ fn team_configuration() -> Result<GlobalConfiguration, Box<dyn std::error::Error
                 PropertyKey::new("summary")?,
                 "What shipped",
                 PropertyRequirement::Required,
-                PropertyMultiplicity::Single,
             )?],
         )?],
     )?;
@@ -374,7 +363,7 @@ struct PropertyEditorView {
     condition_name: Text,
     condition_rationale: Text,
     focus: PropertyFocus,
-    policy: [&'static str; 2],
+    policy: &'static str,
     dirty: bool,
 }
 
@@ -475,7 +464,7 @@ impl Snapshot {
                     condition_name: Text::of(&editor.condition_name),
                     condition_rationale: Text::of(&editor.condition_rationale),
                     focus: editor.focus,
-                    policy: editor.policy_labels(),
+                    policy: editor.policy_label(),
                     dirty: editor.is_dirty(),
                 }),
             settings: state.settings.clone(),
@@ -850,7 +839,7 @@ fn editor_policy(snapshot: &Snapshot) -> Option<String> {
         .property_editor
         .as_ref()
         .filter(|_| matches!(snapshot.screen, Screen::PropertyEditor))
-        .map(|editor| editor.policy.join(" "))
+        .map(|editor| editor.policy.to_owned())
 }
 
 /// Replays `keys` from a fresh workspace. Returns `None` when the last key quit the editor.

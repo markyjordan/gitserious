@@ -36,8 +36,7 @@ pub use identifier::{
 };
 pub use property::{
     PropertyCondition, PropertyConditionError, PropertyDefinition, PropertyDefinitionError,
-    PropertyMultiplicity, PropertyRequirement, PropertyValue, PropertyValueError, PropertyValues,
-    PropertyValuesError,
+    PropertyRequirement, PropertyValue, PropertyValueError,
 };
 pub use property_validation::{
     ConditionalApplicability, PropertyResponse, PropertyValidationIssue,

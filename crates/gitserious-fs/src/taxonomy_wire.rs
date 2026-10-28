@@ -1,8 +1,8 @@
 use gitserious_app::ConfigurationError;
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
-    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, SchemaVersion,
-    Taxonomy, TaxonomyId, TaxonomyLineage, TaxonomyVersion,
+    PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion, Taxonomy, TaxonomyId,
+    TaxonomyLineage, TaxonomyVersion,
 };
 use serde::{Deserialize, Serialize};
 
@@ -38,15 +38,7 @@ struct CommitTypeWire {
 struct PropertyWire {
     key: String,
     description: String,
-    multiplicity: MultiplicityWire,
     requirement: RequirementWire,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case")]
-enum MultiplicityWire {
-    Single,
-    Multiple,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -91,10 +83,6 @@ fn property_to_wire(property: &PropertyDefinition) -> PropertyWire {
     PropertyWire {
         key: property.key().to_string(),
         description: property.description().to_owned(),
-        multiplicity: match property.multiplicity() {
-            PropertyMultiplicity::Single => MultiplicityWire::Single,
-            PropertyMultiplicity::Multiple => MultiplicityWire::Multiple,
-        },
         requirement: match property.requirement() {
             PropertyRequirement::Required => RequirementWire::Required,
             PropertyRequirement::Recommended => RequirementWire::Recommended,
@@ -156,10 +144,6 @@ fn commit_type_from_wire(
 
 fn property_from_wire(wire: PropertyWire, location: &str) -> Result<PropertyDefinition, String> {
     let key = PropertyKey::new(wire.key).map_err(|error| format!("{location}.key: {error}"))?;
-    let multiplicity = match wire.multiplicity {
-        MultiplicityWire::Single => PropertyMultiplicity::Single,
-        MultiplicityWire::Multiple => PropertyMultiplicity::Multiple,
-    };
     let requirement = match wire.requirement {
         RequirementWire::Required => PropertyRequirement::Required,
         RequirementWire::Recommended => PropertyRequirement::Recommended,
@@ -175,7 +159,7 @@ fn property_from_wire(wire: PropertyWire, location: &str) -> Result<PropertyDefi
             PropertyRequirement::Conditional(condition)
         }
     };
-    PropertyDefinition::new(key, wire.description, requirement, multiplicity)
+    PropertyDefinition::new(key, wire.description, requirement)
         .map_err(|error| format!("{location}: {error}"))
 }
 

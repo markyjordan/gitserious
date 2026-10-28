@@ -4,9 +4,9 @@ use std::fmt::Write;
 use gitserious_core::{
     CommitDraft, CommitProvenance, CommitScope, CommitSubject, CommitTypeDefinition, CommitTypeId,
     CommitValidationError, ConditionalApplicability, Description, Fingerprint, PropertyDefinition,
-    PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyResponse, PropertyValue,
-    PropertyValues, SchemaVersion, Taxonomy, TaxonomyId, TaxonomyVersion, built_in_taxonomies,
-    validate_commit_draft, validate_commit_draft_with_provenance,
+    PropertyKey, PropertyRequirement, PropertyResponse, PropertyValue, SchemaVersion, Taxonomy,
+    TaxonomyId, TaxonomyVersion, built_in_taxonomies, validate_commit_draft,
+    validate_commit_draft_with_provenance,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -19,7 +19,6 @@ fn taxonomy(domain: &str, required: Option<&str>) -> Result<Taxonomy, Box<dyn Er
                 PropertyKey::new(key)?,
                 "Durable context.",
                 PropertyRequirement::Required,
-                PropertyMultiplicity::Single,
             )?)
         })
         .transpose()?
@@ -44,7 +43,7 @@ fn draft(required: Option<(&str, &str)>) -> Result<CommitDraft, Box<dyn Error>> 
         .map(|(key, text)| -> Result<_, Box<dyn Error>> {
             Ok(PropertyResponse::new(
                 PropertyKey::new(key)?,
-                Some(PropertyValues::single(PropertyValue::new(text)?)),
+                Some(PropertyValue::new(text)?),
                 None,
             ))
         })
@@ -200,7 +199,7 @@ fn provenance_rendering_keeps_explicit_applicability_validation() -> TestResult 
         .map(|key| -> Result<_, Box<dyn Error>> {
             Ok(PropertyResponse::new(
                 PropertyKey::new(key)?,
-                Some(PropertyValues::single(PropertyValue::new("context")?)),
+                Some(PropertyValue::new("context")?),
                 None,
             ))
         })

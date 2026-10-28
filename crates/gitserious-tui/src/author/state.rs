@@ -2,9 +2,8 @@ use crate::confirmation::{Answer, ConfirmDialog, DISCARD};
 use gitserious_app::{CommitAuthoringContext, CommitDraftAuthorOutcome, CommitTaxonomy};
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
-    ConditionalApplicability, PropertyKey, PropertyMultiplicity, PropertyRequirement,
-    PropertyResponse, PropertyValidationIssueKind, PropertyValue, PropertyValues,
-    ValidationSeverity, validate_commit_draft,
+    ConditionalApplicability, PropertyKey, PropertyRequirement, PropertyResponse,
+    PropertyValidationIssueKind, PropertyValue, ValidationSeverity, validate_commit_draft,
 };
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -44,30 +43,6 @@ pub(crate) enum FieldId {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum FieldKind {
-    Scope,
-    Description,
-    Property {
-        definition_index: usize,
-        value_index: usize,
-    },
-    BreakingChange,
-}
-
-impl FieldKind {
-    pub(crate) const fn id(self) -> FieldId {
-        match self {
-            Self::Scope => FieldId::Scope,
-            Self::Description => FieldId::Description,
-            Self::Property {
-                definition_index, ..
-            } => FieldId::Property(definition_index),
-            Self::BreakingChange => FieldId::BreakingChange,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FieldStatus {
     Incomplete,
     Recommended,
@@ -90,7 +65,7 @@ pub(crate) struct HudField {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct DocumentSection {
-    kind: FieldKind,
+    kind: FieldId,
     heading_line: usize,
     end_line: usize,
     text: String,
@@ -164,7 +139,7 @@ impl ComposerState {
         self.editor.lines() != self.pristine || self.applicability.iter().any(Option::is_some)
     }
 
-    pub(crate) fn current_field(&self, definition: &CommitTypeDefinition) -> Option<FieldKind> {
+    pub(crate) fn current_field(&self, definition: &CommitTypeDefinition) -> Option<FieldId> {
         let cursor_line = self.editor.cursor().0;
         self.parse(definition)
             .sections
@@ -186,7 +161,7 @@ impl ComposerState {
             let sections = parsed
                 .sections
                 .iter()
-                .filter(|section| section.kind.id() == id)
+                .filter(|section| section.kind == id)
                 .collect::<Vec<_>>();
             let invalid = issues.iter().any(|issue| issue.field == Some(id))
                 || sections.iter().any(|section| match id {
@@ -241,7 +216,7 @@ impl ComposerState {
         &self,
         definition: &CommitTypeDefinition,
     ) -> Option<(&ValidationIssue, ValidationSeverity)> {
-        let current = self.current_field(definition).map(FieldKind::id);
+        let current = self.current_field(definition);
         let on_current = |issue: &&ValidationIssue| current.is_some() && issue.field == current;
         self.issues
             .iter()
@@ -262,85 +237,6 @@ impl ComposerState {
 
     fn parse(&self, definition: &CommitTypeDefinition) -> ParsedDocument {
         parse_document(self.editor.lines(), definition)
-    }
-
-    fn edit_occurrence(&mut self, definition: &CommitTypeDefinition, add: bool) {
-        let Some(
-            kind @ FieldKind::Property {
-                definition_index,
-                value_index,
-            },
-        ) = self.current_field(definition)
-        else {
-            return;
-        };
-        let property = &definition.properties()[definition_index];
-        if property.multiplicity() != PropertyMultiplicity::Multiple {
-            return;
-        }
-        let parsed = self.parse(definition);
-        let Some(section) = parsed.sections.iter().find(|section| section.kind == kind) else {
-            return;
-        };
-        let count = parsed
-            .sections
-            .iter()
-            .filter(|section| section.kind.id() == kind.id())
-            .count();
-        let mut lines = self.editor.lines().to_vec();
-        let before_group = lines.get(section.end_line).is_some_and(|line| {
-            matches!(
-                structural_marker(line, definition),
-                Some(DocumentMarker::Section(_))
-            )
-        });
-        let target_occurrence = if add {
-            let insertion = section.end_line.saturating_sub(usize::from(before_group));
-            lines.splice(
-                insertion..insertion,
-                [
-                    property_heading(property.key().as_str()),
-                    String::new(),
-                    String::new(),
-                ],
-            );
-            value_index + 1
-        } else if count == 1 {
-            lines.splice(
-                section.heading_line + 1..section.end_line,
-                vec![String::new(); if before_group { 3 } else { 2 }],
-            );
-            0
-        } else {
-            lines.drain(section.heading_line..section.end_line);
-            if before_group {
-                lines.insert(section.heading_line, String::new());
-            }
-            value_index.min(count - 2)
-        };
-        if !headings_are_intact(&lines, definition) {
-            return;
-        }
-        let target = parse_document(&lines, definition)
-            .sections
-            .into_iter()
-            .find(|section| {
-                section.kind
-                    == FieldKind::Property {
-                        definition_index,
-                        value_index: target_occurrence,
-                    }
-            })
-            .map_or(SCOPE_VALUE_LINE, |section| section.heading_line + 1);
-        self.editor
-            .set_atomic_ranges(std::iter::empty::<AtomicRange>());
-        self.editor.select_all();
-        self.editor.insert_str(lines.join("\n"));
-        apply_heading_guards(&mut self.editor, definition);
-        self.editor
-            .move_cursor(CursorMove::Jump(terminal_line(target), 0));
-        self.issues.clear();
-        self.warnings.clear();
     }
 
     fn validate(
@@ -369,7 +265,7 @@ impl ComposerState {
                     authored
                         .iter()
                         .find(|item| item.key() == property.key())
-                        .map(|item| item.values().clone()),
+                        .map(|item| item.value().clone()),
                     self.applicability[index],
                 )
             })
@@ -379,7 +275,7 @@ impl ComposerState {
                 Ok(draft) => draft,
                 Err(error) => {
                     issues.push(ValidationIssue {
-                        field: self.current_field(definition).map(FieldKind::id),
+                        field: self.current_field(definition),
                         line: self.editor.cursor().0,
                         message: error.to_string(),
                     });
@@ -406,7 +302,7 @@ impl ComposerState {
             line: parsed
                 .sections
                 .iter()
-                .find(|section| Some(section.kind.id()) == field)
+                .find(|section| Some(section.kind) == field)
                 .map_or(cursor, |section| section.heading_line + 1),
             message,
         };
@@ -493,10 +389,10 @@ impl ComposerState {
     fn move_horizontally_within_field(&mut self, definition: &CommitTypeDefinition, key: KeyEvent) {
         let previous = self.editor.clone();
         let previous_cursor = self.editor.cursor();
-        let previous_field = self.current_field(definition).map(FieldKind::id);
+        let previous_field = self.current_field(definition);
         self.editor.input(Input::from(key));
         skip_noneditable_cursor(&mut self.editor, definition, previous_cursor);
-        let current_field = self.current_field(definition).map(FieldKind::id);
+        let current_field = self.current_field(definition);
         if previous_field.is_none() || current_field != previous_field {
             self.editor = previous;
         } else {
@@ -513,7 +409,7 @@ impl ComposerState {
             return false;
         };
         let current = &parsed.sections[current_index];
-        let should_advance = matches!(current.kind, FieldKind::Scope | FieldKind::Description)
+        let should_advance = matches!(current.kind, FieldId::Scope | FieldId::Description)
             || current.text.is_empty();
         if !should_advance {
             return false;
@@ -533,7 +429,7 @@ fn validation_field(
 ) -> Option<FieldId> {
     use gitserious_core::CommitValidationError as E;
     let key = match error {
-        E::UnknownProperty(key) | E::MissingRequired(key) | E::Multiplicity { key, .. } => key,
+        E::UnknownProperty(key) | E::MissingRequired(key) => key,
         E::PropertyResponse(kind) => issue_key(kind),
         E::UnknownCommitType { .. } | E::TypeMismatch { .. } => return None,
     };
@@ -550,8 +446,7 @@ fn issue_key(kind: &PropertyValidationIssueKind) -> &PropertyKey {
         | P::MissingConditionalDecision(key)
         | P::MissingApplicableValue(key)
         | P::ValueForNonApplicableProperty(key)
-        | P::UnexpectedConditionalDecision(key)
-        | P::Multiplicity { key, .. } => key,
+        | P::UnexpectedConditionalDecision(key) => key,
     }
 }
 
@@ -635,12 +530,10 @@ fn headings_are_intact(lines: &[String], definition: &CommitTypeDefinition) -> b
             structural_marker(line, definition).map(|marker| (line_index, marker))
         })
         .collect::<Vec<_>>();
-    let mut signature = markers
+    let signature = markers
         .iter()
         .map(|(_, marker)| *marker)
         .collect::<Vec<_>>();
-    signature.dedup_by(|right, left| right == left && matches!(left,
-        DocumentMarker::Field(FieldId::Property(index)) if definition.properties()[*index].multiplicity() == PropertyMultiplicity::Multiple));
     let headings = markers
         .iter()
         .filter(|(_, marker)| matches!(marker, DocumentMarker::Field(_)))
@@ -821,7 +714,6 @@ fn parse_document(lines: &[String], definition: &CommitTypeDefinition) -> Parsed
         }
     }
 
-    let mut occurrences = vec![0; definition.properties().len()];
     for (index, boundary) in boundaries.iter().copied().enumerate() {
         let BoundaryKind::Known(id) = boundary.kind else {
             continue;
@@ -830,21 +722,8 @@ fn parse_document(lines: &[String], definition: &CommitTypeDefinition) -> Parsed
             .get(index + 1)
             .map_or(lines.len(), |next| next.line);
         let text = section_text(&lines[boundary.line + 1..end_line]);
-        let kind = match id {
-            FieldId::Scope => FieldKind::Scope,
-            FieldId::Description => FieldKind::Description,
-            FieldId::Property(definition_index) => {
-                let value_index = occurrences[definition_index];
-                occurrences[definition_index] += 1;
-                FieldKind::Property {
-                    definition_index,
-                    value_index,
-                }
-            }
-            FieldId::BreakingChange => FieldKind::BreakingChange,
-        };
         parsed.sections.push(DocumentSection {
-            kind,
+            kind: id,
             heading_line: boundary.line,
             end_line,
             text,
@@ -859,10 +738,9 @@ fn parse_document(lines: &[String], definition: &CommitTypeDefinition) -> Parsed
         let matching = parsed
             .sections
             .iter()
-            .filter(|section| section.kind.id() == id)
+            .filter(|section| section.kind == id)
             .collect::<Vec<_>>();
-        let repeatable = matches!(id, FieldId::Property(index) if definition.properties()[index].multiplicity() == PropertyMultiplicity::Multiple);
-        if matching.len() > 1 && !repeatable {
+        if matching.len() > 1 {
             for duplicate in matching.into_iter().skip(1) {
                 parsed.issues.push(ValidationIssue {
                     field: Some(id),
@@ -949,7 +827,7 @@ fn parse_scope(parsed: &ParsedDocument, issues: &mut Vec<ValidationIssue>) -> Op
     let section = parsed
         .sections
         .iter()
-        .find(|section| section.kind == FieldKind::Scope)?;
+        .find(|section| section.kind == FieldId::Scope)?;
     if section.text.is_empty() {
         return None;
     }
@@ -973,7 +851,7 @@ fn parse_description(
     let Some(section) = parsed
         .sections
         .iter()
-        .find(|section| section.kind == FieldKind::Description)
+        .find(|section| section.kind == FieldId::Description)
     else {
         issues.push(ValidationIssue {
             field: Some(FieldId::Description),
@@ -1002,54 +880,26 @@ fn build_properties(
 ) -> Vec<AuthoredProperty> {
     let mut authored = Vec::new();
     for (definition_index, property) in definition.properties().iter().enumerate() {
-        let sections = parsed
-            .sections
-            .iter()
-            .filter(|section| section.kind.id() == FieldId::Property(definition_index))
-            .collect::<Vec<_>>();
-        let first_line = sections
-            .first()
-            .map_or(0, |section| section.heading_line + 1);
-        let values = sections
-            .iter()
-            .filter(|section| !section.text.is_empty())
-            .filter_map(|section| match PropertyValue::new(&section.text) {
-                Ok(value) => Some(value),
-                Err(error) => {
-                    issues.push(ValidationIssue {
-                        field: Some(FieldId::Property(definition_index)),
-                        line: section.heading_line + 1,
-                        message: error.to_string(),
-                    });
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        if values.is_empty() {
+        let id = FieldId::Property(definition_index);
+        let section = parsed.sections.iter().find(|section| section.kind == id);
+        let Some(section) = section.filter(|section| !section.text.is_empty()) else {
             if property.requirement() == &PropertyRequirement::Required {
                 issues.push(ValidationIssue {
-                    field: Some(FieldId::Property(definition_index)),
-                    line: first_line,
+                    field: Some(id),
+                    line: section.map_or(0, |section| section.heading_line + 1),
                     message: format!("complete required property \"{}\"", property.key()),
                 });
             }
             continue;
-        }
-        let values = match property.multiplicity() {
-            PropertyMultiplicity::Single => PropertyValues::single(values[0].clone()),
-            PropertyMultiplicity::Multiple => match PropertyValues::multiple(values) {
-                Ok(values) => values,
-                Err(error) => {
-                    issues.push(ValidationIssue {
-                        field: Some(FieldId::Property(definition_index)),
-                        line: first_line,
-                        message: error.to_string(),
-                    });
-                    continue;
-                }
-            },
         };
-        authored.push(AuthoredProperty::new(property.key().clone(), values));
+        match PropertyValue::new(&section.text) {
+            Ok(value) => authored.push(AuthoredProperty::new(property.key().clone(), value)),
+            Err(error) => issues.push(ValidationIssue {
+                field: Some(id),
+                line: section.heading_line + 1,
+                message: error.to_string(),
+            }),
+        }
     }
     authored
 }
@@ -1061,7 +911,7 @@ fn parse_breaking_change(
     let section = parsed
         .sections
         .iter()
-        .find(|section| section.kind == FieldKind::BreakingChange)?;
+        .find(|section| section.kind == FieldId::BreakingChange)?;
     if section.text.is_empty() {
         return None;
     }
@@ -1319,9 +1169,7 @@ impl<'a> AuthoringSession<'a> {
                     && self
                         .composer
                         .current_field(&definition)
-                        .is_some_and(|field| {
-                            matches!(field, FieldKind::Scope | FieldKind::Description)
-                        })
+                        .is_some_and(|field| matches!(field, FieldId::Scope | FieldId::Description))
                 {
                     return None;
                 }
@@ -1413,18 +1261,10 @@ impl<'a> AuthoringSession<'a> {
     }
 
     fn handle_composer_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
-        if key.modifiers.contains(KeyModifiers::ALT) && matches!(key.code, KeyCode::Char('=' | '-'))
-        {
-            let definition = self.definition().clone();
-            self.composer
-                .edit_occurrence(&definition, key.code == KeyCode::Char('='));
-            return None;
-        }
         if key.modifiers.contains(KeyModifiers::ALT)
             && matches!(key.code, KeyCode::Char('a' | 'n'))
-            && let Some(FieldKind::Property {
-                definition_index, ..
-            }) = self.composer.current_field(self.definition())
+            && let Some(FieldId::Property(definition_index)) =
+                self.composer.current_field(self.definition())
             && matches!(
                 self.definition().properties()[definition_index].requirement(),
                 PropertyRequirement::Conditional(_)

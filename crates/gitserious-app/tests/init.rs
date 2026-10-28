@@ -11,8 +11,8 @@ use gitserious_app::{
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
-    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, SchemaVersion,
-    Taxonomy, TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
+    PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion, Taxonomy, TaxonomyId,
+    TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -359,13 +359,11 @@ fn property(
     key: &str,
     description: &str,
     requirement: PropertyRequirement,
-    multiplicity: PropertyMultiplicity,
 ) -> Result<PropertyDefinition, Box<dyn Error>> {
     Ok(PropertyDefinition::new(
         PropertyKey::new(key)?,
         description,
         requirement,
-        multiplicity,
     )?)
 }
 
@@ -394,18 +392,8 @@ fn taxonomy(commit_types: Vec<CommitTypeDefinition>) -> Result<Taxonomy, Box<dyn
 }
 
 fn commit_type_variants() -> Result<Vec<CommitTypeDefinition>, Box<dyn Error>> {
-    let required = property(
-        "intent",
-        "Why.",
-        PropertyRequirement::Required,
-        PropertyMultiplicity::Single,
-    )?;
-    let second = property(
-        "behavior",
-        "What.",
-        PropertyRequirement::Recommended,
-        PropertyMultiplicity::Single,
-    )?;
+    let required = property("intent", "Why.", PropertyRequirement::Required)?;
+    let second = property("behavior", "What.", PropertyRequirement::Recommended)?;
     let mut variants = vec![
         definition(
             1,
@@ -428,43 +416,17 @@ fn commit_type_variants() -> Result<Vec<CommitTypeDefinition>, Box<dyn Error>> {
         )?,
         definition(1, "feat", "Feature.", vec![second, required])?,
     ];
-    for (key, description, requirement, multiplicity) in [
-        (
-            "intent",
-            "Why.",
-            PropertyRequirement::Required,
-            PropertyMultiplicity::Single,
-        ),
-        (
-            "purpose",
-            "Why.",
-            PropertyRequirement::Required,
-            PropertyMultiplicity::Single,
-        ),
-        (
-            "intent",
-            "Changed.",
-            PropertyRequirement::Required,
-            PropertyMultiplicity::Single,
-        ),
-        (
-            "intent",
-            "Why.",
-            PropertyRequirement::Optional,
-            PropertyMultiplicity::Single,
-        ),
-        (
-            "intent",
-            "Why.",
-            PropertyRequirement::Required,
-            PropertyMultiplicity::Multiple,
-        ),
+    for (key, description, requirement) in [
+        ("intent", "Why.", PropertyRequirement::Required),
+        ("purpose", "Why.", PropertyRequirement::Required),
+        ("intent", "Changed.", PropertyRequirement::Required),
+        ("intent", "Why.", PropertyRequirement::Optional),
     ] {
         variants.push(definition(
             1,
             "feat",
             "Feature.",
-            vec![property(key, description, requirement, multiplicity)?],
+            vec![property(key, description, requirement)?],
         )?);
     }
     for (id, rationale) in [
@@ -481,7 +443,6 @@ fn commit_type_variants() -> Result<Vec<CommitTypeDefinition>, Box<dyn Error>> {
                 "intent",
                 "Why.",
                 PropertyRequirement::Conditional(condition),
-                PropertyMultiplicity::Single,
             )?],
         )?);
     }

@@ -6,7 +6,7 @@ use std::process::{Command, Output};
 use gitserious_app::{CommitWriter, RepositoryRoot};
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, PropertyKey,
-    PropertyValue, PropertyValues, built_in_commit_types, validate_commit_draft,
+    PropertyValue, built_in_commit_types, validate_commit_draft,
 };
 use gitserious_fs::{GitCommitError, GitCommitWriter};
 use tempfile::TempDir;
@@ -50,7 +50,7 @@ fn root(path: &Path) -> Result<RepositoryRoot, Box<dyn Error>> {
 fn property(key: &str, text: &str) -> Result<AuthoredProperty, Box<dyn Error>> {
     Ok(AuthoredProperty::new(
         PropertyKey::new(key)?,
-        PropertyValues::single(PropertyValue::new(text)?),
+        PropertyValue::new(text)?,
     ))
 }
 
