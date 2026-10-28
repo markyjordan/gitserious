@@ -4,14 +4,13 @@ use gitserious_core::{
     AuthoredProperty, COMMIT_MESSAGE_WIDTH, CommitDraft, CommitDraftError, CommitScope,
     CommitScopeError, CommitSubject, CommitSubjectError, CommitTypeDefinition,
     CommitTypeDefinitionError, CommitTypeId, CommitValidationError, PropertyDefinition,
-    PropertyKey, PropertyMultiplicity, PropertyRequirement, PropertyValidationIssueKind,
-    PropertyValue, PropertyValues, SchemaVersion, TaxonomyError, TaxonomyId, built_in_commit_types,
-    validate_commit_draft,
+    PropertyKey, PropertyRequirement, PropertyValidationIssueKind, PropertyValue, SchemaVersion,
+    TaxonomyError, TaxonomyId, built_in_commit_types, validate_commit_draft,
 };
 use unicode_width::UnicodeWidthStr;
 
-fn authored(key: &str, values: PropertyValues) -> Result<AuthoredProperty, Box<dyn Error>> {
-    Ok(AuthoredProperty::new(PropertyKey::new(key)?, values))
+fn authored(key: &str, value: PropertyValue) -> Result<AuthoredProperty, Box<dyn Error>> {
+    Ok(AuthoredProperty::new(PropertyKey::new(key)?, value))
 }
 
 fn value(text: &str) -> Result<PropertyValue, Box<dyn Error>> {
@@ -58,8 +57,8 @@ fn scope_and_subject_enforce_header_boundaries_and_preserve_unicode() -> Result<
 
 #[test]
 fn drafts_reject_duplicate_keys_and_preserve_authored_order() -> Result<(), Box<dyn Error>> {
-    let first = authored("intent", PropertyValues::single(value("one")?))?;
-    let second = authored("intent", PropertyValues::single(value("two")?))?;
+    let first = authored("intent", value("one")?)?;
+    let second = authored("intent", value("two")?)?;
     let duplicate = CommitDraft::new(
         CommitTypeId::new("feat")?,
         Some(CommitScope::new("core")?),
@@ -73,7 +72,7 @@ fn drafts_reject_duplicate_keys_and_preserve_authored_order() -> Result<(), Box<
         )?))
     );
 
-    let decision = authored("decision", PropertyValues::single(value("decision")?))?;
+    let decision = authored("decision", value("decision")?)?;
     let draft = feat_draft(vec![decision.clone(), first])?;
     assert_eq!(draft.properties()[0], decision);
     Ok(())
@@ -83,15 +82,10 @@ fn drafts_reject_duplicate_keys_and_preserve_authored_order() -> Result<(), Box<
 fn canonical_render_uses_schema_order_and_preserves_multiline_values() -> Result<(), Box<dyn Error>>
 {
     let draft = feat_draft(vec![
-        authored(
-            "decision",
-            PropertyValues::single(value("render one message")?),
-        )?,
+        authored("decision", value("render one message")?)?,
         authored(
             "intent",
-            PropertyValues::single(value(
-                "centralize validation\n  preserve authored indentation 🦀",
-            )?),
+            value("centralize validation\n  preserve authored indentation 🦀")?,
         )?,
     ])?;
 
@@ -111,8 +105,8 @@ fn canonical_prose_wraps_at_80_columns_without_mutating_authored_values()
     let intent = format!("{} durable\n  authored indentation", "x".repeat(75));
     let decision = "y".repeat(80);
     let draft = feat_draft(vec![
-        authored("intent", PropertyValues::single(value(&intent)?))?,
-        authored("decision", PropertyValues::single(value(&decision)?))?,
+        authored("intent", value(&intent)?)?,
+        authored("decision", value(&decision)?)?,
     ])?;
 
     let message = validate_commit_draft(&built_in_commit_types()[0], &draft).into_message()?;
@@ -123,15 +117,7 @@ fn canonical_prose_wraps_at_80_columns_without_mutating_authored_values()
             "x".repeat(75),
         )
     );
-    assert_eq!(
-        draft.properties()[0]
-            .values()
-            .iter()
-            .next()
-            .ok_or("missing value")?
-            .as_str(),
-        intent
-    );
+    assert_eq!(draft.properties()[0].value().as_str(), intent);
     assert!(
         message
             .as_str()
@@ -147,8 +133,8 @@ fn canonical_wrapping_splits_long_unicode_tokens_only_at_grapheme_boundaries()
     let crabs = "🦀".repeat(41);
     let combined = "e\u{301}".repeat(81);
     let draft = feat_draft(vec![
-        authored("intent", PropertyValues::single(value(&crabs)?))?,
-        authored("decision", PropertyValues::single(value(&combined)?))?,
+        authored("intent", value(&crabs)?)?,
+        authored("decision", value(&combined)?)?,
     ])?;
 
     let message = validate_commit_draft(&built_in_commit_types()[0], &draft).into_message()?;
@@ -176,11 +162,8 @@ fn breaking_change_prefix_and_continuations_share_the_80_column_contract()
         .collect::<Vec<_>>()
         .join(" ");
     let draft = feat_draft(vec![
-        authored("intent", PropertyValues::single(value("protect callers")?))?,
-        authored(
-            "decision",
-            PropertyValues::single(value("require upgrade")?),
-        )?,
+        authored("intent", value("protect callers")?)?,
+        authored("decision", value("require upgrade")?)?,
     ])?
     .with_breaking_change(value(&format!("{breaking}\n{}", "z".repeat(81)))?);
 
@@ -220,11 +203,8 @@ fn canonical_render_hyphenates_scope_whitespace() -> Result<(), Box<dyn Error>> 
             Some(CommitScope::new(scope)?),
             CommitSubject::new("normalize scope")?,
             vec![
-                authored("intent", PropertyValues::single(value("canonical output")?))?,
-                authored(
-                    "decision",
-                    PropertyValues::single(value("replace whitespace")?),
-                )?,
+                authored("intent", value("canonical output")?)?,
+                authored("decision", value("replace whitespace")?)?,
             ],
         )?;
         assert!(
@@ -241,11 +221,8 @@ fn canonical_render_hyphenates_scope_whitespace() -> Result<(), Box<dyn Error>> 
 fn breaking_change_adds_header_bang_and_uppercase_multiline_footer() -> Result<(), Box<dyn Error>> {
     let definition = &built_in_commit_types()[0];
     let draft = feat_draft(vec![
-        authored("intent", PropertyValues::single(value("replace API")?))?,
-        authored(
-            "decision",
-            PropertyValues::single(value("require migration")?),
-        )?,
+        authored("intent", value("replace API")?)?,
+        authored("decision", value("require migration")?)?,
     ])?
     .with_breaking_change(value("remove the old API\nuse the replacement")?);
 
@@ -273,7 +250,6 @@ fn breaking_change_without_scope_or_body_preserves_canonical_separation()
             PropertyKey::new("notes")?,
             "Optional body notes.",
             PropertyRequirement::Optional,
-            PropertyMultiplicity::Single,
         )?],
     )?;
     let draft = CommitDraft::new(
@@ -294,10 +270,9 @@ fn breaking_change_without_scope_or_body_preserves_canonical_separation()
 }
 
 #[test]
-fn validation_reports_type_unknown_required_and_multiplicity_failures() -> Result<(), Box<dyn Error>>
-{
+fn validation_reports_type_unknown_and_required_failures() -> Result<(), Box<dyn Error>> {
     let feat = &built_in_commit_types()[0];
-    let unknown = authored("unknown", PropertyValues::single(value("value")?))?;
+    let unknown = authored("unknown", value("value")?)?;
     let missing = feat_draft(vec![unknown])?;
     let Err(errors) = validate_commit_draft(feat, &missing).into_message() else {
         return Err("invalid draft accepted".into());
@@ -332,36 +307,14 @@ fn validation_reports_type_unknown_required_and_multiplicity_failures() -> Resul
             Some(CommitValidationError::TypeMismatch { .. })
         )
     ));
-
-    let multiple = authored(
-        "intent",
-        PropertyValues::multiple([value("one")?, value("two")?])?,
-    )?;
-    let mismatch = feat_draft(vec![
-        multiple,
-        authored("decision", PropertyValues::single(value("decision")?))?,
-    ])?;
-    assert!(matches!(
-        validate_commit_draft(feat, &mismatch).into_message(),
-        Err(errors) if errors.as_slice().contains(&CommitValidationError::Multiplicity {
-            key: PropertyKey::new("intent")?,
-            expected: PropertyMultiplicity::Single,
-            actual: PropertyMultiplicity::Multiple,
-        })
-    ));
     Ok(())
 }
 
 #[test]
-fn validation_messages_quote_names_and_state_multiplicity_in_words() -> Result<(), Box<dyn Error>> {
+fn validation_messages_quote_names() -> Result<(), Box<dyn Error>> {
     let key = PropertyKey::new("intent")?;
     let feat = CommitTypeId::new("feat")?;
     let fix = CommitTypeId::new("fix")?;
-    let single_to_multiple = || PropertyValidationIssueKind::Multiplicity {
-        key: key.clone(),
-        expected: PropertyMultiplicity::Single,
-        actual: PropertyMultiplicity::Multiple,
-    };
     let cases = [
         (
             CommitValidationError::UnknownCommitType {
@@ -386,19 +339,6 @@ fn validation_messages_quote_names_and_state_multiplicity_in_words() -> Result<(
         (
             CommitValidationError::MissingRequired(key.clone()).to_string(),
             "complete required property \"intent\"",
-        ),
-        (
-            CommitValidationError::Multiplicity {
-                key: key.clone(),
-                expected: PropertyMultiplicity::Multiple,
-                actual: PropertyMultiplicity::Single,
-            }
-            .to_string(),
-            "property \"intent\" takes multiple values, not a single value",
-        ),
-        (
-            CommitValidationError::PropertyResponse(single_to_multiple()).to_string(),
-            "property \"intent\" takes a single value, not multiple values",
         ),
         (
             PropertyValidationIssueKind::UnknownProperty(key.clone()).to_string(),
@@ -433,10 +373,6 @@ fn validation_messages_quote_names_and_state_multiplicity_in_words() -> Result<(
             "property \"intent\" is not conditional",
         ),
         (
-            single_to_multiple().to_string(),
-            "property \"intent\" takes a single value, not multiple values",
-        ),
-        (
             CommitDraftError::DuplicateProperty(key.clone()).to_string(),
             "commit draft repeats property \"intent\"",
         ),
@@ -456,38 +392,6 @@ fn validation_messages_quote_names_and_state_multiplicity_in_words() -> Result<(
 }
 
 #[test]
-fn repeatable_values_render_as_ordered_canonical_property_blocks() -> Result<(), Box<dyn Error>> {
-    let repeatable = CommitTypeDefinition::new(
-        SchemaVersion::V1,
-        CommitTypeId::new("custom")?,
-        "Repeatable test type.",
-        vec![PropertyDefinition::new(
-            PropertyKey::new("evidence")?,
-            "Independent evidence.",
-            PropertyRequirement::Required,
-            PropertyMultiplicity::Multiple,
-        )?],
-    )?;
-    let draft = CommitDraft::new(
-        CommitTypeId::new("custom")?,
-        None,
-        CommitSubject::new("retain evidence")?,
-        vec![authored(
-            "evidence",
-            PropertyValues::multiple([value("first")?, value("second\nline")?])?,
-        )?],
-    )?;
-
-    assert_eq!(
-        validate_commit_draft(&repeatable, &draft)
-            .into_message()?
-            .as_str(),
-        "custom: retain evidence\n\nevidence:\nfirst\n\nevidence:\nsecond\nline\n"
-    );
-    Ok(())
-}
-
-#[test]
 fn recommended_optional_and_conditional_properties_may_be_absent() -> Result<(), Box<dyn Error>> {
     for definition in built_in_commit_types() {
         let properties = definition
@@ -497,7 +401,7 @@ fn recommended_optional_and_conditional_properties_may_be_absent() -> Result<(),
             .map(|property| {
                 Ok(AuthoredProperty::new(
                     property.key().clone(),
-                    PropertyValues::single(PropertyValue::new("complete")?),
+                    PropertyValue::new("complete")?,
                 ))
             })
             .collect::<Result<Vec<_>, Box<dyn Error>>>()?;

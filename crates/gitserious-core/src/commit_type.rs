@@ -116,8 +116,7 @@ mod tests {
     use std::error::Error;
 
     use crate::{
-        CommitTypeId, PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement,
-        SchemaVersion,
+        CommitTypeId, PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion,
     };
 
     use super::{CommitTypeDefinition, CommitTypeDefinitionError};
@@ -127,7 +126,6 @@ mod tests {
             PropertyKey::new(key)?,
             format!("Description for {key}."),
             PropertyRequirement::Required,
-            PropertyMultiplicity::Single,
         )?)
     }
 

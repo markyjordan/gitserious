@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
-use crate::{CommitTypeId, PropertyKey, PropertyResponse, PropertyValue, PropertyValues};
+use crate::{CommitTypeId, PropertyKey, PropertyResponse, PropertyValue};
 
 /// An optional semantic area affected by a commit.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -153,18 +153,18 @@ impl Display for CommitSubjectError {
 
 impl Error for CommitSubjectError {}
 
-/// Authored values associated with one durable property key.
+/// The authored value of one durable property key.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AuthoredProperty {
     key: PropertyKey,
-    values: PropertyValues,
+    value: PropertyValue,
 }
 
 impl AuthoredProperty {
-    /// Associates a property key with one or more authored values.
+    /// Associates a property key with its authored value.
     #[must_use]
-    pub const fn new(key: PropertyKey, values: PropertyValues) -> Self {
-        Self { key, values }
+    pub const fn new(key: PropertyKey, value: PropertyValue) -> Self {
+        Self { key, value }
     }
 
     /// Returns the durable property key.
@@ -173,10 +173,10 @@ impl AuthoredProperty {
         &self.key
     }
 
-    /// Returns the authored values and their declared multiplicity.
+    /// Returns the authored value.
     #[must_use]
-    pub const fn values(&self) -> &PropertyValues {
-        &self.values
+    pub const fn value(&self) -> &PropertyValue {
+        &self.value
     }
 }
 
@@ -197,7 +197,7 @@ impl CommitDraft {
     /// # Errors
     ///
     /// Returns [`CommitDraftError`] when the same property key appears more
-    /// than once. Repeatable values belong in one [`PropertyValues`] value.
+    /// than once.
     pub fn new(
         commit_type: CommitTypeId,
         scope: Option<CommitScope>,
@@ -246,8 +246,8 @@ impl CommitDraft {
             .iter()
             .filter_map(|response| {
                 response
-                    .values()
-                    .map(|values| AuthoredProperty::new(response.key().clone(), values.clone()))
+                    .value()
+                    .map(|value| AuthoredProperty::new(response.key().clone(), value.clone()))
             })
             .collect();
         let mut draft = Self::new(commit_type, scope, subject, properties)?;

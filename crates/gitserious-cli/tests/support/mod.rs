@@ -15,7 +15,7 @@ use gitserious_app::{
 use gitserious_cli::{CommitAdapters, run_from_with_commit};
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
-    CommitTypeId, PropertyRequirement, PropertyValue, PropertyValues,
+    CommitTypeId, PropertyRequirement, PropertyValue,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -223,7 +223,7 @@ pub fn valid_draft(definition: &CommitTypeDefinition) -> Result<CommitDraft, Box
         .map(|property| {
             Ok(AuthoredProperty::new(
                 property.key().clone(),
-                PropertyValues::single(PropertyValue::new(format!("authored {}", property.key()))?),
+                PropertyValue::new(format!("authored {}", property.key()))?,
             ))
         })
         .collect::<Result<Vec<_>, Box<dyn Error>>>()?;

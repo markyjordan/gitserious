@@ -32,7 +32,6 @@ description = \"Ship a platform change.\"\n\
 [[taxonomies.commit-types.properties]]\n\
 key = \"intent\"\n\
 description = \"Why the platform must change.\"\n\
-multiplicity = \"single\"\n\
 \n\
 [taxonomies.commit-types.properties.requirement]\n\
 level = \"required\"\n";
@@ -53,16 +52,12 @@ fn show_prints_built_in_properties_in_lock_words() -> Result<(), Box<dyn Error>>
         assert!(!properties.is_empty(), "{shown}");
         for property in properties {
             let columns = property.split('\t').collect::<Vec<_>>();
-            assert_eq!(columns.len(), 3, "{taxonomy}: {property:?}");
-            let (requirement, multiplicity) = (columns[1], columns[2]);
+            assert_eq!(columns.len(), 2, "{taxonomy}: {property:?}");
+            let requirement = columns[1];
             let condition = requirement.strip_prefix("conditional:");
             assert!(
                 matches!(requirement, "required" | "recommended" | "optional")
                     || condition.is_some_and(|id| ConditionId::new(id).is_ok()),
-                "{taxonomy}: {property:?}"
-            );
-            assert!(
-                matches!(multiplicity, "single" | "multiple"),
                 "{taxonomy}: {property:?}"
             );
         }

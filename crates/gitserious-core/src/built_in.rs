@@ -238,7 +238,7 @@ fn conditional(
 mod tests {
     use std::collections::BTreeSet;
 
-    use crate::{PropertyMultiplicity, PropertyRequirement, SchemaVersion, built_in_commit_types};
+    use crate::{PropertyRequirement, SchemaVersion, built_in_commit_types};
 
     #[derive(Clone, Copy)]
     enum ExpectedRequirement {
@@ -522,7 +522,6 @@ mod tests {
                 assert_eq!(property.key().as_str(), expected_property.key);
                 assert_eq!(property.description(), expected_property.description);
                 assert!(!property.description().trim().is_empty());
-                assert_eq!(property.multiplicity(), PropertyMultiplicity::Single);
                 assert_requirement(property.requirement(), expected_property.requirement);
             }
         }

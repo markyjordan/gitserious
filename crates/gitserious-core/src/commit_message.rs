@@ -7,8 +7,8 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     CommitDraft, CommitProvenance, CommitTypeDefinition, CommitTypeId, PropertyKey,
-    PropertyMultiplicity, PropertyResponse, PropertyValidationIssue, PropertyValidationIssueKind,
-    TaxonomyId, ValidationSeverity,
+    PropertyResponse, PropertyValidationIssue, PropertyValidationIssueKind, TaxonomyId,
+    ValidationSeverity,
 };
 
 /// Maximum Unicode display width of canonical commit-message prose.
@@ -56,11 +56,9 @@ fn render_valid_draft(definition: &CommitTypeDefinition, draft: &CommitDraft) ->
         else {
             continue;
         };
-        for value in authored.values() {
-            let _ = write!(message, "\n{}:\n", authored.key());
-            for line in value.as_str().lines() {
-                write_wrapped_line(&mut message, line);
-            }
+        let _ = write!(message, "\n{}:\n", authored.key());
+        for line in authored.value().as_str().lines() {
+            write_wrapped_line(&mut message, line);
         }
     }
 
@@ -234,7 +232,7 @@ pub fn validate_commit_draft(
                 .map(|property| {
                     PropertyResponse::new(
                         property.key().clone(),
-                        Some(property.values().clone()),
+                        Some(property.value().clone()),
                         None,
                     )
                 })
@@ -263,15 +261,6 @@ pub fn validate_commit_draft(
                 PropertyValidationIssueKind::MissingRequired(key) => {
                     CommitValidationError::MissingRequired(key.clone())
                 }
-                PropertyValidationIssueKind::Multiplicity {
-                    key,
-                    expected,
-                    actual,
-                } => CommitValidationError::Multiplicity {
-                    key: key.clone(),
-                    expected: *expected,
-                    actual: *actual,
-                },
                 kind => CommitValidationError::PropertyResponse(kind.clone()),
             }),
         }
@@ -307,15 +296,6 @@ pub enum CommitValidationError {
     UnknownProperty(PropertyKey),
     /// A required property is absent.
     MissingRequired(PropertyKey),
-    /// Authored values use a different multiplicity than the schema.
-    Multiplicity {
-        /// Property with the mismatch.
-        key: PropertyKey,
-        /// Schema multiplicity.
-        expected: PropertyMultiplicity,
-        /// Authored multiplicity.
-        actual: PropertyMultiplicity,
-    },
 }
 
 impl Display for CommitValidationError {
@@ -339,16 +319,6 @@ impl Display for CommitValidationError {
             Self::MissingRequired(key) => {
                 write!(formatter, "complete required property \"{key}\"")
             }
-            Self::Multiplicity {
-                key,
-                expected,
-                actual,
-            } => write!(
-                formatter,
-                "property \"{key}\" takes {}, not {}",
-                expected.values_phrase(),
-                actual.values_phrase()
-            ),
         }
     }
 }

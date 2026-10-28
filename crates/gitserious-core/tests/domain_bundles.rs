@@ -2,9 +2,8 @@ use std::error::Error;
 use std::fmt::Write as _;
 
 use gitserious_core::{
-    CommitDraft, CommitSubject, CommitValidationError, PropertyMultiplicity, PropertyRequirement,
-    PropertyResponse, PropertyValue, PropertyValues, Taxonomy, TaxonomyVersion,
-    built_in_taxonomies, validate_commit_draft,
+    CommitDraft, CommitSubject, CommitValidationError, PropertyRequirement, PropertyResponse,
+    PropertyValue, Taxonomy, TaxonomyVersion, built_in_taxonomies, validate_commit_draft,
 };
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -32,7 +31,6 @@ fn verify_taxonomy(id: &str, expected: &[(&str, &str)]) -> TestResult {
             .properties()
             .iter()
             .map(|property| {
-                assert_eq!(property.multiplicity(), PropertyMultiplicity::Single);
                 assert!(!property.description().trim().is_empty());
                 let suffix = match property.requirement() {
                     PropertyRequirement::Required => "!",
@@ -50,10 +48,10 @@ fn verify_taxonomy(id: &str, expected: &[(&str, &str)]) -> TestResult {
             .map(|property| {
                 Ok(PropertyResponse::new(
                     property.key().clone(),
-                    Some(PropertyValues::single(PropertyValue::new(format!(
+                    Some(PropertyValue::new(format!(
                         "context for {}",
                         property.key()
-                    ))?)),
+                    ))?),
                     None,
                 ))
             })

@@ -137,13 +137,13 @@ The breadcrumb adds `add type` or `edit type`, then `add property` or
 `edit property` while that child is open.
 
 The Property frame contains Name, Description, and Policy, with a `used/100`
-counter for Name and Description. New properties default to required policy
-and a single value. Left and Right on Policy choose required, recommended,
-or conditional. Conditional policy exposes Condition name and Condition
-rationale; both are required and excluded from the counter. Existing Optional
-policy, multiplicity, condition metadata, and schema versions are preserved
-when copied items are edited. Choosing another policy explicitly replaces
-Optional. Alt+Enter inserts a Description or Condition rationale newline.
+counter for Name and Description. New properties default to required policy.
+Left and Right on Policy choose required, recommended, or conditional.
+Conditional policy exposes Condition name and Condition rationale; both are
+required and excluded from the counter. Existing Optional policy, condition
+metadata, and schema versions are preserved when copied items are edited.
+Choosing another policy explicitly replaces Optional. Alt+Enter inserts a
+Description or Condition rationale newline.
 Required and recommended Property views use an 11-row frame. Conditional
 uses 17 rows, with a blank row after Policy and after Condition name, and two
 Condition rationale input rows. On shorter terminals, the sections scroll to
@@ -222,6 +222,6 @@ show taxonomy identities and never mutate project policy.
 
 The composer retains the established schema-document interaction: immutable
 section headings, contextual property guidance, completion markers, explicit
-conditional applicability, repeatable property controls, canonical review, and
+conditional applicability, canonical review, and
 discard confirmation. Generated messages contain `Gitserious-Taxonomy` and
 `Gitserious-Schema` provenance trailers.

@@ -11,8 +11,8 @@ use gitserious_app::{
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeDefinitionError, CommitTypeId, ConditionId, Description,
-    PropertyCondition, PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement,
-    SchemaVersion, Taxonomy, TaxonomyError, TaxonomyId, TaxonomyLineage, TaxonomyVersion,
+    PropertyCondition, PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion,
+    Taxonomy, TaxonomyError, TaxonomyId, TaxonomyLineage, TaxonomyVersion,
 };
 use ratatui::Frame;
 use ratatui::crossterm::event::{
@@ -351,7 +351,6 @@ struct PropertyDraft {
     key: String,
     description: String,
     requirement: PropertyRequirement,
-    multiplicity: PropertyMultiplicity,
 }
 
 impl From<&PropertyDefinition> for PropertyDraft {
@@ -360,7 +359,6 @@ impl From<&PropertyDefinition> for PropertyDraft {
             key: value.key().to_string(),
             description: value.description().to_owned(),
             requirement: value.requirement().clone(),
-            multiplicity: value.multiplicity(),
         }
     }
 }
@@ -459,20 +457,14 @@ impl PropertyDraft {
             key: String::new(),
             description: String::new(),
             requirement: PropertyRequirement::Required,
-            multiplicity: PropertyMultiplicity::Single,
         }
     }
 
     fn build(&self) -> Result<PropertyDefinition, String> {
         let key = PropertyKey::from_label(&self.key)
             .map_err(|error| name_error(NameField::Property, &self.key, &error))?;
-        PropertyDefinition::new(
-            key,
-            self.description.clone(),
-            self.requirement.clone(),
-            self.multiplicity,
-        )
-        .map_err(|_| description_required("Property"))
+        PropertyDefinition::new(key, self.description.clone(), self.requirement.clone())
+            .map_err(|_| description_required("Property"))
     }
 }
 
@@ -2969,16 +2961,12 @@ fn project_guidance(status: &str) -> &'static str {
     }
 }
 
-fn policy_label(requirement: &PropertyRequirement, multiplicity: PropertyMultiplicity) -> String {
-    let requirement = match requirement {
+const fn policy_label(requirement: &PropertyRequirement) -> &'static str {
+    match requirement {
         PropertyRequirement::Required => "required",
         PropertyRequirement::Recommended => "recommended",
         PropertyRequirement::Optional => "optional",
         PropertyRequirement::Conditional(_) => "conditional",
-    };
-    match multiplicity {
-        PropertyMultiplicity::Single => requirement.to_owned(),
-        PropertyMultiplicity::Multiple => format!("{requirement}, multiple"),
     }
 }
 
@@ -3196,7 +3184,6 @@ mod tests {
                     PropertyKey::new("notes")?,
                     "x".repeat(130),
                     PropertyRequirement::Optional,
-                    PropertyMultiplicity::Multiple,
                 )?],
             )?],
         )?;
@@ -4723,13 +4710,11 @@ mod tests {
                                 ConditionId::new("changed")?,
                                 "Required when behavior changes",
                             )?),
-                            PropertyMultiplicity::Multiple,
                         )?,
                         PropertyDefinition::new(
                             PropertyKey::new("notes")?,
                             "Additional notes",
                             PropertyRequirement::Recommended,
-                            PropertyMultiplicity::Single,
                         )?,
                     ],
                 )?,
@@ -6062,7 +6047,7 @@ mod tests {
     }
 
     #[test]
-    fn edited_properties_preserve_schema_policy_and_multiplicity_until_type_completion()
+    fn edited_properties_preserve_schema_and_policy_until_type_completion()
     -> Result<(), Box<dyn std::error::Error>> {
         let (workspace, source) = child_editor_workspace()?;
         let mut state = State::new(&workspace);
@@ -6109,10 +6094,6 @@ mod tests {
         assert_eq!(
             draft.properties[0].requirement,
             PropertyRequirement::Optional
-        );
-        assert_eq!(
-            draft.properties[0].multiplicity,
-            PropertyMultiplicity::Multiple
         );
         assert_eq!(
             workspace.global.borrow().catalog()?.find(source.id()),
@@ -6233,51 +6214,6 @@ mod tests {
             .ok_or("missing taxonomy")?;
         assert_eq!(staged.description().as_ref(), "Original taxonomy revised");
         assert_eq!(staged.version(), TaxonomyVersion::new(4)?);
-        Ok(())
-    }
-
-    #[test]
-    fn property_lists_name_multiple_only_for_multiple_properties()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (workspace, _) = child_editor_workspace()?;
-        let mut state = State::new(&workspace);
-        state.category = Category::Library;
-        state.home_focus = HomeFocus::Content;
-        state.library.select_taxonomy(3);
-        let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(text(&terminal).contains("notes  optional, multiple"));
-
-        state.handle_event(key(KeyCode::Char('e')), &workspace);
-        state.open_type_editor(Some(0));
-        state
-            .type_editor
-            .as_mut()
-            .ok_or("missing type")?
-            .draft
-            .properties
-            .push(PropertyDraft {
-                key: "summary".into(),
-                description: "What shipped".into(),
-                requirement: PropertyRequirement::Required,
-                multiplicity: PropertyMultiplicity::Single,
-            });
-        terminal.draw(|frame| state.render(frame))?;
-        let properties = state.type_editor.as_ref().ok_or("missing type")?.areas[1];
-        let row = |offset| {
-            row_text(
-                &terminal,
-                properties.x,
-                properties.y + offset,
-                properties.width,
-            )
-        };
-        assert!(
-            row(2)
-                .trim_end_matches([' ', '│'])
-                .ends_with("optional, multiple")
-        );
-        assert!(row(3).trim_end_matches([' ', '│']).ends_with("required"));
         Ok(())
     }
 

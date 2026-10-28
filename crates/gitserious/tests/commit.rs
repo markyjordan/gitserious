@@ -11,7 +11,7 @@ use gitserious_app::{
 };
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitSubject, CommitTypeDefinition, CommitTypeId,
-    PropertyRequirement, PropertyValue, PropertyValues, TaxonomyId, built_in_taxonomies,
+    PropertyRequirement, PropertyValue, TaxonomyId, built_in_taxonomies,
 };
 use gitserious_fs::{GitCommitWriter, GitRepositoryLocator, TomlProjectStateStore};
 use support::{Home, git, head_exists, repository, stderr, stdout, with_stale_fingerprint};
@@ -71,9 +71,7 @@ impl CommitDraftAuthor for ReviewedAuthor {
             .filter(|property| property.requirement() == &PropertyRequirement::Required)
             .map(|property| {
                 PropertyValue::new(format!("reviewed {}", property.key()))
-                    .map(|value| {
-                        AuthoredProperty::new(property.key().clone(), PropertyValues::single(value))
-                    })
+                    .map(|value| AuthoredProperty::new(property.key().clone(), value))
                     .map_err(io::Error::other)
             })
             .collect::<Result<Vec<_>, _>>()?;

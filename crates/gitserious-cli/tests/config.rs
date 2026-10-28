@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use gitserious_app::GlobalConfiguration;
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
-    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, SchemaVersion,
-    Taxonomy, TaxonomyId, TaxonomyVersion, built_in_taxonomies,
+    PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion, Taxonomy, TaxonomyId,
+    TaxonomyVersion, built_in_taxonomies,
 };
 use support::{Global, Harness, Project};
 
@@ -57,9 +57,9 @@ fn show_renders_a_taxonomy_in_detail() {
     assert!(
         stdout.contains(
             "\nfeat\tAn addition or expansion of capability.\n\
-             \x20 intent\trequired\tsingle\n\
-             \x20 decision\trequired\tsingle\n\
-             \x20 constraints\tconditional:non-obvious-requirements\tsingle\n\n"
+             \x20 intent\trequired\n\
+             \x20 decision\trequired\n\
+             \x20 constraints\tconditional:non-obvious-requirements\n\n"
         ),
         "{stdout}"
     );
@@ -102,15 +102,10 @@ fn list_and_show_include_user_forks() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn show_names_every_requirement_and_multiplicity_in_lock_words() -> Result<(), Box<dyn Error>> {
-    let property = |key: &str, requirement, multiplicity| {
-        PropertyDefinition::new(
-            PropertyKey::new(key)?,
-            "Why it matters.",
-            requirement,
-            multiplicity,
-        )
-        .map_err(Box::<dyn Error>::from)
+fn show_names_every_requirement_in_lock_words() -> Result<(), Box<dyn Error>> {
+    let property = |key: &str, requirement| {
+        PropertyDefinition::new(PropertyKey::new(key)?, "Why it matters.", requirement)
+            .map_err(Box::<dyn Error>::from)
     };
     let platform = TaxonomyId::new("platform")?;
     let taxonomy = Taxonomy::new(
@@ -123,28 +118,15 @@ fn show_names_every_requirement_and_multiplicity_in_lock_words() -> Result<(), B
             CommitTypeId::new("deploy")?,
             "Ship a platform change.",
             vec![
-                property(
-                    "intent",
-                    PropertyRequirement::Required,
-                    PropertyMultiplicity::Single,
-                )?,
-                property(
-                    "services",
-                    PropertyRequirement::Recommended,
-                    PropertyMultiplicity::Multiple,
-                )?,
-                property(
-                    "ticket",
-                    PropertyRequirement::Optional,
-                    PropertyMultiplicity::Single,
-                )?,
+                property("intent", PropertyRequirement::Required)?,
+                property("services", PropertyRequirement::Recommended)?,
+                property("ticket", PropertyRequirement::Optional)?,
                 property(
                     "rollback",
                     PropertyRequirement::Conditional(PropertyCondition::new(
                         ConditionId::new("schema-change")?,
                         "Required when the deploy migrates a schema.",
                     )?),
-                    PropertyMultiplicity::Multiple,
                 )?,
             ],
         )?],
@@ -169,10 +151,10 @@ fn show_names_every_requirement_and_multiplicity_in_lock_words() -> Result<(), B
         "platform\nv1\nPlatform team policy.\n\
          \n\
          deploy\tShip a platform change.\n\
-         \x20 intent\trequired\tsingle\n\
-         \x20 services\trecommended\tmultiple\n\
-         \x20 ticket\toptional\tsingle\n\
-         \x20 rollback\tconditional:schema-change\tmultiple\n"
+         \x20 intent\trequired\n\
+         \x20 services\trecommended\n\
+         \x20 ticket\toptional\n\
+         \x20 rollback\tconditional:schema-change\n"
     );
     Ok(())
 }

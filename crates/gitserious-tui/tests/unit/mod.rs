@@ -3,8 +3,8 @@ use std::error::Error;
 use gitserious_app::{CommitDraftAuthor, CommitDraftAuthorOutcome};
 use gitserious_core::{
     COMMIT_MESSAGE_WIDTH, CommitTypeDefinition, CommitTypeId, ConditionId, PropertyCondition,
-    PropertyDefinition, PropertyKey, PropertyMultiplicity, PropertyRequirement, SchemaVersion,
-    built_in_commit_types, built_in_taxonomies, validate_commit_draft,
+    PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion, built_in_commit_types,
+    built_in_taxonomies, validate_commit_draft,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -31,13 +31,11 @@ mod author_harness {
 
 use author_harness::render::render;
 use author_harness::state::{
-    AuthoringSession, ConfirmationAction, FieldId, FieldKind, FieldStatus, Stage, TypeCatalogKind,
+    AuthoringSession, ConfirmationAction, FieldId, FieldStatus, Stage, TypeCatalogKind,
     ValidationIssue,
 };
 
 const JET_BLACK: Color = Color::Rgb(0, 0, 0);
-
-mod occurrences;
 
 #[test]
 fn conditional_decisions_block_contradictions_and_survive_review() -> Result<(), Box<dyn Error>> {
@@ -541,13 +539,11 @@ fn valid_feat_session() -> AuthoringSession<'static> {
 fn property(
     key: &str,
     requirement: PropertyRequirement,
-    multiplicity: PropertyMultiplicity,
 ) -> Result<PropertyDefinition, Box<dyn Error>> {
     Ok(PropertyDefinition::new(
         PropertyKey::new(key)?,
         format!("Description for {key}."),
         requirement,
-        multiplicity,
     )?)
 }
 
@@ -557,28 +553,15 @@ fn presentation_definition() -> Result<CommitTypeDefinition, Box<dyn Error>> {
         CommitTypeId::new("custom")?,
         "Exercise every property presentation.",
         vec![
-            property(
-                "required-field",
-                PropertyRequirement::Required,
-                PropertyMultiplicity::Single,
-            )?,
-            property(
-                "recommended-field",
-                PropertyRequirement::Recommended,
-                PropertyMultiplicity::Single,
-            )?,
-            property(
-                "optional-field",
-                PropertyRequirement::Optional,
-                PropertyMultiplicity::Single,
-            )?,
+            property("required-field", PropertyRequirement::Required)?,
+            property("recommended-field", PropertyRequirement::Recommended)?,
+            property("optional-field", PropertyRequirement::Optional)?,
             property(
                 "conditional-field",
                 PropertyRequirement::Conditional(PropertyCondition::new(
                     ConditionId::new("when-needed")?,
                     "required when the condition applies",
                 )?),
-                PropertyMultiplicity::Single,
             )?,
         ],
     )?)
@@ -593,7 +576,6 @@ fn guidance_definition(description: &str) -> Result<CommitTypeDefinition, Box<dy
             PropertyKey::new("context")?,
             description,
             PropertyRequirement::Optional,
-            PropertyMultiplicity::Single,
         )?],
     )?)
 }
@@ -604,24 +586,7 @@ fn wide_property_definition() -> Result<CommitTypeDefinition, Box<dyn Error>> {
         SchemaVersion::V1,
         CommitTypeId::new("custom")?,
         "Exercise definition-specific minimum widths.",
-        vec![property(
-            &key,
-            PropertyRequirement::Optional,
-            PropertyMultiplicity::Single,
-        )?],
-    )?)
-}
-
-fn repeatable_definition() -> Result<CommitTypeDefinition, Box<dyn Error>> {
-    Ok(CommitTypeDefinition::new(
-        SchemaVersion::V1,
-        CommitTypeId::new("custom")?,
-        "Exercise repeatable values.",
-        vec![property(
-            "evidence",
-            PropertyRequirement::Required,
-            PropertyMultiplicity::Multiple,
-        )?],
+        vec![property(&key, PropertyRequirement::Optional)?],
     )?)
 }
 
@@ -1155,7 +1120,7 @@ fn horizontal_navigation_and_selection_cannot_cross_field_boundaries() {
     assert!(session.composer.editor.cursor().1 < end.1);
     assert_eq!(
         session.composer.current_field(session.definition()),
-        Some(FieldKind::Scope)
+        Some(FieldId::Scope)
     );
 }
 
@@ -1190,10 +1155,7 @@ second",
     press(&mut session, KeyCode::Down);
     assert_eq!(
         session.composer.current_field(&definitions[0]),
-        Some(FieldKind::Property {
-            definition_index: 1,
-            value_index: 0,
-        })
+        Some(FieldId::Property(1))
     );
     press(&mut session, KeyCode::Up);
     assert_eq!(session.composer.editor.cursor(), (11, 0));
@@ -1295,7 +1257,7 @@ fn backspace_and_delete_cannot_leave_the_active_field_or_poison_footer_editing()
             assert_eq!(session.composer.editor.cursor(), cursor);
             assert_eq!(
                 session.composer.current_field(session.definition()),
-                Some(FieldKind::BreakingChange)
+                Some(FieldId::BreakingChange)
             );
             paste(&mut session, "footer remains editable");
             assert_eq!(
@@ -1331,37 +1293,6 @@ fn backspace_and_delete_cannot_leave_the_active_field_or_poison_footer_editing()
     assert_eq!(selected.composer.editor.lines(), document);
     assert_eq!(selected.composer.editor.cursor(), cursor);
     assert_eq!(selected.composer.editor.selection_range(), selection);
-}
-
-#[test]
-fn multiple_schema_values_still_compile_when_present() -> Result<(), Box<dyn Error>> {
-    let definitions = vec![repeatable_definition()?];
-    let mut session = AuthoringSession::new(&definitions, Some(0));
-    set_document(
-        &mut session,
-        "scope:\n\ndescription:\ncollect evidence\n\nevidence:\nfirst\n\nevidence:\nsecond\nline\n",
-        9,
-    );
-
-    assert_eq!(
-        session.composer.current_field(&definitions[0]),
-        Some(FieldKind::Property {
-            definition_index: 0,
-            value_index: 1,
-        })
-    );
-    modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
-    assert_eq!(session.stage, Stage::Review);
-    assert_eq!(
-        session
-            .review
-            .as_ref()
-            .ok_or("missing review")?
-            .message
-            .as_str(),
-        "custom: collect evidence\n\nevidence:\nfirst\n\nevidence:\nsecond\nline\n"
-    );
-    Ok(())
 }
 
 #[test]
@@ -1440,10 +1371,7 @@ fn hud_tracks_requirement_completion_validation_and_cursor_context() -> Result<(
     );
     assert_eq!(
         session.composer.current_field(&definitions[0]),
-        Some(FieldKind::Property {
-            definition_index: 3,
-            value_index: 0,
-        })
+        Some(FieldId::Property(3))
     );
     let hud = session.composer.hud_fields(&definitions[0]);
     assert_eq!(hud[0].status, FieldStatus::Incomplete);
@@ -1587,7 +1515,6 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(text.contains("applies"));
     assert!(!text.contains("ctrl+t"));
     assert!(!text.contains("Complete every required field before review."));
-    assert!(!text.contains("repeatable"));
     assert_stage_header(&mut composer, 120, 32, "compose message")?;
     let composer_buffer = rendered_buffer(&mut composer, 120, 32)?;
     assert_eq!(composer_buffer[(0, 2)].symbol(), "┌");
@@ -2584,15 +2511,7 @@ fn compose_review_and_final_encoding_share_the_80_column_boundary() -> Result<()
     let CommitDraftAuthorOutcome::Authored(draft) = outcome else {
         return Err("review unexpectedly cancelled".into());
     };
-    assert_eq!(
-        draft.properties()[0]
-            .values()
-            .iter()
-            .next()
-            .ok_or("missing value")?
-            .as_str(),
-        intent
-    );
+    assert_eq!(draft.properties()[0].value().as_str(), intent);
     assert_eq!(
         validate_commit_draft(&built_in_commit_types()[0], &draft)
             .into_message()?
@@ -2803,4 +2722,58 @@ fn non_press_resize_and_paste_events_obey_stage_boundaries() {
             .is_none()
     );
     assert_eq!(review.composer.editor.lines(), document);
+}
+
+/// Moves the cursor to the value line under the first `heading` in the composer.
+fn focus_heading(session: &mut AuthoringSession<'_>, heading: &str) -> Result<(), Box<dyn Error>> {
+    let row = session
+        .composer
+        .editor
+        .lines()
+        .iter()
+        .position(|line| line.as_str() == heading)
+        .ok_or("missing heading")?;
+    session
+        .composer
+        .editor
+        .move_cursor(CursorMove::Jump(u16::try_from(row + 1)?, 0));
+    Ok(())
+}
+
+#[test]
+fn custom_editor_label_collisions_keep_distinct_field_identity() -> Result<(), Box<dyn Error>> {
+    let definitions = vec![CommitTypeDefinition::new(
+        SchemaVersion::V1,
+        CommitTypeId::new("custom")?,
+        "Collision coverage",
+        vec![
+            property("scope", PropertyRequirement::Required)?,
+            property("description", PropertyRequirement::Required)?,
+            property("breaking-change", PropertyRequirement::Required)?,
+        ],
+    )?];
+    let mut session = AuthoringSession::new(&definitions, Some(0));
+    paste(&mut session, "header");
+    focus_heading(&mut session, "description:")?;
+    paste(&mut session, "distinct fields");
+    focus_heading(&mut session, "property[scope]:")?;
+    paste(&mut session, "body scope");
+    focus_heading(&mut session, "property[description]:")?;
+    paste(&mut session, "body description");
+    focus_heading(&mut session, "property[breaking-change]:")?;
+    paste(&mut session, "body breaking context");
+    focus_heading(&mut session, "breaking-change:")?;
+    paste(&mut session, "footer migration");
+    modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    assert_eq!(session.stage, Stage::Review);
+    assert_eq!(
+        session
+            .review
+            .as_ref()
+            .ok_or("missing review")?
+            .message
+            .as_str(),
+        "custom(header)!: distinct fields\n\nscope:\nbody scope\n\ndescription:\nbody description\n\nbreaking-change:\nbody breaking context\n\nBREAKING CHANGE: footer migration\n"
+    );
+    Ok(())
 }

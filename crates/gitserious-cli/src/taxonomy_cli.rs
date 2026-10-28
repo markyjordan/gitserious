@@ -14,8 +14,7 @@ use gitserious_app::{
     initialize_project, run_interactive,
 };
 use gitserious_core::{
-    CommitMessage, CommitTypeDefinition, CommitTypeId, PropertyMultiplicity, PropertyRequirement,
-    Taxonomy, TaxonomyId,
+    CommitMessage, CommitTypeDefinition, CommitTypeId, PropertyRequirement, Taxonomy, TaxonomyId,
 };
 
 #[derive(Debug, Parser)]
@@ -423,14 +422,7 @@ fn render_taxonomy(taxonomy: &Taxonomy) -> String {
                     format!("conditional:{}", condition.id())
                 }
             };
-            let multiplicity = match property.multiplicity() {
-                PropertyMultiplicity::Single => "single",
-                PropertyMultiplicity::Multiple => "multiple",
-            };
-            output.push_str(&format!(
-                "  {}\t{requirement}\t{multiplicity}\n",
-                property.key()
-            ));
+            output.push_str(&format!("  {}\t{requirement}\n", property.key()));
         }
     }
     output
