@@ -136,6 +136,28 @@ fn strict_format_rejects_unknown_fields_unsupported_versions_and_invalid_values(
 }
 
 #[test]
+fn stored_properties_have_no_multiplicity() -> Result<(), Box<dyn Error>> {
+    let temporary = TempDir::new()?;
+    let store = store(temporary.path());
+    store.compare_and_swap(&GlobalConfiguration::default(), &custom_configuration()?)?;
+    let written = fs::read_to_string(store.path())?;
+    assert!(written.contains("[[taxonomies.commit-types.properties]]"));
+    assert!(!written.contains("multiplicity"), "{written}");
+
+    let with_multiplicity = written.replacen(
+        "[taxonomies.commit-types.properties.requirement]",
+        "multiplicity = \"single\"\n\n[taxonomies.commit-types.properties.requirement]",
+        1,
+    );
+    write_config(temporary.path(), &with_multiplicity)?;
+    let Err(error) = store.load() else {
+        return Err("a property with a multiplicity key loaded".into());
+    };
+    assert!(error.to_string().contains("multiplicity"), "{error}");
+    Ok(())
+}
+
+#[test]
 fn nonregular_configuration_paths_are_rejected() -> Result<(), Box<dyn Error>> {
     let temporary = TempDir::new()?;
     let store = store(temporary.path());
