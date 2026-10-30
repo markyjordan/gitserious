@@ -96,6 +96,10 @@ if git -C "$tap_origin" show-ref --verify --quiet refs/heads/main \
   exit 1
 fi
 grep -F 'gh pr create' "$gh_log" >/dev/null
+if grep -F 'x86_64-apple-darwin' "$tap_repo/Formula/gitserious.rb" >/dev/null; then
+  echo "Tap updater published the Intel macOS asset." >&2
+  exit 1
+fi
 
 : >"$gh_log"
 run_updater PR_NUMBER=7
