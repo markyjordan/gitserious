@@ -92,7 +92,7 @@ git -C "$tap_dir" fetch --prune origin main "$branch" 2>/dev/null ||
 
 main_formula="$temp_dir/main-gitserious.rb"
 if git -C "$tap_dir" show origin/main:Formula/gitserious.rb >"$main_formula" 2>/dev/null; then
-  main_state="$($python_command - "$main_formula" "$manifest" <<'PY'
+  main_state="$($python_command - "$main_formula" "$manifest" "$formula" <<'PY'
 import json
 import pathlib
 import re
@@ -100,11 +100,12 @@ import sys
 
 formula = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 manifest = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+rendered = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
 version = manifest["workspace_version"]
 if f'version "{version}"' not in formula:
     print("other-version")
     raise SystemExit
-expected = sorted(entry["sha256"] for entry in manifest["targets"] if "windows" not in entry["target"])
+expected = sorted(re.findall(r'sha256 "([0-9a-f]{64})"', rendered))
 actual = sorted(re.findall(r'sha256 "([0-9a-f]{64})"', formula))
 print("exact" if actual == expected else "digest-conflict")
 PY
@@ -125,7 +126,7 @@ if git -C "$tap_dir" show-ref --verify --quiet "refs/remotes/origin/${branch}"; 
   git -C "$tap_dir" switch -C "$branch" "origin/${branch}"
   branch_formula="$temp_dir/branch-gitserious.rb"
   if git -C "$tap_dir" show "origin/${branch}:Formula/gitserious.rb" >"$branch_formula" 2>/dev/null; then
-    branch_state="$($python_command - "$branch_formula" "$manifest" <<'PY'
+    branch_state="$($python_command - "$branch_formula" "$manifest" "$formula" <<'PY'
 import json
 import pathlib
 import re
@@ -133,11 +134,12 @@ import sys
 
 formula = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 manifest = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+rendered = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
 version = manifest["workspace_version"]
 if f'version "{version}"' not in formula:
     print("replace")
     raise SystemExit
-expected = sorted(entry["sha256"] for entry in manifest["targets"] if "windows" not in entry["target"])
+expected = sorted(re.findall(r'sha256 "([0-9a-f]{64})"', rendered))
 actual = sorted(re.findall(r'sha256 "([0-9a-f]{64})"', formula))
 print("same" if actual == expected else "digest-conflict")
 PY
@@ -177,7 +179,7 @@ if not updated:
 path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 PY
 
-"$python_command" - "$manifest" "$release_url" "$source_repository" >"$pr_body" <<'PY'
+"$python_command" - "$manifest" "$release_url" "$source_repository" "$formula" >"$pr_body" <<'PY'
 import json
 import pathlib
 import sys
@@ -185,6 +187,7 @@ import sys
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 release_url = sys.argv[2]
 source_repository = sys.argv[3]
+formula = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
 print(f"Updates `gitserious` to [{manifest['release_tag']}]({release_url}).")
 print()
 print(f"Source commit: `{manifest['source_commit']}`")
@@ -192,7 +195,7 @@ print()
 print("| Target | Asset | SHA256 |")
 print("| --- | --- | --- |")
 for entry in manifest["targets"]:
-    if "windows" not in entry["target"]:
+    if entry["sha256"] in formula:
         print(f"| `{entry['target']}` | `{entry['filename']}` | `{entry['sha256']}` |")
 print()
 print("Verification:")
