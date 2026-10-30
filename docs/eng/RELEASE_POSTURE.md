@@ -254,10 +254,8 @@ flowchart LR
   Branch --> PR["create or update tap PR; never push tap main"]
   PR --> TapCI["aggregate formula-ci"]
   TapCI --> Arm["macos-15: Apple Silicon asset"]
-  TapCI --> Intel["macos-15-intel: Intel asset"]
   TapCI --> Linux["ubuntu-24.04: Linux x64 asset"]
   Arm --> Decision{"all tap checks green?"}
-  Intel --> Decision
   Linux --> Decision
   Decision -->|"no"| Repair["repair the version PR; do not rewrite source release"]
   Repair --> PR
@@ -277,8 +275,10 @@ commit. It then verifies GitHub provenance and each published archive digest.
 The cross-repository credential is exposed only after those source-identity
 checks pass.
 
-The updater maps Apple Silicon, Intel macOS, and Intel Linux to their published
-archives. Windows remains a direct-download platform. It is idempotent:
+The updater maps Apple Silicon and Intel Linux to their published archives.
+Homebrew has moved Intel macOS to an unsupported tier, so the formula requires
+arm64 on macOS. Intel macOS and Windows remain direct-download platforms. It is
+idempotent:
 
 - tap `main` with the exact version and digests is already complete;
 - an open `automation/gitserious-vX.Y.Z` PR is reused and updated;
@@ -286,14 +286,14 @@ archives. Windows remains a direct-download platform. It is idempotent:
 - the updater has no path that pushes to tap `main`.
 
 The source release is complete when crates.io and GitHub publication succeed.
-Homebrew distribution is complete only after the generated PR passes all three
+Homebrew distribution is complete only after the generated PR passes both
 native tap jobs and the maintainer manually merges it. Formula repair happens in
 another tap PR and never changes the immutable GitHub Release.
 
 Tap CI uses SHA-pinned Actions, rejects placeholder digests, runs `brew style`,
 performs `brew audit --strict --online`, installs the exact published binary,
-runs `brew test`, and directly executes the installed program on Apple Silicon,
-Intel macOS, and Linux x64. Once gitserious has a stable functional command, the
+runs `brew test`, and directly executes the installed program on Apple Silicon
+and Linux x64. Once gitserious has a stable functional command, the
 formula `test do` block must exercise that behavior and assert meaningful output;
 an exit-only placeholder or `--version` check is not the long-term acceptance
 test.
