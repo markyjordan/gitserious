@@ -25,7 +25,6 @@ bash "$renderer" "$manifest" "$formula" >/dev/null
 grep -F 'version "0.1.0"' "$formula" >/dev/null
 grep -F 'license any_of: ["MIT", "Apache-2.0"]' "$formula" >/dev/null
 grep -F 'releases/download/v0.1.0/gitserious-0.1.0-aarch64-apple-darwin.tar.gz' "$formula" >/dev/null
-grep -F 'releases/download/v0.1.0/gitserious-0.1.0-x86_64-apple-darwin.tar.gz' "$formula" >/dev/null
 grep -F 'releases/download/v0.1.0/gitserious-0.1.0-x86_64-unknown-linux-gnu.tar.gz' "$formula" >/dev/null
 grep -F 'system bin/"gitserious"' "$formula" >/dev/null
 if grep -F 'windows' "$formula" >/dev/null; then

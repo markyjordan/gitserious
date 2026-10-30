@@ -81,14 +81,11 @@ formula = f'''class Gitserious < Formula
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do
+    depends_on arch: :arm64
+
     on_arm do
       url "{url('aarch64-apple-darwin')}"
       sha256 "{targets['aarch64-apple-darwin']['sha256']}"
-    end
-
-    on_intel do
-      url "{url('x86_64-apple-darwin')}"
-      sha256 "{targets['x86_64-apple-darwin']['sha256']}"
     end
   end
 
