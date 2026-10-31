@@ -135,7 +135,11 @@ impl GlobalConfiguration {
 
     fn validate(&self) -> Result<(), ConfigurationError> {
         let catalog = self.catalog()?;
-        validate_selection(&catalog, &self.default_taxonomy, &self.available_taxonomies)
+        validate_selection(
+            |id| catalog.find(id).is_some(),
+            &self.default_taxonomy,
+            &self.available_taxonomies,
+        )
     }
 
     /// Returns the format version.
@@ -265,7 +269,7 @@ pub fn resolve_effective_configuration(
     let available = project
         .available_taxonomies()
         .unwrap_or_else(|| global.available_taxonomies());
-    validate_selection(&catalog, &default, available)?;
+    validate_selection(|id| catalog.find(id).is_some(), &default, available)?;
     let taxonomies = available
         .iter()
         .map(|id| {
@@ -401,14 +405,15 @@ fn validate_ids(ids: &[TaxonomyId]) -> Result<(), ConfigurationError> {
     Ok(())
 }
 
-fn validate_selection(
-    catalog: &TaxonomyCatalog,
+/// Checks that `available` names distinct installed taxonomies and includes `default`.
+pub(crate) fn validate_selection(
+    installed: impl Fn(&TaxonomyId) -> bool,
     default: &TaxonomyId,
     available: &[TaxonomyId],
 ) -> Result<(), ConfigurationError> {
     validate_ids(available)?;
     for id in available {
-        if catalog.find(id).is_none() {
+        if !installed(id) {
             return Err(ConfigurationError::UnknownTaxonomy(id.clone()));
         }
     }

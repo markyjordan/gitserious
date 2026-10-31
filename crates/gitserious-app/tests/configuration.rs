@@ -232,6 +232,7 @@ fn created_taxonomies_are_queryable_as_custom_library_entries() -> Result<(), Bo
     assert!(
         session
             .review()?
+            .changes
             .contains("Taxonomies\n  created  team v1, ")
     );
     Ok(())
@@ -253,7 +254,7 @@ fn names_already_in_the_library_are_problems_until_renamed() -> Result<(), Box<d
     let release = node(&mut session, &["team", "feat"]);
     draft(&mut session).edit(&release, DraftEdit::Text(DraftField::Description, " "))?;
     assert_eq!(problems(&session), [ProblemKind::Blank]);
-    assert!(session.review().is_err());
+    assert_eq!(session.review()?.problems.len(), 1);
     assert!(session.is_dirty());
     Ok(())
 }
@@ -656,6 +657,24 @@ fn reviewed_global_sessions_save_one_snapshot_and_reject_concurrent_changes()
 }
 
 #[test]
+fn apply_refuses_while_the_library_has_problems() -> Result<(), Box<dyn Error>> {
+    let original = library(vec![custom("team")])?;
+    let store = FakeGlobalStore::new(original.clone());
+
+    let error = edit_global(&store, |workspace| {
+        let mut session = workspace.load(ConfigurationDestination::Global)?;
+        describe(&mut session, "team", " ");
+        workspace.save(&session).map(|_| ())
+    })
+    .expect_err("a Library with a problem was applied");
+
+    assert!(error.contains("description is blank"), "{error}");
+    assert_eq!(store.swaps.get(), 0);
+    assert_eq!(*store.current.borrow(), original);
+    Ok(())
+}
+
+#[test]
 fn global_store_failures_are_reported_and_leave_the_library_unchanged() {
     let mut store = FakeGlobalStore::new(GlobalConfiguration::default());
     store.fail = true;
@@ -708,7 +727,7 @@ fn review_names_an_edited_taxonomy_and_what_changed() -> Result<(), Box<dyn Erro
     describe(&mut session, "team", "Team policy.");
 
     assert_eq!(
-        session.review()?,
+        session.review()?.changes,
         "GLOBAL CONFIGURATION\n\n\
          Taxonomies\n  edited   team v1 -> v2: description\n\n\
          Default\n  conventional\n\n\
@@ -727,7 +746,7 @@ fn review_names_a_created_and_a_deleted_taxonomy_in_one_session() -> Result<(), 
     draft(&mut session).edit(&team, DraftEdit::Remove)?;
 
     let types = custom("other").commit_types().len();
-    assert!(session.review()?.contains(&format!(
+    assert!(session.review()?.changes.contains(&format!(
         "Taxonomies\n  created  other v1, {types} types\n  deleted  team v1\n\n"
     )));
     Ok(())
@@ -743,7 +762,7 @@ fn review_omits_taxonomies_when_only_the_selection_changed() -> Result<(), Box<d
     session.configure_global(id("research"), built_in_ids())?;
 
     assert_eq!(
-        session.review()?,
+        session.review()?.changes,
         "GLOBAL CONFIGURATION\n\n\
          Default\n  conventional -> research\n\n\
          Available\n  conventional, research, infra-ops"

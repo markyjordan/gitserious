@@ -30,9 +30,10 @@ mod home_overlay;
 #[cfg(test)]
 mod model_check;
 mod naming;
+mod review;
 mod taxonomies;
 use home_overlay::{CommandPaletteState, HomeCommand, HomeOverlay};
-use naming::{problem_sentence, sentence};
+use naming::sentence;
 use taxonomies::{LibraryAction, Nav, TaxonomiesView};
 
 /// Taxonomy-first terminal configuration adapter.
@@ -941,45 +942,12 @@ impl State {
         }
     }
 
-    fn review_key(
-        &mut self,
-        key: KeyEvent,
-        destination: ConfigurationDestination,
-        workspace: &dyn ConfigurationWorkspace,
-    ) -> bool {
-        match key.code {
-            KeyCode::Enter => {
-                let Some(session) = self.session(destination).cloned() else {
-                    return false;
-                };
-                match workspace.save(&session) {
-                    Ok(saved) => {
-                        self.replace_session(destination, Ok(saved));
-                        if destination == ConfigurationDestination::Global {
-                            self.replace_session(
-                                ConfigurationDestination::Project,
-                                workspace.load(ConfigurationDestination::Project),
-                            );
-                        }
-                        self.screen = Screen::Home;
-                        self.status = Some(Notice::info("Configuration applied.".into()));
-                    }
-                    Err(error) => {
-                        self.screen = Screen::Home;
-                        self.status = Some(Notice::error(error));
-                    }
-                }
-            }
-            KeyCode::Esc => self.screen = Screen::Home,
-            KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
-            KeyCode::Down => self.scroll = self.scroll.saturating_add(1),
-            _ => {}
-        }
-        false
-    }
-
     fn apply_scope_then(&mut self, action: PendingAction, workspace: &dyn ConfigurationWorkspace) {
         let destination = self.active_scope;
+        if self.refuse_apply(destination) {
+            self.screen = Screen::Home;
+            return;
+        }
         let Some(session) = self.session(destination).cloned() else {
             return;
         };
@@ -1133,35 +1101,6 @@ impl State {
         }
     }
 
-    fn open_review(&mut self) {
-        let destination = self.active_scope;
-        if destination == ConfigurationDestination::Global
-            && let Some(library) = self.library()
-            && let Some(problem) = library.problems().first()
-        {
-            self.status = Some(Notice::error(problem_sentence(library, problem)));
-            return;
-        }
-        let should_review = self
-            .session(destination)
-            .is_some_and(|session| session.is_dirty() || session.update_available());
-        if should_review {
-            if let Some(error) = self
-                .session(destination)
-                .and_then(|session| session.review().err())
-            {
-                self.status = Some(Notice::error(error));
-            } else {
-                self.scroll = 0;
-                self.screen = Screen::Review(destination);
-            }
-        } else {
-            self.status = Some(Notice::info(
-                "No changes or taxonomy updates to apply.".into(),
-            ));
-        }
-    }
-
     fn session(&self, destination: ConfigurationDestination) -> Option<&ConfigurationSession> {
         match destination {
             ConfigurationDestination::Global => self.global.as_ref(),
@@ -1278,10 +1217,7 @@ impl State {
                         ("esc", "back"),
                     ]
                 }
-                Screen::Review(destination) => {
-                    self.render_review(frame, body, destination);
-                    vec![("enter", "apply"), ("esc", "back"), ("↑/↓", "scroll")]
-                }
+                Screen::Review(destination) => self.render_review(frame, body, destination),
                 Screen::Leave | Screen::ScopeChange(_) | Screen::ConfirmRemove(_) => Vec::new(),
             }
         };
@@ -1710,35 +1646,6 @@ impl State {
             &mut state,
         );
     }
-
-    fn render_review(
-        &mut self,
-        frame: &mut Frame<'_>,
-        area: Rect,
-        destination: ConfigurationDestination,
-    ) {
-        let text = self
-            .session(destination)
-            .and_then(|session| session.review().ok())
-            .unwrap_or_else(|| "Configuration cannot be reviewed.".into());
-        let paragraph = Paragraph::new(hanging_wrap(
-            &text,
-            usize::from(area.width.saturating_sub(2)),
-        ))
-        .wrap(Wrap { trim: false });
-        let viewport_height = area.height.saturating_sub(2);
-        let total_rows =
-            u16::try_from(paragraph.line_count(area.width.saturating_sub(2))).unwrap_or(u16::MAX);
-        self.scroll = self.scroll.min(total_rows.saturating_sub(viewport_height));
-        frame.render_widget(
-            paragraph.scroll((self.scroll, 0)).block(
-                Block::bordered()
-                    .border_style(frame_style())
-                    .title("Review changes — Enter to apply"),
-            ),
-            area,
-        );
-    }
 }
 
 /// Wraps each line of `text` at spaces to `width` columns. Wrapped rows start under the line's
@@ -1863,6 +1770,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
+    use super::naming::problem_sentence;
     use super::*;
 
     pub(super) struct Workspace {
@@ -1883,6 +1791,10 @@ mod tests {
                 ),
                 saves: Cell::new(0),
             }
+        }
+
+        pub(super) fn saves(&self) -> usize {
+            self.saves.get()
         }
     }
 
@@ -3245,8 +3157,8 @@ mod tests {
             [
                 "Type description is required.",
                 "Property description is required.",
-                "Condition name is required.",
-                "Condition rationale is required."
+                "A conditional policy needs a condition.",
+                "A conditional policy needs a rationale."
             ]
         );
     }
@@ -3462,13 +3374,27 @@ mod tests {
         }
         assert_eq!(cursor(&state), ["original", "existing", "verification"]);
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert!(matches!(state.screen, Screen::Home));
-        assert_eq!(notice(&state), Some("Property description is required."));
+        assert!(matches!(state.screen, Screen::Review(_)));
+        terminal.draw(|frame| state.render(frame))?;
+        let screen = rows(&terminal).join("\n");
+        assert!(
+            screen.contains("original › existing › verification"),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("▲ Property description is required."),
+            "{screen}"
+        );
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert_eq!(
+            notice(&state),
+            Some("Apply is disabled until 1 problem is fixed.")
+        );
 
         press(
             &mut state,
             &workspace,
-            &[KeyCode::Esc, KeyCode::Down, KeyCode::Down],
+            &[KeyCode::Esc, KeyCode::Esc, KeyCode::Down, KeyCode::Down],
         );
         assert_eq!(cursor(&state), ["original", "+ add type"]);
         press(&mut state, &workspace, &[KeyCode::Enter]);

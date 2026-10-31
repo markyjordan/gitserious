@@ -32,10 +32,11 @@
 //! entering EDIT, moving between fields, or esc advances a taxonomy's version and rewrites the
 //! user's configuration on apply.
 //!
-//! P3, the review names every taxonomy change. While the Global review shows, every custom
-//! taxonomy whose content differs between the saved and the staged Library appears in the frame
-//! as `created`, `edited`, or `deleted` followed by its id. Without it, a user applies a change
-//! that the review did not show.
+//! P3, the review names every taxonomy change. While the Global review shows a staged Library
+//! that builds, every custom taxonomy whose content differs between the saved and the staged
+//! Library appears in the frame as `created`, `edited`, or `deleted` followed by its id. A staged
+//! Library with problems cannot apply (P11), so its review is not judged here. Without it, a user
+//! applies a change that the review did not show.
 //!
 //! P4, the Inspector's Policy reaches every policy. From a custom property in NAV, the arrow keys
 //! and enter alone set the property to every policy (required, recommended, conditional,
@@ -51,10 +52,12 @@
 //! field of a custom node that existed before the key longer than its limit and longer than
 //! before. Without it, a user can type text that misshapes the Inspector's rows.
 //!
-//! P7, every alert is a whole sentence. Every notice a reachable state shows starts with a capital
-//! letter, ends a sentence, avoids the application's own words (`session`, `save`, `global
-//! configuration`), and appears in the frame in full. Without it, raw domain errors and clipped
-//! toasts reach the screen.
+//! P7, every alert is a whole sentence. Every notice a reachable state shows, and every problem
+//! under the field EDIT sits on, starts with a capital letter, ends a sentence, and avoids the
+//! application's own words (`session`, `save`, `global configuration`). A notice appears in the
+//! frame in full, and a field's problem appears right of the sidebar as `▲` and its words in
+//! order, so the Inspector scrolls it into view with its field. Without it, raw domain errors,
+//! clipped toasts, and problems scrolled out of sight reach the screen.
 //!
 //! P8, removals go through their dialog. A type or property leaves the Library only when the user
 //! answers y on its Remove or Delete dialog, or discards on the Unapplied Changes dialog. Without
@@ -64,11 +67,19 @@
 //! each of its choices as `key: label`, the same pairs as the dialog's buttons. Without it, the
 //! footer and the dialog disagree about which key does what.
 //!
-//! P10, unapplied changes agree everywhere they show. After every key, the count the Config tab
-//! badge shows equals the Library's `ChangeSet::count()`; on Home the sidebar reads `● N
-//! unapplied` with that count, or no unapplied line at zero; and every outline row shows `+ new`
-//! or `~ modified` exactly when its node carries that mark. Without it, the tab, the sidebar, and
-//! the rows disagree about what apply would write, or a changed row goes unmarked.
+//! P10, unapplied changes and problems agree everywhere they show. After every key, the count the
+//! Config tab badge shows equals the Library's `ChangeSet::count()`; on Home the sidebar reads `●
+//! N unapplied` with that count, or no unapplied line at zero; every outline row shows `▲ invalid
+//! N` exactly when N problems sit on its node, or on its node or beneath it while it is collapsed,
+//! and otherwise `+ new` or `~ modified` exactly when its node carries that mark; and the footer
+//! shows `▲ invalid N` for the selected node the same way. Without it, the tab, the sidebar, the
+//! rows, and the footer disagree about what apply would write, a problem hides under a collapsed
+//! row, or an expanded parent repeats the count its visible rows already show.
+//!
+//! P11, the saved Library never changes while problems exist. No key changes the Library the
+//! workspace stores while the staged Library has a problem. Without it, enter on the review or
+//! apply on the Unapplied Changes dialog writes a Library that does not build, and the fake
+//! workspace, which saves whatever it is given, would show it.
 //!
 //! Scope limits:
 //! - Only the keyboard events in [`INPUTS`]. Mouse, paste, and resize events are out of scope.
@@ -77,7 +88,9 @@
 //! - `State` runs standalone, not inside the unified shell, so the shell's own quit dialog and its
 //!   tab keys are not driven. P10 reads the count the shell's badge shows from the same method
 //!   the shell calls; a shell test checks that the header draws it.
-//! - Workspace saves always succeed, and the project starts uninitialized.
+//! - Workspace saves always succeed, and the project starts uninitialized. The real workspace also
+//!   refuses a Library with problems; an app test covers that, and P11 covers the editor's own
+//!   gate.
 //! - P3 reads the frame, so it sees only the review rows that fit the viewport. Every seed's review
 //!   fits without scrolling.
 //! - P4 explores only the up, down, left, right, and enter keys from one custom property. It reads
@@ -100,7 +113,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use gitserious_app::{DraftField, GlobalConfiguration, Mark, NodeRef};
+use gitserious_app::{DraftField, GlobalConfiguration, Mark, NodeRef, ProblemSite};
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
     PropertyRequirement, SchemaVersion, TaxonomyVersion,
@@ -109,6 +122,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use unicode_segmentation::UnicodeSegmentation;
 
+use super::naming::problem_sentence;
 use super::taxonomies::{Mode, Observation};
 use super::tests::Workspace;
 use super::*;
@@ -306,6 +320,20 @@ const SEEDS: &[Seed] = &[
                 "enter",
             ],
             ready: |snapshot| editing(snapshot) == Some(DraftField::Name),
+        },
+        depth: 2,
+        alphabet: Alphabet::Every,
+        reaches: &[],
+    },
+    Seed {
+        name: "team summary conditional with an empty condition in EDIT on its Condition",
+        workspace: team_library,
+        start: Start::Keys {
+            keys: &[
+                "2", "down", "down", "down", "right", "right", "right", "down", "right", "right",
+                "e", "enter", "enter", "enter",
+            ],
+            ready: |snapshot| editing(snapshot) == Some(DraftField::Condition),
         },
         depth: 2,
         alphabet: Alphabet::Every,
@@ -536,8 +564,12 @@ const PROPERTIES: &[(&str, Check)] = &[
         the_footer_shows_the_dialogs_choices,
     ),
     (
-        "P10, unapplied changes agree everywhere they show",
+        "P10, unapplied changes and problems agree everywhere they show",
         unapplied_changes_agree_everywhere,
+    ),
+    (
+        "P11, the saved Library never changes while problems exist",
+        problems_keep_the_saved_library,
     ),
 ];
 
@@ -811,9 +843,24 @@ fn unapplied_changes_agree_everywhere(
     if (count > 0 && !sidebar.contains(&line)) || (count == 0 && sidebar.contains("unapplied")) {
         return Err(format!("The sidebar does not read {line:?}:\n{sidebar}"));
     }
+    let Some(library) = after.library() else {
+        return Ok(());
+    };
     if after.category != Category::Taxonomies {
         return Ok(());
     }
+    let problems = library.problems();
+    let invalid = |id: &NodeId| {
+        let collapsed = !after.taxonomies.expanded.contains(id);
+        problems
+            .iter()
+            .filter(|problem| {
+                std::iter::successors(problem.node().cloned(), |node| library.parent(node))
+                    .take(if collapsed { usize::MAX } else { 1 })
+                    .any(|node| &node == id)
+            })
+            .count()
+    };
     let area = after.taxonomies.outline_area;
     for (index, id) in after.taxonomies.visible.iter().enumerate() {
         let row = rows
@@ -825,7 +872,19 @@ fn unapplied_changes_agree_everywhere(
                     .collect::<String>()
             })
             .unwrap_or_default();
-        let mark = id.as_ref().and_then(|id| changes.mark(id));
+        let count = id.as_ref().map_or(0, invalid);
+        if row.contains("▲ invalid") != (count > 0)
+            || (count > 0 && !row.contains(&format!("▲ invalid {count}")))
+        {
+            return Err(format!(
+                "The outline row {:?} does not show the {count} problems its node counts.",
+                row.trim_end()
+            ));
+        }
+        let mark = id
+            .as_ref()
+            .and_then(|id| changes.mark(id))
+            .filter(|_| count == 0);
         for (chip, shown) in [("+ new", Mark::New), ("~ modified", Mark::Modified)] {
             if row.contains(chip) != (mark == Some(shown)) {
                 return Err(format!(
@@ -834,6 +893,35 @@ fn unapplied_changes_agree_everywhere(
                 ));
             }
         }
+    }
+    let footer = rows.last().copied().unwrap_or_default();
+    if let Some(count) = library
+        .find_path(&after.taxonomies.cursor_path)
+        .map(|id| invalid(&id))
+        && (footer.contains("▲ invalid") != (count > 0)
+            || (count > 0 && !footer.contains(&format!("▲ invalid {count}"))))
+    {
+        return Err(format!(
+            "The footer {:?} does not show the {count} problems the selected node counts.",
+            footer.trim_end()
+        ));
+    }
+    Ok(())
+}
+
+fn problems_keep_the_saved_library(
+    before: &Snapshot,
+    _: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    let Some(after) = after else {
+        return Ok(());
+    };
+    let blocked = before
+        .library()
+        .is_some_and(|library| !library.problems().is_empty());
+    if blocked && format!("{:?}", after.saved[0]) != format!("{:?}", before.saved[0]) {
+        return Err("The saved Library changed while the staged Library had problems.".into());
     }
     Ok(())
 }
@@ -847,25 +935,90 @@ fn every_alert_is_a_whole_sentence(
     _: &Event,
     after: Option<&Snapshot>,
 ) -> Result<(), String> {
-    let Some((after, status)) = after.and_then(|after| Some((after, after.status.as_deref()?)))
-    else {
+    let Some(after) = after else {
         return Ok(());
     };
-    let text = status.split_once(": ").map_or(status, |(_, text)| text);
+    if let Some(status) = after.status.as_deref() {
+        let text = status.split_once(": ").map_or(status, |(_, text)| text);
+        let problem = not_a_sentence(text).or_else(|| {
+            text.split_whitespace()
+                .find(|word| !after.frame.contains(word))
+                .map(|word| format!("is cut off before {word:?}"))
+        });
+        if let Some(problem) = problem {
+            return Err(format!("The alert {text:?} {problem}."));
+        }
+    }
+    for text in field_problems(after) {
+        let problem = not_a_sentence(&text).or_else(|| {
+            (!shows_in_order(&after.frame, &format!("▲ {text}")))
+                .then(|| "is not shown in full under its field".to_owned())
+        });
+        if let Some(problem) = problem {
+            return Err(format!("The problem {text:?} {problem}."));
+        }
+    }
+    Ok(())
+}
+
+/// Why `text` does not read as one of the editor's sentences, if it does not.
+fn not_a_sentence(text: &str) -> Option<String> {
     let lowered = text.to_lowercase();
-    let problem = if !text.chars().next().is_some_and(char::is_uppercase) {
+    if !text.chars().next().is_some_and(char::is_uppercase) {
         Some("does not start with a capital letter".to_owned())
     } else if !text.ends_with(['.', '?', '!']) {
         Some("does not end a sentence".to_owned())
-    } else if let Some(word) = FOREIGN_WORDS.iter().find(|word| lowered.contains(*word)) {
-        Some(format!("uses {:?}", word.trim()))
     } else {
-        text.split_whitespace()
-            .find(|word| !after.frame.contains(word))
-            .map(|word| format!("is cut off before {word:?}"))
+        FOREIGN_WORDS
+            .iter()
+            .find(|word| lowered.contains(*word))
+            .map(|word| format!("uses {:?}", word.trim()))
+    }
+}
+
+/// The sentences of the problems on the field EDIT sits on, while the outline shows.
+fn field_problems(snapshot: &Snapshot) -> Vec<String> {
+    let (Some(library), Mode::Edit { node, field, .. }) =
+        (snapshot.library(), &snapshot.taxonomies.mode)
+    else {
+        return Vec::new();
     };
-    problem.map_or(Ok(()), |problem| {
-        Err(format!("The alert {text:?} {problem}."))
+    if !snapshot.outline_takes_keys() || snapshot.too_small {
+        return Vec::new();
+    }
+    let site = ProblemSite::Field(node.clone(), *field);
+    library
+        .problems()
+        .iter()
+        .filter(|problem| problem.site == site)
+        .map(|problem| problem_sentence(library, problem))
+        .collect()
+}
+
+/// Whether the words of `text` follow one another in the frame right of the sidebar, read row by
+/// row with borders and the focus gutter dropped.
+fn shows_in_order(frame: &str, text: &str) -> bool {
+    let words = frame
+        .lines()
+        .flat_map(|row| {
+            row.chars()
+                .skip(usize::from(MENU_WIDTH))
+                .map(|character| match character {
+                    '│' | '▌' => ' ',
+                    other => other,
+                })
+                .collect::<String>()
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let wanted = text.split_whitespace().collect::<Vec<_>>();
+    words.windows(wanted.len()).any(|window| {
+        window
+            .iter()
+            .zip(&wanted)
+            .all(|(shown, word)| shown == word)
     })
 }
 
@@ -886,10 +1039,12 @@ fn review_names_every_taxonomy_change(
     }) else {
         return Ok(());
     };
+    let Some(staged) = after.staged_library() else {
+        return Ok(());
+    };
+    let staged = staged.custom_taxonomies();
     let saved = after.stored_library().unwrap_or_default();
     let saved = saved.custom_taxonomies();
-    let staged = after.staged_library().unwrap_or_default();
-    let staged = staged.custom_taxonomies();
     let changes = staged
         .iter()
         .filter_map(|taxonomy| match find(saved, taxonomy.id()) {

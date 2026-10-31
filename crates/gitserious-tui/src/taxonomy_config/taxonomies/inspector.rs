@@ -1,4 +1,6 @@
-use gitserious_app::{DraftField, LibraryDraft, NodeRef, Policy, TaxonomyOrigin};
+use std::ops::Range;
+
+use gitserious_app::{DraftField, NodeRef, Policy, ProblemSite, TaxonomyOrigin};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -7,7 +9,7 @@ use ratatui::widgets::{Block, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::super::hanging_wrap;
-use super::{BADGE_STYLE, BAND, Chip, DIM, KEY_STYLE, fit, policy_style};
+use super::{BADGE_STYLE, BAND, Chips, DIM, KEY_STYLE, fit, policy_style};
 use crate::theme::focus_frame_style;
 
 /// Labels and the values beside them start in these columns.
@@ -15,6 +17,9 @@ const LABEL_WIDTH: usize = 13;
 /// Room for the widest counter, `100/100`, and the gap before it.
 const COUNTER_WIDTH: usize = 8;
 const CURSOR: Style = Style::new().add_modifier(Modifier::REVERSED);
+const PROBLEM: Style = Style::new().fg(Color::Red);
+const PLACEHOLDER: Style = DIM.add_modifier(Modifier::ITALIC);
+const PLACEHOLDER_TEXT: &str = "when does this apply?";
 
 /// The field a row is focused on and, while it is edited, the cursor's grapheme index.
 #[derive(Clone, Copy)]
@@ -23,14 +28,20 @@ pub(super) struct Focus {
     pub(super) cursor: Option<usize>,
 }
 
+/// The rows of the focused field: `band` is the field itself, and `view` adds the problems
+/// under it, which scrolling keeps in view with it.
+struct Focused {
+    band: Range<usize>,
+    view: Range<usize>,
+}
+
 /// Describes `node` in words under a header with its chip, scrolled down by `offset` rows, and
-/// keeps the focused field in view.
+/// keeps the focused field and its problems in view.
 pub(super) fn render(
     frame: &mut Frame<'_>,
     area: Rect,
-    library: &LibraryDraft,
+    chips: &Chips<'_>,
     node: NodeRef<'_>,
-    chip: Option<Chip>,
     focus: Option<Focus>,
     offset: &mut u16,
 ) {
@@ -42,12 +53,12 @@ pub(super) fn render(
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let width = usize::from(inner.width).saturating_sub(2);
-    let (lines, focused) = describe(library, node, chip, focus, width, inner.height > 10);
+    let (lines, focused) = describe(chips, node, focus, width, inner.height > 10);
     let total = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-    if let Some((start, end)) = focused {
+    if let Some(Focused { view, .. }) = &focused {
         let (start, end) = (
-            u16::try_from(start).unwrap_or(u16::MAX),
-            u16::try_from(end).unwrap_or(u16::MAX),
+            u16::try_from(view.start).unwrap_or(u16::MAX),
+            u16::try_from(view.end).unwrap_or(u16::MAX),
         );
         if end > offset.saturating_add(inner.height) {
             *offset = end.saturating_sub(inner.height);
@@ -59,7 +70,9 @@ pub(super) fn render(
         .into_iter()
         .enumerate()
         .map(|(index, line)| {
-            let band = focused.is_some_and(|(start, end)| (start..end).contains(&index));
+            let band = focused
+                .as_ref()
+                .is_some_and(|focused| focused.band.contains(&index));
             let gutter = if band {
                 Span::styled("▌", Style::default().fg(Color::Yellow))
             } else {
@@ -74,15 +87,16 @@ pub(super) fn render(
     frame.render_widget(Paragraph::new(lines).scroll((*offset, 0)), inner);
 }
 
-/// The lines and the range of lines the focused field takes.
+/// The lines and the rows the focused field takes.
 fn describe(
-    library: &LibraryDraft,
+    chips: &Chips<'_>,
     node: NodeRef<'_>,
-    chip: Option<Chip>,
     focus: Option<Focus>,
     width: usize,
     roomy: bool,
-) -> (Vec<Line<'static>>, Option<(usize, usize)>) {
+) -> (Vec<Line<'static>>, Option<Focused>) {
+    let library = chips.library;
+    let chip = chips.of(node.id());
     let mut lines = Vec::new();
     if roomy {
         lines.push(Line::default());
@@ -131,6 +145,7 @@ fn describe(
     let mut show = |lines: &mut Vec<Line<'static>>, field: DraftField| {
         let start = lines.len();
         let focus = focus.filter(|focus| focus.field == field);
+        let problems = chips.sentences(&ProblemSite::Field(id.clone(), field));
         if field == DraftField::Policy {
             if let NodeRef::Property { property, .. } = node {
                 lines.extend(policy_lines(property.policy(), width));
@@ -139,15 +154,23 @@ fn describe(
             let text = library.text(id, field).unwrap_or_default();
             let limit = field.limit().filter(|_| editable.contains(&field));
             lines.extend(field_lines(
-                field.label(),
+                field,
                 text,
                 limit,
                 focus.and_then(|focus| focus.cursor),
+                !problems.is_empty(),
                 width,
             ));
         }
+        let band = start..lines.len();
+        for problem in &problems {
+            lines.extend(problem_lines(problem, width));
+        }
         if focus.is_some() {
-            focused = Some((start, lines.len()));
+            focused = Some(Focused {
+                band,
+                view: start..lines.len(),
+            });
         }
     };
     let fact = |lines: &mut Vec<Line<'static>>, label: &str, value: &str| {
@@ -191,6 +214,9 @@ fn describe(
             }
         }
     }
+    for problem in chips.sentences(&ProblemSite::Node(id.clone())) {
+        lines.extend(problem_lines(&problem, width));
+    }
     if let NodeRef::Taxonomy(taxonomy) = node {
         lines.push(Line::default());
         if taxonomy.origin() == TaxonomyOrigin::BuiltIn {
@@ -222,14 +248,18 @@ fn fact_lines(label: &str, value: &str, width: usize) -> Vec<Line<'static>> {
 }
 
 /// A text field: its label, its text wrapped in the value column with room for the cursor,
-/// `used/limit` at the end of the first row when the field is editable, and the cursor.
+/// `used/limit` at the end of the first row when the field is editable, and the cursor. An
+/// empty Condition shows a placeholder, and a field with a problem draws its label and counter
+/// red.
 fn field_lines(
-    label: &str,
+    field: DraftField,
     text: &str,
     limit: Option<usize>,
     cursor: Option<usize>,
+    invalid: bool,
     width: usize,
 ) -> Vec<Line<'static>> {
+    let style = if invalid { PROBLEM } else { DIM };
     let graphemes = text
         .graphemes(true)
         .map(|grapheme| {
@@ -249,15 +279,22 @@ fn field_lines(
     rows.iter()
         .enumerate()
         .map(|(index, &(start, end))| {
-            let mut spans = vec![Span::styled(
-                format!("{:<LABEL_WIDTH$}", if index == 0 { label } else { "" }),
-                DIM,
-            )];
+            let label = if index == 0 { field.label() } else { "" };
+            let mut spans = vec![Span::styled(format!("{label:<LABEL_WIDTH$}"), style)];
             let at = cursor.filter(|&at| {
                 (start..end).contains(&at)
                     || (at == end && (index == last || rows[index + 1].0 > at))
             });
             match at {
+                _ if graphemes.is_empty() && field == DraftField::Condition => {
+                    let (first, rest) = PLACEHOLDER_TEXT.split_at(1);
+                    if at.is_some() {
+                        spans.push(Span::styled(first, CURSOR.patch(PLACEHOLDER)));
+                        spans.push(Span::styled(rest, PLACEHOLDER));
+                    } else {
+                        spans.push(Span::styled(PLACEHOLDER_TEXT, PLACEHOLDER));
+                    }
+                }
                 Some(at) if at < end => {
                     spans.push(Span::raw(graphemes[start..at].concat()));
                     spans.push(Span::styled(graphemes[at].to_owned(), CURSOR));
@@ -270,9 +307,26 @@ fn field_lines(
                 None => spans.push(Span::raw(graphemes[start..end].concat())),
             }
             match counter.as_ref().filter(|_| index == 0) {
-                Some(counter) => fit(spans, vec![Span::styled(counter.clone(), DIM)], width),
+                Some(counter) => fit(spans, vec![Span::styled(counter.clone(), style)], width),
                 None => Line::from(spans),
             }
+        })
+        .collect()
+}
+
+/// `▲ problem` in the value column, wrapped beneath its own first word.
+fn problem_lines(problem: &str, width: usize) -> Vec<Line<'static>> {
+    let graphemes = problem.graphemes(true).collect::<Vec<_>>();
+    let column = width.saturating_sub(LABEL_WIDTH + 2).max(1);
+    wrap(&graphemes, column)
+        .into_iter()
+        .enumerate()
+        .map(|(index, (start, end))| {
+            let mark = if index == 0 { "▲ " } else { "  " };
+            Line::from(vec![
+                Span::raw(" ".repeat(LABEL_WIDTH)),
+                Span::styled(format!("{mark}{}", graphemes[start..end].concat()), PROBLEM),
+            ])
         })
         .collect()
 }

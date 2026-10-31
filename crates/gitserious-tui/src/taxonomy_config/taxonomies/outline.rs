@@ -1,15 +1,13 @@
 use std::collections::BTreeSet;
 
-use gitserious_app::{
-    ChangeSet, LibraryDraft, NodeId, NodeRef, TaxonomyNode, TaxonomyOrigin, TypeNode,
-};
+use gitserious_app::{LibraryDraft, NodeId, NodeRef, TaxonomyNode, TaxonomyOrigin, TypeNode};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use super::{BADGE_STYLE, BAND, Chip, DIM, fit, policy_style};
+use super::{BADGE_STYLE, BAND, Chip, Chips, DIM, fit, policy_style};
 use crate::theme::{focus_frame_style, frame_style};
 
 pub(super) const ADD_TYPE: &str = "+ add type";
@@ -141,18 +139,17 @@ pub(super) fn resolve(rows: &[Row<'_>], cursor: Option<&RowKey>, library: &Libra
     0
 }
 
-/// Draws the rows, each with the chip of its mark, and returns the area they fill, for mouse
-/// hit-testing.
+/// Draws the rows, each with its chip, and returns the area they fill, for mouse hit-testing.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the outline draws from the view's state and the Library's derived rows and changes"
+    reason = "the outline draws from the view's state and the Library's derived rows and chips"
 )]
 pub(super) fn render(
     frame: &mut Frame<'_>,
     area: Rect,
     rows: &[Row<'_>],
     expanded: &BTreeSet<NodeId>,
-    changes: &ChangeSet,
+    chips: &Chips<'_>,
     selected: usize,
     offset: &mut usize,
     focused: bool,
@@ -186,7 +183,7 @@ pub(super) fn render(
         .map(|(index, &row)| {
             let open = has_children(row) && expanded.contains(row.node().id());
             let chip = match row {
-                Row::Node(node) => Chip::of(changes, node.id()),
+                Row::Node(node) => chips.of(node.id()),
                 Row::AddType(_) | Row::AddProperty(..) => None,
             };
             row_line(row, open, chip, index == selected, focused, width)

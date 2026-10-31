@@ -3,8 +3,8 @@
 use std::error::Error;
 
 use gitserious_app::{
-    ConfigurationSession, DraftEdit, DraftField, GlobalConfiguration, NodeId, ProjectConfig,
-    ProjectLock, resolve_effective_configuration,
+    ConfigurationSession, DraftEdit, DraftField, GlobalConfiguration, NodeId, Problem, ProblemSite,
+    ProjectConfig, ProjectLock, resolve_effective_configuration,
 };
 use gitserious_core::{TaxonomyId, built_in_taxonomies};
 
@@ -76,9 +76,16 @@ fn a_selected_custom_taxonomy_cannot_be_removed_without_a_problem() -> Result<()
     session.configure_global(team, available)?;
     let library = session.library_mut().ok_or("a Global session")?;
     library.edit(&fork, DraftEdit::Remove)?;
-    let error = session
-        .review()
-        .expect_err("selected taxonomy must be protected");
-    assert!(error.contains("not installed") || error.contains("available"));
+    let problems = session.review()?.problems;
+    assert!(
+        matches!(
+            problems.as_slice(),
+            [Problem {
+                site: ProblemSite::Selection,
+                ..
+            }]
+        ),
+        "{problems:?}"
+    );
     Ok(())
 }

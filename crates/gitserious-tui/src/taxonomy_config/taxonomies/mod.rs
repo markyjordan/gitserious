@@ -8,7 +8,7 @@ use std::ops::Range;
 
 use gitserious_app::{
     ChangeSet, DraftEdit, DraftField, EditRefusal, LibraryDraft, Mark, NodeId, NodeRef, Policy,
-    TaxonomyOrigin,
+    Problem, ProblemSite, TaxonomyOrigin,
 };
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -19,7 +19,7 @@ use ratatui::widgets::{Block, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::contains;
-use super::naming::{refusal_sentence, single_line};
+use super::naming::{problem_sentence, refusal_sentence, single_line};
 use crate::theme::{AMBER, JET_BLACK, ZEBRA_BACKGROUND, focus_frame_style, navigation_key_style};
 use outline::Row;
 pub(super) use outline::RowKey;
@@ -43,19 +43,63 @@ pub(super) enum Chip {
     ReadOnly,
     New,
     Modified,
-    #[expect(dead_code, reason = "problems reach the outline in the next change")]
     Invalid(usize),
 }
 
-impl Chip {
-    /// The chip of a node's mark in `changes`.
-    fn of(changes: &ChangeSet, id: &NodeId) -> Option<Self> {
-        changes.mark(id).map(|mark| match mark {
-            Mark::New => Self::New,
-            Mark::Modified => Self::Modified,
+/// What one render derives from the Library for its chips and problem lines.
+pub(super) struct Chips<'a> {
+    library: &'a LibraryDraft,
+    expanded: &'a BTreeSet<NodeId>,
+    changes: ChangeSet,
+    problems: Vec<Problem>,
+}
+
+impl<'a> Chips<'a> {
+    fn new(library: &'a LibraryDraft, expanded: &'a BTreeSet<NodeId>) -> Self {
+        Self {
+            library,
+            expanded,
+            changes: library.changes(),
+            problems: library.problems(),
+        }
+    }
+
+    /// A node's chip: the count of problems on it, plus those beneath it while it is collapsed
+    /// and its rows cannot show them, else its mark.
+    fn of(&self, id: &NodeId) -> Option<Chip> {
+        let collapsed = !self.expanded.contains(id);
+        let invalid = self
+            .problems
+            .iter()
+            .filter_map(Problem::node)
+            .filter(|node| *node == id || (collapsed && self.beneath(node, id)))
+            .count();
+        if invalid > 0 {
+            return Some(Chip::Invalid(invalid));
+        }
+        self.changes.mark(id).map(|mark| match mark {
+            Mark::New => Chip::New,
+            Mark::Modified => Chip::Modified,
         })
     }
 
+    /// Whether `node` is `ancestor` or sits beneath it.
+    fn beneath(&self, node: &NodeId, ancestor: &NodeId) -> bool {
+        std::iter::successors(Some(node.clone()), |id| self.library.parent(id))
+            .any(|id| &id == ancestor)
+    }
+
+    /// The sentences of the problems at `site`.
+    fn sentences(&self, site: &ProblemSite) -> Vec<String> {
+        self.problems
+            .iter()
+            .filter(|problem| &problem.site == site)
+            .map(|problem| problem_sentence(self.library, problem))
+            .collect()
+    }
+}
+
+impl Chip {
     fn label(self) -> String {
         match self {
             Self::ReadOnly => "◇ read-only".into(),
@@ -466,13 +510,13 @@ impl TaxonomiesView {
         let rows = outline::rows(library, &self.expanded);
         let selected = outline::resolve(&rows, self.cursor.as_ref(), library);
         let outline_focused = focused && !self.editing();
-        let changes = library.changes();
+        let chips = Chips::new(library, &self.expanded);
         self.outline_area = outline::render(
             frame,
             outline_area,
             &rows,
             &self.expanded,
-            &changes,
+            &chips,
             selected,
             &mut self.outline_offset,
             outline_focused,
@@ -502,9 +546,8 @@ impl TaxonomiesView {
             inspector::render(
                 frame,
                 inspector_area,
-                library,
+                &chips,
                 node,
-                Chip::of(&changes, node.id()),
                 focus,
                 &mut self.inspector_offset,
             );
@@ -547,7 +590,7 @@ impl TaxonomiesView {
             let state = if built_in {
                 Some(Chip::ReadOnly)
             } else {
-                library.and_then(|library| Chip::of(&library.changes(), node.id()))
+                library.and_then(|library| Chips::new(library, &self.expanded).of(node.id()))
             };
             if let Some(state) = state {
                 chip.extend([Span::raw(" · "), state.span()]);

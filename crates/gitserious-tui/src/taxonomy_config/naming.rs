@@ -113,18 +113,23 @@ pub(super) fn problem_sentence(library: &LibraryDraft, problem: &Problem) -> Str
         ProblemSite::Field(_, field) => Some(*field),
         ProblemSite::Node(_) | ProblemSite::Selection => None,
     };
+    let raw = problem
+        .node()
+        .zip(field)
+        .and_then(|(node, field)| library.text(node, field))
+        .unwrap_or_default();
     match &problem.kind {
+        ProblemKind::Label(LabelError::Empty)
+            if field == Some(DraftField::Condition) && raw.trim().is_empty() =>
+        {
+            "A conditional policy needs a condition.".into()
+        }
         ProblemKind::Label(error) => {
             let name = if field == Some(DraftField::Condition) {
                 NameField::Condition
             } else {
                 owner.1
             };
-            let raw = problem
-                .node()
-                .zip(field)
-                .and_then(|(node, field)| library.text(node, field))
-                .unwrap_or_default();
             name_error(name, raw, error)
         }
         ProblemKind::Taken(id) => format!(
@@ -136,7 +141,7 @@ pub(super) fn problem_sentence(library: &LibraryDraft, problem: &Problem) -> Str
             "Taxonomy \"{id}\" is staged for deletion; apply the deletion before reusing its name."
         ),
         ProblemKind::Blank if field == Some(DraftField::Rationale) => {
-            "Condition rationale is required.".into()
+            "A conditional policy needs a rationale.".into()
         }
         ProblemKind::Blank => description_required(owner.0),
         ProblemKind::NoTypes => "Add a type before applying the taxonomy.".into(),
