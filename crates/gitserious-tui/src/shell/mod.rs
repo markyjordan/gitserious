@@ -13,7 +13,7 @@ use ratatui::crossterm::event::{
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
@@ -21,11 +21,23 @@ use crate::author::{AuthoringCheckpoint, embedded_author};
 use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT};
 use crate::taxonomy_config::{ConfigView, ShellKeys};
 use crate::theme::{
-    JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, centered_rect, command_hints, frame_style,
+    AMBER, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, centered_rect, command_hints, frame_style,
     navigation_key_style, normalize_background, render_navigation_row,
 };
 use commit_view::CommitView;
 use home_logo::{HomeLogo, render_home_logo, resolve_dev_theme};
+
+/// A section's tab label; Config carries the count of unapplied Library changes.
+fn tab(section: Section, pending: usize) -> Line<'static> {
+    let mut spans = vec![Span::raw(format!(" {} ", section.label()))];
+    if section == Section::Config && pending > 0 {
+        spans.push(Span::styled(
+            format!("●{pending}"),
+            Style::new().fg(JET_BLACK).bg(AMBER),
+        ));
+    }
+    Line::from(spans)
+}
 
 fn quit_question() -> Confirmation<'static> {
     Confirmation {
@@ -578,28 +590,25 @@ impl Shell {
         let block = Block::bordered().border_style(frame_style());
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        let width = Section::ALL
-            .into_iter()
-            .map(|section| {
-                u16::try_from(Line::from(section.label()).width())
-                    .unwrap_or(0)
-                    .saturating_add(2)
-            })
+        let pending = self.config.pending_count();
+        let tabs = Section::ALL.map(|section| (section, tab(section, pending)));
+        let width = tabs
+            .iter()
+            .map(|(_, tab)| u16::try_from(tab.width()).unwrap_or(0))
             .sum::<u16>()
             .saturating_add(u16::try_from(Section::ALL.len() - 1).unwrap_or(0));
         let mut x = inner
             .x
             .saturating_add(inner.width.saturating_sub(width) / 2);
-        for section in Section::ALL {
-            let text = format!(" {} ", section.label());
-            let width = u16::try_from(Line::from(text.as_str()).width()).unwrap_or(0);
+        for (section, tab) in tabs {
+            let width = u16::try_from(tab.width()).unwrap_or(0);
             let rect = Rect::new(x, inner.y, width.min(inner.right().saturating_sub(x)), 1);
             let style = if section == self.section {
                 navigation_key_style()
             } else {
                 Style::default()
             };
-            frame.render_widget(Paragraph::new(text).style(style), rect);
+            frame.render_widget(Paragraph::new(tab).style(style), rect);
             self.root_areas[section.index()] = rect;
             x = x.saturating_add(width + 1);
         }
@@ -818,6 +827,38 @@ mod tests {
         assert!(rendered(&terminal).contains("Taxonomies"));
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.section, Section::Home);
+        Ok(())
+    }
+
+    #[test]
+    fn the_config_tab_counts_unapplied_changes_inside_its_click_target()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let services = Services;
+        let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        assert!(!rendered(&terminal).contains('●'));
+        shell.handle_event(key(KeyCode::Char('2')), &services, &[]);
+        shell.handle_event(key(KeyCode::Char('n')), &services, &[]);
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        let header = rendered(&terminal)
+            .lines()
+            .nth(1)
+            .unwrap_or_default()
+            .to_owned();
+        assert!(header.contains(" Config ●1  Help "), "{header:?}");
+        let config = shell.root_areas[Section::Config.index()];
+        let help = shell.root_areas[Section::Help.index()];
+        assert_eq!(config.width, 10);
+        assert_eq!(help.x, config.right() + 1);
+        assert_eq!(
+            header
+                .chars()
+                .skip(usize::from(config.x))
+                .take(10)
+                .collect::<String>(),
+            " Config ●1"
+        );
         Ok(())
     }
 

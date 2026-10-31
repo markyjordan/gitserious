@@ -1,13 +1,15 @@
 use std::collections::BTreeSet;
 
-use gitserious_app::{LibraryDraft, NodeId, NodeRef, TaxonomyNode, TaxonomyOrigin, TypeNode};
+use gitserious_app::{
+    ChangeSet, LibraryDraft, NodeId, NodeRef, TaxonomyNode, TaxonomyOrigin, TypeNode,
+};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use super::{BADGE_STYLE, BAND, DIM, fit, policy_style};
+use super::{BADGE_STYLE, BAND, Chip, DIM, fit, policy_style};
 use crate::theme::{focus_frame_style, frame_style};
 
 pub(super) const ADD_TYPE: &str = "+ add type";
@@ -139,12 +141,18 @@ pub(super) fn resolve(rows: &[Row<'_>], cursor: Option<&RowKey>, library: &Libra
     0
 }
 
-/// Draws the rows and returns the area they fill, for mouse hit-testing.
+/// Draws the rows, each with the chip of its mark, and returns the area they fill, for mouse
+/// hit-testing.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the outline draws from the view's state and the Library's derived rows and changes"
+)]
 pub(super) fn render(
     frame: &mut Frame<'_>,
     area: Rect,
     rows: &[Row<'_>],
     expanded: &BTreeSet<NodeId>,
+    changes: &ChangeSet,
     selected: usize,
     offset: &mut usize,
     focused: bool,
@@ -177,7 +185,11 @@ pub(super) fn render(
         .take(height)
         .map(|(index, &row)| {
             let open = has_children(row) && expanded.contains(row.node().id());
-            row_line(row, open, index == selected, focused, width)
+            let chip = match row {
+                Row::Node(node) => Chip::of(changes, node.id()),
+                Row::AddType(_) | Row::AddProperty(..) => None,
+            };
+            row_line(row, open, chip, index == selected, focused, width)
         })
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines), inner);
@@ -190,9 +202,11 @@ fn column<'a>(name: &str, names: impl Iterator<Item = &'a str>) -> String {
     format!("{name:<width$}")
 }
 
+/// One row. A taxonomy without a chip shows where it lives instead.
 fn row_line(
     row: Row<'_>,
     open: bool,
+    chip: Option<Chip>,
     selected: bool,
     focused: bool,
     width: usize,
@@ -230,9 +244,9 @@ fn row_line(
                 marker,
                 Span::styled(taxonomy.name().to_owned(), name_style),
             ],
-            vec![Span::styled(
-                format!(" {} ", taxonomy.origin().as_str()),
-                BADGE_STYLE,
+            vec![chip.map_or_else(
+                || Span::styled(format!(" {} ", taxonomy.origin().as_str()), BADGE_STYLE),
+                Chip::span,
             )],
         ),
         Row::Node(NodeRef::Type {
@@ -253,8 +267,14 @@ fn row_line(
                     .join(" · ");
                 left.push(Span::styled(summary, DIM));
             }
-            let count = Span::styled(commit_type.properties().len().to_string(), DIM);
-            (left, vec![count])
+            let mut right = vec![Span::styled(
+                commit_type.properties().len().to_string(),
+                DIM,
+            )];
+            if let Some(chip) = chip {
+                right.extend([Span::raw("  "), chip.span()]);
+            }
+            (left, right)
         }
         Row::Node(NodeRef::Property {
             taxonomy,
@@ -278,7 +298,7 @@ fn row_line(
                     Span::styled(name, name_style),
                     Span::styled(property.policy().label(), policy_style(property.policy())),
                 ],
-                Vec::new(),
+                chip.map(Chip::span).into_iter().collect(),
             )
         }
     };

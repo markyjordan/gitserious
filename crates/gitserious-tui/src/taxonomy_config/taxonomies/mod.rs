@@ -7,7 +7,8 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 
 use gitserious_app::{
-    DraftEdit, DraftField, EditRefusal, LibraryDraft, NodeId, NodeRef, Policy, TaxonomyOrigin,
+    ChangeSet, DraftEdit, DraftField, EditRefusal, LibraryDraft, Mark, NodeId, NodeRef, Policy,
+    TaxonomyOrigin,
 };
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -19,7 +20,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::contains;
 use super::naming::{refusal_sentence, single_line};
-use crate::theme::{JET_BLACK, ZEBRA_BACKGROUND, focus_frame_style, navigation_key_style};
+use crate::theme::{AMBER, JET_BLACK, ZEBRA_BACKGROUND, focus_frame_style, navigation_key_style};
 use outline::Row;
 pub(super) use outline::RowKey;
 
@@ -32,9 +33,48 @@ const BADGE_STYLE: Style = Style::new().fg(Color::Gray).bg(ZEBRA_BACKGROUND);
 const BAND: Style = Style::new().bg(Color::Rgb(40, 40, 40));
 const EDIT_CHIP: Style = Style::new()
     .fg(JET_BLACK)
-    .bg(Color::Rgb(255, 176, 0))
+    .bg(AMBER)
     .add_modifier(Modifier::BOLD);
 const INSPECTOR_PAGE: u16 = 8;
+
+/// A node's state as its outline row, the Inspector header, and the footer show it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Chip {
+    ReadOnly,
+    New,
+    Modified,
+    #[expect(dead_code, reason = "problems reach the outline in the next change")]
+    Invalid(usize),
+}
+
+impl Chip {
+    /// The chip of a node's mark in `changes`.
+    fn of(changes: &ChangeSet, id: &NodeId) -> Option<Self> {
+        changes.mark(id).map(|mark| match mark {
+            Mark::New => Self::New,
+            Mark::Modified => Self::Modified,
+        })
+    }
+
+    fn label(self) -> String {
+        match self {
+            Self::ReadOnly => "◇ read-only".into(),
+            Self::New => "+ new".into(),
+            Self::Modified => "~ modified".into(),
+            Self::Invalid(count) => format!("▲ invalid {count}"),
+        }
+    }
+
+    fn span(self) -> Span<'static> {
+        let style = match self {
+            Self::ReadOnly => BADGE_STYLE,
+            Self::New => Style::new().fg(Color::Green).bg(Color::Rgb(20, 44, 24)),
+            Self::Modified => Style::new().fg(AMBER).bg(Color::Rgb(52, 38, 12)),
+            Self::Invalid(_) => Style::new().fg(Color::Red).bg(Color::Rgb(56, 18, 18)),
+        };
+        Span::styled(format!(" {} ", self.label()), style)
+    }
+}
 
 #[derive(Debug, Default)]
 pub(super) struct TaxonomiesView {
@@ -426,11 +466,13 @@ impl TaxonomiesView {
         let rows = outline::rows(library, &self.expanded);
         let selected = outline::resolve(&rows, self.cursor.as_ref(), library);
         let outline_focused = focused && !self.editing();
+        let changes = library.changes();
         self.outline_area = outline::render(
             frame,
             outline_area,
             &rows,
             &self.expanded,
+            &changes,
             selected,
             &mut self.outline_offset,
             outline_focused,
@@ -462,15 +504,15 @@ impl TaxonomiesView {
                 inspector_area,
                 library,
                 node,
+                Chip::of(&changes, node.id()),
                 focus,
                 &mut self.inspector_offset,
             );
         }
     }
 
-    /// The footer: mode, the selected row's kind, read-only on built-ins, then its keys. The
-    /// reorder and arrow hints go first and the trailing keys next, front to back, when the row
-    /// is narrow.
+    /// The footer: mode, the selected row's kind and chip, then its keys. The reorder and arrow
+    /// hints go first and the trailing keys next, front to back, when the row is narrow.
     pub(super) fn status_line(
         &self,
         library: Option<&LibraryDraft>,
@@ -502,9 +544,13 @@ impl TaxonomiesView {
             };
             chip.push(Span::raw(format!(" · {kind}")));
             let built_in = node.taxonomy().origin() == TaxonomyOrigin::BuiltIn;
-            if built_in {
-                chip.push(Span::raw(" · "));
-                chip.push(Span::styled(" ◇ read-only ", BADGE_STYLE));
+            let state = if built_in {
+                Some(Chip::ReadOnly)
+            } else {
+                library.and_then(|library| Chip::of(&library.changes(), node.id()))
+            };
+            if let Some(state) = state {
+                chip.extend([Span::raw(" · "), state.span()]);
             }
             if editing {
                 hints.extend([("enter", "next field"), ("esc", "done")]);
@@ -559,7 +605,20 @@ impl TaxonomiesView {
 
     #[cfg(test)]
     pub(super) fn observe(&self, library: Option<&LibraryDraft>) -> Observation {
+        let visible = library.map_or_else(Vec::new, |library| {
+            outline::rows(library, &self.expanded)
+                .into_iter()
+                .skip(self.outline_offset)
+                .take(usize::from(self.outline_area.height))
+                .map(|row| match row {
+                    Row::Node(node) => Some(node.id().clone()),
+                    Row::AddType(_) | Row::AddProperty(..) => None,
+                })
+                .collect()
+        });
         Observation {
+            outline_area: self.outline_area,
+            visible,
             cursor: self.cursor.clone(),
             cursor_path: library
                 .and_then(|library| self.selected_row(library))
@@ -573,6 +632,35 @@ impl TaxonomiesView {
     }
 }
 
+/// The Config sidebar's last two rows while the Library has unapplied changes: their count, as
+/// the Config tab shows it, and the key that reviews them.
+pub(super) fn render_pending(frame: &mut Frame<'_>, menu: Rect, count: usize) {
+    if count == 0 || menu.height <= 5 {
+        return;
+    }
+    let area = Rect::new(
+        menu.x.saturating_add(1),
+        menu.bottom().saturating_sub(3),
+        menu.width.saturating_sub(2),
+        2,
+    );
+    let text = format!("● {count} unapplied");
+    let pad = if text.chars().count() < usize::from(area.width) {
+        " "
+    } else {
+        ""
+    };
+    let lines = vec![
+        Line::styled(format!("{pad}{text}"), Style::new().fg(AMBER)),
+        Line::from(vec![
+            Span::raw(pad),
+            Span::styled("ctrl+s", KEY_STYLE),
+            Span::styled(" review", DIM),
+        ]),
+    ];
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
 /// Replaces the graphemes in `range` of `text` with `insert`. Returns the new text and the
 /// grapheme index just past the insertion.
 fn splice(text: &str, range: Range<usize>, insert: &str) -> (String, usize) {
@@ -583,7 +671,8 @@ fn splice(text: &str, range: Range<usize>, insert: &str) -> (String, usize) {
 }
 
 /// What the model checker sees of this section: the raw cursor and expanded ids, the selected
-/// row's names, scroll offsets, and the mode with its field and text cursor.
+/// row's names, scroll offsets, the mode with its field and text cursor, and where the outline
+/// drew which nodes, an add row as none.
 #[cfg(test)]
 #[derive(Debug)]
 #[expect(
@@ -591,6 +680,8 @@ fn splice(text: &str, range: Range<usize>, insert: &str) -> (String, usize) {
     reason = "the model checker's fingerprint reads these fields through Debug"
 )]
 pub(super) struct Observation {
+    pub(super) outline_area: Rect,
+    pub(super) visible: Vec<Option<NodeId>>,
     pub(super) cursor: Option<RowKey>,
     pub(super) cursor_path: Vec<String>,
     pub(super) expanded: Vec<NodeId>,

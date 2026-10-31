@@ -120,6 +120,10 @@ impl ConfigView {
     pub(crate) fn dirty(&self) -> bool {
         self.state.any_dirty() || self.state.settings.is_some()
     }
+
+    pub(crate) fn pending_count(&self) -> usize {
+        self.state.pending_count()
+    }
 }
 
 /// The keys the shell may take before Config sees them.
@@ -1196,6 +1200,10 @@ impl State {
             || self.scope_dirty(ConfigurationDestination::Project)
     }
 
+    fn pending_count(&self) -> usize {
+        self.library().map_or(0, |draft| draft.changes().count())
+    }
+
     fn render(&mut self, frame: &mut Frame<'_>) {
         self.render_at(frame, frame.area());
     }
@@ -1331,17 +1339,7 @@ impl State {
                 self.tab_areas[category.index()] = row;
             }
         }
-        if self.any_dirty() && area.height > 5 {
-            frame.render_widget(
-                Paragraph::new(" unapplied\n changes").style(section_heading_style()),
-                Rect::new(
-                    area.x.saturating_add(1),
-                    area.bottom().saturating_sub(3),
-                    area.width.saturating_sub(2),
-                    2,
-                ),
-            );
-        }
+        taxonomies::render_pending(frame, area, self.pending_count());
     }
 
     fn render_notice(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -2915,9 +2913,7 @@ mod tests {
             .initialize_project()?;
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(row_text(&terminal, 0, 26, MENU_WIDTH), "│ unapplied    │");
-        assert_eq!(row_text(&terminal, 0, 27, MENU_WIDTH), "│ changes      │");
-        assert_eq!(terminal.backend().buffer()[(2, 26)].fg, Color::Yellow);
+        assert_eq!(row_text(&terminal, 0, 26, MENU_WIDTH), "│              │");
         state.handle_event(key(KeyCode::Down), &workspace);
         assert_eq!(state.category, Category::Taxonomies);
         terminal.draw(|frame| state.render(frame))?;
@@ -2979,7 +2975,7 @@ mod tests {
         assert!(text(&terminal).contains("Forked from  conventional@2"));
         let team = row_text(&terminal, MENU_WIDTH, 4, 100 - MENU_WIDTH);
         assert!(team.contains("▌▾ team"));
-        assert!(team.trim_end().ends_with("custom  │"));
+        assert!(team.trim_end().ends_with("+ new  │"));
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(matches!(
             state.taxonomies.observe(state.library()).mode,

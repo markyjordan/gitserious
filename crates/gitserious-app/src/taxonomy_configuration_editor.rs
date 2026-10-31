@@ -3,7 +3,6 @@ use std::path::Path;
 
 use gitserious_core::TaxonomyId;
 
-use crate::taxonomy_changes::taxonomy_changes;
 use crate::{
     GlobalConfiguration, GlobalConfigurationStore, LibraryDraft, ProjectConfig, ProjectLock,
     ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot, TaxonomyCatalog,
@@ -249,9 +248,10 @@ impl ConfigurationSession {
                     .map_err(|problems| first_problem(&problems))?;
                 let original = library.persisted();
                 let mut sections = vec!["GLOBAL CONFIGURATION".to_owned()];
-                let changes = taxonomy_changes(original, &working);
-                if !changes.is_empty() {
+                let changes = library.changes();
+                if !changes.taxonomies().is_empty() {
                     let lines = changes
+                        .taxonomies()
                         .iter()
                         .map(|change| format!("  {change}"))
                         .collect::<Vec<_>>();

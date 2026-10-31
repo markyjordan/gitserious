@@ -549,3 +549,252 @@ fn a_fork_name_fits_the_name_limit() -> TestResult {
     assert_eq!(draft.text(&fork, DraftField::Name), Some("team-fork"));
     Ok(())
 }
+
+/// The draft's changes, checked to count something exactly when apply would write the custom
+/// taxonomies.
+fn checked(draft: &LibraryDraft) -> ChangeSet {
+    let changes = draft.changes();
+    assert_eq!(changes.count() > 0, draft.is_changed(), "{changes:?}");
+    changes
+}
+
+fn lines(changes: &ChangeSet) -> Vec<String> {
+    changes
+        .taxonomies()
+        .iter()
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn set_name(draft: &mut LibraryDraft, id: &NodeId, name: &str) -> Result<(), EditRefusal> {
+    draft
+        .edit(id, DraftEdit::Text(DraftField::Name, name))
+        .map(|_| ())
+}
+
+#[test]
+fn a_loaded_draft_has_no_changes() -> TestResult {
+    let draft = LibraryDraft::from_configuration(team()?);
+    let changes = checked(&draft);
+    assert_eq!(changes.count(), 0);
+    assert!(lines(&changes).is_empty());
+    for path in [&["team"][..], &["team", "release"], &["zeta", "feat"]] {
+        assert_eq!(changes.mark(&find(&draft, path)?), None);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_new_property_is_new_and_modifies_its_type_and_taxonomy_for_one_change() -> TestResult {
+    let mut draft = LibraryDraft::from_configuration(team()?);
+    let release = find(&draft, &["team", "release"])?;
+    let added = draft.edit(&release, DraftEdit::AddProperty)?;
+    set_name(&mut draft, &added, "verification")?;
+    draft.edit(
+        &added,
+        DraftEdit::Text(DraftField::Description, "How it was checked"),
+    )?;
+
+    let changes = checked(&draft);
+    assert_eq!(changes.mark(&added), Some(Mark::New));
+    assert_eq!(changes.mark(&release), Some(Mark::Modified));
+    assert_eq!(
+        changes.mark(&find(&draft, &["team"])?),
+        Some(Mark::Modified)
+    );
+    assert_eq!(
+        changes.mark(&find(&draft, &["team", "release", "summary"])?),
+        None
+    );
+    assert_eq!(changes.count(), 1);
+    assert_eq!(
+        lines(&changes),
+        ["edited   team v3 -> v4: property release.verification added"]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_fork_counts_once_and_its_edits_compare_with_its_source() -> TestResult {
+    let mut draft = LibraryDraft::from_configuration(team()?);
+    let fork = draft.fork(&find(&draft, &["team"])?)?;
+    let changes = checked(&draft);
+    assert_eq!(changes.mark(&fork), Some(Mark::New));
+    assert_eq!(
+        changes.mark(&find(&draft, &["team-fork", "release"])?),
+        None
+    );
+    assert_eq!(changes.count(), 1);
+
+    set_name(&mut draft, &fork, "ops")?;
+    let release = find(&draft, &["ops", "release"])?;
+    let added = draft.edit(&release, DraftEdit::AddProperty)?;
+    set_name(&mut draft, &added, "verification")?;
+    draft.edit(
+        &added,
+        DraftEdit::Text(DraftField::Description, "How it was checked"),
+    )?;
+
+    let changes = checked(&draft);
+    assert_eq!(changes.count(), 2);
+    assert_eq!(changes.mark(&release), Some(Mark::Modified));
+    assert_eq!(
+        lines(&changes),
+        ["created  ops v1, 1 type: property release.verification added"]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_rename_is_an_edit_and_restoring_the_text_clears_it() -> TestResult {
+    let mut draft = LibraryDraft::from_configuration(team()?);
+    let summary = find(&draft, &["team", "release", "summary"])?;
+    set_name(&mut draft, &summary, "outcome")?;
+    let renamed = checked(&draft);
+    assert_eq!(renamed.mark(&summary), Some(Mark::Modified));
+    assert_eq!(renamed.count(), 1);
+    assert_eq!(
+        lines(&renamed),
+        ["edited   team v3 -> v4: property release.outcome edited"]
+    );
+
+    set_name(&mut draft, &summary, "summary")?;
+    draft.edit(
+        &summary,
+        DraftEdit::Text(DraftField::Description, " What shipped "),
+    )?;
+    let restored = checked(&draft);
+    assert_eq!(restored.count(), 0);
+    assert_eq!(restored.mark(&summary), None);
+    assert_eq!(restored.mark(&find(&draft, &["team"])?), None);
+    Ok(())
+}
+
+#[test]
+fn a_deletion_counts_once_and_modifies_its_parent() -> TestResult {
+    let mut draft = LibraryDraft::from_configuration(team()?);
+    let release = find(&draft, &["team", "release"])?;
+    draft.edit(
+        &find(&draft, &["team", "release", "rollback"])?,
+        DraftEdit::Remove,
+    )?;
+    let changes_after_one = checked(&draft);
+    assert_eq!(changes_after_one.count(), 1);
+    assert_eq!(changes_after_one.mark(&release), Some(Mark::Modified));
+    assert_eq!(
+        lines(&changes_after_one),
+        ["edited   team v3 -> v4: property release.rollback removed"]
+    );
+
+    draft.edit(&find(&draft, &["zeta", "feat"])?, DraftEdit::Remove)?;
+    let both = checked(&draft);
+    assert_eq!(both.count(), 2);
+    assert_eq!(lines(&both)[0], "edited   zeta v1 -> v2: type feat removed");
+    Ok(())
+}
+
+#[test]
+fn a_created_taxonomy_counts_once_with_everything_in_it() -> TestResult {
+    let mut draft = LibraryDraft::from_configuration(team()?);
+    let created = draft.create_taxonomy();
+    set_name(&mut draft, &created, "ops")?;
+    let added = draft.edit(&created, DraftEdit::AddType)?;
+    let property = draft.edit(&added, DraftEdit::AddProperty)?;
+
+    let changes = checked(&draft);
+    assert_eq!(changes.count(), 1);
+    for id in [&created, &added, &property] {
+        assert_eq!(changes.mark(id), Some(Mark::New));
+    }
+    assert_eq!(lines(&changes), ["created  ops v1, 1 type"]);
+    Ok(())
+}
+
+#[test]
+fn a_reorder_counts_once_at_its_parent_and_only_while_the_kept_order_differs() -> TestResult {
+    let mut draft = LibraryDraft::from_configuration(team()?);
+    let release = find(&draft, &["team", "release"])?;
+    let summary = find(&draft, &["team", "release", "summary"])?;
+    draft.edit(&summary, DraftEdit::Move { down: true })?;
+    let moved = checked(&draft);
+    assert_eq!(moved.count(), 1);
+    assert_eq!(moved.mark(&release), Some(Mark::Modified));
+    assert_eq!(moved.mark(&summary), None);
+    assert_eq!(
+        lines(&moved),
+        ["edited   team v3 -> v4: release properties reordered"]
+    );
+
+    draft.edit(&summary, DraftEdit::Move { down: false })?;
+    assert_eq!(checked(&draft).count(), 0);
+    let added = draft.edit(&release, DraftEdit::AddProperty)?;
+    draft.edit(&added, DraftEdit::Move { down: false })?;
+    set_name(&mut draft, &added, "first")?;
+    assert_eq!(
+        lines(&checked(&draft)),
+        ["edited   team v3 -> v4: property release.first added"]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_conditional_property_compares_its_condition_and_rationale_only_while_conditional() -> TestResult
+{
+    let mut draft = LibraryDraft::from_configuration(team()?);
+    let rollback = find(&draft, &["team", "release", "rollback"])?;
+    draft.edit(&rollback, DraftEdit::Policy(Policy::Required))?;
+    draft.edit(
+        &rollback,
+        DraftEdit::Text(DraftField::Rationale, "Changed."),
+    )?;
+    assert_eq!(checked(&draft).count(), 1);
+    draft.edit(
+        &rollback,
+        DraftEdit::Text(DraftField::Rationale, "Risky releases need a way back."),
+    )?;
+    draft.edit(&rollback, DraftEdit::Policy(Policy::Conditional))?;
+    assert_eq!(checked(&draft).count(), 0);
+    draft.edit(
+        &rollback,
+        DraftEdit::Text(DraftField::Condition, "dangerous"),
+    )?;
+    assert_eq!(
+        lines(&checked(&draft)),
+        ["edited   team v3 -> v4: property release.rollback edited"]
+    );
+    Ok(())
+}
+
+#[test]
+fn changes_list_outline_order_then_deleted_taxonomies_naming_each_part() -> TestResult {
+    let mut draft = LibraryDraft::from_configuration(team()?);
+    let team_id = find(&draft, &["team"])?;
+    draft.edit(
+        &team_id,
+        DraftEdit::Text(DraftField::Description, "Team policy"),
+    )?;
+    let release = find(&draft, &["team", "release"])?;
+    draft.edit(
+        &release,
+        DraftEdit::Text(DraftField::Description, "Releases"),
+    )?;
+    let hotfix = draft.edit(&team_id, DraftEdit::AddType)?;
+    set_name(&mut draft, &hotfix, "hotfix")?;
+    draft.edit(&hotfix, DraftEdit::Move { down: false })?;
+    draft.edit(&find(&draft, &["zeta"])?, DraftEdit::Remove)?;
+    draft.fork(&find(&draft, &["research"])?)?;
+
+    let types = built_in_taxonomies()[1].commit_types().len();
+    let zeta = team()?.custom_taxonomies()[0].version();
+    assert_eq!(
+        lines(&draft.changes()),
+        [
+            "edited   team v3 -> v4: description; type hotfix added; type release edited"
+                .to_owned(),
+            format!("created  research-fork v1, {types} types"),
+            format!("deleted  zeta v{zeta}"),
+        ]
+    );
+    assert_eq!(draft.changes().count(), 5);
+    Ok(())
+}

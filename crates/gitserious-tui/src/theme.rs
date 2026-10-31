@@ -8,6 +8,8 @@ pub(crate) const MINIMUM_WIDTH: u16 = 66;
 pub(crate) const MINIMUM_HEIGHT: u16 = 18;
 pub(crate) const JET_BLACK: Color = Color::Rgb(0, 0, 0);
 pub(crate) const ZEBRA_BACKGROUND: Color = Color::Rgb(16, 16, 16);
+/// Unapplied changes and EDIT.
+pub(crate) const AMBER: Color = Color::Rgb(255, 176, 0);
 
 pub(crate) fn frame_style() -> Style {
     Style::default().fg(Color::DarkGray)
