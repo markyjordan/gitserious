@@ -86,6 +86,30 @@ impl Display for Problem {
 }
 
 pub(super) fn build(draft: &LibraryDraft) -> Result<GlobalConfiguration, Vec<Problem>> {
+    let (custom, mut problems) = custom(draft);
+    let installed = draft
+        .taxonomies
+        .iter()
+        .filter_map(|taxonomy| TaxonomyId::from_label(&taxonomy.name).ok())
+        .collect::<Vec<_>>();
+    if let Err(error) = validate_selection(
+        |id| installed.contains(id),
+        &draft.default,
+        &draft.available,
+    ) {
+        problems.push(selection(error));
+    }
+    if !problems.is_empty() {
+        return Err(problems);
+    }
+    let custom = custom.into_iter().map(|(_, taxonomy)| taxonomy).collect();
+    GlobalConfiguration::new(1, draft.default.clone(), draft.available.clone(), custom)
+        .map_err(|error| vec![selection(error)])
+}
+
+/// Every custom taxonomy that builds, with its index in the draft, and the problems of the
+/// ones that do not.
+pub(super) fn custom(draft: &LibraryDraft) -> (Vec<(usize, Taxonomy)>, Vec<Problem>) {
     let mut problems = Vec::new();
     let mut taken = draft
         .taxonomies
@@ -94,10 +118,11 @@ pub(super) fn build(draft: &LibraryDraft) -> Result<GlobalConfiguration, Vec<Pro
         .map(|taxonomy| taxonomy.name.clone())
         .collect::<Vec<_>>();
     let mut custom = Vec::new();
-    for taxonomy in draft
+    for (index, taxonomy) in draft
         .taxonomies
         .iter()
-        .filter(|taxonomy| taxonomy.origin == TaxonomyOrigin::Custom)
+        .enumerate()
+        .filter(|(_, taxonomy)| taxonomy.origin == TaxonomyOrigin::Custom)
     {
         let before = problems.len();
         let id = identifier(
@@ -128,30 +153,15 @@ pub(super) fn build(draft: &LibraryDraft) -> Result<GlobalConfiguration, Vec<Pro
                         taxonomy.derived_from.clone(),
                         types,
                     )
-                    .ok(),
+                    .ok()
+                    .map(|built| (index, built)),
                 );
             }
             (_, Err(more), _) => problems.extend(more),
             _ => {}
         }
     }
-    let installed = draft
-        .taxonomies
-        .iter()
-        .filter_map(|taxonomy| TaxonomyId::from_label(&taxonomy.name).ok())
-        .collect::<Vec<_>>();
-    if let Err(error) = validate_selection(
-        |id| installed.contains(id),
-        &draft.default,
-        &draft.available,
-    ) {
-        problems.push(selection(error));
-    }
-    if !problems.is_empty() {
-        return Err(problems);
-    }
-    GlobalConfiguration::new(1, draft.default.clone(), draft.available.clone(), custom)
-        .map_err(|error| vec![selection(error)])
+    (custom, problems)
 }
 
 const fn selection(error: ConfigurationError) -> Problem {

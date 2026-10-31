@@ -1,6 +1,9 @@
 use std::ops::Range;
 
-use gitserious_app::{DraftField, NodeRef, Policy, ProblemSite, TaxonomyOrigin};
+use gitserious_app::{
+    DraftField, Fingerprint, NodeRef, Policy, Preview, PreviewValue, ProblemSite, Schema,
+    TaxonomyOrigin,
+};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -20,6 +23,9 @@ const CURSOR: Style = Style::new().add_modifier(Modifier::REVERSED);
 const PROBLEM: Style = Style::new().fg(Color::Red);
 const PLACEHOLDER: Style = DIM.add_modifier(Modifier::ITALIC);
 const PLACEHOLDER_TEXT: &str = "when does this apply?";
+const SAMPLE_BAND: Style = Style::new().bg(Color::Rgb(20, 44, 24));
+const SAMPLE_KEY: Style = Style::new().fg(Color::Green).add_modifier(Modifier::BOLD);
+const SUBJECT: Style = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
 
 /// The field a row is focused on and, while it is edited, the cursor's grapheme index.
 #[derive(Clone, Copy)]
@@ -35,8 +41,9 @@ struct Focused {
     view: Range<usize>,
 }
 
-/// Describes `node` in words under a header with its chip, scrolled down by `offset` rows, and
-/// keeps the focused field and its problems in view.
+/// Describes `node` in words under a header with its chip, scrolled down by `offset` rows. The
+/// focused field never sits below the view, and while it is edited it stays in view with its
+/// problems; in NAV the rows past it, such as a property's preview, scroll into view.
 pub(super) fn render(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -63,7 +70,9 @@ pub(super) fn render(
         if end > offset.saturating_add(inner.height) {
             *offset = end.saturating_sub(inner.height);
         }
-        *offset = (*offset).min(start);
+        if editing {
+            *offset = (*offset).min(start);
+        }
     }
     *offset = (*offset).min(total.saturating_sub(inner.height));
     let lines = lines
@@ -78,10 +87,10 @@ pub(super) fn render(
             } else {
                 Span::raw(" ")
             };
+            let style = if band { BAND } else { line.style };
             let mut spans = vec![gutter];
             spans.extend(line.spans);
-            let line = Line::from(spans);
-            if band { line.style(BAND) } else { line }
+            Line::from(spans).style(style)
         })
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines).scroll((*offset, 0)), inner);
@@ -217,6 +226,11 @@ fn describe(
     for problem in chips.sentences(&ProblemSite::Node(id.clone())) {
         lines.extend(problem_lines(&problem, width));
     }
+    if let NodeRef::Property { commit_type, .. } = node
+        && let Some(preview) = library.preview(id)
+    {
+        lines.extend(preview_lines(&preview, commit_type.name(), width));
+    }
     if let NodeRef::Taxonomy(taxonomy) = node {
         lines.push(Line::default());
         if taxonomy.origin() == TaxonomyOrigin::BuiltIn {
@@ -314,6 +328,61 @@ fn field_lines(
         .collect()
 }
 
+/// A message of the property's type under a ruled title: the subject, one line naming the
+/// blocks above, the property's own block on a band, and the trailers.
+fn preview_lines(preview: &Preview<'_>, commit_type: &str, width: usize) -> Vec<Line<'static>> {
+    let title = format!("Preview · {commit_type} message ");
+    let rule = "─".repeat(width.saturating_sub(Span::raw(title.as_str()).width()));
+    let mut lines = vec![Line::default(), Line::styled(format!("{title}{rule}"), DIM)];
+    lines.extend(wrapped(&preview.subject, SUBJECT, width));
+    if !preview.earlier.is_empty() {
+        let noun = if preview.earlier.len() == 1 {
+            "block"
+        } else {
+            "blocks"
+        };
+        let above = format!("… {} {noun} above …", preview.earlier.join(", "));
+        lines.push(fit(vec![Span::styled(above, DIM)], Vec::new(), width));
+    }
+    let (value, style) = match preview.value {
+        PreviewValue::Sample(value) => (value, Style::new()),
+        PreviewValue::Placeholder(description) => (description, PLACEHOLDER),
+    };
+    let key = Line::from(Span::styled(format!("{}:", preview.key), SAMPLE_KEY));
+    let block = std::iter::once(key)
+        .chain(wrapped(value, style, width))
+        .map(|line| line.style(SAMPLE_BAND));
+    lines.extend(block);
+    lines.push(Line::default());
+    let taxonomy = format!(
+        "Gitserious-Taxonomy: {}@{}",
+        preview.taxonomy, preview.version
+    );
+    let schema = match preview.schema {
+        Schema::Current(fingerprint) => short(fingerprint),
+        Schema::LastValid(fingerprint) => format!("{} (last valid)", short(fingerprint)),
+        Schema::Unavailable => "unavailable until the taxonomy is valid".to_owned(),
+    };
+    lines.extend(wrapped(&taxonomy, DIM, width));
+    lines.extend(wrapped(&format!("Gitserious-Schema: {schema}"), DIM, width));
+    lines
+}
+
+/// `sha256:` and the first four hex digits.
+fn short(fingerprint: Fingerprint) -> String {
+    let full = fingerprint.to_string();
+    format!("{}…", &full[.."sha256:".len() + 4])
+}
+
+/// `text` in `style`, wrapped to `width` columns.
+fn wrapped(text: &str, style: Style, width: usize) -> Vec<Line<'static>> {
+    let graphemes = text.graphemes(true).collect::<Vec<_>>();
+    wrap(&graphemes, width.max(1))
+        .into_iter()
+        .map(|(start, end)| Line::from(Span::styled(graphemes[start..end].concat(), style)))
+        .collect()
+}
+
 /// `▲ problem` in the value column, wrapped beneath its own first word.
 fn problem_lines(problem: &str, width: usize) -> Vec<Line<'static>> {
     let graphemes = problem.graphemes(true).collect::<Vec<_>>();
@@ -408,7 +477,54 @@ fn hint(key: &'static str, label: &'static str) -> Line<'static> {
 
 #[cfg(test)]
 mod tests {
-    use super::wrap;
+    use std::collections::BTreeSet;
+
+    use gitserious_app::{GlobalConfiguration, LibraryDraft};
+    use ratatui::text::Line;
+
+    use super::{Chips, SAMPLE_BAND, describe, wrap};
+
+    fn text(line: &Line<'_>) -> String {
+        let text = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        text.trim_end().to_owned()
+    }
+
+    #[test]
+    fn a_property_previews_its_block_on_a_band_between_the_subject_and_both_trailers()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let library = LibraryDraft::from_configuration(GlobalConfiguration::default());
+        let decision = library
+            .find_path(&["conventional", "feat", "decision"])
+            .ok_or("feat has a decision")?;
+        let node = library.node(&decision).ok_or("the node exists")?;
+        let expanded = BTreeSet::new();
+        let (lines, _) = describe(&Chips::new(&library, &expanded), node, None, 70, true);
+        let texts = lines.iter().map(text).collect::<Vec<_>>();
+        let preview = texts
+            .iter()
+            .position(|line| line.starts_with("Preview · feat message ─"))
+            .ok_or("a preview title")?;
+        assert_eq!(
+            texts[preview + 1..preview + 4],
+            [
+                "feat(api): rate-limit public endpoints",
+                "… intent block above …",
+                "decision:",
+            ]
+        );
+        assert_eq!(lines[preview + 3].style, SAMPLE_BAND);
+        assert_eq!(lines[preview + 4].style, SAMPLE_BAND);
+        let trailers = &texts[texts.len() - 2..];
+        assert_eq!(trailers[0], "Gitserious-Taxonomy: conventional@2");
+        assert!(trailers[1].starts_with("Gitserious-Schema: sha256:"));
+        assert!(trailers[1].ends_with('…'));
+        assert!(!texts.iter().any(|line| line == "constraints:"));
+        Ok(())
+    }
 
     #[test]
     fn wrap_breaks_after_the_last_space_that_fits_and_inside_long_words() {

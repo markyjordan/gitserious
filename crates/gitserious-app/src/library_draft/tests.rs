@@ -816,3 +816,91 @@ fn changes_list_outline_order_then_deleted_taxonomies_naming_each_part() -> Test
     assert_eq!(draft.changes().count(), 5);
     Ok(())
 }
+
+#[test]
+fn a_fork_finds_its_samples_through_lineage_and_other_types_fall_back_to_their_text() -> TestResult
+{
+    let mut draft = LibraryDraft::from_configuration(team()?);
+    let fork = draft.fork(&find(&draft, &["conventional"])?)?;
+    draft.fork(&fork)?;
+    let sample = gitserious_core::built_in_sample("conventional", "feat").ok_or("a feat sample")?;
+    for taxonomy in ["zeta", "conventional-fork", "conventional-fork-fork"] {
+        let preview = draft
+            .preview(&find(&draft, &[taxonomy, "feat", "decision"])?)
+            .ok_or("a property preview")?;
+        assert_eq!(preview.subject, sample.subject(), "{taxonomy}");
+        assert_eq!(preview.earlier, ["intent"]);
+        assert_eq!(
+            preview.value,
+            PreviewValue::Sample(sample.value("decision").ok_or("a decision value")?)
+        );
+    }
+
+    let feat = find(&draft, &["conventional-fork-fork", "feat"])?;
+    let verification = draft.edit(&feat, DraftEdit::AddProperty)?;
+    set_name(&mut draft, &verification, "verification")?;
+    draft.edit(
+        &verification,
+        DraftEdit::Text(DraftField::Description, "How it was verified."),
+    )?;
+    let preview = draft.preview(&verification).ok_or("a property preview")?;
+    assert_eq!(preview.earlier, ["intent", "decision", "constraints"]);
+    assert_eq!(
+        preview.value,
+        PreviewValue::Placeholder("How it was verified.")
+    );
+    assert_eq!(
+        (preview.taxonomy, preview.version),
+        ("conventional-fork-fork", TaxonomyVersion::V1)
+    );
+
+    let preview = draft
+        .preview(&find(&draft, &["team", "release", "summary"])?)
+        .ok_or("a property preview")?;
+    assert_eq!(preview.subject, "release: Release notes");
+    assert_eq!(preview.value, PreviewValue::Placeholder("What shipped"));
+    assert!(draft.preview(&fork).is_none());
+    Ok(())
+}
+
+#[test]
+fn the_schema_is_the_last_valid_build_while_a_taxonomy_has_problems() -> TestResult {
+    let configuration = team()?;
+    let stored = crate::fingerprint_taxonomy(&configuration.custom_taxonomies()[1]);
+    let mut draft = LibraryDraft::from_configuration(configuration);
+    let schema = |draft: &LibraryDraft, path: &[&str]| -> Result<Schema, Box<dyn Error>> {
+        Ok(draft
+            .preview(&find(draft, path)?)
+            .ok_or("a preview")?
+            .schema)
+    };
+    let summary = ["team", "release", "summary"];
+    assert_eq!(schema(&draft, &summary)?, Schema::Current(stored));
+    assert_eq!(
+        schema(&draft, &["conventional", "feat", "intent"])?,
+        Schema::Current(crate::fingerprint_taxonomy(&built_in_taxonomies()[0]))
+    );
+
+    let team_id = find(&draft, &["team"])?;
+    draft.edit(&team_id, DraftEdit::Text(DraftField::Description, " "))?;
+    assert_eq!(schema(&draft, &summary)?, Schema::LastValid(stored));
+    draft.edit(
+        &team_id,
+        DraftEdit::Text(DraftField::Description, "Revised"),
+    )?;
+    let Schema::Current(revised) = schema(&draft, &summary)? else {
+        return Err("a valid taxonomy has a current schema".into());
+    };
+    assert_ne!(revised, stored);
+    draft.edit(&team_id, DraftEdit::Text(DraftField::Description, ""))?;
+    assert_eq!(schema(&draft, &summary)?, Schema::LastValid(revised));
+
+    let created = draft.create_taxonomy();
+    let commit_type = draft.edit(&created, DraftEdit::AddType)?;
+    let property = draft.edit(&commit_type, DraftEdit::AddProperty)?;
+    assert_eq!(
+        draft.preview(&property).map(|preview| preview.schema),
+        Some(Schema::Unavailable)
+    );
+    Ok(())
+}

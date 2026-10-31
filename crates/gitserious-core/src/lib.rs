@@ -4,6 +4,7 @@ mod built_in;
 mod built_in_domain;
 mod built_in_infra_ops;
 mod built_in_ml_research;
+mod built_in_samples;
 mod commit_draft;
 mod commit_message;
 mod commit_type;
@@ -18,6 +19,7 @@ mod taxonomy_provenance;
 mod taxonomy_version;
 
 pub use built_in::built_in_commit_types;
+pub use built_in_samples::{CommitSample, built_in_sample};
 pub use commit_draft::{
     AuthoredProperty, CommitDraft, CommitDraftError, CommitScope, CommitScopeError, CommitSubject,
     CommitSubjectError,
