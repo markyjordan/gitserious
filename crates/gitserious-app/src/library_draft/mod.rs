@@ -2,11 +2,13 @@
 //!
 //! A draft may hold text that does not build, such as a blank name; `problems` reports it and
 //! `build` refuses it. `edit`, `create_taxonomy`, and `fork` are the only writers. Versions,
-//! problems, and whether the draft differs from what it was loaded from are derived on each call.
+//! problems, changes, and whether the draft differs from what it was loaded from are derived on
+//! each call.
 //!
 //! Building a draft from the same configuration twice yields equal node ids, so a view can keep
 //! a node id across rebuilds. A node created in this session gets a local id that is never reused.
 
+mod changes;
 mod problems;
 
 use std::error::Error;
@@ -20,6 +22,7 @@ use gitserious_core::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{ConfigurationError, GlobalConfiguration, TaxonomyOrigin};
+pub use changes::{ChangeSet, Mark};
 pub use problems::{Problem, ProblemKind, ProblemSite};
 
 /// The identity of one taxonomy, type, or property draft. Never persisted.

@@ -16,7 +16,6 @@ mod repository_status;
 mod resolve_global_paths;
 mod storage_directory;
 mod taxonomy_authoring_context;
-mod taxonomy_changes;
 mod taxonomy_configuration_editor;
 mod taxonomy_policy;
 mod taxonomy_ports;
@@ -55,7 +54,7 @@ pub use interactive::{
     HelpPage, InteractiveEntry, InteractiveUi, InteractiveWorkspace, run_interactive,
 };
 pub use library_draft::{
-    DraftEdit, DraftField, EditRefusal, LibraryDraft, NodeId, NodeRef, Policy, Problem,
-    ProblemKind, ProblemSite, PropertyNode, TaxonomyNode, TypeNode,
+    ChangeSet, DraftEdit, DraftField, EditRefusal, LibraryDraft, Mark, NodeId, NodeRef, Policy,
+    Problem, ProblemKind, ProblemSite, PropertyNode, TaxonomyNode, TypeNode,
 };
 pub use repository_status::{BranchState, RepositoryStatus, RepositoryStatusReader, StatusEntry};

@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::super::hanging_wrap;
-use super::{BADGE_STYLE, BAND, DIM, KEY_STYLE, fit, policy_style};
+use super::{BADGE_STYLE, BAND, Chip, DIM, KEY_STYLE, fit, policy_style};
 use crate::theme::focus_frame_style;
 
 /// Labels and the values beside them start in these columns.
@@ -23,13 +23,14 @@ pub(super) struct Focus {
     pub(super) cursor: Option<usize>,
 }
 
-/// Describes `node` in words, scrolled down by `offset` rows, and keeps the focused field in
-/// view.
+/// Describes `node` in words under a header with its chip, scrolled down by `offset` rows, and
+/// keeps the focused field in view.
 pub(super) fn render(
     frame: &mut Frame<'_>,
     area: Rect,
     library: &LibraryDraft,
     node: NodeRef<'_>,
+    chip: Option<Chip>,
     focus: Option<Focus>,
     offset: &mut u16,
 ) {
@@ -41,7 +42,7 @@ pub(super) fn render(
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let width = usize::from(inner.width).saturating_sub(2);
-    let (lines, focused) = describe(library, node, focus, width, inner.height > 10);
+    let (lines, focused) = describe(library, node, chip, focus, width, inner.height > 10);
     let total = u16::try_from(lines.len()).unwrap_or(u16::MAX);
     if let Some((start, end)) = focused {
         let (start, end) = (
@@ -77,6 +78,7 @@ pub(super) fn render(
 fn describe(
     library: &LibraryDraft,
     node: NodeRef<'_>,
+    chip: Option<Chip>,
     focus: Option<Focus>,
     width: usize,
     roomy: bool,
@@ -99,14 +101,13 @@ fn describe(
                 .add_modifier(Modifier::BOLD),
         ),
     ];
-    let badge = match node {
-        NodeRef::Taxonomy(taxonomy) => {
-            vec![Span::styled(
-                format!(" {} ", taxonomy.origin().as_str()),
-                BADGE_STYLE,
-            )]
-        }
-        _ => Vec::new(),
+    let badge = match (chip, node) {
+        (Some(chip), _) => vec![chip.span()],
+        (None, NodeRef::Taxonomy(taxonomy)) => vec![Span::styled(
+            format!(" {} ", taxonomy.origin().as_str()),
+            BADGE_STYLE,
+        )],
+        (None, _) => Vec::new(),
     };
     lines.push(fit(heading, badge, width));
     match node {

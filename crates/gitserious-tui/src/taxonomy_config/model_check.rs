@@ -64,12 +64,19 @@
 //! each of its choices as `key: label`, the same pairs as the dialog's buttons. Without it, the
 //! footer and the dialog disagree about which key does what.
 //!
+//! P10, unapplied changes agree everywhere they show. After every key, the count the Config tab
+//! badge shows equals the Library's `ChangeSet::count()`; on Home the sidebar reads `● N
+//! unapplied` with that count, or no unapplied line at zero; and every outline row shows `+ new`
+//! or `~ modified` exactly when its node carries that mark. Without it, the tab, the sidebar, and
+//! the rows disagree about what apply would write, or a changed row goes unmarked.
+//!
 //! Scope limits:
 //! - Only the keyboard events in [`INPUTS`]. Mouse, paste, and resize events are out of scope.
 //! - One terminal of `MINIMUM_WIDTH` by `MINIMUM_HEIGHT` cells. Mouse hit areas that rendering
 //!   records are not projected.
 //! - `State` runs standalone, not inside the unified shell, so the shell's own quit dialog and its
-//!   tab keys are not driven.
+//!   tab keys are not driven. P10 reads the count the shell's badge shows from the same method
+//!   the shell calls; a shell test checks that the header draws it.
 //! - Workspace saves always succeed, and the project starts uninitialized.
 //! - P3 reads the frame, so it sees only the review rows that fit the viewport. Every seed's review
 //!   fits without scrolling.
@@ -93,7 +100,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use gitserious_app::{DraftField, GlobalConfiguration, NodeRef};
+use gitserious_app::{DraftField, GlobalConfiguration, Mark, NodeRef};
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
     PropertyRequirement, SchemaVersion, TaxonomyVersion,
@@ -414,6 +421,8 @@ struct Snapshot {
     project: Option<ConfigurationSession>,
     /// Whether the Library has changes apply would write.
     unapplied: bool,
+    /// The count of unapplied changes the shell's Config tab shows.
+    pending: usize,
     load_errors: [String; 2],
     saved: [ConfigurationSession; 2],
     dialog: String,
@@ -446,6 +455,7 @@ impl Snapshot {
             global: state.global.clone(),
             project: state.project.clone(),
             unapplied: state.scope_dirty(ConfigurationDestination::Global),
+            pending: state.pending_count(),
             load_errors: [state.global_error.clone(), state.project_error.clone()],
             saved: [
                 workspace.global.borrow().clone(),
@@ -524,6 +534,10 @@ const PROPERTIES: &[(&str, Check)] = &[
     (
         "P9, the footer shows the dialog's choices",
         the_footer_shows_the_dialogs_choices,
+    ),
+    (
+        "P10, unapplied changes agree everywhere they show",
+        unapplied_changes_agree_everywhere,
     ),
 ];
 
@@ -759,6 +773,69 @@ fn the_footer_shows_the_dialogs_choices(
                 footer.trim_end()
             ))
         })
+}
+
+fn unapplied_changes_agree_everywhere(
+    _: &Snapshot,
+    _: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    let Some(after) = after else {
+        return Ok(());
+    };
+    let changes = after
+        .library()
+        .map(LibraryDraft::changes)
+        .unwrap_or_default();
+    let count = changes.count();
+    if after.pending != count {
+        return Err(format!(
+            "The Config tab counts {} unapplied changes and the Library {count}.",
+            after.pending
+        ));
+    }
+    if !matches!(after.screen, Screen::Home) || after.overlay.is_some() || after.too_small {
+        return Ok(());
+    }
+    let rows = after.frame.lines().collect::<Vec<_>>();
+    let sidebar = rows
+        .iter()
+        .map(|row| {
+            row.chars()
+                .take(usize::from(MENU_WIDTH))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let line = format!("● {count} unapplied");
+    if (count > 0 && !sidebar.contains(&line)) || (count == 0 && sidebar.contains("unapplied")) {
+        return Err(format!("The sidebar does not read {line:?}:\n{sidebar}"));
+    }
+    if after.category != Category::Taxonomies {
+        return Ok(());
+    }
+    let area = after.taxonomies.outline_area;
+    for (index, id) in after.taxonomies.visible.iter().enumerate() {
+        let row = rows
+            .get(usize::from(area.y) + index)
+            .map(|row| {
+                row.chars()
+                    .skip(usize::from(area.x))
+                    .take(usize::from(area.width))
+                    .collect::<String>()
+            })
+            .unwrap_or_default();
+        let mark = id.as_ref().and_then(|id| changes.mark(id));
+        for (chip, shown) in [("+ new", Mark::New), ("~ modified", Mark::Modified)] {
+            if row.contains(chip) != (mark == Some(shown)) {
+                return Err(format!(
+                    "The outline row {:?} and its node's mark {mark:?} disagree about {chip:?}.",
+                    row.trim_end()
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Words from the application's vocabulary that the editor never shows: it applies changes and
