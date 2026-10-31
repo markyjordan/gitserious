@@ -3,7 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use gitserious_app::{GlobalConfiguration, GlobalConfigurationStore, GlobalPaths};
-use gitserious_core::{TaxonomyId, built_in_taxonomies};
+use gitserious_core::{
+    Taxonomy, TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
+};
 use gitserious_fs::{GlobalConfigurationError, TomlGlobalConfigurationStore};
 use tempfile::TempDir;
 
@@ -18,11 +20,19 @@ fn custom_configuration() -> Result<GlobalConfiguration, Box<dyn Error>> {
         .available_taxonomies()
         .to_vec();
     available.push(team.clone());
+    let source = &built_in_taxonomies()[0];
+    let fork = Taxonomy::new(
+        team.clone(),
+        TaxonomyVersion::V1,
+        source.description().clone(),
+        Some(TaxonomyLineage::new(source.id().clone(), source.version())),
+        source.commit_types().to_vec(),
+    )?;
     Ok(GlobalConfiguration::new(
         1,
         team.clone(),
         available,
-        vec![built_in_taxonomies()[0].fork(team)],
+        vec![fork],
     )?)
 }
 

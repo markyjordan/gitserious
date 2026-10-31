@@ -405,6 +405,7 @@ version = "0.1.0"
 dependencies = [
  "gitserious-core",
  "sha2",
+ "unicode-segmentation",
 ]
 
 [[package]]

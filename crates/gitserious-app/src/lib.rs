@@ -55,6 +55,7 @@ pub use interactive::{
     HelpPage, InteractiveEntry, InteractiveUi, InteractiveWorkspace, run_interactive,
 };
 pub use library_draft::{
-    DraftField, LibraryDraft, NodeId, NodeRef, Policy, PropertyNode, TaxonomyNode, TypeNode,
+    DraftEdit, DraftField, EditRefusal, LibraryDraft, NodeId, NodeRef, Policy, Problem,
+    ProblemKind, ProblemSite, PropertyNode, TaxonomyNode, TypeNode,
 };
 pub use repository_status::{BranchState, RepositoryStatus, RepositoryStatusReader, StatusEntry};

@@ -104,18 +104,6 @@ impl Taxonomy {
     pub fn commit_types(&self) -> &[CommitTypeDefinition] {
         &self.commit_types
     }
-
-    /// Copies this taxonomy under a new identity and records snapshot lineage.
-    #[must_use]
-    pub fn fork(&self, id: TaxonomyId) -> Self {
-        Self {
-            id,
-            version: TaxonomyVersion::V1,
-            description: self.description.clone(),
-            derived_from: Some(TaxonomyLineage::new(self.id.clone(), self.version)),
-            commit_types: self.commit_types.clone(),
-        }
-    }
 }
 
 /// A structural taxonomy failure.
@@ -199,14 +187,21 @@ mod tests {
     }
 
     #[test]
-    fn fork_is_an_informational_snapshot() {
+    fn snapshot_lineage_is_informational() -> Result<(), TaxonomyError> {
         let source = &built_in_taxonomies()[0];
-        let fork = source.fork(TaxonomyId::from_trusted("team"));
+        let fork = Taxonomy::new(
+            TaxonomyId::from_trusted("team"),
+            TaxonomyVersion::V1,
+            source.description().clone(),
+            Some(TaxonomyLineage::new(source.id().clone(), source.version())),
+            source.commit_types().to_vec(),
+        )?;
         assert_eq!(fork.version(), TaxonomyVersion::V1);
         assert_eq!(fork.commit_types(), source.commit_types());
         assert_eq!(
             fork.derived_from().map(TaxonomyLineage::id),
             Some(source.id())
         );
+        Ok(())
     }
 }

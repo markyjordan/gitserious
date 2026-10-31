@@ -7,7 +7,7 @@ use gitserious_app::GlobalConfiguration;
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
     PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion, Taxonomy, TaxonomyId,
-    TaxonomyVersion, built_in_taxonomies,
+    TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
 };
 use support::{Global, Harness, Project};
 
@@ -17,11 +17,19 @@ fn with_team() -> Result<GlobalConfiguration, Box<dyn Error>> {
         .available_taxonomies()
         .to_vec();
     available.push(team.clone());
+    let source = &built_in_taxonomies()[0];
+    let fork = Taxonomy::new(
+        team.clone(),
+        TaxonomyVersion::V1,
+        source.description().clone(),
+        Some(TaxonomyLineage::new(source.id().clone(), source.version())),
+        source.commit_types().to_vec(),
+    )?;
     Ok(GlobalConfiguration::new(
         1,
         team.clone(),
         available,
-        vec![built_in_taxonomies()[0].fork(team)],
+        vec![fork],
     )?)
 }
 

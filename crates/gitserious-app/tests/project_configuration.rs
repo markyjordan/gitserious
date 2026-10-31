@@ -11,7 +11,9 @@ use gitserious_app::{
     ProjectStateStore, RepositoryLocator, RepositoryRoot, edit_configuration,
     resolve_effective_configuration,
 };
-use gitserious_core::{TaxonomyId, built_in_taxonomies};
+use gitserious_core::{
+    Taxonomy, TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
+};
 
 fn id(value: &str) -> TaxonomyId {
     TaxonomyId::new(value).expect("valid test identity")
@@ -26,13 +28,17 @@ fn with_team() -> GlobalConfiguration {
         .available_taxonomies()
         .to_vec();
     available.push(id("team"));
-    GlobalConfiguration::new(
-        1,
-        id("conventional"),
-        available,
-        vec![built_in_taxonomies()[0].fork(id("team"))],
+    let source = &built_in_taxonomies()[0];
+    let team = Taxonomy::new(
+        id("team"),
+        TaxonomyVersion::V1,
+        source.description().clone(),
+        Some(TaxonomyLineage::new(source.id().clone(), source.version())),
+        source.commit_types().to_vec(),
     )
-    .expect("valid global configuration")
+    .expect("valid test taxonomy");
+    GlobalConfiguration::new(1, id("conventional"), available, vec![team])
+        .expect("valid global configuration")
 }
 
 fn initialized(global: &GlobalConfiguration, config: ProjectConfig) -> ProjectState {

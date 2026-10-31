@@ -1,13 +1,9 @@
 use std::borrow::Cow;
 
-use gitserious_core::{LabelError, normalize_identifier};
-use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
-
-use super::taxonomy_heading_line;
-use crate::theme::{frame_style, section_heading_style};
-
-const MINIMUM_NOTE_WIDTH: usize = 12;
+use gitserious_app::{
+    DraftField, EditRefusal, LibraryDraft, NodeRef, Problem, ProblemKind, ProblemSite,
+};
+use gitserious_core::LabelError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum NameField {
@@ -40,45 +36,6 @@ pub(super) fn name_error(field: NameField, raw: &str, error: &LabelError) -> Str
             format!("{noun} can't use \"{character}\". Use letters a-z and digits.")
         }
     }
-}
-
-fn name_note(raw: &str) -> Option<String> {
-    if raw.trim().is_empty() {
-        return None;
-    }
-    match normalize_identifier(raw) {
-        Ok(formatted) if formatted == raw => None,
-        Ok(formatted) => Some(format!("saves as {formatted}")),
-        Err(LabelError::StartsWithDigit { .. }) => Some("start with a letter".into()),
-        Err(LabelError::Empty | LabelError::Unsupported { .. }) => Some("use letters a-z".into()),
-    }
-}
-
-/// A Name heading whose rule ends with the identifier the typed text saves as.
-pub(super) fn name_heading_line(title: &str, raw: &str, width: u16) -> Line<'static> {
-    noted_heading_line(title, name_note(raw), width)
-}
-
-/// A heading whose rule ends with `note`, or a plain heading when there is no room for it.
-pub(super) fn noted_heading_line(title: &str, note: Option<String>, width: u16) -> Line<'static> {
-    let available = usize::from(width).saturating_sub(title.len() + 1);
-    let Some(note) = note.filter(|_| available >= MINIMUM_NOTE_WIDTH) else {
-        return taxonomy_heading_line(title, width);
-    };
-    // Notes are ASCII, so byte length is display width and slicing is safe.
-    let room = available - 2;
-    let (note, note_width) = if note.len() > room {
-        (format!("{}…", &note[..room - 1]), room)
-    } else {
-        let note_width = note.len();
-        (note, note_width)
-    };
-    let rule_width = available - 1 - note_width;
-    Line::from(vec![
-        Span::styled(title.to_owned(), section_heading_style().fg(Color::White)),
-        Span::styled(format!(" {} ", "⠒".repeat(rule_width)), frame_style()),
-        Span::styled(note, Style::default().fg(Color::White)),
-    ])
 }
 
 /// The notice for an entry whose description is blank, such as `Type description is required.`
@@ -122,11 +79,67 @@ pub(super) fn single_line(text: &str) -> Cow<'_, str> {
     Cow::Owned(line)
 }
 
-/// Trims edited prose at its edges. Unchanged loaded prose stays byte for byte.
-pub(super) fn edited_prose(text: String, loaded: &str) -> String {
-    if text == loaded {
-        text
-    } else {
-        text.trim().to_owned()
+/// The notice for an edit the Library refused. `field` names the field a text edit targeted.
+pub(super) fn refusal_sentence(refusal: EditRefusal, field: Option<DraftField>) -> String {
+    match (
+        refusal,
+        field.and_then(|field| Some((field, field.limit()?))),
+    ) {
+        (EditRefusal::ReadOnly, _) => {
+            "Built-in taxonomies are read-only; fork one to customize it.".into()
+        }
+        (EditRefusal::NameLocked, _) => {
+            "A taxonomy keeps its name once it is applied; fork it to use another name.".into()
+        }
+        (EditRefusal::TooLong, Some((field, limit))) => {
+            format!("{} is limited to {limit} characters.", field.label())
+        }
+        (EditRefusal::TooLong, None) => "That text is too long for this field.".into(),
+        (EditRefusal::NotApplicable | EditRefusal::Missing, _) => {
+            "Select a taxonomy, type, or property first.".into()
+        }
+    }
+}
+
+/// The sentence for a problem that keeps the Library from building.
+pub(super) fn problem_sentence(library: &LibraryDraft, problem: &Problem) -> String {
+    let node = problem.node().and_then(|node| library.node(node));
+    let owner = match node {
+        Some(NodeRef::Taxonomy(_)) | None => ("Taxonomy", NameField::Taxonomy, "the Library"),
+        Some(NodeRef::Type { .. }) => ("Type", NameField::Type, "this taxonomy"),
+        Some(NodeRef::Property { .. }) => ("Property", NameField::Property, "this type"),
+    };
+    let field = match &problem.site {
+        ProblemSite::Field(_, field) => Some(*field),
+        ProblemSite::Node(_) | ProblemSite::Selection => None,
+    };
+    match &problem.kind {
+        ProblemKind::Label(error) => {
+            let name = if field == Some(DraftField::Condition) {
+                NameField::Condition
+            } else {
+                owner.1
+            };
+            let raw = problem
+                .node()
+                .zip(field)
+                .and_then(|(node, field)| library.text(node, field))
+                .unwrap_or_default();
+            name_error(name, raw, error)
+        }
+        ProblemKind::Taken(id) => format!(
+            "A {} named \"{id}\" already exists in {}.",
+            owner.0.to_lowercase(),
+            owner.2
+        ),
+        ProblemKind::StagedForDeletion(id) => format!(
+            "Taxonomy \"{id}\" is staged for deletion; apply the deletion before reusing its name."
+        ),
+        ProblemKind::Blank if field == Some(DraftField::Rationale) => {
+            "Condition rationale is required.".into()
+        }
+        ProblemKind::Blank => description_required(owner.0),
+        ProblemKind::NoTypes => "Add a type before applying the taxonomy.".into(),
+        ProblemKind::Selection(error) => sentence(&error.to_string()),
     }
 }

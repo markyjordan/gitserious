@@ -154,7 +154,6 @@ struct Shell {
     commit: CommitView,
     home_logo: HomeLogo,
     pending_author: Option<PendingAuthor>,
-    pending_navigation: Option<Action>,
     overlay: Option<Overlay>,
     quit_dialog: ConfirmDialog,
     help_page: usize,
@@ -179,7 +178,6 @@ impl Shell {
             commit: CommitView::default(),
             home_logo: HomeLogo::with_theme(resolve_dev_theme()),
             pending_author: None,
-            pending_navigation: None,
             overlay: None,
             quit_dialog: ConfirmDialog::default(),
             help_page: 0,
@@ -195,17 +193,6 @@ impl Shell {
 
     fn animating(&self) -> bool {
         self.section == Section::Home
-    }
-
-    fn request(&mut self, action: Action, workspace: &dyn InteractiveWorkspace) -> Option<Action> {
-        if self.section == Section::Config
-            && self.config.editing_taxonomy()
-            && !self.config.request_leave_editor()
-        {
-            self.pending_navigation = Some(action);
-            return None;
-        }
-        self.execute(action, workspace)
     }
 
     fn execute(&mut self, action: Action, workspace: &dyn InteractiveWorkspace) -> Option<Action> {
@@ -246,18 +233,8 @@ impl Shell {
             return self.handle_overlay(event, workspace);
         }
         if self.section == Section::Config && self.config.modal() {
-            let was_confirming = self.config.confirming_discard();
-            let quit = self.config.handle_event(event, workspace.configuration());
-            if quit {
+            if self.config.handle_event(event, workspace.configuration()) {
                 return self.execute(Action::Quit, workspace);
-            }
-            if was_confirming && !self.config.confirming_discard() {
-                let pending = self.pending_navigation.take();
-                if !self.config.editing_taxonomy()
-                    && let Some(action) = pending
-                {
-                    return self.execute(action, workspace);
-                }
             }
             return None;
         }
@@ -268,7 +245,7 @@ impl Shell {
             if let Some(section) = Section::ALL.into_iter().find(|section| {
                 self.root_areas[section.index()].contains((mouse.column, mouse.row).into())
             }) {
-                return self.request(Action::Select(section), workspace);
+                return self.execute(Action::Select(section), workspace);
             }
             if self.section == Section::Commit {
                 self.commit.click(mouse.column, mouse.row);
@@ -277,30 +254,33 @@ impl Shell {
         if let Event::Key(key) = &event {
             let control = key.modifiers.contains(KeyModifiers::CONTROL);
             if control && key.code == KeyCode::Char('c') {
-                return self.request(Action::Quit, workspace);
+                return self.execute(Action::Quit, workspace);
             }
             if self.too_small {
                 return if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
-                    self.request(Action::Quit, workspace)
+                    self.execute(Action::Quit, workspace)
                 } else {
                     None
                 };
             }
             if self.section == Section::Config {
-                if self.config.shell_keys() == ShellKeys::Navigation {
-                    match key.code {
-                        KeyCode::Tab | KeyCode::BackTab => {
-                            return self.execute(
-                                Action::Select(self.section.next(key.code == KeyCode::BackTab)),
-                                workspace,
-                            );
-                        }
-                        KeyCode::Esc => {
-                            return self.execute(Action::Select(Section::Home), workspace);
-                        }
-                        KeyCode::Char('q') => return self.execute(Action::Quit, workspace),
-                        _ => {}
+                match (self.config.shell_keys(), key.code) {
+                    (
+                        ShellKeys::Navigation | ShellKeys::TabsOnly,
+                        KeyCode::Tab | KeyCode::BackTab,
+                    ) => {
+                        return self.execute(
+                            Action::Select(self.section.next(key.code == KeyCode::BackTab)),
+                            workspace,
+                        );
                     }
+                    (ShellKeys::Navigation, KeyCode::Esc) => {
+                        return self.execute(Action::Select(Section::Home), workspace);
+                    }
+                    (ShellKeys::Navigation, KeyCode::Char('q')) => {
+                        return self.execute(Action::Quit, workspace);
+                    }
+                    _ => {}
                 }
             } else {
                 match key.code {
@@ -447,7 +427,7 @@ impl Shell {
                         }
                         KeyCode::Enter => {
                             if let Some((_, action)) = commands.get(palette.selected) {
-                                return self.request(*action, workspace);
+                                return self.execute(*action, workspace);
                             }
                         }
                         KeyCode::Backspace => {
@@ -584,9 +564,6 @@ impl Shell {
                 };
                 render_navigation_row(frame, footer, hints);
             }
-        }
-        if self.too_small && self.section == Section::Config && self.config.confirming_discard() {
-            self.config.render(frame, area);
         }
         self.render_overlay(frame, area);
         if matches!(self.overlay, Some(Overlay::QuitConfirm)) {
@@ -845,65 +822,26 @@ mod tests {
     }
 
     #[test]
-    fn taxonomy_editor_guards_root_navigation_with_the_config_discard_dialog()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn config_edit_keeps_tab_and_gives_esc_and_q_to_the_field() {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
-        shell.handle_event(key(KeyCode::Down), &services, &[]);
+        shell.handle_event(key(KeyCode::Char('2')), &services, &[]);
         shell.handle_event(key(KeyCode::Char('n')), &services, &[]);
-        shell.handle_event(Event::Paste("team".into()), &services, &[]);
-        assert!(shell.config.editing_taxonomy());
+        assert_eq!(shell.config.shell_keys(), ShellKeys::TabsOnly);
+        shell.handle_event(key(KeyCode::Char('q')), &services, &[]);
+        assert_eq!(shell.section, Section::Config);
+        assert!(shell.overlay.is_none());
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
-        assert_eq!(shell.section, Section::Config);
-        assert!(!shell.config.confirming_discard());
-        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert!(rendered(&terminal).contains("Library / create taxonomy"));
-        shell.handle_event(
-            click(shell.root_areas[Section::Commit.index()]),
-            &services,
-            &[],
-        );
-        assert!(shell.config.confirming_discard());
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert!(rendered(&terminal).contains("Discard new taxonomy"));
-        shell.handle_event(key(KeyCode::Esc), &services, &[]);
-        assert!(shell.config.editing_taxonomy());
-        assert!(shell.pending_navigation.is_none());
-        assert_eq!(shell.section, Section::Config);
-        shell.handle_event(
-            Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
-            &services,
-            &[],
-        );
-        assert!(shell.config.confirming_discard());
-        shell.handle_event(key(KeyCode::Char('n')), &services, &[]);
-        shell.handle_event(
-            click(shell.root_areas[Section::Commit.index()]),
-            &services,
-            &[],
-        );
-        shell.handle_event(key(KeyCode::Char('y')), &services, &[]);
-        assert!(!shell.config.editing_taxonomy());
-        assert_eq!(shell.section, Section::Commit);
-        Ok(())
-    }
-
-    #[test]
-    fn unchanged_taxonomy_editor_leaves_without_confirmation() {
-        let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
-        shell.handle_event(key(KeyCode::Down), &services, &[]);
-        shell.handle_event(key(KeyCode::Char('n')), &services, &[]);
-        assert!(shell.config.editing_taxonomy());
-        shell.execute(Action::Select(Section::Help), &services);
         assert_eq!(shell.section, Section::Help);
-        shell.request(Action::Select(Section::Help), &services);
-        shell.execute(Action::Select(Section::Config), &services);
-        assert!(shell.config.editing_taxonomy());
-        shell.request(Action::Select(Section::Commit), &services);
-        assert_eq!(shell.section, Section::Commit);
-        assert!(!shell.config.editing_taxonomy());
+        shell.handle_event(key(KeyCode::BackTab), &services, &[]);
+        assert_eq!(shell.section, Section::Config);
+        assert_eq!(shell.config.shell_keys(), ShellKeys::TabsOnly);
+        shell.handle_event(key(KeyCode::Esc), &services, &[]);
+        assert_eq!(shell.section, Section::Config);
+        assert_eq!(shell.config.shell_keys(), ShellKeys::Navigation);
+        assert!(shell.config.dirty());
+        shell.handle_event(key(KeyCode::Char('q')), &services, &[]);
+        assert!(matches!(shell.overlay, Some(Overlay::QuitConfirm)));
     }
 
     #[test]
@@ -1185,7 +1123,6 @@ mod tests {
         let original_header = shell.root_areas;
         shell.handle_event(key(KeyCode::Char('i')), &services, &[]);
         assert_eq!(shell.config.shell_keys(), ShellKeys::None);
-        assert!(!shell.config.editing_taxonomy());
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert_eq!(shell.root_areas, original_header);
         let review = rendered(&terminal);
@@ -1205,40 +1142,6 @@ mod tests {
         assert_eq!(shell.config.shell_keys(), ShellKeys::None);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert_eq!(rendered(&terminal), review);
-        Ok(())
-    }
-
-    #[test]
-    fn small_create_view_preserves_draft_and_discard_confirmation()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
-        shell.handle_event(key(KeyCode::Down), &services, &[]);
-        shell.handle_event(key(KeyCode::Char('n')), &services, &[]);
-        shell.handle_event(Event::Paste("team".into()), &services, &[]);
-        let mut terminal = Terminal::new(TestBackend::new(66, 21))?;
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert!(rendered(&terminal).contains("Library / create taxonomy"));
-        assert!(rendered(&terminal).contains("+ add type"));
-        terminal.backend_mut().resize(66, 18);
-        terminal.resize(Rect::new(0, 0, 66, 18))?;
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert!(!shell.too_small);
-        assert!(rendered(&terminal).contains("Terminal too small"));
-        shell.handle_event(key(KeyCode::Esc), &services, &[]);
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert!(rendered(&terminal).contains("Discard new taxonomy"));
-        terminal.backend_mut().resize(60, 18);
-        terminal.resize(Rect::new(0, 0, 60, 18))?;
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert!(shell.too_small);
-        assert!(rendered(&terminal).contains("Discard new taxonomy"));
-        shell.handle_event(key(KeyCode::Char('n')), &services, &[]);
-        assert!(shell.config.editing_taxonomy());
-        terminal.backend_mut().resize(66, 21);
-        terminal.resize(Rect::new(0, 0, 66, 21))?;
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert!(rendered(&terminal).contains("team"));
         Ok(())
     }
 }
