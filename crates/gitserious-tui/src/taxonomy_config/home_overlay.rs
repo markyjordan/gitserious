@@ -50,7 +50,7 @@ const CREATE_COMMANDS: &[CreateCommand] =
 
 impl HomeCommand {
     fn label(self, category: Category) -> &'static str {
-        if category == Category::Library {
+        if category == Category::Taxonomies {
             return match self {
                 Self::New => "create taxonomy",
                 Self::Edit => "edit taxonomy",
@@ -60,7 +60,7 @@ impl HomeCommand {
                 Self::SwitchTab => "switch to project",
                 Self::Help => "help",
                 Self::Quit => "quit",
-                _ => unreachable!("Project commands are not shown in Library"),
+                _ => unreachable!("Project commands are not shown in Taxonomies"),
             };
         }
         match self {
@@ -72,8 +72,8 @@ impl HomeCommand {
             Self::Fork => "Fork taxonomy",
             Self::Delete => "Delete taxonomy",
             Self::SwitchTab => match category {
-                Category::Project => "Switch to Library",
-                Category::Library => "Switch to Project",
+                Category::Project => "Switch to Taxonomies",
+                Category::Taxonomies => "Switch to Project",
             },
             Self::Help => "Help",
             Self::Quit => "Quit",
@@ -118,7 +118,7 @@ const LIBRARY_COMMANDS: &[HomeCommand] = &[
 fn commands(category: Category) -> &'static [HomeCommand] {
     match category {
         Category::Project => PROJECT_COMMANDS,
-        Category::Library => LIBRARY_COMMANDS,
+        Category::Taxonomies => LIBRARY_COMMANDS,
     }
 }
 
@@ -307,7 +307,7 @@ fn render_palette(
 fn render_help(frame: &mut Frame<'_>, area: Rect, category: Category) {
     let rows: &[(&str, &str)] = match category {
         Category::Project => &[
-            ("Switch Project / Library", "↑/↓/click"),
+            ("Switch Project / Taxonomies", "1/2/click"),
             ("Focus menu or sections", "←/→"),
             ("Move between sections", "↑/↓"),
             ("Configure project", "enter"),
@@ -317,11 +317,11 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, category: Category) {
             ("Open commands", "/"),
             ("Quit", "esc/q"),
         ],
-        Category::Library => &[
-            ("Switch Project / Library", "↑/↓/click"),
-            ("Focus menu, taxonomy, or type", "←/→"),
+        Category::Taxonomies => &[
+            ("Switch Project / Taxonomies", "1/2/click"),
+            ("Expand, collapse, or go up", "←/→/enter"),
             ("Move selection", "↑/↓"),
-            ("Scroll details", "pgup/pgdn"),
+            ("Scroll Inspector", "pgup/pgdn"),
             ("New / edit / fork / delete", "n/e/f/d"),
             ("Review changes", "ctrl+s"),
             ("Open commands", "/"),

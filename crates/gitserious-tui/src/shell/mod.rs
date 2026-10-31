@@ -19,7 +19,7 @@ use ratatui::{DefaultTerminal, Frame};
 
 use crate::author::{AuthoringCheckpoint, embedded_author};
 use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT};
-use crate::taxonomy_config::ConfigView;
+use crate::taxonomy_config::{ConfigView, ShellKeys};
 use crate::theme::{
     JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, centered_rect, command_hints, frame_style,
     navigation_key_style, normalize_background, render_navigation_row,
@@ -287,7 +287,7 @@ impl Shell {
                 };
             }
             if self.section == Section::Config {
-                if self.config.overview() {
+                if self.config.shell_keys() == ShellKeys::Navigation {
                     match key.code {
                         KeyCode::Tab | KeyCode::BackTab => {
                             return self.execute(
@@ -825,7 +825,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let text = rendered(&terminal);
-        assert!(text.contains("Menu"));
+        assert!(text.contains("1  Project"));
         assert!(text.contains("tab/shift+tab: switch"));
         shell.handle_event(key(KeyCode::Down), &services, &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
@@ -953,7 +953,7 @@ mod tests {
         shell.handle_event(key(KeyCode::Char('i')), &services, &[]);
         assert!(shell.config.dirty());
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
-        assert!(shell.config.overview());
+        assert_eq!(shell.config.shell_keys(), ShellKeys::Navigation);
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.section, Section::Home);
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
@@ -1005,7 +1005,7 @@ mod tests {
         shell.handle_event(Event::Paste("quit".into()), &services, &[]);
         shell.handle_event(key(KeyCode::Enter), &services, &[]);
         assert!(matches!(shell.overlay, Some(Overlay::QuitConfirm)));
-        assert!(shell.config.overview());
+        assert_eq!(shell.config.shell_keys(), ShellKeys::Navigation);
         assert_eq!(
             shell.handle_event(key(KeyCode::Char('y')), &services, &[]),
             Some(Action::Quit)
@@ -1060,7 +1060,7 @@ mod tests {
             .collect();
         assert!(header.contains("Home   Commit   Config   Help"));
         assert!(!header.contains('['));
-        assert!(rendered(&terminal).contains("Menu"));
+        assert!(rendered(&terminal).contains("1  Project"));
         let config = shell.root_areas[Section::Config.index()];
         assert_eq!(
             terminal.backend().buffer()[(config.x + 1, config.y)].bg,
@@ -1184,7 +1184,7 @@ mod tests {
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let original_header = shell.root_areas;
         shell.handle_event(key(KeyCode::Char('i')), &services, &[]);
-        assert!(!shell.config.overview());
+        assert_eq!(shell.config.shell_keys(), ShellKeys::None);
         assert!(!shell.config.editing_taxonomy());
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert_eq!(shell.root_areas, original_header);
@@ -1202,7 +1202,7 @@ mod tests {
             &[],
         );
         assert_eq!(shell.section, Section::Config);
-        assert!(!shell.config.overview());
+        assert_eq!(shell.config.shell_keys(), ShellKeys::None);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert_eq!(rendered(&terminal), review);
         Ok(())

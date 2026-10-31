@@ -10,6 +10,7 @@ mod global_path_resolver;
 mod global_paths;
 mod initialize_taxonomy_project;
 mod interactive;
+mod library_draft;
 mod repository_locator;
 mod repository_status;
 mod resolve_global_paths;
@@ -52,5 +53,8 @@ pub use taxonomy_ports::{GlobalConfigurationStore, ProjectStateStore};
 
 pub use interactive::{
     HelpPage, InteractiveEntry, InteractiveUi, InteractiveWorkspace, run_interactive,
+};
+pub use library_draft::{
+    DraftField, LibraryDraft, NodeId, NodeRef, Policy, PropertyNode, TaxonomyNode, TypeNode,
 };
 pub use repository_status::{BranchState, RepositoryStatus, RepositoryStatusReader, StatusEntry};

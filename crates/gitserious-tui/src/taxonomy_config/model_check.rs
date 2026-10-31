@@ -2,7 +2,10 @@
 //!
 //! The check drives the real [`State`] through every sequence of keys from each seed's
 //! [`Alphabet`], up to the seed's depth bound, and checks every entry of [`PROPERTIES`] on every
-//! transition, the seed's own keys included. A seed explores every key in [`INPUTS`] unless it
+//! transition, the keys that reach the seed's [`Start`] included. An outline start names the row
+//! to start on by its names, and the check finds the keys: `2`, then `down` until the selected
+//! row matches each name and `right` to expand it before the next. Seeds that open one of the
+//! taxonomy, type, or property editors start from literal keys and a readiness predicate. A seed explores every key in [`INPUTS`] unless it
 //! names a smaller alphabet, which lets it reach deeper for the same number of replays. After a
 //! seed's exploration, each of its [`Reach`] goals must have seen every expected value in some
 //! explored state. A state is rebuilt by replaying its keys into a fresh fake workspace and
@@ -74,7 +77,9 @@
 //!   fits without scrolling.
 //! - P4 explores only the up, down, left, right, and enter keys from one new property editor. It
 //!   reads the editor's policy, not the frame.
-//! - A pass covers the seven seeds to their depth bounds, not every reachable state. Every replay
+//! - The Taxonomies outline is seen through `taxonomies::Observation`: the raw cursor and expanded
+//!   node ids, the selected row's names, the scroll offsets, and the mode.
+//! - A pass covers the nine seeds to their depth bounds, not every reachable state. Every replay
 //!   renders each frame in a debug build, so the bounds keep the check near 45 seconds on six
 //!   cores. The editor seeds get the deeper bound because P1 lives in the editors. The P4 seed's
 //!   bound is deep enough to expand every state its five keys reach.
@@ -91,7 +96,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
 use super::child_editor::PropertyFocus;
-use super::library_view::LibraryFocus;
+use super::taxonomies::{Mode, Observation};
 use super::tests::Workspace;
 use super::*;
 use crate::confirmation::{self, Answer, ConfirmDialog, DISCARD, REMOVE};
@@ -132,20 +137,34 @@ const INPUTS: &[(&str, Event)] = &[
     ("q", plain(KeyCode::Char('q'))),
     ("a", plain(KeyCode::Char('a'))),
     ("1", plain(KeyCode::Char('1'))),
+    ("2", plain(KeyCode::Char('2'))),
     ("space", plain(KeyCode::Char(' '))),
 ];
 
 struct Seed {
     name: &'static str,
     workspace: fn() -> Result<Workspace, String>,
-    keys: &'static [&'static str],
-    ready: fn(&Snapshot) -> bool,
+    start: Start,
     depth: usize,
     alphabet: Alphabet,
     reaches: &'static [Reach],
 }
 
-/// The keys a seed explores after its own keys.
+/// Where a seed's exploration starts.
+enum Start {
+    /// The Taxonomies outline with the row these names lead to selected, in `mode`.
+    Outline {
+        path: &'static [&'static str],
+        mode: Mode,
+    },
+    /// The state these keys reach, which `ready` must accept.
+    Keys {
+        keys: &'static [&'static str],
+        ready: fn(&Snapshot) -> bool,
+    },
+}
+
+/// The keys a seed explores after its start.
 enum Alphabet {
     Every,
     Only(&'static [&'static str]),
@@ -161,19 +180,34 @@ struct Reach {
 
 const SEEDS: &[Seed] = &[
     Seed {
-        name: "built-ins at Library",
+        name: "built-ins at Taxonomies",
         workspace: built_ins,
-        keys: &["down", "right"],
-        ready: at_taxonomy_list,
+        start: Start::Outline {
+            path: &["conventional"],
+            mode: Mode::Nav,
+        },
         depth: 2,
         alphabet: Alphabet::Every,
         reaches: &[],
     },
     Seed {
-        name: "team at Library",
+        name: "team at Taxonomies",
         workspace: team_library,
-        keys: &["down", "right", "down", "down", "down"],
-        ready: team_selected,
+        start: Start::Outline {
+            path: &["team"],
+            mode: Mode::Nav,
+        },
+        depth: 2,
+        alphabet: Alphabet::Every,
+        reaches: &[],
+    },
+    Seed {
+        name: "team release expanded at Taxonomies",
+        workspace: team_library,
+        start: Start::Outline {
+            path: &["team", "release", "summary"],
+            mode: Mode::Nav,
+        },
         depth: 2,
         alphabet: Alphabet::Every,
         reaches: &[],
@@ -181,8 +215,10 @@ const SEEDS: &[Seed] = &[
     Seed {
         name: "built-ins with the create editor open",
         workspace: built_ins,
-        keys: &["down", "right", "n"],
-        ready: creating,
+        start: Start::Keys {
+            keys: &["2", "n"],
+            ready: creating,
+        },
         depth: 3,
         alphabet: Alphabet::Every,
         reaches: &[],
@@ -190,8 +226,10 @@ const SEEDS: &[Seed] = &[
     Seed {
         name: "a fork of conventional open at its full budget",
         workspace: built_ins,
-        keys: &["down", "right", "f"],
-        ready: forking,
+        start: Start::Keys {
+            keys: &["2", "f"],
+            ready: forking,
+        },
         depth: 2,
         alphabet: Alphabet::Every,
         reaches: &[],
@@ -199,39 +237,42 @@ const SEEDS: &[Seed] = &[
     Seed {
         name: "team with the edit editor open",
         workspace: team_library,
-        keys: &["down", "right", "down", "down", "down", "e"],
-        ready: editing,
+        start: Start::Keys {
+            keys: &["2", "down", "down", "down", "e"],
+            ready: editing,
+        },
         depth: 3,
         alphabet: Alphabet::Every,
         reaches: &[],
     },
     Seed {
-        name: "team edited at Library",
+        name: "team edited at Taxonomies",
         workspace: team_library,
-        keys: &[
-            "down", "right", "down", "down", "down", "e", "up", "a", "ctrl+s",
-        ],
-        ready: team_selected,
+        start: Start::Keys {
+            keys: &["2", "down", "down", "down", "e", "up", "a", "ctrl+s"],
+            ready: team_selected,
+        },
         depth: 2,
         alphabet: Alphabet::Every,
         reaches: &[],
     },
     Seed {
-        name: "a fork created and team deleted at Library",
+        name: "a fork created and team deleted at Taxonomies",
         workspace: team_library,
-        keys: &[
-            "down",
-            "right",
-            "f",
-            "backspace",
-            "ctrl+s",
-            "down",
-            "down",
-            "down",
-            "d",
-            "y",
-        ],
-        ready: at_taxonomy_list,
+        start: Start::Keys {
+            keys: &[
+                "2",
+                "f",
+                "backspace",
+                "ctrl+s",
+                "down",
+                "down",
+                "down",
+                "d",
+                "y",
+            ],
+            ready: at_outline,
+        },
         depth: 2,
         alphabet: Alphabet::Every,
         reaches: &[],
@@ -239,10 +280,10 @@ const SEEDS: &[Seed] = &[
     Seed {
         name: "team with a new property editor open",
         workspace: team_library,
-        keys: &[
-            "down", "right", "down", "down", "down", "e", "down", "enter", "ctrl+n",
-        ],
-        ready: adding_property,
+        start: Start::Keys {
+            keys: &["2", "down", "down", "down", "e", "down", "enter", "ctrl+n"],
+            ready: adding_property,
+        },
         depth: 13,
         alphabet: Alphabet::Only(&["up", "down", "left", "right", "enter"]),
         reaches: &[Reach {
@@ -253,15 +294,23 @@ const SEEDS: &[Seed] = &[
     },
 ];
 
-fn at_taxonomy_list(snapshot: &Snapshot) -> bool {
+fn at_outline(snapshot: &Snapshot) -> bool {
     matches!(snapshot.screen, Screen::Home)
-        && snapshot.category == Category::Library
+        && snapshot.category == Category::Taxonomies
         && snapshot.home_focus == HomeFocus::Content
-        && snapshot.library_focus == LibraryFocus::Taxonomies
+}
+
+fn selects(snapshot: &Snapshot, path: &[&str]) -> bool {
+    snapshot
+        .taxonomies
+        .cursor_path
+        .iter()
+        .map(String::as_str)
+        .eq(path.iter().copied())
 }
 
 fn team_selected(snapshot: &Snapshot) -> bool {
-    at_taxonomy_list(snapshot) && snapshot.selected_taxonomy.as_deref() == Some("team")
+    at_outline(snapshot) && selects(snapshot, &["team"])
 }
 
 fn creating(snapshot: &Snapshot) -> bool {
@@ -376,9 +425,7 @@ struct Snapshot {
     home_focus: HomeFocus,
     project_section: ProjectSection,
     active_scope: ConfigurationDestination,
-    library_focus: LibraryFocus,
-    selected_taxonomy: Option<String>,
-    library: String,
+    taxonomies: Observation,
     overlay: Option<String>,
     child_selected: usize,
     create_focus: CreateFocus,
@@ -414,11 +461,7 @@ impl Snapshot {
             home_focus: state.home_focus,
             project_section: state.project_section,
             active_scope: state.active_scope,
-            library_focus: state.library.focus,
-            selected_taxonomy: state
-                .selected_taxonomy()
-                .map(|taxonomy| taxonomy.id().to_string()),
-            library: format!("{:?}", state.library),
+            taxonomies: state.taxonomies.observe(state.library().as_ref()),
             overlay: state
                 .home_overlay
                 .as_ref()
@@ -871,13 +914,14 @@ fn labels(keys: &[usize]) -> String {
         .join(" ")
 }
 
+/// Judges the last of `keys`, of which the first `seed_keys` reached the seed's start.
 fn check(
     seed: &Seed,
+    seed_keys: usize,
     keys: &[usize],
     before: &Snapshot,
     after: &Result<Option<Snapshot>, String>,
 ) -> Result<(), String> {
-    let seed_keys = seed.keys.len().min(keys.len() - 1);
     let report = |name: &str, reason: &str, after: &str| {
         format!(
             "{name} failed from seed \"{}\".\nSeed keys: {}\nKeys after the seed: {}\n\
@@ -939,6 +983,60 @@ struct Coverage {
     elapsed: Duration,
 }
 
+/// Presses `label` after `keys`, checking the transition, and moves `state` to the result.
+fn advance(
+    seed: &Seed,
+    keys: &mut Vec<usize>,
+    state: &mut Snapshot,
+    label: &str,
+) -> Result<(), String> {
+    keys.extend(input_indices(seed, &[label])?);
+    let after = replay(seed, keys);
+    check(seed, keys.len() - 1, keys, state, &after)?;
+    *state = after?.ok_or_else(|| format!("seed \"{}\" quit the editor", seed.name))?;
+    Ok(())
+}
+
+/// Finds and checks the keys to the seed's start, and returns them with the state they reach.
+fn start(seed: &Seed) -> Result<(Vec<usize>, Snapshot), String> {
+    let mut keys = Vec::new();
+    let mut state = replay(seed, &[])?.ok_or("the editor quit before any key")?;
+    let ready = match seed.start {
+        Start::Keys {
+            keys: labels,
+            ready,
+        } => {
+            for label in labels {
+                advance(seed, &mut keys, &mut state, label)?;
+            }
+            ready(&state)
+        }
+        Start::Outline { path, mode } => {
+            advance(seed, &mut keys, &mut state, "2")?;
+            for depth in 1..=path.len() {
+                if depth > 1 {
+                    advance(seed, &mut keys, &mut state, "right")?;
+                }
+                for _ in 0..64 {
+                    let names = state.taxonomies.cursor_path.iter().map(String::as_str);
+                    if names.take(depth).eq(path[..depth].iter().copied()) {
+                        break;
+                    }
+                    advance(seed, &mut keys, &mut state, "down")?;
+                }
+            }
+            at_outline(&state) && selects(&state, path) && state.taxonomies.mode == mode
+        }
+    };
+    if !ready {
+        return Err(format!(
+            "seed \"{}\" does not reach its start state; it reached {:?}",
+            seed.name, state.screen
+        ));
+    }
+    Ok((keys, state))
+}
+
 fn input_indices(seed: &Seed, labels: &[&str]) -> Result<Vec<usize>, String> {
     labels
         .iter()
@@ -953,23 +1051,13 @@ fn input_indices(seed: &Seed, labels: &[&str]) -> Result<Vec<usize>, String> {
 
 fn explore(seed: &Seed) -> Result<Coverage, String> {
     let started = Instant::now();
-    let prefix = input_indices(seed, seed.keys)?;
     let alphabet = match seed.alphabet {
         Alphabet::Every => (0..INPUTS.len()).collect(),
         Alphabet::Only(labels) => input_indices(seed, labels)?,
     };
-    let mut before = replay(seed, &[])?.ok_or("the editor quit before any key")?;
-    for end in 1..=prefix.len() {
-        let after = replay(seed, &prefix[..end]);
-        check(seed, &prefix[..end], &before, &after)?;
-        before = after?.ok_or_else(|| format!("seed \"{}\" quit the editor", seed.name))?;
-    }
-    if !(seed.ready)(&before) {
-        return Err(format!(
-            "seed \"{}\" does not reach its start state; it reached {:?}",
-            seed.name, before.screen
-        ));
-    }
+    let (prefix, before) = start(seed)?;
+    let seed_keys = prefix.len();
+    let start_keys = labels(&prefix);
     let mut visited = HashSet::from([format!("{before:?}")]);
     let mut observed = seed
         .reaches
@@ -994,7 +1082,7 @@ fn explore(seed: &Seed) -> Result<Coverage, String> {
         let outcomes = replay_all(seed, &jobs);
         for ((&(parent, _), keys), after) in edges.iter().zip(jobs).zip(outcomes) {
             transitions += 1;
-            check(seed, &keys, &frontier[parent].1, &after)?;
+            check(seed, seed_keys, &keys, &frontier[parent].1, &after)?;
             if let Ok(Some(after)) = after
                 && visited.insert(format!("{after:?}"))
             {
@@ -1023,7 +1111,7 @@ fn explore(seed: &Seed) -> Result<Coverage, String> {
                  Never reached: {}\nReached: {}",
                 reach.name,
                 seed.name,
-                seed.keys.join(" "),
+                start_keys,
                 seed.depth,
                 labels(&alphabet),
                 missing.join(", "),

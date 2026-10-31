@@ -7,7 +7,7 @@ use crate::confirmation::{
 };
 use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
-    ProjectConfig, RepositoryRoot, TaxonomyOrigin, resolve_effective_configuration,
+    LibraryDraft, ProjectConfig, RepositoryRoot, TaxonomyOrigin, resolve_effective_configuration,
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeDefinitionError, CommitTypeId, ConditionId, Description,
@@ -35,17 +35,17 @@ use crate::theme::{
 
 mod child_editor;
 mod home_overlay;
-mod library_view;
 #[cfg(test)]
 mod model_check;
 mod naming;
+mod taxonomies;
 use child_editor::{ChildAction, PropertyEditorState, TypeEditorState};
 use home_overlay::{CommandPaletteState, CreateCommand, HomeCommand, HomeOverlay};
-use library_view::{LibraryFocus, LibraryViewState};
 use naming::{
     NameField, description_required, edited_prose, name_error, name_heading_line,
     noted_heading_line, sentence, single_line,
 };
+use taxonomies::TaxonomiesView;
 
 /// Taxonomy-first terminal configuration adapter.
 #[derive(Clone, Debug, Default)]
@@ -111,9 +111,13 @@ impl ConfigView {
         self.state.handle_event(event, workspace)
     }
 
-    /// The Project or Library browser is showing without a popup.
-    pub(crate) fn overview(&self) -> bool {
-        matches!(self.state.screen, Screen::Home) && self.state.home_overlay.is_none()
+    /// Which keys the shell may take before Config sees them.
+    pub(crate) fn shell_keys(&self) -> ShellKeys {
+        if matches!(self.state.screen, Screen::Home) && self.state.home_overlay.is_none() {
+            ShellKeys::Navigation
+        } else {
+            ShellKeys::None
+        }
     }
 
     pub(crate) fn modal(&self) -> bool {
@@ -143,33 +147,41 @@ impl ConfigView {
     }
 }
 
+/// The keys the shell may take before Config sees them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ShellKeys {
+    /// The shell switches sections on tab, goes Home on esc, and quits on q.
+    Navigation,
+    None,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Category {
     Project,
-    Library,
+    Taxonomies,
 }
 
 impl Category {
-    const ALL: [Self; 2] = [Self::Project, Self::Library];
+    const ALL: [Self; 2] = [Self::Project, Self::Taxonomies];
 
     const fn index(self) -> usize {
         match self {
             Self::Project => 0,
-            Self::Library => 1,
+            Self::Taxonomies => 1,
         }
     }
 
     const fn label(self) -> &'static str {
         match self {
             Self::Project => "Project",
-            Self::Library => "Library",
+            Self::Taxonomies => "Taxonomies",
         }
     }
 
     const fn next(self) -> Self {
         match self {
-            Self::Project => Self::Library,
-            Self::Library => Self::Project,
+            Self::Project => Self::Taxonomies,
+            Self::Taxonomies => Self::Project,
         }
     }
 }
@@ -264,7 +276,7 @@ enum Screen {
     ConfirmRemoveProperty(usize),
 }
 
-const MENU_WIDTH: u16 = 12;
+const MENU_WIDTH: u16 = 16;
 const BREADCRUMB_HEIGHT: u16 = 3;
 const CREATE_TEXT_LIMIT: usize = 80;
 const CREATE_TEXT_LIMIT_NOTICE: &str =
@@ -487,7 +499,7 @@ struct State {
     active_scope: ConfigurationDestination,
     category: Category,
     home_focus: HomeFocus,
-    library: LibraryViewState,
+    taxonomies: TaxonomiesView,
     project_section: ProjectSection,
     screen: Screen,
     breadcrumb_area: Rect,
@@ -529,7 +541,7 @@ impl State {
             active_scope: ConfigurationDestination::Project,
             category: Category::Project,
             home_focus: HomeFocus::Menu,
-            library: LibraryViewState::default(),
+            taxonomies: TaxonomiesView::default(),
             project_section: ProjectSection::Commit,
             screen: Screen::Home,
             breadcrumb_area: Rect::default(),
@@ -605,7 +617,7 @@ impl State {
         self.type_editor = None;
         self.property_editor = None;
         self.screen = Screen::Home;
-        self.category = Category::Library;
+        self.category = Category::Taxonomies;
         self.create_areas = [Rect::default(); 2];
         self.breadcrumb_area = Rect::default();
     }
@@ -885,34 +897,11 @@ impl State {
                         self.project_scroll = 0;
                     }
                 } else if matches!(self.screen, Screen::Home)
-                    && self.category == Category::Library
-                    && contains(self.library.browser_area, mouse.column, mouse.row)
-                {
-                    if let Some(index) = self.library.taxonomy_at(
-                        mouse.column,
-                        mouse.row,
-                        self.catalog().map_or(0, |items| items.len()),
-                    ) {
-                        self.home_focus = HomeFocus::Content;
-                        self.library.select_taxonomy(index);
-                        self.status = None;
-                    } else if self.library.create_at(mouse.column, mouse.row) {
-                        self.home_focus = HomeFocus::Content;
-                        self.library.select_create();
-                        self.request_global_action(PendingAction::Create);
-                    }
-                } else if matches!(self.screen, Screen::Home)
-                    && self.category == Category::Library
-                    && contains(self.library.type_area, mouse.column, mouse.row)
-                    && let Some(index) = self.library.type_at(
-                        mouse.column,
-                        mouse.row,
-                        self.selected_taxonomy()
-                            .map_or(0, |taxonomy| taxonomy.commit_types().len()),
-                    )
+                    && self.category == Category::Taxonomies
+                    && let Some(library) = self.library()
+                    && self.taxonomies.click(mouse.column, mouse.row, &library)
                 {
                     self.home_focus = HomeFocus::Content;
-                    self.library.select_type(index);
                 } else if matches!(self.screen, Screen::TypeEditor)
                     && let Some(editor) = &mut self.type_editor
                 {
@@ -1132,11 +1121,23 @@ impl State {
             {
                 self.home_overlay = Some(HomeOverlay::Help);
             }
+            KeyCode::Char(digit @ ('1' | '2')) if key.modifiers.is_empty() => {
+                let category = if digit == '1' {
+                    Category::Project
+                } else {
+                    Category::Taxonomies
+                };
+                if self.category != category {
+                    self.category = category;
+                    self.status = None;
+                }
+                self.home_focus = HomeFocus::Content;
+            }
             KeyCode::Up | KeyCode::Down if self.home_focus == HomeFocus::Menu => {
                 let category = if key.code == KeyCode::Up {
                     Category::Project
                 } else {
-                    Category::Library
+                    Category::Taxonomies
                 };
                 if self.category != category {
                     self.category = category;
@@ -1145,12 +1146,9 @@ impl State {
             }
             KeyCode::Right if self.home_focus == HomeFocus::Menu => {
                 self.home_focus = HomeFocus::Content;
-                self.library.focus = LibraryFocus::Taxonomies;
             }
             KeyCode::Left
-                if self.home_focus == HomeFocus::Menu
-                    || self.category == Category::Project
-                    || self.library.focus == LibraryFocus::Taxonomies =>
+                if self.home_focus == HomeFocus::Menu || self.category == Category::Project =>
             {
                 self.home_focus = HomeFocus::Menu;
             }
@@ -1163,30 +1161,21 @@ impl State {
                 self.project_section = ProjectSection::ALL[index];
                 self.project_scroll = 0;
             }
-            KeyCode::Up | KeyCode::Down if self.library.focus == LibraryFocus::Taxonomies => {
-                let count = self.catalog().map_or(0, |items| items.len());
-                let show_create = self.show_create_row();
-                self.library
-                    .move_taxonomy(key.code == KeyCode::Down, count, show_create);
-                self.status = None;
-            }
-            KeyCode::Up | KeyCode::Down => {
-                let count = self
-                    .selected_taxonomy()
-                    .map_or(0, |taxonomy| taxonomy.commit_types().len());
-                let index = match key.code {
-                    KeyCode::Up => self.library.type_selected.saturating_sub(1),
-                    _ => (self.library.type_selected + 1).min(count.saturating_sub(1)),
-                };
-                self.library.select_type(index);
-            }
-            KeyCode::Right
-                if self.category == Category::Library && !self.library.create_selected =>
+            KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Enter
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+                if self.category == Category::Taxonomies
+                    && self.home_focus == HomeFocus::Content =>
             {
-                self.library.focus = LibraryFocus::Types;
-            }
-            KeyCode::Left if self.category == Category::Library => {
-                self.library.focus = LibraryFocus::Taxonomies;
+                if let Some(library) = self.library()
+                    && self.taxonomies.key(key.code, &library)
+                {
+                    self.home_focus = HomeFocus::Menu;
+                }
             }
             KeyCode::PageUp if self.category == Category::Project => {
                 self.project_scroll = self.project_scroll.saturating_sub(8);
@@ -1194,63 +1183,36 @@ impl State {
             KeyCode::PageDown if self.category == Category::Project => {
                 self.project_scroll = self.project_scroll.saturating_add(8);
             }
-            KeyCode::PageUp if self.category == Category::Library => {
-                if self.library.focus == LibraryFocus::Taxonomies {
-                    let page = self.library.taxonomy_content_area.height.max(1);
-                    self.library.taxonomy_scroll =
-                        self.library.taxonomy_scroll.saturating_sub(page);
-                } else {
-                    let page = self.library.metadata_area.height.max(1);
-                    self.library.property_scroll =
-                        self.library.property_scroll.saturating_sub(page);
-                }
-            }
-            KeyCode::PageDown if self.category == Category::Library => {
-                if self.library.focus == LibraryFocus::Taxonomies {
-                    let page = self.library.taxonomy_content_area.height.max(1);
-                    self.library.taxonomy_scroll =
-                        self.library.taxonomy_scroll.saturating_add(page);
-                } else {
-                    let page = self.library.metadata_area.height.max(1);
-                    self.library.property_scroll =
-                        self.library.property_scroll.saturating_add(page);
-                }
-            }
             KeyCode::Enter if self.category == Category::Project => {
                 if self.project_section == ProjectSection::Commit {
                     self.request_project_action(PendingAction::EditProject);
                 }
             }
-            KeyCode::Enter
-                if self.category == Category::Library && self.library.create_selected =>
-            {
-                self.request_global_action(PendingAction::Create);
-            }
             KeyCode::Char('i') if self.category == Category::Project => {
                 self.request_project_action(PendingAction::InitializeProject);
             }
             KeyCode::Char('n')
-                if self.category == Category::Library && key.modifiers.is_empty() =>
+                if self.category == Category::Taxonomies && key.modifiers.is_empty() =>
             {
                 self.request_global_action(PendingAction::Create);
             }
             KeyCode::Char('e')
-                if self.category == Category::Library && key.modifiers.is_empty() =>
+                if self.category == Category::Taxonomies && key.modifiers.is_empty() =>
             {
                 self.request_global_action(PendingAction::Edit);
             }
             KeyCode::Char('f')
-                if self.category == Category::Library && key.modifiers.is_empty() =>
+                if self.category == Category::Taxonomies && key.modifiers.is_empty() =>
             {
                 self.request_global_action(PendingAction::Fork);
             }
             KeyCode::Char('d')
-                if self.category == Category::Library && key.modifiers.is_empty() =>
+                if self.category == Category::Taxonomies && key.modifiers.is_empty() =>
             {
                 self.request_global_action(PendingAction::Delete);
             }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if self.category == Category::Library {
+                if self.category == Category::Taxonomies {
                     self.request_global_action(PendingAction::ReviewGlobal);
                 } else {
                     self.request_project_action(PendingAction::ReviewProject);
@@ -1688,6 +1650,14 @@ impl State {
     }
 
     fn stage_deletion(&mut self) {
+        let previous = self.library().and_then(|library| {
+            let selected = self.taxonomies.selected(&library)?.taxonomy().id();
+            let index = library
+                .taxonomies()
+                .iter()
+                .position(|taxonomy| taxonomy.id() == selected)?;
+            Some(library.taxonomies()[index.saturating_sub(1)].id().clone())
+        });
         let result = self
             .selected_taxonomy()
             .map(|taxonomy| taxonomy.id().clone())
@@ -1700,10 +1670,9 @@ impl State {
             });
         match result {
             Ok(()) => {
-                self.library.browse_selected = self.library.browse_selected.saturating_sub(1);
-                self.library.type_selected = 0;
-                self.library.type_offset = 0;
-                self.library.property_scroll = 0;
+                if let Some(previous) = previous {
+                    self.taxonomies.select(previous);
+                }
                 self.screen = Screen::Home;
                 self.status = Some(Notice::info(
                     "Deletion staged. Ctrl+S reviews before applying.".into(),
@@ -2147,23 +2116,25 @@ impl State {
         )
     }
 
-    fn selected_taxonomy(&self) -> Option<Taxonomy> {
-        if self.library.create_selected {
-            return None;
-        }
-        self.catalog()?.get(self.library.browse_selected).cloned()
-    }
-
-    fn show_create_row(&self) -> bool {
+    /// The Library as the outline reads it, rebuilt from the Global session on each call.
+    fn library(&self) -> Option<LibraryDraft> {
         self.global
             .as_ref()
-            .and_then(|session| session.catalog().ok())
-            .is_some_and(|catalog| {
-                catalog
-                    .taxonomies()
-                    .iter()
-                    .all(|taxonomy| catalog.origin(taxonomy.id()) != Some(TaxonomyOrigin::Custom))
-            })
+            .map(|session| LibraryDraft::from_configuration(session.global()))
+    }
+
+    /// The taxonomy that owns the outline's selected row.
+    fn selected_taxonomy(&self) -> Option<Taxonomy> {
+        let library = self.library()?;
+        let name = self
+            .taxonomies
+            .selected(&library)?
+            .taxonomy()
+            .name()
+            .to_owned();
+        self.catalog()?
+            .into_iter()
+            .find(|taxonomy| taxonomy.id().as_str() == name)
     }
 
     fn scope_dirty(&self, destination: ConfigurationDestination) -> bool {
@@ -2234,18 +2205,24 @@ impl State {
                     self.render_editor_background(frame, body, &Screen::TypeEditor);
                 }
                 _ if self.category == Category::Project => self.render_project(frame, body),
-                _ => self.render_library(frame, body),
+                _ => self.render_taxonomies(frame, body),
             }
             self.dialog.render(frame, body, &question);
             confirmation::hints(question.choices)
         } else {
             match self.screen.clone() {
+                Screen::Home if self.category == Category::Taxonomies => {
+                    self.render_taxonomies(frame, body);
+                    let line = self.taxonomies.status_line(
+                        self.library().as_ref(),
+                        self.embedded,
+                        footer.width,
+                    );
+                    frame.render_widget(Paragraph::new(line), footer);
+                    Vec::new()
+                }
                 Screen::Home => {
-                    if self.category == Category::Project {
-                        self.render_project(frame, body);
-                    } else {
-                        self.render_library(frame, body);
-                    }
+                    self.render_project(frame, body);
                     let mut hints = vec![
                         ("←/→", "focus"),
                         ("↑/↓", "move"),
@@ -2308,7 +2285,10 @@ impl State {
                 | Screen::ConfirmRemoveProperty(_) => Vec::new(),
             }
         };
-        render_navigation_row(frame, footer, &hints);
+        // The Taxonomies outline draws its own footer and leaves no hints.
+        if !hints.is_empty() {
+            render_navigation_row(frame, footer, &hints);
+        }
         if let Some(overlay) = &mut self.home_overlay {
             overlay.render(frame, main, self.category);
         } else {
@@ -2325,10 +2305,9 @@ impl State {
             Block::bordered()
                 .border_style(style)
                 .title_style(style)
-                .title("Menu"),
+                .title("Config"),
             area,
         );
-        let border = area.right().saturating_sub(1);
         for category in Category::ALL {
             let y = area
                 .y
@@ -2338,20 +2317,24 @@ impl State {
                 break;
             }
             let row = Rect::new(area.x.saturating_add(1), y, area.width.saturating_sub(2), 1);
-            let selected = category == self.category;
-            frame.render_widget(
-                Paragraph::new(format!(" {}", category.label())).style(if selected {
-                    Style::default().fg(Color::Yellow)
-                } else {
+            let (digit, label) = if category == self.category {
+                (
+                    navigation_key_style(),
                     Style::default()
-                }),
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::UNDERLINED),
+                )
+            } else {
+                (Style::default().fg(Color::Gray), Style::default())
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(format!(" {} ", category.index() + 1), digit),
+                    Span::raw(" "),
+                    Span::styled(category.label(), label),
+                ])),
                 row,
             );
-            if selected && border > area.x {
-                frame.buffer_mut()[(border, y)]
-                    .set_symbol("┃")
-                    .set_fg(Color::Yellow);
-            }
             if home {
                 self.tab_areas[category.index()] = row;
             }
@@ -2377,7 +2360,7 @@ impl State {
             area.width.saturating_sub(2),
             1,
         );
-        let label = Category::Library.label();
+        let label = "Library";
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(format!(" {label}"), Style::default().fg(Color::Yellow)),
@@ -2407,7 +2390,7 @@ impl State {
                     || Some(self.project_error.clone()),
                     ConfigurationSession::source_error,
                 ),
-                Category::Library => self.catalog_error(),
+                Category::Taxonomies => self.catalog_error(),
             }
         } else {
             None
@@ -2685,15 +2668,11 @@ impl State {
         }
     }
 
-    fn render_library(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let catalog = self
-            .global
-            .as_ref()
-            .and_then(|session| session.catalog().ok());
-        let error = self.catalog_error();
-        let focused = self.home_focus == HomeFocus::Content;
-        self.library
-            .render(frame, area, catalog.as_ref(), error.as_deref(), focused);
+    fn render_taxonomies(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let focused = matches!(self.screen, Screen::Home) && self.home_focus == HomeFocus::Content;
+        let library = self.library();
+        self.taxonomies
+            .render(frame, area, library.as_ref(), focused);
     }
 
     fn render_settings(
@@ -3266,6 +3245,15 @@ mod tests {
         Ok(())
     }
 
+    fn select_taxonomy(state: &mut State, index: usize) {
+        let library = state
+            .library()
+            .unwrap_or_else(|| unreachable!("the Library loads"));
+        state
+            .taxonomies
+            .select(library.taxonomies()[index].id().clone());
+    }
+
     fn text(terminal: &Terminal<TestBackend>) -> String {
         terminal
             .backend()
@@ -3310,7 +3298,7 @@ mod tests {
                 .is_none()
         );
         let buffer = terminal.backend().buffer();
-        assert!(row_text(&terminal, 0, 0, 100).contains("Menu"));
+        assert!(row_text(&terminal, 0, 0, 100).contains("Config"));
         assert_eq!(buffer[(0, 0)].symbol(), "┌");
         assert_eq!(buffer[(MENU_WIDTH - 1, 0)].symbol(), "┐");
         assert_eq!(buffer[(MENU_WIDTH - 1, 28)].symbol(), "┘");
@@ -3328,9 +3316,10 @@ mod tests {
             )
             .starts_with("Commit taxonomy")
         );
-        assert_eq!(buffer[(2, 1)].fg, Color::Yellow);
-        assert_eq!(buffer[(2, 1)].bg, JET_BLACK);
-        assert_eq!(buffer[(MENU_WIDTH - 1, 1)].symbol(), "┃");
+        assert_eq!(buffer[(2, 1)].symbol(), "1");
+        assert_eq!(buffer[(2, 1)].bg, Color::Yellow);
+        assert_eq!(buffer[(5, 1)].fg, Color::Yellow);
+        assert!(buffer[(5, 1)].modifier.contains(Modifier::UNDERLINED));
         assert_eq!(buffer[(0, 28)].symbol(), "└");
         assert_eq!(buffer[(0, 29)].symbol(), "←");
         assert_eq!(buffer[(3, 29)].symbol(), ":");
@@ -3504,544 +3493,13 @@ mod tests {
     }
 
     #[test]
-    fn library_uses_three_panes_and_retains_selection() -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        let mut terminal = Terminal::new(TestBackend::new(120, 40))?;
-        terminal.draw(|frame| state.render(frame))?;
-        let library_tab = state.tab_areas[Category::Library.index()];
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: library_tab.x,
-                row: library_tab.y,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        state.handle_event(key(KeyCode::Right), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        let [taxonomies, types, metadata] = state.library.pane_areas;
-        let taxonomy_description = state.library.taxonomy_description_area;
-        assert_eq!(taxonomies.x, MENU_WIDTH);
-        assert_eq!(taxonomies.bottom(), types.y);
-        assert_eq!((types.x, types.width), (taxonomies.x, taxonomies.width));
-        assert_eq!(taxonomies.right() + 1, taxonomy_description.x);
-        assert_eq!(taxonomy_description.right() + 1, metadata.x);
-        assert_eq!(metadata.right(), 120);
-        assert_eq!(
-            taxonomy_description.height,
-            taxonomies.height + types.height
-        );
-        assert!(taxonomies.width.abs_diff(taxonomy_description.width) <= 1);
-        assert!(taxonomy_description.width.abs_diff(metadata.width) <= 1);
-        assert!(taxonomies.width.abs_diff(metadata.width) <= 1);
-        let titles = row_text(&terminal, 0, taxonomies.y, 120);
-        for title in ["Taxonomies", "Taxonomy Description", "Type Details"] {
-            assert!(titles.contains(title));
-        }
-        assert!(row_text(&terminal, types.x, types.y, types.width).contains("Types"));
-        assert!(
-            row_text(
-                &terminal,
-                taxonomy_description.x,
-                taxonomy_description.y,
-                taxonomy_description.width,
-            )
-            .contains("Taxonomy Description")
-        );
-        let taxonomy_area = state.library.browser_area;
-        let type_area = state.library.type_area;
-        let built_in = row_text(
-            &terminal,
-            taxonomy_area.x,
-            taxonomy_area.y,
-            taxonomy_area.width,
-        );
-        let spacer = row_text(
-            &terminal,
-            taxonomy_area.x,
-            taxonomy_area.y + 4,
-            taxonomy_area.width,
-        );
-        let custom = row_text(
-            &terminal,
-            taxonomy_area.x,
-            taxonomy_area.y + 5,
-            taxonomy_area.width,
-        );
-        assert!(built_in.contains("Built-in") && built_in.contains('⠒'));
-        assert!(spacer.trim().is_empty());
-        assert!(custom.contains("Custom") && custom.contains('⠒'));
-        assert_eq!(
-            terminal.backend().buffer()[(taxonomy_area.right() - 1, taxonomy_area.y)].symbol(),
-            "⠒"
-        );
-        assert!(
-            row_text(
-                &terminal,
-                taxonomy_description.x + 1,
-                taxonomy_description.y + 1,
-                taxonomy_description.width - 2,
-            )
-            .contains("The Conventional")
-        );
-        let first_type = row_text(&terminal, type_area.x, type_area.y, type_area.width);
-        assert!(first_type.contains("› feat"));
-        assert!(!first_type.contains("feat  3"));
-        let first_metadata = row_text(
-            &terminal,
-            state.library.metadata_area.x,
-            state.library.metadata_area.y,
-            state.library.metadata_area.width,
-        );
-        assert!(first_metadata.contains("Description") && first_metadata.contains('⠒'));
-        assert_eq!(state.library.metadata_area.x, metadata.x + 1);
-        assert_eq!(
-            terminal.backend().buffer()[(taxonomy_description.x + 1, taxonomy_description.y + 1)]
-                .symbol(),
-            "T"
-        );
-        assert_eq!(
-            terminal.backend().buffer()[(
-                state.library.metadata_area.right() - 1,
-                state.library.metadata_area.y
-            )]
-                .symbol(),
-            "⠒"
-        );
-        assert!(
-            row_text(
-                &terminal,
-                state.library.metadata_area.x,
-                state.library.metadata_area.y + 1,
-                state.library.metadata_area.width,
-            )
-            .starts_with("An addition")
-        );
-        let properties_y = (state.library.metadata_area.y..state.library.metadata_area.bottom())
-            .find(|&y| {
-                row_text(
-                    &terminal,
-                    state.library.metadata_area.x,
-                    y,
-                    state.library.metadata_area.width,
-                )
-                .contains("Properties")
-            })
-            .ok_or("missing properties heading")?;
-        assert_eq!(
-            terminal.backend().buffer()[(state.library.metadata_area.right() - 1, properties_y)]
-                .symbol(),
-            "⠒"
-        );
-        let required = row_text(
-            &terminal,
-            state.library.metadata_area.x,
-            properties_y + 1,
-            state.library.metadata_area.width,
-        );
-        let conditional = row_text(
-            &terminal,
-            state.library.metadata_area.x,
-            properties_y + 3,
-            state.library.metadata_area.width,
-        );
-        assert_eq!(
-            required.find("required").ok_or("missing requirement")?,
-            conditional.find("conditional").ok_or("missing condition")?
-        );
-        assert_eq!(
-            terminal.backend().buffer()[(taxonomy_area.x + 1, taxonomy_area.y + 1)].bg,
-            Color::Yellow
-        );
-        assert_ne!(
-            terminal.backend().buffer()[(type_area.x + 1, type_area.y)].bg,
-            Color::Yellow
-        );
-
-        state.handle_event(key(KeyCode::Right), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        assert_ne!(
-            terminal.backend().buffer()[(taxonomy_area.x + 1, taxonomy_area.y + 1)].bg,
-            Color::Yellow
-        );
-        assert_eq!(
-            terminal.backend().buffer()[(type_area.x + 1, type_area.y)].bg,
-            Color::Yellow
-        );
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: type_area.x,
-                row: type_area.y + 1,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        assert_eq!(state.library.type_selected, 1);
-        assert_eq!(state.library.focus, LibraryFocus::Types);
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: taxonomy_area.x,
-                row: taxonomy_area.y + 2,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        assert_eq!(state.library.browse_selected, 1);
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: taxonomy_area.x,
-                row: taxonomy_area.y + 5,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        assert_eq!(state.library.browse_selected, 1);
-        assert_eq!(state.library.type_selected, 0);
-        assert_eq!(state.library.focus, LibraryFocus::Taxonomies);
-        terminal.draw(|frame| state.render(frame))?;
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: taxonomy_description.x + 2,
-                row: taxonomy_description.y + 1,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        assert_eq!(state.library.browse_selected, 1);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.library.browse_selected, 2);
-        state.handle_event(key(KeyCode::Tab), &workspace);
-        state.handle_event(key(KeyCode::Tab), &workspace);
-        assert_eq!(state.category, Category::Library);
-        assert_eq!(state.library.browse_selected, 2);
-        let project_tab = state.tab_areas[Category::Project.index()];
-        state.screen = Screen::TypeEditor;
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: project_tab.x,
-                row: project_tab.y,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        assert_eq!(state.category, Category::Library);
-        Ok(())
-    }
-
-    #[test]
-    fn compact_panels_scroll_without_changing_selection() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        state.project_section = ProjectSection::Resolution;
-        terminal.draw(|frame| state.render(frame))?;
-        state.handle_event(key(KeyCode::PageDown), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(state.project_scroll > 0);
-        assert_eq!(state.project_section, ProjectSection::Resolution);
-
-        state.category = Category::Library;
-        state.home_focus = HomeFocus::Content;
-        state.library.focus = LibraryFocus::Types;
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(state.library.type_area.height > 0);
-        let [taxonomies, types, details] = state.library.pane_areas;
-        assert_eq!(taxonomies.bottom(), types.y);
-        assert_eq!(state.library.taxonomy_description_area.bottom(), details.y);
-        let type_area = state.library.type_area;
-        let taxonomy_area = state.library.browser_area;
-        assert_eq!(
-            terminal.backend().buffer()[(type_area.x + 1, type_area.y)].bg,
-            Color::Yellow
-        );
-        assert_ne!(
-            terminal.backend().buffer()[(taxonomy_area.x + 1, taxonomy_area.y + 1)].bg,
-            Color::Yellow
-        );
-        let detail_heading = row_text(&terminal, details.x, details.y, details.width);
-        assert!(detail_heading.contains("Type Details"));
-        assert!(
-            row_text(
-                &terminal,
-                state.library.metadata_area.x,
-                state.library.metadata_area.y,
-                state.library.metadata_area.width
-            )
-            .contains("Description")
-        );
-        assert!(
-            row_text(
-                &terminal,
-                state.library.metadata_area.x,
-                state.library.metadata_area.y + 1,
-                state.library.metadata_area.width,
-            )
-            .contains("An addition")
-        );
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(state.library.property_scroll, 0);
-        state.handle_event(key(KeyCode::PageDown), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(state.library.property_scroll > 0);
-        assert!(text(&terminal).contains("Properties"));
-        assert_eq!(state.library.browse_selected, 0);
-        assert_eq!(state.library.type_selected, 2);
-        Ok(())
-    }
-
-    #[test]
-    fn library_switches_layout_at_the_content_width_boundary()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Library;
-        state.home_focus = HomeFocus::Content;
-        let mut compact = Terminal::new(TestBackend::new(MENU_WIDTH + 95, 30))?;
-        compact.draw(|frame| state.render(frame))?;
-        assert_eq!(
-            state.library.pane_areas[0].bottom(),
-            state.library.pane_areas[1].y
-        );
-        assert_eq!(
-            state.library.taxonomy_description_area.bottom(),
-            state.library.pane_areas[2].y
-        );
-        assert!(text(&compact).contains("Type Details"));
-
-        let mut wide = Terminal::new(TestBackend::new(MENU_WIDTH + 96, 30))?;
-        wide.draw(|frame| state.render(frame))?;
-        let [taxonomies, types, metadata] = state.library.pane_areas;
-        let taxonomy_description = state.library.taxonomy_description_area;
-        assert_eq!(taxonomies.bottom(), types.y);
-        assert_eq!(taxonomies.right() + 1, taxonomy_description.x);
-        assert_eq!(taxonomy_description.right() + 1, metadata.x);
-        assert_eq!(metadata.right(), MENU_WIDTH + 96);
-        assert!(taxonomies.width.abs_diff(taxonomy_description.width) <= 1);
-        assert!(taxonomy_description.width.abs_diff(metadata.width) <= 1);
-        assert!(text(&wide).contains("Type Details"));
-        Ok(())
-    }
-
-    #[test]
-    fn compact_details_align_property_columns() -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Library;
-        state.home_focus = HomeFocus::Content;
-        let mut terminal = Terminal::new(TestBackend::new(MENU_WIDTH + 80, 35))?;
-        terminal.draw(|frame| state.render(frame))?;
-        let details = state.library.pane_areas[2];
-        assert_eq!(state.library.taxonomy_description_area.bottom(), details.y);
-        assert!(row_text(&terminal, details.x, details.y, details.width).contains("Type Details"));
-        let area = state.library.metadata_area;
-        let required = row_text(&terminal, area.x, area.y + 4, area.width);
-        let conditional = row_text(&terminal, area.x, area.y + 6, area.width);
-        assert_eq!(
-            required.find("required").ok_or("missing requirement")?,
-            conditional.find("conditional").ok_or("missing condition")?
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn taxonomy_description_scrolls_to_fork_lineage() -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Library;
-        state.home_focus = HomeFocus::Content;
-        let target = TaxonomyId::new("team")?;
-        let session = state.global.as_mut().ok_or("missing global")?;
-        session.fork_unchanged(&TaxonomyId::new("conventional")?, target.clone())?;
-        let original = session
-            .catalog()?
-            .find(&target)
-            .cloned()
-            .ok_or("missing fork")?;
-        let description = Description::new("A lengthy taxonomy description. ".repeat(40))?;
-        session.update_taxonomy(&target, description, original.commit_types().to_vec())?;
-        state.library.browse_selected = 3;
-        let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
-        terminal.draw(|frame| state.render(frame))?;
-        for _ in 0..3 {
-            state.handle_event(key(KeyCode::PageDown), &workspace);
-            terminal.draw(|frame| state.render(frame))?;
-        }
-        assert!(state.library.taxonomy_scroll > 0);
-        assert!(text(&terminal).contains("Forked from conventional@2"));
-        Ok(())
-    }
-
-    #[test]
-    fn library_mouse_targets_follow_the_scrolled_taxonomy_list()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Library;
-        state.home_focus = HomeFocus::Content;
-        let session = state.global.as_mut().ok_or("missing global")?;
-        for index in 0..8 {
-            session.fork_unchanged(
-                &TaxonomyId::new("conventional")?,
-                TaxonomyId::new(format!("team-{index}"))?,
-            )?;
-        }
-        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        terminal.draw(|frame| state.render(frame))?;
-        for _ in 0..8 {
-            state.handle_event(key(KeyCode::Down), &workspace);
-        }
-        terminal.draw(|frame| state.render(frame))?;
-        let list = state.library.browser_area;
-        let offset = state.library.browser_offset;
-        assert!(offset > 0);
-        let (row, expected) = (list.y..list.bottom())
-            .find_map(|row| {
-                state
-                    .library
-                    .taxonomy_at(list.x, row, state.catalog().map_or(0, |items| items.len()))
-                    .map(|index| (row, index))
-            })
-            .ok_or("no visible taxonomy")?;
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: list.x,
-                row,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        assert_eq!(state.library.browse_selected, expected);
-        assert_eq!(state.library.focus, LibraryFocus::Taxonomies);
-        Ok(())
-    }
-
-    #[test]
-    fn taxonomy_selection_skips_section_spacer_and_headings()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Library;
-        state.home_focus = HomeFocus::Content;
-        state
-            .global
-            .as_mut()
-            .ok_or("missing global")?
-            .fork_unchanged(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
-        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
-        terminal.draw(|frame| state.render(frame))?;
-        let list = state.library.browser_area;
-        assert!(
-            row_text(&terminal, list.x, list.y + 4, list.width)
-                .trim()
-                .is_empty()
-        );
-        assert!(row_text(&terminal, list.x, list.y + 5, list.width).contains("Custom"));
-        assert!(row_text(&terminal, list.x, list.y + 6, list.width).contains("team"));
-        state.library.select_taxonomy(2);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.library.browse_selected, 3);
-        state.handle_event(key(KeyCode::Up), &workspace);
-        assert_eq!(state.library.browse_selected, 2);
-        for row in [list.y + 4, list.y + 5] {
-            state.handle_event(
-                Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                    kind: MouseEventKind::Down(MouseButton::Left),
-                    column: list.x,
-                    row,
-                    modifiers: KeyModifiers::NONE,
-                }),
-                &workspace,
-            );
-            assert_eq!(state.library.browse_selected, 2);
-        }
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: list.x,
-                row: list.y + 6,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        assert_eq!(state.library.browse_selected, 3);
-        Ok(())
-    }
-
-    #[test]
-    fn empty_custom_action_is_selectable_and_disappears_after_creation()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Library;
-        state.home_focus = HomeFocus::Content;
-        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
-        terminal.draw(|frame| state.render(frame))?;
-        let list = state.library.browser_area;
-        assert!(row_text(&terminal, list.x, list.y + 6, list.width).contains("+ create taxonomy"));
-        state.library.select_taxonomy(2);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        assert!(state.library.create_selected);
-        state.handle_event(key(KeyCode::Right), &workspace);
-        assert_eq!(state.library.focus, LibraryFocus::Taxonomies);
-        state.handle_event(key(KeyCode::Left), &workspace);
-        assert_eq!(state.home_focus, HomeFocus::Menu);
-        state.handle_event(key(KeyCode::Right), &workspace);
-        assert_eq!(state.library.focus, LibraryFocus::Taxonomies);
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(!row_text(&terminal, list.x, list.y + 3, list.width).contains('›'));
-        assert!(
-            row_text(&terminal, list.x, list.y + 6, list.width).contains("› + create taxonomy")
-        );
-        assert!(text(&terminal).contains("n/a"));
-        state.handle_event(key(KeyCode::Up), &workspace);
-        assert!(!state.library.create_selected);
-        assert_eq!(state.library.browse_selected, 2);
-        state.handle_event(key(KeyCode::Right), &workspace);
-        assert_eq!(state.library.focus, LibraryFocus::Types);
-        state.handle_event(key(KeyCode::Left), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor)
-                && state.editor_mode == EditorMode::Create
-        );
-        assert_eq!(workspace.saves.get(), 0);
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        assert!(matches!(state.screen, Screen::Home));
-        assert!(state.library.create_selected);
-        state
-            .global
-            .as_mut()
-            .ok_or("missing global")?
-            .fork_unchanged(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(!state.library.create_selected);
-        assert_eq!(state.library.browse_selected, 3);
-        assert!(!text(&terminal).contains("+ create taxonomy"));
-        Ok(())
-    }
-
-    #[test]
     fn create_taxonomy_edits_fields_and_stages_through_commands()
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
-        state.library.select_taxonomy(2);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(key(KeyCode::Enter), &workspace);
+        state.handle_event(key(KeyCode::Char('n')), &workspace);
         assert!(
             matches!(state.screen, Screen::TaxonomyEditor)
                 && state.editor_mode == EditorMode::Create
@@ -4051,7 +3509,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
         let rendered = text(&terminal);
-        assert!(row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Menu"));
+        assert!(row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Config"));
         assert!(rendered.contains("Name"));
         assert!(rendered.contains("Description"));
         assert!(rendered.contains("+ add type"));
@@ -4071,7 +3529,7 @@ mod tests {
                 .starts_with("esc: back  enter: next/open  ctrl+s: stage  /: commands")
         );
         terminal.draw(|frame| state.render(frame))?;
-        assert!(row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Menu"));
+        assert!(row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Config"));
 
         state.handle_event(Event::Paste("team".into()), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
@@ -4174,7 +3632,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
@@ -4221,7 +3679,7 @@ mod tests {
     {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
@@ -4355,7 +3813,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
@@ -4396,7 +3854,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(Event::Paste("team".into()), &workspace);
@@ -4470,7 +3928,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
@@ -4512,7 +3970,7 @@ mod tests {
         let workspace = Workspace::new();
         for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
             let mut state = State::new(&workspace);
-            state.category = Category::Library;
+            state.category = Category::Taxonomies;
             state.home_focus = HomeFocus::Content;
             state.handle_event(key(KeyCode::Char('n')), &workspace);
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
@@ -4556,10 +4014,10 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         for index in 0..3 {
-            state.library.select_taxonomy(index);
+            select_taxonomy(&mut state, index);
             let source = state.selected_taxonomy().ok_or("missing source")?;
             assert!(
                 source.id().as_str().graphemes(true).count()
@@ -4600,7 +4058,7 @@ mod tests {
             assert!(state.fork_source.is_none());
         }
 
-        state.library.select_taxonomy(0);
+        select_taxonomy(&mut state, 0);
         let source = state.selected_taxonomy().ok_or("missing source")?;
         state.handle_event(key(KeyCode::Char('f')), &workspace);
         rename_creation(&mut state, &workspace, "Research")?;
@@ -4730,9 +4188,9 @@ mod tests {
                 vec![source.clone()],
             )?);
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
-        state.library.select_taxonomy(3);
+        select_taxonomy(&mut state, 3);
         state.handle_event(key(KeyCode::Char('f')), &workspace);
         assert_eq!(
             state.editor.as_ref().ok_or("missing draft")?.build()?,
@@ -4780,7 +4238,7 @@ mod tests {
             .select_all();
         state.handle_event(Event::Paste("Edited snapshot".into()), &workspace);
         rename_creation(&mut state, &workspace, "forked-team")?;
-        state.library.select_taxonomy(0);
+        select_taxonomy(&mut state, 0);
         stage_creation(&mut state, &workspace);
         assert!(matches!(state.screen, Screen::Home));
         let catalog = state.global.as_ref().ok_or("missing global")?.catalog()?;
@@ -4804,13 +4262,9 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
-        state.library.select_create();
-        state.handle_event(key(KeyCode::Char('f')), &workspace);
-        assert!(matches!(state.status, Some(Notice::Error(_))));
-        assert!(state.editor.is_none());
-        state.library.select_taxonomy(0);
+        select_taxonomy(&mut state, 0);
         state
             .project
             .as_mut()
@@ -4856,16 +4310,16 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
         let content_x = MENU_WIDTH;
         let content_width = MINIMUM_WIDTH - MENU_WIDTH;
-        assert!(row_text(&terminal, 0, 0, content_x).contains("Menu"));
+        assert!(row_text(&terminal, 0, 0, content_x).contains("Config"));
         assert!(row_text(&terminal, 0, 1, content_x).contains("Project"));
-        assert!(row_text(&terminal, 0, 2, content_x).contains("Library"));
+        assert!(row_text(&terminal, 0, 2, content_x).contains("Taxonomies"));
         assert!(
             row_text(&terminal, content_x, 1, content_width).contains("Library / create taxonomy")
         );
@@ -4896,7 +4350,7 @@ mod tests {
             matches!(state.screen, Screen::TaxonomyEditor)
                 && state.editor_mode == EditorMode::Create
         );
-        assert_eq!(state.category, Category::Library);
+        assert_eq!(state.category, Category::Taxonomies);
 
         let mut wide = Terminal::new(TestBackend::new(120, 30))?;
         wide.draw(|frame| state.render(frame))?;
@@ -4918,57 +4372,206 @@ mod tests {
         terminal.draw(|frame| state.render(frame))?;
         assert_eq!(state.breadcrumb_area, Rect::default());
         assert!(!text(&terminal).contains("create taxonomy /"));
-        assert_eq!(state.library.pane_areas[0].y, 0);
-        assert_eq!(state.library.pane_areas[0].x, content_x);
+        assert!(row_text(&terminal, content_x, 0, 11).starts_with("┌Taxonomies"));
+        Ok(())
+    }
+
+    fn rows(terminal: &Terminal<TestBackend>) -> Vec<String> {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| row_text(terminal, 0, y, buffer.area.width))
+            .collect()
+    }
+
+    #[test]
+    fn outline_lists_every_taxonomy_and_the_inspector_describes_the_selection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (width, height) in [(87, 40), (MINIMUM_WIDTH, MINIMUM_HEIGHT)] {
+            let (workspace, _) = child_editor_workspace()?;
+            let mut state = State::new(&workspace);
+            state.handle_event(key(KeyCode::Char('2')), &workspace);
+            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+            terminal.draw(|frame| state.render(frame))?;
+            let screen = rows(&terminal);
+            assert!(screen[0].starts_with("┌Config"));
+            assert!(row_text(&terminal, MENU_WIDTH, 0, 11).starts_with("┌Taxonomies"));
+            assert!(screen[2].contains(" 2  Taxonomies"));
+            let outline = |name: &str| {
+                screen
+                    .iter()
+                    .find(|row| row.contains(&format!("▸ {name} ")))
+                    .cloned()
+                    .unwrap_or_default()
+            };
+            assert!(outline("conventional").contains("│▌▸ conventional"));
+            assert!(outline("conventional").trim_end().ends_with("built-in  │"));
+            assert!(outline("infra-ops").trim_end().ends_with("built-in  │"));
+            assert!(outline("original").trim_end().ends_with("custom  │"));
+            let text = screen.join("\n");
+            assert!(text.contains("┌Inspector"));
+            assert!(text.contains("Taxonomy conventional"));
+            assert!(text.contains("Version      2"));
+            assert!(
+                screen[usize::from(height) - 1]
+                    .starts_with(" NAV  · taxonomy ·  ◇ read-only   f fork  n new")
+            );
+            if height == 40 {
+                assert!(text.contains("Types        11"));
+                assert!(text.contains("f fork to customize · built-ins are read-only"));
+                assert!(text.contains("n new blank taxonomy"));
+            }
+
+            select_taxonomy(&mut state, 3);
+            terminal.draw(|frame| state.render(frame))?;
+            let screen = rows(&terminal);
+            assert!(screen.join("\n").contains("Taxonomy original"));
+            assert!(
+                screen[usize::from(height) - 1]
+                    .starts_with(" NAV  · taxonomy  e edit  f fork  n new  d delete")
+            );
+        }
         Ok(())
     }
 
     #[test]
-    fn menu_marks_the_selected_tab_in_its_right_border() -> Result<(), Box<dyn std::error::Error>> {
+    fn outline_expands_types_and_properties_and_the_inspector_follows()
+    -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
+        let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
+        let mut press =
+            |state: &mut State, code: KeyCode| -> Result<String, Box<dyn std::error::Error>> {
+                state.handle_event(key(code), &workspace);
+                terminal.draw(|frame| state.render(frame))?;
+                Ok(rows(&terminal).join("\n"))
+            };
+        press(&mut state, KeyCode::Char('2'))?;
+        press(&mut state, KeyCode::Right)?;
+        let screen = press(&mut state, KeyCode::Right)?;
+        assert!(screen.contains("│▌  ▸ feat      intent · decision · constraints"));
+        assert!(screen.contains("│   ▸ fix       cause · decision · constraints"));
+        assert!(screen.contains("Type feat"));
+        assert!(screen.contains("in conventional"));
+        assert!(screen.contains("Properties   3"));
+        assert!(screen.contains(" NAV  · type ·  ◇ read-only"));
+
+        press(&mut state, KeyCode::Enter)?;
+        for _ in 0..3 {
+            press(&mut state, KeyCode::Down)?;
+        }
+        let screen = press(&mut state, KeyCode::PageDown)?;
+        assert!(screen.contains("│▌    └ constraints  conditional"));
+        assert!(screen.contains("│     ├ intent       required"));
+        assert!(screen.contains("Property constraints"));
+        assert!(screen.contains("in conventional › feat"));
+        assert!(screen.contains("Policy       required recommended conditional optional"));
+        assert!(screen.contains("Condition    non-obvious-requirements"));
+        assert!(screen.contains("Rationale    Required when"));
+        assert!(screen.contains(" NAV  · property ·  ◇ read-only"));
+        let buffer = terminal.backend().buffer();
+        let (policy_x, policy_y) = (0..40)
+            .find_map(|y| {
+                row_text(&terminal, 0, y, 87)
+                    .find("conditional optional")
+                    .map(|x| (x, y))
+            })
+            .ok_or("missing policy row")?;
+        let policy_x = u16::try_from(
+            row_text(&terminal, 0, policy_y, 87)[..policy_x]
+                .chars()
+                .count(),
+        )?;
+        assert_eq!(buffer[(policy_x, policy_y)].fg, Color::Cyan);
+        assert_eq!(buffer[(policy_x, policy_y)].bg, Color::Rgb(40, 40, 40));
+        assert_eq!(buffer[(policy_x - 2, policy_y)].fg, Color::Gray);
+
+        state.handle_event(key(KeyCode::Char('e')), &workspace);
+        assert!(matches!(state.screen, Screen::Home));
+        assert!(matches!(
+            &state.status,
+            Some(Notice::Error(message)) if message.starts_with("Built-in taxonomies are read-only")
+        ));
+        state.handle_event(key(KeyCode::Char('f')), &workspace);
+        assert_eq!(
+            state
+                .fork_source
+                .as_ref()
+                .map(|source| source.id().to_string()),
+            Some("conventional".into())
+        );
+        state.handle_event(key(KeyCode::Esc), &workspace);
+        assert!(matches!(state.screen, Screen::Home));
+
+        let cursor = |state: &State| {
+            state
+                .taxonomies
+                .observe(state.library().as_ref())
+                .cursor_path
+        };
+        assert_eq!(cursor(&state), ["conventional", "feat", "constraints"]);
+        state.handle_event(key(KeyCode::Left), &workspace);
+        assert_eq!(cursor(&state), ["conventional", "feat"]);
+        state.handle_event(key(KeyCode::Left), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        assert_eq!(cursor(&state), ["conventional", "fix"]);
+        state.handle_event(key(KeyCode::Left), &workspace);
+        assert_eq!(cursor(&state), ["conventional"]);
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        assert_eq!(cursor(&state), ["research"]);
+        Ok(())
+    }
+
+    #[test]
+    fn outline_counts_hidden_rows_on_its_borders_and_takes_clicks_at_the_minimum_size()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.handle_event(key(KeyCode::Char('2')), &workspace);
+        state.handle_event(key(KeyCode::Right), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
-        let border = MENU_WIDTH - 1;
-        let cell = |terminal: &Terminal<TestBackend>, x: u16, y: u16| {
-            terminal.backend().buffer()[(x, y)].clone()
-        };
-        assert_eq!(state.home_focus, HomeFocus::Menu);
-        assert_eq!(cell(&terminal, 0, 0).fg, Color::Yellow);
-        assert_eq!(cell(&terminal, 2, 1).symbol(), "P");
-        assert_eq!(cell(&terminal, 2, 1).fg, Color::Yellow);
-        assert_eq!(cell(&terminal, 2, 1).bg, JET_BLACK);
-        assert_eq!(cell(&terminal, border, 1).symbol(), "┃");
-        assert_eq!(cell(&terminal, border, 1).fg, Color::Yellow);
-        assert_ne!(cell(&terminal, 2, 2).fg, Color::Yellow);
-        assert_eq!(cell(&terminal, border, 2).symbol(), "│");
-
-        state.handle_event(
-            click(state.tab_areas[Category::Library.index()]),
-            &workspace,
-        );
-        assert_eq!(state.category, Category::Library);
-        assert_eq!(state.home_focus, HomeFocus::Menu);
+        let screen = rows(&terminal);
+        let bottom = screen
+            .iter()
+            .position(|row| row.contains(" more ┘"))
+            .ok_or("missing the hidden-rows count")?;
+        let visible = bottom - 1;
+        assert!(screen[bottom].contains(&format!("↓ {} more", 14 - visible)));
+        assert!(!screen[0].contains("more"));
+        for _ in 0..20 {
+            state.handle_event(key(KeyCode::Down), &workspace);
+        }
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(cell(&terminal, 2, 2).fg, Color::Yellow);
-        assert_eq!(cell(&terminal, border, 2).symbol(), "┃");
-        assert_eq!(cell(&terminal, border, 1).symbol(), "│");
-        let taxonomies = state.library.pane_areas[0];
-        assert_ne!(
-            cell(&terminal, taxonomies.x, taxonomies.y).fg,
-            Color::Yellow
-        );
+        let screen = rows(&terminal);
+        assert!(screen[0].contains(&format!("↑ {} more", 14 - visible)));
+        assert!(screen[bottom - 1].contains("│▌▸ infra-ops"));
+        assert!(screen.join("\n").contains("Taxonomy infra-ops"));
 
-        state.handle_event(key(KeyCode::Right), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        assert_ne!(cell(&terminal, 0, 0).fg, Color::Yellow);
+        let first = row_text(&terminal, MENU_WIDTH + 1, 1, MINIMUM_WIDTH - MENU_WIDTH - 2);
+        let name = first.split_whitespace().nth(1).ok_or("missing first row")?;
+        state.handle_event(click(Rect::new(MENU_WIDTH + 1, 1, 1, 1)), &workspace);
         assert_eq!(
-            cell(&terminal, taxonomies.x, taxonomies.y).fg,
-            Color::Yellow
+            state
+                .taxonomies
+                .observe(state.library().as_ref())
+                .cursor_path,
+            ["conventional", name]
         );
-        assert_eq!(cell(&terminal, border, 2).symbol(), "┃");
-        assert_eq!(cell(&terminal, border, 2).fg, Color::Yellow);
-        assert_ne!(cell(&terminal, border, 1).fg, Color::Yellow);
+        Ok(())
+    }
+
+    #[test]
+    fn embedded_footer_ends_with_the_shell_keys() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.embedded = true;
+        state.handle_event(key(KeyCode::Char('2')), &workspace);
+        let mut terminal = Terminal::new(TestBackend::new(87, 36))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let footer = row_text(&terminal, 0, 35, 87);
+        assert!(footer.starts_with(" NAV  · taxonomy ·  ◇ read-only   f fork  n new  ↑/↓ move"));
+        assert!(footer.trim_end().ends_with("│  tab tabs  / cmds  ? help"));
         Ok(())
     }
 
@@ -4995,22 +4598,41 @@ mod tests {
         assert_eq!(state.home_focus, HomeFocus::Menu);
 
         state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.category, Category::Library);
+        assert_eq!(state.category, Category::Taxonomies);
         assert_eq!(state.project_section, ProjectSection::Resolution);
         state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.category, Category::Library);
+        assert_eq!(state.category, Category::Taxonomies);
         state.handle_event(key(KeyCode::Right), &workspace);
         assert_eq!(state.home_focus, HomeFocus::Content);
-        assert_eq!(state.library.focus, LibraryFocus::Taxonomies);
+        let cursor = |state: &State| {
+            state
+                .taxonomies
+                .observe(state.library().as_ref())
+                .cursor_path
+        };
         state.handle_event(key(KeyCode::Right), &workspace);
-        assert_eq!(state.library.focus, LibraryFocus::Types);
+        assert_eq!(cursor(&state), ["conventional"]);
+        state.handle_event(key(KeyCode::Right), &workspace);
+        assert_eq!(cursor(&state), ["conventional", "feat"]);
         state.handle_event(key(KeyCode::Left), &workspace);
-        assert_eq!(state.library.focus, LibraryFocus::Taxonomies);
+        assert_eq!(cursor(&state), ["conventional"]);
+        state.handle_event(key(KeyCode::Left), &workspace);
         assert_eq!(state.home_focus, HomeFocus::Content);
+        state.handle_event(key(KeyCode::Down), &workspace);
+        assert_eq!(cursor(&state), ["research"]);
+        state.handle_event(key(KeyCode::Up), &workspace);
         state.handle_event(key(KeyCode::Left), &workspace);
         assert_eq!(state.home_focus, HomeFocus::Menu);
         state.handle_event(key(KeyCode::Up), &workspace);
         assert_eq!(state.category, Category::Project);
+
+        state.handle_event(key(KeyCode::Char('2')), &workspace);
+        assert_eq!(state.category, Category::Taxonomies);
+        assert_eq!(state.home_focus, HomeFocus::Content);
+        state.handle_event(key(KeyCode::Left), &workspace);
+        state.handle_event(key(KeyCode::Char('1')), &workspace);
+        assert_eq!(state.category, Category::Project);
+        assert_eq!(state.home_focus, HomeFocus::Content);
     }
 
     #[test]
@@ -5018,7 +4640,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
@@ -5026,7 +4648,7 @@ mod tests {
         state.handle_event(Event::Paste("feat".into()), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(row_text(&terminal, 0, 0, 120).contains("Menu"));
+        assert!(row_text(&terminal, 0, 0, 120).contains("Config"));
         assert!(!row_text(&terminal, 0, 0, 120).contains("Create Taxonomy"));
         assert!(row_text(&terminal, 0, 1, 120).contains("/ create taxonomy"));
         assert!(
@@ -5088,9 +4710,9 @@ mod tests {
     {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
-        state.library.select_taxonomy(0);
+        select_taxonomy(&mut state, 0);
         state.handle_event(key(KeyCode::Char('f')), &workspace);
         assert!(state.fork_source.is_some());
         let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
@@ -5117,53 +4739,15 @@ mod tests {
     }
 
     #[test]
-    fn empty_custom_action_click_uses_dirty_scope_guard() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Library;
-        state.home_focus = HomeFocus::Content;
-        state
-            .project
-            .as_mut()
-            .ok_or("missing project")?
-            .initialize_project()?;
-        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
-        terminal.draw(|frame| state.render(frame))?;
-        let list = state.library.browser_area;
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: list.x,
-                row: list.y + 6,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        assert!(state.library.create_selected);
-        assert!(matches!(
-            state.screen,
-            Screen::ScopeChange(PendingAction::Create)
-        ));
-        assert_eq!(workspace.saves.get(), 0);
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        assert!(matches!(state.screen, Screen::Home));
-        assert!(state.library.create_selected);
-        Ok(())
-    }
-
-    #[test]
     fn home_palette_filters_commands_and_routes_through_existing_actions()
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(
-            row_text(&terminal, 0, 29, 100).contains("←/→: focus  ↑/↓: move  /: commands  ?: help")
-        );
+        assert!(row_text(&terminal, 0, 29, 100).contains("f fork  n new  ↑/↓ move"));
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Commands"));
@@ -5217,7 +4801,7 @@ mod tests {
         let workspace = Workspace::new();
         for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
             let mut state = State::new(&workspace);
-            state.category = Category::Library;
+            state.category = Category::Taxonomies;
             state.home_focus = HomeFocus::Content;
             state.handle_event(key(KeyCode::Char('/')), &workspace);
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
@@ -5271,10 +4855,10 @@ mod tests {
                     palette.list_area.width
                 )
                 .trim_end(),
-                "Switch to Library"
+                "Switch to Taxonomies"
             );
             state.handle_event(key(KeyCode::Enter), &workspace);
-            assert_eq!(state.category, Category::Library);
+            assert_eq!(state.category, Category::Taxonomies);
             state.handle_event(key(KeyCode::Char('n')), &workspace);
             state.handle_event(key(KeyCode::Char('/')), &workspace);
             terminal.draw(|frame| state.render(frame))?;
@@ -5308,16 +4892,16 @@ mod tests {
             state.handle_event(key(KeyCode::Char('m')), &workspace);
             assert_eq!(state.category, Category::Project);
             state.handle_event(key(KeyCode::Down), &workspace);
-            assert_eq!(state.category, Category::Library);
+            assert_eq!(state.category, Category::Taxonomies);
             assert!(state.home_overlay.is_none());
             terminal.draw(|frame| state.render(frame))?;
             let footer = row_text(&terminal, 0, height - 1, width);
-            assert!(footer.starts_with("←/→: focus  ↑/↓: move  /: commands  ?: help"));
-            assert!(!footer.contains('|'));
+            assert!(footer.starts_with(" NAV  · taxonomy ·  ◇ read-only   f fork  n new"));
+            assert!(footer.trim_end().ends_with("│  / cmds  ? help"));
             state.handle_event(key(KeyCode::Char('/')), &workspace);
             assert!(matches!(state.home_overlay, Some(HomeOverlay::Palette(_))));
             state.handle_event(key(KeyCode::Esc), &workspace);
-            assert_eq!(state.category, Category::Library);
+            assert_eq!(state.category, Category::Taxonomies);
             let project_tab = state.tab_areas[Category::Project.index()];
             state.handle_event(
                 Event::Mouse(ratatui::crossterm::event::MouseEvent {
@@ -5338,7 +4922,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         state.handle_event(Event::Paste("edit".into()), &workspace);
@@ -5371,8 +4955,8 @@ mod tests {
         let content_width = help.width - 4;
         let switch_row = row_text(&terminal, content_x, help.y + 2, content_width);
         let review_row = row_text(&terminal, content_x, help.y + 7, content_width);
-        assert!(switch_row.starts_with("Switch Project / Library"));
-        assert!(switch_row.ends_with("↑/↓/click"));
+        assert!(switch_row.starts_with("Switch Project / Taxonomies"));
+        assert!(switch_row.ends_with("1/2/click"));
         assert!(review_row.starts_with("Review changes"));
         assert!(review_row.ends_with("ctrl+s"));
         assert!(text(&terminal).contains("[esc] close"));
@@ -5401,7 +4985,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         state.handle_event(key(KeyCode::Char('?')), &workspace);
@@ -5411,8 +4995,8 @@ mod tests {
         let content_width = help.width - 4;
         let switch_row = row_text(&terminal, content_x, help.y + 2, content_width);
         let edit_row = row_text(&terminal, content_x, help.y + 6, content_width);
-        assert!(switch_row.starts_with("Switch Project / Library"));
-        assert!(switch_row.ends_with("↑/↓/click"));
+        assert!(switch_row.starts_with("Switch Project / Taxonomies"));
+        assert!(switch_row.ends_with("1/2/click"));
         assert!(edit_row.starts_with("New / edit / fork / delete"));
         assert!(edit_row.ends_with("n/e/f/d"));
         state.handle_event(key(KeyCode::Enter), &workspace);
@@ -5441,7 +5025,7 @@ mod tests {
             .as_mut()
             .ok_or("missing project")?
             .initialize_project()?;
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         state.handle_event(Event::Paste("create".into()), &workspace);
@@ -5459,11 +5043,11 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(row_text(&terminal, 0, 17, MINIMUM_WIDTH).contains("?: help"));
+        assert!(row_text(&terminal, 0, 17, MINIMUM_WIDTH).contains("? help"));
         let project_tab = state.tab_areas[Category::Project.index()];
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         terminal.draw(|frame| state.render(frame))?;
@@ -5527,7 +5111,7 @@ mod tests {
             &workspace,
         );
         assert!(state.home_overlay.is_none());
-        assert_eq!(state.category, Category::Library);
+        assert_eq!(state.category, Category::Taxonomies);
         Ok(())
     }
 
@@ -5536,7 +5120,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state
             .global
@@ -5608,7 +5192,7 @@ mod tests {
         assert!(text(&terminal).contains("Review pending"));
 
         state.status = None;
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.global = None;
         state.global_error = "global load failed".into();
@@ -5630,13 +5214,13 @@ mod tests {
             .initialize_project()?;
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(row_text(&terminal, 0, 26, MENU_WIDTH), "│ unapplied│");
-        assert_eq!(row_text(&terminal, 0, 27, MENU_WIDTH), "│ changes  │");
+        assert_eq!(row_text(&terminal, 0, 26, MENU_WIDTH), "│ unapplied    │");
+        assert_eq!(row_text(&terminal, 0, 27, MENU_WIDTH), "│ changes      │");
         assert_eq!(terminal.backend().buffer()[(2, 26)].fg, Color::Yellow);
         state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.category, Category::Library);
+        assert_eq!(state.category, Category::Taxonomies);
         terminal.draw(|frame| state.render(frame))?;
-        assert!(text(&terminal).contains("Library"));
+        assert!(text(&terminal).contains("Inspector"));
         assert!(state.scope_dirty(ConfigurationDestination::Project));
         assert_eq!(workspace.saves.get(), 0);
         state.handle_event(key(KeyCode::Char('e')), &workspace);
@@ -5651,7 +5235,7 @@ mod tests {
         assert_eq!(workspace.saves.get(), 0);
         state.handle_event(key(KeyCode::Esc), &workspace);
         assert!(matches!(state.screen, Screen::Home));
-        assert_eq!(state.category, Category::Library);
+        assert_eq!(state.category, Category::Taxonomies);
         assert!(state.scope_dirty(ConfigurationDestination::Project));
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(key(KeyCode::Char('a')), &workspace);
@@ -5669,7 +5253,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
@@ -5688,19 +5272,13 @@ mod tests {
             .as_mut()
             .ok_or("missing global")?
             .fork_unchanged(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
-        state.library.browse_selected = 3;
+        select_taxonomy(&mut state, 3);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(text(&terminal).contains("Forked from"));
-        assert!(text(&terminal).contains("conventional@2"));
-        let list = state.library.browser_area;
-        assert!(
-            row_text(&terminal, list.x, list.y + 4, list.width)
-                .trim()
-                .is_empty()
-        );
-        assert!(row_text(&terminal, list.x, list.y + 5, list.width).contains("Custom"));
-        assert!(row_text(&terminal, list.x, list.y + 6, list.width).contains("team"));
+        assert!(text(&terminal).contains("Forked from  conventional@2"));
+        let team = row_text(&terminal, MENU_WIDTH, 4, 100 - MENU_WIDTH);
+        assert!(team.contains("▌▸ team"));
+        assert!(team.trim_end().ends_with("custom  │"));
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(
             matches!(state.screen, Screen::TaxonomyEditor) && state.editor_mode == EditorMode::Edit
@@ -5724,20 +5302,16 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.global = None;
         state.global_error = "global load failed".into();
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
         let rendered = text(&terminal);
-        assert!(rendered.contains("Library"));
         assert!(rendered.contains("Taxonomies"));
-        assert!(rendered.contains("Details"));
-        assert!(rendered.contains("Taxonomy library"));
-        assert!(rendered.contains("No commit types."));
-        assert!(rendered.contains("No type selected."));
-        assert!(rendered.contains("/: commands  ?: help"));
+        assert!(rendered.contains("Taxonomy library unavailable."));
+        assert!(rendered.contains("/ cmds  ? help"));
         assert!(rendered.contains("Global load failed."));
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
@@ -5755,7 +5329,7 @@ mod tests {
             .as_mut()
             .ok_or("missing project")?
             .initialize_project()?;
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
         assert!(matches!(
@@ -5840,10 +5414,10 @@ mod tests {
             .collect::<Vec<_>>();
         let edited = rows
             .iter()
-            .position(|row| row.contains("│  edited   team v1 -> v2: description; type hotfix"))
+            .position(|row| row.contains("│  edited   team v1 -> v2: description; type "))
             .ok_or("the edited line is not on screen")?;
         assert!(
-            rows[edited + 1].contains("│           removed; types reordered "),
+            rows[edited + 1].contains("│           hotfix removed; types reordered "),
             "the wrapped row does not start under the taxonomy id: {:?}",
             rows[edited + 1]
         );
@@ -5878,7 +5452,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(Event::Paste("team".into()), &workspace);
@@ -5940,9 +5514,9 @@ mod tests {
         for action in ['n', 'f', 'e'] {
             let (workspace, source) = child_editor_workspace()?;
             let mut state = State::new(&workspace);
-            state.category = Category::Library;
+            state.category = Category::Taxonomies;
             state.home_focus = HomeFocus::Content;
-            state.library.select_taxonomy(3);
+            select_taxonomy(&mut state, 3);
             state.handle_event(key(KeyCode::Char(action)), &workspace);
             let initial_types = state.editor.as_ref().ok_or("missing taxonomy")?.types.len();
             state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
@@ -5955,7 +5529,7 @@ mod tests {
             for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
                 let mut terminal = Terminal::new(TestBackend::new(width, height))?;
                 terminal.draw(|frame| state.render(frame))?;
-                assert!(row_text(&terminal, 0, 1, width).contains("/ add type / add property"));
+                assert!(row_text(&terminal, 0, 1, width).contains("/ add type / add p"));
                 assert!(row_text(&terminal, 0, height - 1, width).contains("ctrl+s: complete"));
                 assert!(text(&terminal).contains("31/100"));
             }
@@ -6051,9 +5625,9 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let (workspace, source) = child_editor_workspace()?;
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
-        state.library.select_taxonomy(3);
+        select_taxonomy(&mut state, 3);
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
         state.handle_event(key(KeyCode::Enter), &workspace);
@@ -6070,7 +5644,7 @@ mod tests {
         terminal.draw(|frame| state.render(frame))?;
         assert!(
             row_text(&terminal, 0, 1, MINIMUM_WIDTH)
-                .contains("/ edit taxonomy / edit type / edit property")
+                .contains("/ edit taxonomy / edit type / edit p")
         );
         let property = state.property_editor.as_mut().ok_or("missing property")?;
         property.focus = child_editor::PropertyFocus::Description;
@@ -6107,9 +5681,9 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let (workspace, source) = child_editor_workspace()?;
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
-        state.library.select_taxonomy(3);
+        select_taxonomy(&mut state, 3);
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
         state.handle_event(Event::Paste("existing".into()), &workspace);
@@ -6173,9 +5747,9 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let (workspace, source) = child_editor_workspace()?;
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
-        state.library.select_taxonomy(3);
+        select_taxonomy(&mut state, 3);
         let library = state.global.clone().ok_or("missing global")?;
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
@@ -6184,7 +5758,7 @@ mod tests {
             matches!(state.status, Some(Notice::Info(ref message)) if message == "No changes to stage.")
         );
         assert!(matches!(state.screen, Screen::Home));
-        assert_eq!(state.category, Category::Library);
+        assert_eq!(state.category, Category::Taxonomies);
         assert_eq!(
             state.global.as_ref().map(ConfigurationSession::global),
             Some(library.global())
@@ -6223,9 +5797,9 @@ mod tests {
         let (workspace, _) = child_editor_workspace()?;
         for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
             let mut state = State::new(&workspace);
-            state.category = Category::Library;
+            state.category = Category::Taxonomies;
             state.home_focus = HomeFocus::Content;
-            state.library.select_taxonomy(3);
+            select_taxonomy(&mut state, 3);
             state.handle_event(key(KeyCode::Char('f')), &workspace);
             state.open_type_editor(Some(0));
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
@@ -6282,7 +5856,7 @@ mod tests {
             );
             state.handle_event(key(KeyCode::Enter), &workspace);
             terminal.draw(|frame| state.render(frame))?;
-            assert!(row_text(&terminal, 0, 1, width).contains("/ edit type / edit property"));
+            assert!(row_text(&terminal, 0, 1, width).contains("/ edit type / edit p"));
             assert!(text(&terminal).contains("135/100"));
             state.handle_event(key(KeyCode::Esc), &workspace);
             assert!(matches!(state.screen, Screen::TypeEditor));
@@ -6301,9 +5875,9 @@ mod tests {
         for (action, width, height) in [('n', 60, 18), ('f', 120, 30), ('e', 60, 18)] {
             let (workspace, source) = child_editor_workspace()?;
             let mut state = State::new(&workspace);
-            state.category = Category::Library;
+            state.category = Category::Taxonomies;
             state.home_focus = HomeFocus::Content;
-            state.library.select_taxonomy(3);
+            select_taxonomy(&mut state, 3);
             state.handle_event(key(KeyCode::Char(action)), &workspace);
             assert!(!state.taxonomy_is_dirty());
             state.handle_event(key(KeyCode::Esc), &workspace);
@@ -6364,7 +5938,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
@@ -6511,7 +6085,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(Event::Paste("team".into()), &workspace);
@@ -6563,7 +6137,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         let long = "Release Notes ".repeat(5);
@@ -6582,7 +6156,7 @@ mod tests {
             ("!!!", "use letters a-z", "use letters a-z"),
             (
                 long.as_str(),
-                "saves as release-notes-release-notes-release…",
+                "saves as release-notes-release-notes-rel…",
                 long_note.as_str(),
             ),
             ("team-changes", "", ""),
@@ -6623,7 +6197,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
@@ -6735,7 +6309,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(Event::Paste("Team Changes".into()), &workspace);
@@ -6883,9 +6457,9 @@ mod tests {
     {
         let (workspace, _) = child_editor_workspace()?;
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
-        state.library.select_taxonomy(3);
+        select_taxonomy(&mut state, 3);
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         state.handle_event(key(KeyCode::Up), &workspace);
         let description = |state: &State| -> Result<_, Box<dyn std::error::Error>> {
@@ -6915,9 +6489,9 @@ mod tests {
     {
         let (workspace, source) = child_editor_workspace()?;
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
-        state.library.select_taxonomy(3);
+        select_taxonomy(&mut state, 3);
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
@@ -6952,9 +6526,9 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let (workspace, _) = child_editor_workspace()?;
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
-        state.library.select_taxonomy(3);
+        select_taxonomy(&mut state, 3);
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         state.handle_event(key(KeyCode::Up), &workspace);
         assert_eq!(state.create_focus, CreateFocus::Description);
@@ -7020,7 +6594,7 @@ mod tests {
 
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.category = Category::Library;
+        state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         send(&mut state, &workspace, key(KeyCode::Char('n')));
         type_text(&mut state, &workspace, "Team Changes");
