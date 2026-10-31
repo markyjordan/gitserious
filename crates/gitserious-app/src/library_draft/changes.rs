@@ -313,7 +313,10 @@ fn same_text(draft: &str, stored: &str) -> bool {
 }
 
 /// The identifier apply would write for `name`, or `name` itself when it is not one.
-fn written<T: AsRef<str>>(parse: fn(&str) -> Result<T, LabelError>, name: &str) -> String {
+pub(super) fn written<T: AsRef<str>>(
+    parse: fn(&str) -> Result<T, LabelError>,
+    name: &str,
+) -> String {
     parse(name).map_or_else(|_| name.to_owned(), |id| id.as_ref().to_owned())
 }
 

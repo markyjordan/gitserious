@@ -265,6 +265,7 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, category: Category) {
             ("Reorder a type or property", "alt+↑/↓"),
             ("Scroll Inspector", "pgup/pgdn"),
             ("New / edit / fork / delete", "n/e/f/d"),
+            ("Copy a property to other types", "c"),
             ("Next field / done editing", "enter/esc"),
             ("Review changes", "ctrl+s"),
             ("Open commands", "/"),

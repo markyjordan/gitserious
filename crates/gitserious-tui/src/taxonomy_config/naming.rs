@@ -95,6 +95,9 @@ pub(super) fn refusal_sentence(refusal: EditRefusal, field: Option<DraftField>) 
             format!("{} is limited to {limit} characters.", field.label())
         }
         (EditRefusal::TooLong, None) => "That text is too long for this field.".into(),
+        (EditRefusal::Taken { .. }, _) => {
+            "A chosen type already has this property; nothing was copied.".into()
+        }
         (EditRefusal::NotApplicable | EditRefusal::Missing, _) => {
             "Select a taxonomy, type, or property first.".into()
         }

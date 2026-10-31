@@ -7,6 +7,9 @@
 //! records that build as its last valid one, which a preview names while the taxonomy has
 //! problems.
 //!
+//! A property copied in this session names the type it was copied from; the configuration does
+//! not store that, so it is gone once the Library is applied and loaded again.
+//!
 //! Building a draft from the same configuration twice yields equal node ids, so a view can keep
 //! a node id across rebuilds. A node created in this session gets a local id that is never reused.
 
@@ -19,8 +22,8 @@ use std::fmt::{self, Display, Formatter};
 use std::num::NonZeroU32;
 
 use gitserious_core::{
-    CommitTypeDefinition, PropertyDefinition, PropertyRequirement, SchemaVersion, Taxonomy,
-    TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
+    CommitTypeDefinition, PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion,
+    Taxonomy, TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -176,6 +179,10 @@ pub enum DraftEdit<'a> {
     Move {
         down: bool,
     },
+    /// Copies a property into each of these types as a new property of its own. Every target
+    /// must be another type of the property's taxonomy without the property's key, or nothing is
+    /// copied.
+    CopyTo(&'a [NodeId]),
 }
 
 /// Why `edit` changed nothing.
@@ -191,6 +198,8 @@ pub enum EditRefusal {
     Missing,
     /// The text is longer than the field's limit and longer than before.
     TooLong,
+    /// The copy target at this index already has the property's key.
+    Taken { target: usize },
 }
 
 impl Display for EditRefusal {
@@ -201,6 +210,7 @@ impl Display for EditRefusal {
             Self::NotApplicable => "the node has no such field",
             Self::Missing => "no node has this id",
             Self::TooLong => "the text is longer than the field allows",
+            Self::Taken { .. } => "a target type already has this key",
         })
     }
 }
@@ -349,6 +359,7 @@ pub struct PropertyNode {
     policy: Policy,
     condition: String,
     rationale: String,
+    copied_from: Option<NodeId>,
 }
 
 impl PropertyNode {
@@ -373,6 +384,7 @@ impl PropertyNode {
             policy,
             condition,
             rationale,
+            copied_from: None,
         }
     }
 
@@ -401,6 +413,12 @@ impl PropertyNode {
     #[must_use]
     pub const fn policy(&self) -> Policy {
         self.policy
+    }
+
+    /// The type this property was copied from in this session.
+    #[must_use]
+    pub const fn copied_from(&self) -> Option<&NodeId> {
+        self.copied_from.as_ref()
     }
 }
 
@@ -585,6 +603,24 @@ impl LibraryDraft {
         }
     }
 
+    /// The types `CopyTo` may copy the property `id` into: the other types of its custom
+    /// taxonomy, in order. Empty for anything else.
+    #[must_use]
+    pub fn copy_targets(&self, id: &NodeId) -> Vec<&TypeNode> {
+        match self.node(id) {
+            Some(NodeRef::Property {
+                taxonomy,
+                commit_type,
+                ..
+            }) if taxonomy.origin == TaxonomyOrigin::Custom => taxonomy
+                .types
+                .iter()
+                .filter(|other| other.id != commit_type.id)
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// The fields an edit may change, in display order: none on a built-in, no Name on a
     /// taxonomy the configuration stores, and Condition and Rationale only while conditional.
     #[must_use]
@@ -761,6 +797,7 @@ impl LibraryDraft {
                         policy: Policy::Required,
                         condition: String::new(),
                         rationale: String::new(),
+                        copied_from: None,
                     });
                     Ok(id)
                 }
@@ -797,7 +834,45 @@ impl LibraryDraft {
                 }
                 Ok(id.clone())
             }
+            DraftEdit::CopyTo(targets) => self.copy(address, targets).map(|()| id.clone()),
         }
+    }
+
+    fn copy(&mut self, address: Address, targets: &[NodeId]) -> Result<(), EditRefusal> {
+        let Address::Property(t, c, p) = address else {
+            return Err(EditRefusal::NotApplicable);
+        };
+        let key = |name: &str| changes::written(PropertyKey::from_label, name);
+        let source = self.taxonomies[t].types[c].properties[p].clone();
+        let mut into = Vec::with_capacity(targets.len());
+        for (index, target) in targets.iter().enumerate() {
+            let Some(Address::Type(target_t, target_c)) = self.address(target) else {
+                return Err(EditRefusal::NotApplicable);
+            };
+            if target_t != t {
+                return Err(EditRefusal::NotApplicable);
+            }
+            let taken = into.contains(&target_c)
+                || self.taxonomies[t].types[target_c]
+                    .properties
+                    .iter()
+                    .any(|property| key(&property.name) == key(&source.name));
+            if taken {
+                return Err(EditRefusal::Taken { target: index });
+            }
+            into.push(target_c);
+        }
+        let copied_from = Some(self.taxonomies[t].types[c].id.clone());
+        for target_c in into {
+            let copy = PropertyNode {
+                id: self.mint(),
+                baseline: None,
+                copied_from: copied_from.clone(),
+                ..source.clone()
+            };
+            self.taxonomies[t].types[target_c].properties.push(copy);
+        }
+        Ok(())
     }
 
     fn text_mut(&mut self, address: Address, field: DraftField) -> &mut String {
@@ -845,7 +920,7 @@ impl LibraryDraft {
 
     /// Appends a copy of the taxonomy that owns `id`, named `<source>-fork` with the source part
     /// cut to fit the Name limit, with lineage to the source's version. Each copied node keeps
-    /// the baseline of the node it copies.
+    /// the baseline of the node it copies, but no property names a type it was copied from.
     pub fn fork(&mut self, id: &NodeId) -> Result<NodeId, EditRefusal> {
         let source = self.node(id).ok_or(EditRefusal::Missing)?.taxonomy();
         let lineage = TaxonomyId::from_label(&source.name)
@@ -865,6 +940,7 @@ impl LibraryDraft {
             commit_type.id = self.mint();
             for property in &mut commit_type.properties {
                 property.id = self.mint();
+                property.copied_from = None;
             }
         }
         let id = fork.id.clone();

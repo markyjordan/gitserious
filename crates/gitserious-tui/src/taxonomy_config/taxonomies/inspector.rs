@@ -141,11 +141,17 @@ fn describe(
         NodeRef::Property {
             taxonomy,
             commit_type,
-            ..
-        } => lines.push(Line::styled(
-            format!("in {} › {}", taxonomy.name(), commit_type.name()),
-            DIM,
-        )),
+            property,
+        } => {
+            let mut context = format!("in {} › {}", taxonomy.name(), commit_type.name());
+            if let Some(NodeRef::Type { commit_type, .. }) = property
+                .copied_from()
+                .and_then(|source| library.node(source))
+            {
+                context.push_str(&format!("  · copied from {}", commit_type.name()));
+            }
+            lines.push(Line::styled(context, DIM));
+        }
     }
     lines.push(Line::default());
     let id = node.id();
@@ -225,6 +231,15 @@ fn describe(
     }
     for problem in chips.sentences(&ProblemSite::Node(id.clone())) {
         lines.extend(problem_lines(&problem, width));
+    }
+    if matches!(node, NodeRef::Property { .. }) && !editable.is_empty() {
+        lines.push(Line::default());
+        lines.push(Line::from(vec![
+            Span::styled("c", KEY_STYLE),
+            Span::styled(" copy to other types…   ", DIM),
+            Span::styled("d", KEY_STYLE),
+            Span::styled(" delete", DIM),
+        ]));
     }
     if let NodeRef::Property { commit_type, .. } = node
         && let Some(preview) = library.preview(id)
