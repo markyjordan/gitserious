@@ -3,12 +3,15 @@
 //! A draft may hold text that does not build, such as a blank name; `problems` reports it and
 //! `build` refuses it. `edit`, `create_taxonomy`, and `fork` are the only writers. Versions,
 //! problems, changes, and whether the draft differs from what it was loaded from are derived on
-//! each call.
+//! each call. History is not: after each edit and fork, every custom taxonomy that builds
+//! records that build as its last valid one, which a preview names while the taxonomy has
+//! problems.
 //!
 //! Building a draft from the same configuration twice yields equal node ids, so a view can keep
 //! a node id across rebuilds. A node created in this session gets a local id that is never reused.
 
 mod changes;
+mod preview;
 mod problems;
 
 use std::error::Error;
@@ -23,6 +26,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{ConfigurationError, GlobalConfiguration, TaxonomyOrigin};
 pub use changes::{ChangeSet, Mark};
+pub use preview::{Preview, PreviewValue, Schema};
 pub use problems::{Problem, ProblemKind, ProblemSite};
 
 /// The identity of one taxonomy, type, or property draft. Never persisted.
@@ -214,6 +218,9 @@ pub struct TaxonomyNode {
     version: TaxonomyVersion,
     derived_from: Option<TaxonomyLineage>,
     types: Vec<TypeNode>,
+    /// The last build of this custom taxonomy that had no problems: as loaded, or as the latest
+    /// write that left it building. None for a built-in, and until a new taxonomy first builds.
+    last_valid: Option<Taxonomy>,
 }
 
 impl TaxonomyNode {
@@ -233,6 +240,7 @@ impl TaxonomyNode {
                 .iter()
                 .map(|commit_type| TypeNode::new(name, commit_type))
                 .collect(),
+            last_valid: (origin == TaxonomyOrigin::Custom).then(|| taxonomy.clone()),
         }
     }
 
@@ -320,6 +328,11 @@ impl TypeNode {
     }
 
     #[must_use]
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    #[must_use]
     pub fn properties(&self) -> &[PropertyNode] {
         &self.properties
     }
@@ -378,6 +391,11 @@ impl PropertyNode {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    #[must_use]
+    pub fn description(&self) -> &str {
+        &self.description
     }
 
     #[must_use]
@@ -673,6 +691,20 @@ impl LibraryDraft {
     /// Applies one edit and returns the node a cursor should land on: the edited node, the new
     /// child, or after `Remove` the next sibling, else the previous one, else the parent.
     pub fn edit(&mut self, id: &NodeId, edit: DraftEdit<'_>) -> Result<NodeId, EditRefusal> {
+        let landing = self.apply(id, edit)?;
+        self.record_valid_builds();
+        Ok(landing)
+    }
+
+    /// Records each custom taxonomy's build as its last valid one where it builds. An edit to
+    /// one taxonomy can fix another, such as a rename that frees the other's name.
+    fn record_valid_builds(&mut self) {
+        for (index, built) in problems::custom(self).0 {
+            self.taxonomies[index].last_valid = Some(built);
+        }
+    }
+
+    fn apply(&mut self, id: &NodeId, edit: DraftEdit<'_>) -> Result<NodeId, EditRefusal> {
         let node = self.node(id).ok_or(EditRefusal::Missing)?;
         if node.taxonomy().origin == TaxonomyOrigin::BuiltIn {
             return Err(EditRefusal::ReadOnly);
@@ -806,6 +838,7 @@ impl LibraryDraft {
             version: TaxonomyVersion::V1,
             derived_from: None,
             types: Vec::new(),
+            last_valid: None,
         });
         id
     }
@@ -826,6 +859,7 @@ impl LibraryDraft {
         fork.name = source.name.graphemes(true).take(room).collect::<String>() + FORK_SUFFIX;
         fork.version = TaxonomyVersion::V1;
         fork.derived_from = Some(lineage);
+        fork.last_valid = None;
         fork.id = self.mint();
         for commit_type in &mut fork.types {
             commit_type.id = self.mint();
@@ -835,6 +869,7 @@ impl LibraryDraft {
         }
         let id = fork.id.clone();
         self.taxonomies.push(fork);
+        self.record_valid_builds();
         Ok(id)
     }
 }
