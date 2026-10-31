@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use gitserious_app::{LibraryDraft, NodeId, NodeRef};
+use gitserious_app::{LibraryDraft, NodeId, NodeRef, TaxonomyNode, TaxonomyOrigin, TypeNode};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -10,54 +10,128 @@ use ratatui::widgets::{Block, Paragraph};
 use super::{BADGE_STYLE, BAND, DIM, fit, policy_style};
 use crate::theme::{focus_frame_style, frame_style};
 
+pub(super) const ADD_TYPE: &str = "+ add type";
+pub(super) const ADD_PROPERTY: &str = "+ add property";
+const ADD_STYLE: Style = Style::new().fg(Color::LightBlue);
+
+/// What a row stands for. The add rows are not drafts, so they name the node they add to.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in super::super) enum RowKey {
+    Node(NodeId),
+    AddType(NodeId),
+    AddProperty(NodeId),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Row<'a> {
+    Node(NodeRef<'a>),
+    AddType(&'a TaxonomyNode),
+    AddProperty(&'a TaxonomyNode, &'a TypeNode),
+}
+
+impl<'a> Row<'a> {
+    pub(super) fn key(self) -> RowKey {
+        match self {
+            Self::Node(node) => RowKey::Node(node.id().clone()),
+            Self::AddType(taxonomy) => RowKey::AddType(taxonomy.id().clone()),
+            Self::AddProperty(_, commit_type) => RowKey::AddProperty(commit_type.id().clone()),
+        }
+    }
+
+    /// The row's node, or for an add row the node it adds to.
+    pub(super) const fn node(self) -> NodeRef<'a> {
+        match self {
+            Self::Node(node) => node,
+            Self::AddType(taxonomy) => NodeRef::Taxonomy(taxonomy),
+            Self::AddProperty(taxonomy, commit_type) => NodeRef::Type {
+                taxonomy,
+                commit_type,
+            },
+        }
+    }
+
+    /// Names from the taxonomy down to this row; an add row ends with its label.
+    #[cfg(test)]
+    pub(super) fn names(self) -> Vec<String> {
+        let mut names = self
+            .node()
+            .names()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        match self {
+            Self::Node(_) => {}
+            Self::AddType(_) => names.push(ADD_TYPE.into()),
+            Self::AddProperty(..) => names.push(ADD_PROPERTY.into()),
+        }
+        names
+    }
+}
+
 /// Visible rows in display order: every taxonomy, the types of each expanded taxonomy, and the
-/// properties of each expanded type.
-pub(super) fn rows<'a>(library: &'a LibraryDraft, expanded: &BTreeSet<NodeId>) -> Vec<NodeRef<'a>> {
+/// properties of each expanded type. A custom taxonomy or type ends with its add row.
+pub(super) fn rows<'a>(library: &'a LibraryDraft, expanded: &BTreeSet<NodeId>) -> Vec<Row<'a>> {
     let mut rows = Vec::new();
     for taxonomy in library.taxonomies() {
-        rows.push(NodeRef::Taxonomy(taxonomy));
+        rows.push(Row::Node(NodeRef::Taxonomy(taxonomy)));
         if !expanded.contains(taxonomy.id()) {
             continue;
         }
+        let custom = taxonomy.origin() == TaxonomyOrigin::Custom;
         for commit_type in taxonomy.types() {
-            rows.push(NodeRef::Type {
+            rows.push(Row::Node(NodeRef::Type {
                 taxonomy,
                 commit_type,
-            });
+            }));
             if expanded.contains(commit_type.id()) {
-                rows.extend(
-                    commit_type
-                        .properties()
-                        .iter()
-                        .map(|property| NodeRef::Property {
-                            taxonomy,
-                            commit_type,
-                            property,
-                        }),
-                );
+                rows.extend(commit_type.properties().iter().map(|property| {
+                    Row::Node(NodeRef::Property {
+                        taxonomy,
+                        commit_type,
+                        property,
+                    })
+                }));
+                if custom {
+                    rows.push(Row::AddProperty(taxonomy, commit_type));
+                }
             }
+        }
+        if custom {
+            rows.push(Row::AddType(taxonomy));
         }
     }
     rows
 }
 
-pub(super) fn has_children(node: NodeRef<'_>) -> bool {
+/// Whether the row opens: a custom taxonomy or type always does, to show its add row.
+pub(super) fn has_children(row: Row<'_>) -> bool {
+    let Row::Node(node) = row else {
+        return false;
+    };
+    let custom = node.taxonomy().origin() == TaxonomyOrigin::Custom;
     match node {
-        NodeRef::Taxonomy(taxonomy) => !taxonomy.types().is_empty(),
-        NodeRef::Type { commit_type, .. } => !commit_type.properties().is_empty(),
+        NodeRef::Taxonomy(taxonomy) => custom || !taxonomy.types().is_empty(),
+        NodeRef::Type { commit_type, .. } => custom || !commit_type.properties().is_empty(),
         NodeRef::Property { .. } => false,
     }
 }
 
 /// The cursor's row, else the row of its nearest visible ancestor, else the first row.
-pub(super) fn resolve(
-    rows: &[NodeRef<'_>],
-    cursor: Option<&NodeId>,
-    library: &LibraryDraft,
-) -> usize {
-    let mut id = cursor.cloned();
+pub(super) fn resolve(rows: &[Row<'_>], cursor: Option<&RowKey>, library: &LibraryDraft) -> usize {
+    let Some(cursor) = cursor else {
+        return 0;
+    };
+    if let Some(index) = rows.iter().position(|row| &row.key() == cursor) {
+        return index;
+    }
+    let mut id = Some(match cursor {
+        RowKey::Node(id) | RowKey::AddType(id) | RowKey::AddProperty(id) => id.clone(),
+    });
     while let Some(current) = id {
-        if let Some(index) = rows.iter().position(|row| row.id() == &current) {
+        if let Some(index) = rows
+            .iter()
+            .position(|row| row.key() == RowKey::Node(current.clone()))
+        {
             return index;
         }
         id = library.parent(&current);
@@ -69,7 +143,7 @@ pub(super) fn resolve(
 pub(super) fn render(
     frame: &mut Frame<'_>,
     area: Rect,
-    rows: &[NodeRef<'_>],
+    rows: &[Row<'_>],
     expanded: &BTreeSet<NodeId>,
     selected: usize,
     offset: &mut usize,
@@ -102,7 +176,7 @@ pub(super) fn render(
         .skip(*offset)
         .take(height)
         .map(|(index, &row)| {
-            let open = expanded.contains(row.id()) && has_children(row);
+            let open = has_children(row) && expanded.contains(row.node().id());
             row_line(row, open, index == selected, focused, width)
         })
         .collect::<Vec<_>>();
@@ -110,8 +184,14 @@ pub(super) fn render(
     inner
 }
 
+/// Pads `name` to the widest of `names` plus two spaces.
+fn column<'a>(name: &str, names: impl Iterator<Item = &'a str>) -> String {
+    let width = names.map(str::len).max().unwrap_or(0) + 2;
+    format!("{name:<width$}")
+}
+
 fn row_line(
-    row: NodeRef<'_>,
+    row: Row<'_>,
     open: bool,
     selected: bool,
     focused: bool,
@@ -131,7 +211,20 @@ fn row_line(
     };
     let marker = Span::styled(if open { "▾ " } else { "▸ " }, frame_style());
     let (left, right) = match row {
-        NodeRef::Taxonomy(taxonomy) => (
+        Row::AddType(_) => (
+            vec![bar, Span::raw("  "), Span::styled(ADD_TYPE, ADD_STYLE)],
+            Vec::new(),
+        ),
+        Row::AddProperty(..) => (
+            vec![
+                bar,
+                Span::raw("    "),
+                Span::styled("└ ", frame_style()),
+                Span::styled(ADD_PROPERTY, ADD_STYLE),
+            ],
+            Vec::new(),
+        ),
+        Row::Node(NodeRef::Taxonomy(taxonomy)) => (
             vec![
                 bar,
                 marker,
@@ -142,23 +235,15 @@ fn row_line(
                 BADGE_STYLE,
             )],
         ),
-        NodeRef::Type {
+        Row::Node(NodeRef::Type {
             taxonomy,
             commit_type,
-        } => {
-            let column = taxonomy
-                .types()
-                .iter()
-                .map(|sibling| sibling.name().len())
-                .max()
-                .unwrap_or(0)
-                + 2;
-            let mut left = vec![
-                bar,
-                Span::raw("  "),
-                marker,
-                Span::styled(format!("{:<column$}", commit_type.name()), name_style),
-            ];
+        }) => {
+            let name = column(
+                commit_type.name(),
+                taxonomy.types().iter().map(TypeNode::name),
+            );
+            let mut left = vec![bar, Span::raw("  "), marker, Span::styled(name, name_style)];
             if !open {
                 let summary = commit_type
                     .properties()
@@ -171,27 +256,26 @@ fn row_line(
             let count = Span::styled(commit_type.properties().len().to_string(), DIM);
             (left, vec![count])
         }
-        NodeRef::Property {
+        Row::Node(NodeRef::Property {
+            taxonomy,
             commit_type,
             property,
-            ..
-        } => {
+        }) => {
             let siblings = commit_type.properties();
-            let column = siblings
-                .iter()
-                .map(|sibling| sibling.name().len())
-                .max()
-                .unwrap_or(0)
-                + 2;
-            let last = siblings
-                .last()
-                .is_some_and(|last| last.id() == property.id());
+            let last = taxonomy.origin() == TaxonomyOrigin::BuiltIn
+                && siblings
+                    .last()
+                    .is_some_and(|last| last.id() == property.id());
+            let name = column(
+                property.name(),
+                siblings.iter().map(gitserious_app::PropertyNode::name),
+            );
             (
                 vec![
                     bar,
                     Span::raw("    "),
                     Span::styled(if last { "└ " } else { "├ " }, frame_style()),
-                    Span::styled(format!("{:<column$}", property.name()), name_style),
+                    Span::styled(name, name_style),
                     Span::styled(property.policy().label(), policy_style(property.policy())),
                 ],
                 Vec::new(),

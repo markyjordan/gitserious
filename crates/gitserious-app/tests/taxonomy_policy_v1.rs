@@ -3,8 +3,8 @@
 use std::error::Error;
 
 use gitserious_app::{
-    ConfigurationSession, GlobalConfiguration, ProjectConfig, ProjectLock,
-    resolve_effective_configuration,
+    ConfigurationSession, DraftEdit, DraftField, GlobalConfiguration, NodeId, ProjectConfig,
+    ProjectLock, resolve_effective_configuration,
 };
 use gitserious_core::{TaxonomyId, built_in_taxonomies};
 
@@ -37,20 +37,24 @@ fn portable_lock_keeps_complete_taxonomies() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Forks conventional under the name `team`, as forking and typing a name does.
+fn fork_team(session: &mut ConfigurationSession) -> Result<NodeId, Box<dyn Error>> {
+    let library = session.library_mut().ok_or("a Global session")?;
+    let conventional = library.find_path(&["conventional"]).ok_or("conventional")?;
+    let fork = library.fork(&conventional)?;
+    library.edit(&fork, DraftEdit::Text(DraftField::Name, "team"))?;
+    Ok(fork)
+}
+
 #[test]
 fn fork_creation_is_separate_from_availability() -> Result<(), Box<dyn Error>> {
     let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
-    let conventional = &built_in_taxonomies()[0];
-    session.fork_taxonomy(
-        conventional.id(),
-        TaxonomyId::new("team")?,
-        conventional.description().clone(),
-        conventional.commit_types().to_vec(),
-    )?;
+    fork_team(&mut session)?;
     assert!(session.catalog()?.find(&TaxonomyId::new("team")?).is_some());
     assert!(
         !session
-            .global()
+            .library()
+            .ok_or("a Global session")?
             .available_taxonomies()
             .contains(&TaxonomyId::new("team")?)
     );
@@ -59,21 +63,21 @@ fn fork_creation_is_separate_from_availability() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn selected_custom_taxonomy_cannot_be_deleted() -> Result<(), Box<dyn Error>> {
+fn a_selected_custom_taxonomy_cannot_be_removed_without_a_problem() -> Result<(), Box<dyn Error>> {
     let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
     let team = TaxonomyId::new("team")?;
-    let conventional = &built_in_taxonomies()[0];
-    session.fork_taxonomy(
-        conventional.id(),
-        team.clone(),
-        conventional.description().clone(),
-        conventional.commit_types().to_vec(),
-    )?;
-    let mut available = session.global().available_taxonomies().to_vec();
+    let fork = fork_team(&mut session)?;
+    let mut available = session
+        .library()
+        .ok_or("a Global session")?
+        .available_taxonomies()
+        .to_vec();
     available.push(team.clone());
-    session.configure_global(team.clone(), available)?;
+    session.configure_global(team, available)?;
+    let library = session.library_mut().ok_or("a Global session")?;
+    library.edit(&fork, DraftEdit::Remove)?;
     let error = session
-        .delete_taxonomy(&team)
+        .review()
         .expect_err("selected taxonomy must be protected");
     assert!(error.contains("not installed") || error.contains("available"));
     Ok(())

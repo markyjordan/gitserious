@@ -536,7 +536,14 @@ fn available_custom_taxonomies_are_recorded_in_the_lock() -> Result<(), Box<dyn 
         .available_taxonomies()
         .to_vec();
     available.push(team.clone());
-    let fork = built_in_taxonomies()[0].fork(team.clone());
+    let source = &built_in_taxonomies()[0];
+    let fork = Taxonomy::new(
+        team.clone(),
+        TaxonomyVersion::V1,
+        source.description().clone(),
+        Some(TaxonomyLineage::new(source.id().clone(), source.version())),
+        source.commit_types().to_vec(),
+    )?;
     let global = GlobalConfiguration::new(
         1,
         TaxonomyId::new("conventional")?,

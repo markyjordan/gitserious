@@ -32,7 +32,6 @@ pub use description::{Description, DescriptionError};
 pub use fingerprint::Fingerprint;
 pub use identifier::{
     CommitTypeId, ConditionId, IdentifierError, LabelError, PropertyKey, TaxonomyId,
-    normalize_identifier,
 };
 pub use property::{
     PropertyCondition, PropertyConditionError, PropertyDefinition, PropertyDefinitionError,

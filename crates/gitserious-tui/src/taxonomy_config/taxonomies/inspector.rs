@@ -4,46 +4,83 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::super::hanging_wrap;
-use super::{BADGE_STYLE, DIM, KEY_STYLE, fit, policy_style};
-use crate::theme::frame_style;
+use super::{BADGE_STYLE, BAND, DIM, KEY_STYLE, fit, policy_style};
+use crate::theme::focus_frame_style;
 
 /// Labels and the values beside them start in these columns.
 const LABEL_WIDTH: usize = 13;
+/// Room for the widest counter, `100/100`, and the gap before it.
+const COUNTER_WIDTH: usize = 8;
+const CURSOR: Style = Style::new().add_modifier(Modifier::REVERSED);
 
-/// Describes `node` in words, scrolled down by `offset` rows.
+/// The field a row is focused on and, while it is edited, the cursor's grapheme index.
+#[derive(Clone, Copy)]
+pub(super) struct Focus {
+    pub(super) field: DraftField,
+    pub(super) cursor: Option<usize>,
+}
+
+/// Describes `node` in words, scrolled down by `offset` rows, and keeps the focused field in
+/// view.
 pub(super) fn render(
     frame: &mut Frame<'_>,
     area: Rect,
     library: &LibraryDraft,
     node: NodeRef<'_>,
+    focus: Option<Focus>,
     offset: &mut u16,
 ) {
+    let editing = focus.is_some_and(|focus| focus.cursor.is_some());
     let block = Block::bordered()
-        .border_style(frame_style())
-        .title_style(frame_style())
+        .border_style(focus_frame_style(editing))
+        .title_style(focus_frame_style(editing))
         .title("Inspector");
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let body = Rect::new(
-        inner.x.saturating_add(1),
-        inner.y,
-        inner.width.saturating_sub(2),
-        inner.height,
-    );
-    let lines = describe(library, node, usize::from(body.width), body.height > 10);
+    let width = usize::from(inner.width).saturating_sub(2);
+    let (lines, focused) = describe(library, node, focus, width, inner.height > 10);
     let total = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-    *offset = (*offset).min(total.saturating_sub(body.height));
-    frame.render_widget(Paragraph::new(lines).scroll((*offset, 0)), body);
+    if let Some((start, end)) = focused {
+        let (start, end) = (
+            u16::try_from(start).unwrap_or(u16::MAX),
+            u16::try_from(end).unwrap_or(u16::MAX),
+        );
+        if end > offset.saturating_add(inner.height) {
+            *offset = end.saturating_sub(inner.height);
+        }
+        *offset = (*offset).min(start);
+    }
+    *offset = (*offset).min(total.saturating_sub(inner.height));
+    let lines = lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let band = focused.is_some_and(|(start, end)| (start..end).contains(&index));
+            let gutter = if band {
+                Span::styled("▌", Style::default().fg(Color::Yellow))
+            } else {
+                Span::raw(" ")
+            };
+            let mut spans = vec![gutter];
+            spans.extend(line.spans);
+            let line = Line::from(spans);
+            if band { line.style(BAND) } else { line }
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(lines).scroll((*offset, 0)), inner);
 }
 
+/// The lines and the range of lines the focused field takes.
 fn describe(
     library: &LibraryDraft,
     node: NodeRef<'_>,
+    focus: Option<Focus>,
     width: usize,
     roomy: bool,
-) -> Vec<Line<'static>> {
+) -> (Vec<Line<'static>>, Option<(usize, usize)>) {
     let mut lines = Vec::new();
     if roomy {
         lines.push(Line::default());
@@ -72,26 +109,59 @@ fn describe(
         _ => Vec::new(),
     };
     lines.push(fit(heading, badge, width));
-    if !matches!(node, NodeRef::Taxonomy(_)) {
-        let mut names = node.names();
-        names.pop();
-        lines.push(Line::styled(format!("in {}", names.join(" › ")), DIM));
+    match node {
+        NodeRef::Taxonomy(_) => {}
+        NodeRef::Type { taxonomy, .. } => {
+            lines.push(Line::styled(format!("in {}", taxonomy.name()), DIM));
+        }
+        NodeRef::Property {
+            taxonomy,
+            commit_type,
+            ..
+        } => lines.push(Line::styled(
+            format!("in {} › {}", taxonomy.name(), commit_type.name()),
+            DIM,
+        )),
     }
     lines.push(Line::default());
+    let id = node.id();
+    let editable = library.fields(id);
+    let mut focused = None;
+    let mut show = |lines: &mut Vec<Line<'static>>, field: DraftField| {
+        let start = lines.len();
+        let focus = focus.filter(|focus| focus.field == field);
+        if field == DraftField::Policy {
+            if let NodeRef::Property { property, .. } = node {
+                lines.extend(policy_lines(property.policy(), width));
+            }
+        } else {
+            let text = library.text(id, field).unwrap_or_default();
+            let limit = field.limit().filter(|_| editable.contains(&field));
+            lines.extend(field_lines(
+                field.label(),
+                text,
+                limit,
+                focus.and_then(|focus| focus.cursor),
+                width,
+            ));
+        }
+        if focus.is_some() {
+            focused = Some((start, lines.len()));
+        }
+    };
     let fact = |lines: &mut Vec<Line<'static>>, label: &str, value: &str| {
         lines.extend(fact_lines(label, value, width));
     };
     match node {
         NodeRef::Taxonomy(taxonomy) => {
+            if editable.contains(&DraftField::Name) {
+                show(&mut lines, DraftField::Name);
+            }
             let version = library
-                .version(taxonomy.id())
+                .version(id)
                 .map_or_else(String::new, |version| version.to_string());
             fact(&mut lines, "Version", &version);
-            fact(
-                &mut lines,
-                DraftField::Description.label(),
-                taxonomy.description(),
-            );
+            show(&mut lines, DraftField::Description);
             fact(&mut lines, "Types", &taxonomy.types().len().to_string());
             if let Some(source) = taxonomy.derived_from() {
                 fact(
@@ -102,12 +172,8 @@ fn describe(
             }
         }
         NodeRef::Type { commit_type, .. } => {
-            fact(&mut lines, DraftField::Name.label(), commit_type.name());
-            fact(
-                &mut lines,
-                DraftField::Description.label(),
-                commit_type.description(),
-            );
+            show(&mut lines, DraftField::Name);
+            show(&mut lines, DraftField::Description);
             fact(
                 &mut lines,
                 "Properties",
@@ -115,24 +181,12 @@ fn describe(
             );
         }
         NodeRef::Property { property, .. } => {
-            fact(&mut lines, DraftField::Name.label(), property.name());
-            fact(
-                &mut lines,
-                DraftField::Description.label(),
-                property.description(),
-            );
-            lines.push(policy_line(property.policy()));
+            show(&mut lines, DraftField::Name);
+            show(&mut lines, DraftField::Description);
+            show(&mut lines, DraftField::Policy);
             if property.policy() == Policy::Conditional {
-                fact(
-                    &mut lines,
-                    DraftField::Condition.label(),
-                    property.condition(),
-                );
-                fact(
-                    &mut lines,
-                    DraftField::Rationale.label(),
-                    property.rationale(),
-                );
+                show(&mut lines, DraftField::Condition);
+                show(&mut lines, DraftField::Rationale);
             }
         }
     }
@@ -143,7 +197,7 @@ fn describe(
         }
         lines.push(hint("n", "new blank taxonomy"));
     }
-    lines
+    (lines, focused)
 }
 
 /// `label` in the label column and `value` wrapped beneath its own first column.
@@ -166,28 +220,128 @@ fn fact_lines(label: &str, value: &str, width: usize) -> Vec<Line<'static>> {
         .collect()
 }
 
-/// Every policy in order, the current one highlighted.
-fn policy_line(current: Policy) -> Line<'static> {
+/// A text field: its label, its text wrapped in the value column with room for the cursor,
+/// `used/limit` at the end of the first row when the field is editable, and the cursor.
+fn field_lines(
+    label: &str,
+    text: &str,
+    limit: Option<usize>,
+    cursor: Option<usize>,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let graphemes = text
+        .graphemes(true)
+        .map(|grapheme| {
+            if grapheme.contains(['\n', '\r']) {
+                " "
+            } else {
+                grapheme
+            }
+        })
+        .collect::<Vec<_>>();
+    let counter = limit.map(|limit| format!("{}/{limit}", graphemes.len()));
+    let column = width
+        .saturating_sub(LABEL_WIDTH + usize::from(counter.is_some()) * COUNTER_WIDTH + 1)
+        .max(1);
+    let rows = wrap(&graphemes, column);
+    let last = rows.len() - 1;
+    rows.iter()
+        .enumerate()
+        .map(|(index, &(start, end))| {
+            let mut spans = vec![Span::styled(
+                format!("{:<LABEL_WIDTH$}", if index == 0 { label } else { "" }),
+                DIM,
+            )];
+            let at = cursor.filter(|&at| {
+                (start..end).contains(&at)
+                    || (at == end && (index == last || rows[index + 1].0 > at))
+            });
+            match at {
+                Some(at) if at < end => {
+                    spans.push(Span::raw(graphemes[start..at].concat()));
+                    spans.push(Span::styled(graphemes[at].to_owned(), CURSOR));
+                    spans.push(Span::raw(graphemes[at + 1..end].concat()));
+                }
+                Some(_) => {
+                    spans.push(Span::raw(graphemes[start..end].concat()));
+                    spans.push(Span::styled(" ", CURSOR));
+                }
+                None => spans.push(Span::raw(graphemes[start..end].concat())),
+            }
+            match counter.as_ref().filter(|_| index == 0) {
+                Some(counter) => fit(spans, vec![Span::styled(counter.clone(), DIM)], width),
+                None => Line::from(spans),
+            }
+        })
+        .collect()
+}
+
+/// Splits `graphemes` into rows of at most `width` columns, breaking after the last space that
+/// fits and dropping it, or inside a word longer than a row. Returns each row's range.
+fn wrap(graphemes: &[&str], width: usize) -> Vec<(usize, usize)> {
+    let cell = |grapheme: &str| Span::raw(grapheme.to_owned()).width();
+    let mut rows = Vec::new();
+    let mut start = 0;
+    let mut used = 0;
+    let mut index = 0;
+    while index < graphemes.len() {
+        let size = cell(graphemes[index]);
+        if used + size > width && index > start {
+            let space = if graphemes[index] == " " {
+                Some(index)
+            } else {
+                (start + 1..index).rev().find(|&at| graphemes[at] == " ")
+            };
+            let (end, next) = space.map_or((index, index), |at| (at, at + 1));
+            rows.push((start, end));
+            start = next;
+            index = index.max(next);
+            used = graphemes[start..index].iter().map(|g| cell(g)).sum();
+            continue;
+        }
+        used += size;
+        index += 1;
+    }
+    rows.push((start, graphemes.len()));
+    rows
+}
+
+/// Every policy in order, the current one highlighted, wrapping within the value column.
+fn policy_lines(current: Policy, width: usize) -> Vec<Line<'static>> {
+    let column = width.saturating_sub(LABEL_WIDTH);
+    let mut lines = Vec::new();
     let mut spans = vec![Span::styled(
         format!("{:<LABEL_WIDTH$}", DraftField::Policy.label()),
         DIM,
     )];
-    for (index, policy) in Policy::ORDER.into_iter().enumerate() {
-        if index > 0 {
+    let mut used = 0;
+    for policy in Policy::ORDER {
+        let label = policy.label();
+        if used > 0 && used + 1 + label.len() > column {
+            lines.push(Line::from(std::mem::replace(
+                &mut spans,
+                vec![Span::raw(" ".repeat(LABEL_WIDTH))],
+            )));
+            used = 0;
+        }
+        if used > 0 {
             spans.push(Span::raw(" "));
+            used += 1;
         }
         spans.push(if policy == current {
             Span::styled(
-                policy.label(),
+                label,
                 policy_style(policy)
-                    .bg(Color::Rgb(40, 40, 40))
+                    .bg(Color::Rgb(60, 60, 60))
                     .add_modifier(Modifier::BOLD),
             )
         } else {
-            Span::styled(policy.label(), DIM)
+            Span::styled(label, DIM)
         });
+        used += label.len();
     }
-    Line::from(spans)
+    lines.push(Line::from(spans));
+    lines
 }
 
 fn hint(key: &'static str, label: &'static str) -> Line<'static> {
@@ -195,4 +349,19 @@ fn hint(key: &'static str, label: &'static str) -> Line<'static> {
         Span::styled(key, KEY_STYLE),
         Span::styled(format!(" {label}"), DIM),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap;
+
+    #[test]
+    fn wrap_breaks_after_the_last_space_that_fits_and_inside_long_words() {
+        let words = "ab cd efghij"
+            .split("")
+            .filter(|g| !g.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(wrap(&words, 5), [(0, 5), (6, 11), (11, 12)]);
+        assert_eq!(wrap(&[], 5), [(0, 0)]);
+    }
 }

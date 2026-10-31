@@ -2,18 +2,15 @@ use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 
 use crate::confirmation::{
-    self, APPLY_OR_DISCARD, Answer, ConfirmDialog, Confirmation, DISCARD, DISCARD_AND_QUIT, REMOVE,
+    self, APPLY_OR_DISCARD, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT, REMOVE,
     STAGE_DELETION,
 };
 use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
-    LibraryDraft, ProjectConfig, RepositoryRoot, TaxonomyOrigin, resolve_effective_configuration,
+    DraftEdit, EditRefusal, LibraryDraft, NodeId, NodeRef, ProjectConfig, RepositoryRoot,
+    TaxonomyOrigin, resolve_effective_configuration,
 };
-use gitserious_core::{
-    CommitTypeDefinition, CommitTypeDefinitionError, CommitTypeId, ConditionId, Description,
-    PropertyCondition, PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion,
-    Taxonomy, TaxonomyError, TaxonomyId, TaxonomyLineage, TaxonomyVersion,
-};
+use gitserious_core::{Taxonomy, TaxonomyId};
 use ratatui::Frame;
 use ratatui::crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
@@ -21,11 +18,7 @@ use ratatui::crossterm::event::{
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap,
-};
-use tui_textarea::{CursorMove, CursorRenderMode, TextArea, WrapMode};
-use unicode_segmentation::UnicodeSegmentation;
+use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::theme::{
     JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, centered_rect, focus_frame_style, frame_style,
@@ -33,19 +26,14 @@ use crate::theme::{
     section_heading_style, selected_style,
 };
 
-mod child_editor;
 mod home_overlay;
 #[cfg(test)]
 mod model_check;
 mod naming;
 mod taxonomies;
-use child_editor::{ChildAction, PropertyEditorState, TypeEditorState};
-use home_overlay::{CommandPaletteState, CreateCommand, HomeCommand, HomeOverlay};
-use naming::{
-    NameField, description_required, edited_prose, name_error, name_heading_line,
-    noted_heading_line, sentence, single_line,
-};
-use taxonomies::TaxonomiesView;
+use home_overlay::{CommandPaletteState, HomeCommand, HomeOverlay};
+use naming::{problem_sentence, sentence};
+use taxonomies::{LibraryAction, Nav, TaxonomiesView};
 
 /// Taxonomy-first terminal configuration adapter.
 #[derive(Clone, Debug, Default)]
@@ -113,37 +101,24 @@ impl ConfigView {
 
     /// Which keys the shell may take before Config sees them.
     pub(crate) fn shell_keys(&self) -> ShellKeys {
-        if matches!(self.state.screen, Screen::Home) && self.state.home_overlay.is_none() {
-            ShellKeys::Navigation
-        } else {
-            ShellKeys::None
+        match (&self.state.screen, &self.state.home_overlay) {
+            (Screen::Home, None)
+                if self.state.category == Category::Taxonomies
+                    && self.state.taxonomies.editing() =>
+            {
+                ShellKeys::TabsOnly
+            }
+            (Screen::Home, None) => ShellKeys::Navigation,
+            _ => ShellKeys::None,
         }
     }
 
-    pub(crate) fn modal(&self) -> bool {
-        self.state.home_overlay.is_some() || self.confirming_discard()
-    }
-
-    pub(crate) fn editing_taxonomy(&self) -> bool {
-        self.state.creating_taxonomy()
-    }
-
-    pub(crate) fn confirming_discard(&self) -> bool {
-        matches!(
-            self.state.screen,
-            Screen::ConfirmDiscardCreate(_) | Screen::ConfirmDiscardChild(_)
-        )
+    pub(crate) const fn modal(&self) -> bool {
+        self.state.home_overlay.is_some()
     }
 
     pub(crate) fn dirty(&self) -> bool {
-        self.state.any_dirty() || self.state.editor.is_some() || self.state.settings.is_some()
-    }
-
-    /// Leaves a taxonomy editor the way its Library breadcrumb does. Returns false while
-    /// the discard confirmation is open.
-    pub(crate) fn request_leave_editor(&mut self) -> bool {
-        self.state.request_leave_editor();
-        !self.state.creating_taxonomy()
+        self.state.any_dirty() || self.state.settings.is_some()
     }
 }
 
@@ -152,6 +127,8 @@ impl ConfigView {
 pub(crate) enum ShellKeys {
     /// The shell switches sections on tab, goes Home on esc, and quits on q.
     Navigation,
+    /// The shell switches sections on tab; esc and q belong to the field being edited.
+    TabsOnly,
     None,
 }
 
@@ -224,9 +201,7 @@ enum PendingAction {
     EditProject,
     InitializeProject,
     ReviewProject,
-    Create,
-    Edit,
-    Fork,
+    Library(LibraryAction),
     Delete,
     ReviewGlobal,
 }
@@ -246,240 +221,18 @@ impl Notice {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum EditorMode {
-    Create,
-    Edit,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CreateFocus {
-    Name,
-    Description,
-    Types,
-}
-
 #[derive(Clone, Debug)]
 enum Screen {
     Home,
     Settings(ConfigurationDestination),
-    TaxonomyEditor,
-    TypeEditor,
-    PropertyEditor,
-    Delete,
     Review(ConfigurationDestination),
     Leave,
     ScopeChange(PendingAction),
-    ConfirmDiscardCreate(Box<Screen>),
-    ConfirmDiscardChild(Box<Screen>),
-    ConfirmRemoveType(usize),
-    ConfirmRemoveProperty(usize),
+    /// Asks before a taxonomy, type, or property leaves the Library.
+    ConfirmRemove(NodeId),
 }
 
 const MENU_WIDTH: u16 = 16;
-const BREADCRUMB_HEIGHT: u16 = 3;
-const CREATE_TEXT_LIMIT: usize = 80;
-const CREATE_TEXT_LIMIT_NOTICE: &str =
-    "Taxonomy name and description are limited to 80 characters.";
-const CREATE_TYPES_MARKER_WIDTH: u16 = 1;
-const CREATE_TYPES_COLUMN_SPACING: u16 = 2;
-const CREATE_TYPES_ADD_LABEL: &str = "+ add type";
-
-struct CreateTextEditors {
-    name: TextArea<'static>,
-    description: TextArea<'static>,
-    limit: usize,
-}
-
-impl CreateTextEditors {
-    fn from_draft(draft: &TaxonomyDraft) -> Self {
-        Self::from_values(&draft.id, &draft.description, CREATE_TEXT_LIMIT)
-    }
-
-    fn from_values(name: &str, description: &str, limit: usize) -> Self {
-        let mut name = TextArea::new(vec![name.to_owned()]);
-        let mut description = TextArea::new(description.split('\n').map(str::to_owned).collect());
-        for area in [&mut name, &mut description] {
-            area.set_style(Style::default().fg(Color::White).bg(JET_BLACK));
-            area.set_cursor_line_style(Style::default());
-            area.set_cursor_render_mode(CursorRenderMode::Hidden);
-            area.move_cursor(CursorMove::Bottom);
-            area.move_cursor(CursorMove::End);
-        }
-        description.set_wrap_mode(WrapMode::WordOrGlyph);
-        Self {
-            name,
-            description,
-            limit,
-        }
-    }
-
-    fn sync_draft(&self, draft: &mut TaxonomyDraft) {
-        draft.id = self.name.lines().join("\n");
-        draft.description = self.description.lines().join("\n");
-    }
-
-    fn used(&self) -> usize {
-        Self::length(&self.name) + Self::length(&self.description)
-    }
-
-    fn length(area: &TextArea<'_>) -> usize {
-        area.lines().join("\n").graphemes(true).count()
-    }
-
-    /// Applies `edit` unless it would leave the entry over its budget and longer than before, so
-    /// an entry loaded over budget can still shrink.
-    fn edit(&mut self, focus: CreateFocus, edit: impl FnOnce(&mut TextArea<'static>)) -> bool {
-        let (target, other) = match focus {
-            CreateFocus::Name => (&mut self.name, &self.description),
-            CreateFocus::Description => (&mut self.description, &self.name),
-            CreateFocus::Types => return false,
-        };
-        let mut candidate = target.clone();
-        edit(&mut candidate);
-        let before = Self::length(target) + Self::length(other);
-        let after = Self::length(&candidate) + Self::length(other);
-        if after > self.limit && after > before {
-            return false;
-        }
-        *target = candidate;
-        true
-    }
-
-    fn paste(&mut self, focus: CreateFocus, text: &str) -> bool {
-        for grapheme in text.graphemes(true) {
-            if !self.edit(focus, |area| {
-                area.insert_str(grapheme);
-            }) {
-                return true;
-            }
-        }
-        false
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PropertyDraft {
-    key: String,
-    description: String,
-    requirement: PropertyRequirement,
-}
-
-impl From<&PropertyDefinition> for PropertyDraft {
-    fn from(value: &PropertyDefinition) -> Self {
-        Self {
-            key: value.key().to_string(),
-            description: value.description().to_owned(),
-            requirement: value.requirement().clone(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TypeDraft {
-    id: String,
-    description: String,
-    schema_version: u16,
-    properties: Vec<PropertyDraft>,
-}
-
-impl From<&CommitTypeDefinition> for TypeDraft {
-    fn from(value: &CommitTypeDefinition) -> Self {
-        Self {
-            id: value.id().to_string(),
-            description: value.description().to_owned(),
-            schema_version: value.schema_version().get(),
-            properties: value.properties().iter().map(PropertyDraft::from).collect(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TaxonomyDraft {
-    id: String,
-    description: String,
-    version: u16,
-    derived_from: Option<TaxonomyLineage>,
-    types: Vec<TypeDraft>,
-}
-
-impl TaxonomyDraft {
-    fn empty() -> Self {
-        Self {
-            id: String::new(),
-            description: String::new(),
-            version: 1,
-            derived_from: None,
-            types: Vec::new(),
-        }
-    }
-
-    fn from_taxonomy(value: &Taxonomy) -> Self {
-        Self {
-            id: value.id().to_string(),
-            description: value.description().to_string(),
-            version: value.version().get(),
-            derived_from: value.derived_from().cloned(),
-            types: value.commit_types().iter().map(TypeDraft::from).collect(),
-        }
-    }
-
-    fn build(&self) -> Result<Taxonomy, String> {
-        let id = TaxonomyId::from_label(&self.id)
-            .map_err(|error| name_error(NameField::Taxonomy, &self.id, &error))?;
-        let description =
-            Description::new(&self.description).map_err(|_| description_required("Taxonomy"))?;
-        let version = TaxonomyVersion::new(self.version).map_err(|error| error.to_string())?;
-        let types = self
-            .types
-            .iter()
-            .map(TypeDraft::build)
-            .collect::<Result<Vec<_>, _>>()?;
-        Taxonomy::new(id, version, description, self.derived_from.clone(), types).map_err(|error| {
-            match error {
-                TaxonomyError::EmptyCommitTypes => "Add a type before staging the taxonomy.".into(),
-                TaxonomyError::DuplicateCommitType(_) => sentence(&error.to_string()),
-            }
-        })
-    }
-}
-
-impl TypeDraft {
-    fn build(&self) -> Result<CommitTypeDefinition, String> {
-        let id = CommitTypeId::from_label(&self.id)
-            .map_err(|error| name_error(NameField::Type, &self.id, &error))?;
-        let version = SchemaVersion::new(self.schema_version).map_err(|error| error.to_string())?;
-        let properties = self
-            .properties
-            .iter()
-            .map(PropertyDraft::build)
-            .collect::<Result<Vec<_>, _>>()?;
-        CommitTypeDefinition::new(version, id, self.description.clone(), properties).map_err(
-            |error| match error {
-                CommitTypeDefinitionError::EmptyDescription => description_required("Type"),
-                CommitTypeDefinitionError::DuplicateProperty(_) => sentence(&error.to_string()),
-            },
-        )
-    }
-}
-
-impl PropertyDraft {
-    fn empty() -> Self {
-        Self {
-            key: String::new(),
-            description: String::new(),
-            requirement: PropertyRequirement::Required,
-        }
-    }
-
-    fn build(&self) -> Result<PropertyDefinition, String> {
-        let key = PropertyKey::from_label(&self.key)
-            .map_err(|error| name_error(NameField::Property, &self.key, &error))?;
-        PropertyDefinition::new(key, self.description.clone(), self.requirement.clone())
-            .map_err(|_| description_required("Property"))
-    }
-}
-
 #[derive(Clone, Debug)]
 struct SettingsDraft {
     selected: usize,
@@ -502,23 +255,11 @@ struct State {
     taxonomies: TaxonomiesView,
     project_section: ProjectSection,
     screen: Screen,
-    breadcrumb_area: Rect,
     home_overlay: Option<HomeOverlay>,
-    child_selected: usize,
-    create_focus: CreateFocus,
-    create_areas: [Rect; 2],
-    create_text: Option<CreateTextEditors>,
-    fork_source: Option<TaxonomyLineage>,
-    create_type_offset: usize,
     scroll: u16,
     project_scroll: u16,
     status: Option<Notice>,
-    editor: Option<TaxonomyDraft>,
-    initial_editor: Option<TaxonomyDraft>,
     dialog: ConfirmDialog,
-    editor_mode: EditorMode,
-    type_editor: Option<TypeEditorState>,
-    property_editor: Option<PropertyEditorState>,
     settings: Option<SettingsDraft>,
     too_small: bool,
     project_area: Rect,
@@ -544,23 +285,11 @@ impl State {
             taxonomies: TaxonomiesView::default(),
             project_section: ProjectSection::Commit,
             screen: Screen::Home,
-            breadcrumb_area: Rect::default(),
             home_overlay: None,
-            child_selected: 0,
-            create_focus: CreateFocus::Name,
-            create_areas: [Rect::default(); 2],
-            create_text: None,
-            fork_source: None,
-            create_type_offset: 0,
             scroll: 0,
             project_scroll: 0,
             status: None,
-            editor: None,
-            initial_editor: None,
             dialog: ConfirmDialog::default(),
-            editor_mode: EditorMode::Create,
-            type_editor: None,
-            property_editor: None,
             settings: None,
             too_small: false,
             project_area: Rect::default(),
@@ -568,179 +297,40 @@ impl State {
         }
     }
 
-    fn creating_taxonomy(&self) -> bool {
-        self.editor.is_some()
-            && matches!(
-                self.screen,
-                Screen::TaxonomyEditor
-                    | Screen::TypeEditor
-                    | Screen::PropertyEditor
-                    | Screen::ConfirmDiscardCreate(_)
-                    | Screen::ConfirmDiscardChild(_)
-                    | Screen::ConfirmRemoveType(_)
-                    | Screen::ConfirmRemoveProperty(_)
-            )
-    }
-
-    fn editor_breadcrumb(&self) -> String {
-        let mut path = if self.editor_mode == EditorMode::Edit {
-            " / edit taxonomy"
-        } else if self.fork_source.is_some() {
-            " / fork taxonomy"
-        } else {
-            " / create taxonomy"
-        }
-        .to_owned();
-        if let Some(editor) = &self.type_editor {
-            path.push_str(if editor.target.is_none() {
-                " / add type"
-            } else {
-                " / edit type"
-            });
-        }
-        if let Some(editor) = &self.property_editor {
-            path.push_str(if editor.target.is_none() {
-                " / add property"
-            } else {
-                " / edit property"
-            });
-        }
-        path
-    }
-
-    fn leave_create_taxonomy(&mut self) {
-        self.editor = None;
-        self.initial_editor = None;
-        self.dialog.invalidate();
-        self.create_text = None;
-        self.fork_source = None;
-        self.type_editor = None;
-        self.property_editor = None;
-        self.screen = Screen::Home;
-        self.category = Category::Taxonomies;
-        self.create_areas = [Rect::default(); 2];
-        self.breadcrumb_area = Rect::default();
-    }
-
-    fn taxonomy_is_dirty(&self) -> bool {
-        let (Some(editor), Some(initial)) = (&self.editor, &self.initial_editor) else {
-            return false;
-        };
-        let mut current = editor.clone();
-        if let Some(text) = &self.create_text {
-            text.sync_draft(&mut current);
-        }
-        current != *initial
-    }
-
-    fn open_discard(&mut self, screen: Screen) {
-        self.dialog.invalidate();
-        self.screen = screen;
-    }
-
-    fn request_taxonomy_back(&mut self) {
-        if self.taxonomy_is_dirty() {
-            self.open_discard(Screen::ConfirmDiscardCreate(Box::new(self.screen.clone())));
-        } else {
-            self.leave_create_taxonomy();
-        }
-    }
-
-    fn request_leave_editor(&mut self) {
-        if matches!(self.screen, Screen::TaxonomyEditor) {
-            self.request_taxonomy_back();
-        } else {
-            self.open_discard(Screen::ConfirmDiscardCreate(Box::new(self.screen.clone())));
-        }
-    }
-
     /// The question the current screen asks, if it is a confirmation. Its choices drive the
     /// dialog's keys and buttons and the footer's hints.
     fn confirmation(&self) -> Option<Confirmation<'static>> {
         let (title, message, choices) = match &self.screen {
-            Screen::ConfirmDiscardCreate(_) => {
-                let message = match (&self.editor_mode, &self.fork_source, &self.initial_editor) {
-                    (EditorMode::Edit, _, Some(initial)) => {
+            Screen::ConfirmRemove(node) => {
+                let library = self.library()?;
+                match library.node(node)? {
+                    NodeRef::Taxonomy(taxonomy) => (
+                        "Delete Taxonomy",
                         format!(
-                            "Discard changes to \"{}\" and return to Library?",
-                            initial.id
-                        )
-                    }
-                    (_, Some(source), _) => format!(
-                        "Discard this fork of \"{}\" and return to Library?",
-                        source.id()
+                            "Stage the deletion of \"{}\"? Ctrl+S reviews it before applying.",
+                            taxonomy.name()
+                        ),
+                        STAGE_DELETION,
                     ),
-                    _ => "Discard new taxonomy and return to Library?".to_owned(),
-                };
-                ("Discard Taxonomy", message, DISCARD)
-            }
-            Screen::ConfirmDiscardChild(return_to)
-                if matches!(**return_to, Screen::PropertyEditor) =>
-            {
-                let existing = self
-                    .property_editor
-                    .as_ref()
-                    .and_then(|editor| editor.target)
-                    .zip(self.type_editor.as_ref())
-                    .and_then(|(index, kind)| kind.draft.properties.get(index));
-                let message = existing.map_or_else(
-                    || "Discard the new property?".to_owned(),
-                    |property| format!("Discard changes to property \"{}\"?", property.key),
-                );
-                ("Discard Property", message, DISCARD)
-            }
-            Screen::ConfirmDiscardChild(_) => {
-                let message = match self.type_editor.as_ref() {
-                    Some(editor) if editor.target.is_some() => {
-                        format!("Discard changes to type \"{}\"?", editor.draft.id)
-                    }
-                    _ => "Discard the new type?".to_owned(),
-                };
-                ("Discard Type", message, DISCARD)
-            }
-            Screen::ConfirmRemoveType(index) => {
-                let id = self
-                    .editor
-                    .as_ref()
-                    .and_then(|draft| draft.types.get(*index))
-                    .map(|kind| kind.id.clone())
-                    .unwrap_or_default();
-                (
-                    "Remove Type",
-                    format!("Remove type \"{id}\" from this taxonomy?"),
-                    REMOVE,
-                )
-            }
-            Screen::ConfirmRemoveProperty(index) => {
-                let (kind, key) = self
-                    .type_editor
-                    .as_ref()
-                    .map(|editor| {
-                        let key = editor
-                            .draft
-                            .properties
-                            .get(*index)
-                            .map(|property| property.key.clone())
-                            .unwrap_or_default();
-                        (editor.draft.id.clone(), key)
-                    })
-                    .unwrap_or_default();
-                (
-                    "Remove Property",
-                    format!("Remove property \"{key}\" from type \"{kind}\"?"),
-                    REMOVE,
-                )
-            }
-            Screen::Delete => {
-                let id = self
-                    .selected_taxonomy()
-                    .map(|taxonomy| taxonomy.id().to_string())
-                    .unwrap_or_default();
-                (
-                    "Delete Taxonomy",
-                    format!("Stage the deletion of \"{id}\"? Ctrl+S reviews it before applying."),
-                    STAGE_DELETION,
-                )
+                    NodeRef::Type { commit_type, .. } => (
+                        "Remove Type",
+                        format!("Remove type \"{}\" from this taxonomy?", commit_type.name()),
+                        REMOVE,
+                    ),
+                    NodeRef::Property {
+                        commit_type,
+                        property,
+                        ..
+                    } => (
+                        "Remove Property",
+                        format!(
+                            "Remove property \"{}\" from type \"{}\"?",
+                            property.name(),
+                            commit_type.name()
+                        ),
+                        REMOVE,
+                    ),
+                }
             }
             Screen::Leave => (
                 "Quit",
@@ -778,32 +368,7 @@ impl State {
         };
         self.dialog.invalidate();
         match (self.screen.clone(), answer) {
-            (Screen::ConfirmDiscardCreate(_), Answer::Confirm) => self.leave_create_taxonomy(),
-            (Screen::ConfirmDiscardChild(return_to), Answer::Confirm) => {
-                self.close_child(matches!(*return_to, Screen::PropertyEditor));
-            }
-            (
-                Screen::ConfirmDiscardCreate(return_to) | Screen::ConfirmDiscardChild(return_to),
-                Answer::Keep | Answer::Alternate,
-            ) => self.screen = *return_to,
-            (Screen::ConfirmRemoveType(index), Answer::Confirm) => {
-                if let Some(draft) = &mut self.editor
-                    && index < draft.types.len()
-                {
-                    draft.types.remove(index);
-                    self.child_selected = index;
-                }
-                self.screen = Screen::TaxonomyEditor;
-            }
-            (Screen::ConfirmRemoveType(_), _) => self.screen = Screen::TaxonomyEditor,
-            (Screen::ConfirmRemoveProperty(index), Answer::Confirm) => {
-                if let Some(editor) = &mut self.type_editor {
-                    editor.remove_property(index);
-                }
-                self.screen = Screen::TypeEditor;
-            }
-            (Screen::ConfirmRemoveProperty(_), _) => self.screen = Screen::TypeEditor,
-            (Screen::Delete, Answer::Confirm) => self.stage_deletion(),
+            (Screen::ConfirmRemove(node), Answer::Confirm) => self.remove(&node),
             (Screen::Leave, Answer::Confirm) => return true,
             (Screen::ScopeChange(action), Answer::Confirm) => {
                 self.apply_scope_then(action, workspace)
@@ -841,29 +406,15 @@ impl State {
             self.status = None;
         }
         if let Event::Paste(text) = &event {
-            let child_action = match self.screen {
-                Screen::TypeEditor => self.type_editor.as_mut().map(|editor| editor.paste(text)),
-                Screen::PropertyEditor => self
-                    .property_editor
+            if matches!(self.screen, Screen::Home)
+                && self.category == Category::Taxonomies
+                && let Some(library) = self
+                    .global
                     .as_mut()
-                    .map(|editor| editor.paste(text)),
-                _ => None,
-            };
-            if let Some(action) = child_action {
-                self.child_action(action, matches!(self.screen, Screen::PropertyEditor));
-                return false;
-            }
-            if matches!(self.screen, Screen::TaxonomyEditor)
-                && let Some(editors) = &mut self.create_text
+                    .and_then(ConfigurationSession::library_mut)
+                && let Err(error) = self.taxonomies.paste(text, library)
             {
-                let text = match self.create_focus {
-                    CreateFocus::Name => single_line(text),
-                    CreateFocus::Description => text.into(),
-                    CreateFocus::Types => return false,
-                };
-                if editors.paste(self.create_focus, &text) {
-                    self.status = Some(Notice::info(CREATE_TEXT_LIMIT_NOTICE.into()));
-                }
+                self.status = Some(Notice::error(error));
             }
             return false;
         }
@@ -872,11 +423,7 @@ impl State {
                 return false;
             }
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-                if self.creating_taxonomy()
-                    && contains(self.breadcrumb_area, mouse.column, mouse.row)
-                {
-                    self.request_leave_editor();
-                } else if matches!(self.screen, Screen::Home)
+                if matches!(self.screen, Screen::Home)
                     && let Some(category) = Category::ALL.into_iter().find(|category| {
                         contains(self.tab_areas[category.index()], mouse.column, mouse.row)
                     })
@@ -898,47 +445,11 @@ impl State {
                     }
                 } else if matches!(self.screen, Screen::Home)
                     && self.category == Category::Taxonomies
-                    && let Some(library) = self.library()
-                    && self.taxonomies.click(mouse.column, mouse.row, &library)
+                    && let Some(library) =
+                        self.global.as_ref().and_then(ConfigurationSession::library)
+                    && self.taxonomies.click(mouse.column, mouse.row, library)
                 {
                     self.home_focus = HomeFocus::Content;
-                } else if matches!(self.screen, Screen::TypeEditor)
-                    && let Some(editor) = &mut self.type_editor
-                {
-                    let pane = editor.areas[1];
-                    let list = Rect::new(
-                        pane.x + 1,
-                        pane.y + 1,
-                        pane.width.saturating_sub(2),
-                        pane.height.saturating_sub(2),
-                    );
-                    if contains(list, mouse.column, mouse.row) {
-                        let index = editor.offset + usize::from(mouse.row - list.y);
-                        if index <= editor.draft.properties.len() {
-                            editor.focus = CreateFocus::Types;
-                            editor.selected = index;
-                        }
-                    }
-                } else if matches!(self.screen, Screen::TaxonomyEditor) {
-                    let pane = self.create_areas[1];
-                    let list = Rect::new(
-                        pane.x.saturating_add(1),
-                        pane.y.saturating_add(1),
-                        pane.width.saturating_sub(2),
-                        pane.height.saturating_sub(2),
-                    );
-                    if contains(list, mouse.column, mouse.row) {
-                        self.create_focus = CreateFocus::Types;
-                        let index =
-                            self.create_type_offset + usize::from(mouse.row.saturating_sub(list.y));
-                        let count = self
-                            .editor
-                            .as_ref()
-                            .map_or(1, |draft| draft.types.len() + 1);
-                        if index < count {
-                            self.child_selected = index;
-                        }
-                    }
                 }
             }
             return false;
@@ -952,17 +463,13 @@ impl State {
         match self.screen.clone() {
             Screen::Home => self.home_key(key, workspace),
             Screen::Settings(destination) => self.settings_key(key, destination),
-            Screen::TaxonomyEditor => self.taxonomy_editor_key(key),
-            Screen::TypeEditor => self.type_editor_key(key),
-            Screen::PropertyEditor => self.property_editor_key(key),
             Screen::Review(destination) => self.review_key(key, destination, workspace),
-            Screen::Delete
-            | Screen::Leave
-            | Screen::ScopeChange(_)
-            | Screen::ConfirmDiscardCreate(_)
-            | Screen::ConfirmDiscardChild(_)
-            | Screen::ConfirmRemoveType(_)
-            | Screen::ConfirmRemoveProperty(_) => false,
+            Screen::ConfirmRemove(_) => {
+                // The node is gone, so there is nothing left to confirm.
+                self.screen = Screen::Home;
+                false
+            }
+            Screen::Leave | Screen::ScopeChange(_) => false,
         }
     }
 
@@ -975,12 +482,7 @@ impl State {
             return false;
         };
         match overlay {
-            HomeOverlay::Palette(palette) => {
-                self.handle_palette_event(event, workspace, palette, false)
-            }
-            HomeOverlay::CreatePalette(palette) => {
-                self.handle_palette_event(event, workspace, palette, true)
-            }
+            HomeOverlay::Palette(palette) => self.handle_palette_event(event, workspace, palette),
             HomeOverlay::Help => {
                 if !matches!(
                     event,
@@ -1001,17 +503,12 @@ impl State {
         event: Event,
         workspace: &dyn ConfigurationWorkspace,
         mut palette: CommandPaletteState,
-        create: bool,
     ) -> bool {
         match event {
             Event::Key(key) => match key.code {
                 KeyCode::Esc => return false,
                 KeyCode::Up | KeyCode::Down => {
-                    if create {
-                        palette.move_create_selection(key.code == KeyCode::Down);
-                    } else {
-                        palette.move_selection(self.category, key.code == KeyCode::Down);
-                    }
+                    palette.move_selection(self.category, key.code == KeyCode::Down);
                 }
                 KeyCode::Backspace => {
                     let mut query = palette.query.clone();
@@ -1019,13 +516,7 @@ impl State {
                     palette.set_query(query);
                 }
                 KeyCode::Enter => {
-                    if create {
-                        if let Some(command) = palette.selected_create_command() {
-                            self.status = None;
-                            self.dispatch_create_command(command);
-                            return false;
-                        }
-                    } else if let Some(command) = palette.selected_command(self.category) {
+                    if let Some(command) = palette.selected_command(self.category) {
                         self.status = None;
                         return self.dispatch_home_command(command, workspace);
                     }
@@ -1048,11 +539,7 @@ impl State {
                 if contains(palette.list_area, mouse.column, mouse.row) {
                     let index = palette.list_offset
                         + usize::from(mouse.row.saturating_sub(palette.list_area.y));
-                    let count = if create {
-                        palette.visible_create().len()
-                    } else {
-                        palette.visible(self.category).len()
-                    };
+                    let count = palette.visible(self.category).len();
                     if index < count {
                         palette.selected = index;
                     }
@@ -1062,19 +549,8 @@ impl State {
             }
             _ => {}
         }
-        self.home_overlay = Some(if create {
-            HomeOverlay::CreatePalette(palette)
-        } else {
-            HomeOverlay::Palette(palette)
-        });
+        self.home_overlay = Some(HomeOverlay::Palette(palette));
         false
-    }
-
-    fn dispatch_create_command(&mut self, command: CreateCommand) {
-        match command {
-            CreateCommand::AddType => self.open_new_type_form(),
-            CreateCommand::ValidateAndStage => self.stage_editor(self.editor_mode),
-        }
     }
 
     fn dispatch_home_command(
@@ -1090,9 +566,15 @@ impl State {
             HomeCommand::ReviewProject => {
                 self.request_project_action(PendingAction::ReviewProject);
             }
-            HomeCommand::New => self.request_global_action(PendingAction::Create),
-            HomeCommand::Edit => self.request_global_action(PendingAction::Edit),
-            HomeCommand::Fork => self.request_global_action(PendingAction::Fork),
+            HomeCommand::New => {
+                self.request_global_action(PendingAction::Library(LibraryAction::Create));
+            }
+            HomeCommand::Edit => {
+                self.request_global_action(PendingAction::Library(LibraryAction::Edit));
+            }
+            HomeCommand::Fork => {
+                self.request_global_action(PendingAction::Library(LibraryAction::Fork));
+            }
             HomeCommand::Delete => self.request_global_action(PendingAction::Delete),
             HomeCommand::ReviewLibrary => self.request_global_action(PendingAction::ReviewGlobal),
             HomeCommand::SwitchTab => self.category = self.category.next(),
@@ -1112,6 +594,36 @@ impl State {
     }
 
     fn home_key(&mut self, key: KeyEvent, _workspace: &dyn ConfigurationWorkspace) -> bool {
+        if self.category == Category::Taxonomies && self.taxonomies.editing() {
+            if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                self.request_global_action(PendingAction::ReviewGlobal);
+            } else if let Some(library) = self
+                .global
+                .as_mut()
+                .and_then(ConfigurationSession::library_mut)
+                && let Err(error) = self.taxonomies.edit_key(key, library)
+            {
+                self.status = Some(Notice::error(error));
+            }
+            return false;
+        }
+        if self.category == Category::Taxonomies
+            && self.home_focus == HomeFocus::Content
+            && let Some(library) = self.global.as_ref().and_then(ConfigurationSession::library)
+        {
+            match self.taxonomies.key(key, library) {
+                Nav::Handled => return false,
+                Nav::Sidebar => {
+                    self.home_focus = HomeFocus::Menu;
+                    return false;
+                }
+                Nav::Act(action) => {
+                    self.request_global_action(PendingAction::Library(action));
+                    return false;
+                }
+                Nav::Unhandled => {}
+            }
+        }
         match key.code {
             KeyCode::Char('/') if key.modifiers.is_empty() => {
                 self.home_overlay = Some(HomeOverlay::Palette(CommandPaletteState::default()));
@@ -1161,22 +673,6 @@ impl State {
                 self.project_section = ProjectSection::ALL[index];
                 self.project_scroll = 0;
             }
-            KeyCode::Up
-            | KeyCode::Down
-            | KeyCode::Left
-            | KeyCode::Right
-            | KeyCode::Enter
-            | KeyCode::PageUp
-            | KeyCode::PageDown
-                if self.category == Category::Taxonomies
-                    && self.home_focus == HomeFocus::Content =>
-            {
-                if let Some(library) = self.library()
-                    && self.taxonomies.key(key.code, &library)
-                {
-                    self.home_focus = HomeFocus::Menu;
-                }
-            }
             KeyCode::PageUp if self.category == Category::Project => {
                 self.project_scroll = self.project_scroll.saturating_sub(8);
             }
@@ -1191,20 +687,14 @@ impl State {
             KeyCode::Char('i') if self.category == Category::Project => {
                 self.request_project_action(PendingAction::InitializeProject);
             }
-            KeyCode::Char('n')
+            KeyCode::Char(letter @ ('e' | 'f' | 'n'))
                 if self.category == Category::Taxonomies && key.modifiers.is_empty() =>
             {
-                self.request_global_action(PendingAction::Create);
-            }
-            KeyCode::Char('e')
-                if self.category == Category::Taxonomies && key.modifiers.is_empty() =>
-            {
-                self.request_global_action(PendingAction::Edit);
-            }
-            KeyCode::Char('f')
-                if self.category == Category::Taxonomies && key.modifiers.is_empty() =>
-            {
-                self.request_global_action(PendingAction::Fork);
+                self.request_global_action(PendingAction::Library(match letter {
+                    'e' => LibraryAction::Edit,
+                    'f' => LibraryAction::Fork,
+                    _ => LibraryAction::Create,
+                }));
             }
             KeyCode::Char('d')
                 if self.category == Category::Taxonomies && key.modifiers.is_empty() =>
@@ -1266,24 +756,30 @@ impl State {
             return;
         };
         let (default, available, inherit_default, inherit_available) = match destination {
-            ConfigurationDestination::Global => (
-                session.global().default_taxonomy().clone(),
-                session.global().available_taxonomies().to_vec(),
-                false,
-                false,
-            ),
+            ConfigurationDestination::Global => {
+                let Some(library) = session.library() else {
+                    return;
+                };
+                (
+                    library.default_taxonomy().clone(),
+                    library.available_taxonomies().to_vec(),
+                    false,
+                    false,
+                )
+            }
             ConfigurationDestination::Project => {
-                let Some(config) = session.project_config() else {
+                let (Some(config), Some(global)) = (session.project_config(), session.global())
+                else {
                     return;
                 };
                 (
                     config
                         .default_taxonomy()
-                        .unwrap_or_else(|| session.global().default_taxonomy())
+                        .unwrap_or_else(|| global.default_taxonomy())
                         .clone(),
                     config
                         .available_taxonomies()
-                        .unwrap_or_else(|| session.global().available_taxonomies())
+                        .unwrap_or_else(|| global.available_taxonomies())
                         .to_vec(),
                     config.default_taxonomy().is_none(),
                     config.available_taxonomies().is_none(),
@@ -1354,22 +850,22 @@ impl State {
             }
             KeyCode::Char('d') if destination == ConfigurationDestination::Project => {
                 settings.inherit_default = true;
-                if let Some(session) = self.project.as_ref() {
-                    settings.default = session.global().default_taxonomy().clone();
+                if let Some(global) = self.project.as_ref().and_then(ConfigurationSession::global) {
+                    settings.default = global.default_taxonomy().clone();
                 }
             }
             KeyCode::Char('a') if destination == ConfigurationDestination::Project => {
                 settings.inherit_available = true;
-                if let Some(session) = self.project.as_ref() {
-                    settings.available = session.global().available_taxonomies().to_vec();
+                if let Some(global) = self.project.as_ref().and_then(ConfigurationSession::global) {
+                    settings.available = global.available_taxonomies().to_vec();
                 }
             }
             KeyCode::Char('r') if destination == ConfigurationDestination::Project => {
                 settings.inherit_default = true;
                 settings.inherit_available = true;
-                if let Some(session) = self.project.as_ref() {
-                    settings.default = session.global().default_taxonomy().clone();
-                    settings.available = session.global().available_taxonomies().to_vec();
+                if let Some(global) = self.project.as_ref().and_then(ConfigurationSession::global) {
+                    settings.default = global.default_taxonomy().clone();
+                    settings.available = global.available_taxonomies().to_vec();
                 }
             }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1415,272 +911,28 @@ impl State {
         false
     }
 
-    fn taxonomy_editor_key(&mut self, key: KeyEvent) -> bool {
-        let count = self
-            .editor
-            .as_ref()
-            .map_or(1, |draft| draft.types.len() + 1);
-        match key.code {
-            KeyCode::Char('/') if key.modifiers.is_empty() => {
-                self.home_overlay =
-                    Some(HomeOverlay::CreatePalette(CommandPaletteState::default()));
-            }
-            KeyCode::Char('/')
-                if key.modifiers.contains(KeyModifiers::ALT)
-                    && self.create_focus == CreateFocus::Description =>
-            {
-                if let Some(editors) = &mut self.create_text
-                    && !editors.edit(CreateFocus::Description, |area| {
-                        area.insert_char('/');
-                    })
-                {
-                    self.status = Some(Notice::info(CREATE_TEXT_LIMIT_NOTICE.into()));
-                }
-            }
-            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.open_new_type_form();
-            }
-            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.stage_editor(self.editor_mode);
-            }
-            KeyCode::Up
-                if self.create_focus == CreateFocus::Types
-                    && key.modifiers.contains(KeyModifiers::ALT)
-                    && self.child_selected > 1 =>
-            {
-                if let Some(editor) = &mut self.editor {
-                    editor
-                        .types
-                        .swap(self.child_selected - 1, self.child_selected - 2);
-                    self.child_selected -= 1;
-                }
-            }
-            KeyCode::Down
-                if self.create_focus == CreateFocus::Types
-                    && key.modifiers.contains(KeyModifiers::ALT)
-                    && self.child_selected > 0
-                    && self.child_selected < count - 1 =>
-            {
-                if let Some(editor) = &mut self.editor {
-                    editor
-                        .types
-                        .swap(self.child_selected - 1, self.child_selected);
-                    self.child_selected += 1;
-                }
-            }
-            KeyCode::Up if self.create_focus == CreateFocus::Types => {
-                if self.child_selected == 0 {
-                    self.create_focus = CreateFocus::Description;
-                } else {
-                    self.child_selected -= 1;
-                }
-            }
-            KeyCode::Down if self.create_focus == CreateFocus::Types => {
-                self.child_selected = (self.child_selected + 1).min(count.saturating_sub(1));
-            }
-            KeyCode::Up if self.create_focus == CreateFocus::Description => {
-                if let Some(editors) = &mut self.create_text {
-                    let before = editors.description.cursor();
-                    editors.description.move_cursor(CursorMove::Up);
-                    if editors.description.cursor() == before
-                        && self.editor_mode == EditorMode::Create
-                    {
-                        self.create_focus = CreateFocus::Name;
-                    }
-                }
-            }
-            KeyCode::Down if self.create_focus == CreateFocus::Description => {
-                if let Some(editors) = &mut self.create_text {
-                    let before = editors.description.cursor();
-                    editors.description.move_cursor(CursorMove::Down);
-                    if editors.description.cursor() == before {
-                        self.create_focus = CreateFocus::Types;
-                    }
-                }
-            }
-            KeyCode::Down if self.create_focus == CreateFocus::Name => {
-                self.create_focus = CreateFocus::Description;
-            }
-            KeyCode::PageUp | KeyCode::PageDown
-                if self.create_focus == CreateFocus::Description =>
-            {
-                if let Some(editors) = &mut self.create_text {
-                    editors.description.input(key);
-                }
-            }
-            KeyCode::Enter
-                if self.create_focus == CreateFocus::Description
-                    && key.modifiers.contains(KeyModifiers::ALT) =>
-            {
-                if let Some(editors) = &mut self.create_text
-                    && !editors.edit(CreateFocus::Description, |area| {
-                        area.insert_newline();
-                    })
-                {
-                    self.status = Some(Notice::info(CREATE_TEXT_LIMIT_NOTICE.into()));
-                }
-            }
-            KeyCode::Enter if key.modifiers.is_empty() => match self.create_focus {
-                CreateFocus::Name => {
-                    self.create_focus = CreateFocus::Description;
-                }
-                CreateFocus::Description => self.create_focus = CreateFocus::Types,
-                CreateFocus::Types if self.child_selected == 0 => self.open_new_type_form(),
-                CreateFocus::Types => {
-                    let index = self.child_selected - 1;
-                    self.open_type_editor(Some(index));
-                }
-            },
-            KeyCode::Char('n')
-                if self.create_focus == CreateFocus::Types && key.modifiers.is_empty() =>
-            {
-                self.open_new_type_form();
-            }
-            KeyCode::Char('d')
-                if self.create_focus == CreateFocus::Types
-                    && key.modifiers.is_empty()
-                    && self.child_selected > 0 =>
-            {
-                self.screen = Screen::ConfirmRemoveType(self.child_selected - 1);
-            }
-            KeyCode::Backspace
-            | KeyCode::Delete
-            | KeyCode::Left
-            | KeyCode::Right
-            | KeyCode::Home
-            | KeyCode::End
-                if self.create_focus != CreateFocus::Types =>
-            {
-                self.create_text_input(key)
-            }
-            KeyCode::Char(_)
-                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
-                    && self.create_focus != CreateFocus::Types =>
-            {
-                self.create_text_input(key)
-            }
-            KeyCode::Esc => {
-                self.request_taxonomy_back();
-            }
-            _ => {}
-        }
-        false
-    }
-
-    fn create_text_input(&mut self, key: KeyEvent) {
-        if let Some(editors) = &mut self.create_text
-            && !editors.edit(self.create_focus, |area| {
-                area.input(key);
-            })
-        {
-            self.status = Some(Notice::info(CREATE_TEXT_LIMIT_NOTICE.into()));
-        }
-    }
-
-    fn type_editor_key(&mut self, key: KeyEvent) -> bool {
-        let action = self
-            .type_editor
+    /// Removes `node` after its dialog confirmed it and lands on its neighbor.
+    fn remove(&mut self, node: &NodeId) {
+        self.screen = Screen::Home;
+        let Some(library) = self
+            .global
             .as_mut()
-            .map_or(ChildAction::Continue, |editor| editor.key(key));
-        self.child_action(action, false);
-        false
-    }
-
-    fn property_editor_key(&mut self, key: KeyEvent) -> bool {
-        let action = self
-            .property_editor
-            .as_mut()
-            .map_or(ChildAction::Continue, |editor| editor.key(key));
-        self.child_action(action, true);
-        false
-    }
-
-    fn child_action(&mut self, action: ChildAction, property: bool) {
-        match action {
-            ChildAction::Continue => {}
-            ChildAction::Error(message) => self.status = Some(Notice::error(message)),
-            ChildAction::Complete => {
-                let result = if property {
-                    self.complete_property()
-                } else {
-                    self.complete_type()
-                };
-                if let Err(message) = result {
-                    self.status = Some(Notice::error(message));
+            .and_then(ConfigurationSession::library_mut)
+        else {
+            return;
+        };
+        let taxonomy = matches!(library.node(node), Some(NodeRef::Taxonomy(_)));
+        match library.edit(node, DraftEdit::Remove) {
+            Ok(landing) => {
+                self.taxonomies.select(landing);
+                if taxonomy {
+                    self.status = Some(Notice::info(
+                        "Deletion staged. Ctrl+S reviews before applying.".into(),
+                    ));
                 }
             }
-            ChildAction::Back => {
-                let dirty = if property {
-                    self.property_editor
-                        .as_ref()
-                        .is_some_and(PropertyEditorState::is_dirty)
-                } else {
-                    self.type_editor
-                        .as_ref()
-                        .is_some_and(TypeEditorState::is_dirty)
-                };
-                if dirty {
-                    self.open_discard(Screen::ConfirmDiscardChild(Box::new(self.screen.clone())));
-                } else {
-                    self.close_child(property);
-                }
-            }
-            ChildAction::AddProperty => self.open_property_editor(None),
-            ChildAction::EditProperty(index) => self.open_property_editor(Some(index)),
-            ChildAction::RemoveProperty(index) => {
-                self.screen = Screen::ConfirmRemoveProperty(index)
-            }
-        }
-    }
-
-    fn close_child(&mut self, property: bool) {
-        self.dialog.invalidate();
-        if property {
-            self.property_editor = None;
-            self.screen = Screen::TypeEditor;
-        } else {
-            self.child_selected = self
-                .type_editor
-                .as_ref()
-                .and_then(|editor| editor.target)
-                .map_or(0, |index| index + 1);
-            self.type_editor = None;
-            self.screen = Screen::TaxonomyEditor;
-        }
-    }
-
-    fn stage_deletion(&mut self) {
-        let previous = self.library().and_then(|library| {
-            let selected = self.taxonomies.selected(&library)?.taxonomy().id();
-            let index = library
-                .taxonomies()
-                .iter()
-                .position(|taxonomy| taxonomy.id() == selected)?;
-            Some(library.taxonomies()[index.saturating_sub(1)].id().clone())
-        });
-        let result = self
-            .selected_taxonomy()
-            .map(|taxonomy| taxonomy.id().clone())
-            .ok_or("Select a taxonomy first.".to_owned())
-            .and_then(|id| {
-                self.global
-                    .as_mut()
-                    .ok_or("The Library is unavailable.".to_owned())
-                    .and_then(|session| session.delete_taxonomy(&id))
-            });
-        match result {
-            Ok(()) => {
-                if let Some(previous) = previous {
-                    self.taxonomies.select(previous);
-                }
-                self.screen = Screen::Home;
-                self.status = Some(Notice::info(
-                    "Deletion staged. Ctrl+S reviews before applying.".into(),
-                ));
-            }
-            Err(error) => {
-                self.screen = Screen::Home;
-                self.status = Some(Notice::error(error));
+            Err(refusal) => {
+                self.status = Some(Notice::error(naming::refusal_sentence(refusal, None)));
             }
         }
     }
@@ -1698,15 +950,12 @@ impl State {
                 };
                 match workspace.save(&session) {
                     Ok(saved) => {
-                        match destination {
-                            ConfigurationDestination::Global => self.global = Some(saved),
-                            ConfigurationDestination::Project => self.project = Some(saved),
-                        }
+                        self.replace_session(destination, Ok(saved));
                         if destination == ConfigurationDestination::Global {
-                            let (project, error) =
-                                split_result(workspace.load(ConfigurationDestination::Project));
-                            self.project = project;
-                            self.project_error = error;
+                            self.replace_session(
+                                ConfigurationDestination::Project,
+                                workspace.load(ConfigurationDestination::Project),
+                            );
                         }
                         self.screen = Screen::Home;
                         self.status = Some(Notice::info("Configuration applied.".into()));
@@ -1732,10 +981,7 @@ impl State {
         };
         match workspace.save(&session) {
             Ok(saved) => {
-                match destination {
-                    ConfigurationDestination::Global => self.global = Some(saved),
-                    ConfigurationDestination::Project => self.project = Some(saved),
-                };
+                self.replace_session(destination, Ok(saved));
                 self.screen = Screen::Home;
                 self.perform_pending_action(action);
             }
@@ -1751,45 +997,72 @@ impl State {
         action: PendingAction,
         workspace: &dyn ConfigurationWorkspace,
     ) {
-        let destination = self.active_scope;
-        let (session, error) = split_result(workspace.load(destination));
+        self.replace_session(self.active_scope, workspace.load(self.active_scope));
+        self.screen = Screen::Home;
+        self.perform_pending_action(action);
+    }
+
+    /// The one writer of a loaded session. A new Global session leaves EDIT, whose node may be
+    /// gone, and keeps the cursor on the row of the same names.
+    fn replace_session(
+        &mut self,
+        destination: ConfigurationDestination,
+        result: Result<ConfigurationSession, String>,
+    ) {
+        let (session, error) = split_result(result);
         match destination {
             ConfigurationDestination::Global => {
+                let path = self.library().and_then(|library| {
+                    let node = self.taxonomies.selected(library)?;
+                    Some(
+                        node.names()
+                            .into_iter()
+                            .map(str::to_owned)
+                            .collect::<Vec<_>>(),
+                    )
+                });
                 self.global = session;
                 self.global_error = error;
+                self.taxonomies.leave_edit();
+                if let Some(id) = path
+                    .zip(self.library())
+                    .and_then(|(path, library)| library.find_path(&path))
+                {
+                    self.taxonomies.select(id);
+                }
             }
             ConfigurationDestination::Project => {
                 self.project = session;
                 self.project_error = error;
             }
         }
-        self.screen = Screen::Home;
-        self.perform_pending_action(action);
     }
 
     fn request_global_action(&mut self, action: PendingAction) {
-        if let Some(error) = self.catalog_error() {
-            self.status = Some(Notice::error(error));
+        if self.global.is_none() {
+            self.status = Some(Notice::error(self.library_error()));
             return;
         }
-        if !matches!(action, PendingAction::Create | PendingAction::ReviewGlobal)
-            && self.selected_taxonomy().is_none()
+        if matches!(
+            action,
+            PendingAction::Library(LibraryAction::Edit) | PendingAction::Delete
+        ) && self
+            .library()
+            .and_then(|library| self.taxonomies.selected(library))
+            .is_some_and(|node| node.taxonomy().origin() == TaxonomyOrigin::BuiltIn)
         {
-            self.status = Some(Notice::error("Select a taxonomy first.".into()));
+            self.status = Some(Notice::error(naming::refusal_sentence(
+                EditRefusal::ReadOnly,
+                None,
+            )));
             return;
         }
-        if matches!(action, PendingAction::Edit | PendingAction::Delete)
-            && self.selected_taxonomy().is_some_and(|taxonomy| {
-                self.global
-                    .as_ref()
-                    .and_then(|session| session.catalog().ok())
-                    .and_then(|catalog| catalog.origin(taxonomy.id()))
-                    != Some(TaxonomyOrigin::Custom)
+        if matches!(action, PendingAction::Delete)
+            && let Some(blocker) = self.library().and_then(|library| {
+                library.removal_blocker(self.taxonomies.selected(library)?.id())
             })
         {
-            self.status = Some(Notice::error(
-                "Built-in taxonomies are read-only; fork one to customize it.".into(),
-            ));
+            self.status = Some(Notice::error(blocker.to_string()));
             return;
         }
         self.status = None;
@@ -1827,25 +1100,27 @@ impl State {
                 self.active_scope = ConfigurationDestination::Project;
                 self.open_review();
             }
-            PendingAction::Create => {
-                self.open_creation(TaxonomyDraft::empty(), None);
-            }
-            PendingAction::Edit => {
+            PendingAction::Library(action) => {
                 self.active_scope = ConfigurationDestination::Global;
-                self.open_edit();
-            }
-            PendingAction::Fork => {
-                if let Some(source) = self.selected_taxonomy() {
-                    let lineage = TaxonomyLineage::new(source.id().clone(), source.version());
-                    let mut draft = TaxonomyDraft::from_taxonomy(&source);
-                    draft.version = 1;
-                    draft.derived_from = Some(lineage.clone());
-                    self.open_creation(draft, Some(lineage));
+                self.category = Category::Taxonomies;
+                self.home_focus = HomeFocus::Content;
+                if let Some(library) = self
+                    .global
+                    .as_mut()
+                    .and_then(ConfigurationSession::library_mut)
+                    && let Err(error) = self.taxonomies.act(action, library)
+                {
+                    self.status = Some(Notice::error(error));
                 }
             }
             PendingAction::Delete => {
                 self.active_scope = ConfigurationDestination::Global;
-                self.screen = Screen::Delete;
+                if let Some(node) = self
+                    .library()
+                    .and_then(|library| self.taxonomies.selected(library))
+                {
+                    self.screen = Screen::ConfirmRemove(node.id().clone());
+                }
             }
             PendingAction::ReviewGlobal => {
                 self.active_scope = ConfigurationDestination::Global;
@@ -1854,24 +1129,15 @@ impl State {
         }
     }
 
-    fn open_creation(&mut self, draft: TaxonomyDraft, source: Option<TaxonomyLineage>) {
-        self.active_scope = ConfigurationDestination::Global;
-        self.create_text = Some(CreateTextEditors::from_draft(&draft));
-        self.initial_editor = Some(draft.clone());
-        self.dialog.invalidate();
-        self.editor = Some(draft);
-        self.fork_source = source;
-        self.type_editor = None;
-        self.property_editor = None;
-        self.editor_mode = EditorMode::Create;
-        self.child_selected = 0;
-        self.create_focus = CreateFocus::Name;
-        self.create_type_offset = 0;
-        self.screen = Screen::TaxonomyEditor;
-    }
-
     fn open_review(&mut self) {
         let destination = self.active_scope;
+        if destination == ConfigurationDestination::Global
+            && let Some(library) = self.library()
+            && let Some(problem) = library.problems().first()
+        {
+            self.status = Some(Notice::error(problem_sentence(library, problem)));
+            return;
+        }
         let should_review = self
             .session(destination)
             .is_some_and(|session| session.is_dirty() || session.update_available());
@@ -1892,202 +1158,6 @@ impl State {
         }
     }
 
-    fn open_edit(&mut self) {
-        let Some(taxonomy) = self.selected_taxonomy() else {
-            return;
-        };
-        if self
-            .global
-            .as_ref()
-            .and_then(|session| session.catalog().ok())
-            .and_then(|catalog| catalog.origin(taxonomy.id()))
-            != Some(TaxonomyOrigin::Custom)
-        {
-            self.status = Some(Notice::error(
-                "Built-in taxonomies are read-only; fork one to customize it.".into(),
-            ));
-            return;
-        }
-        let draft = TaxonomyDraft::from_taxonomy(&taxonomy);
-        self.create_text = Some(CreateTextEditors::from_draft(&draft));
-        self.initial_editor = Some(draft.clone());
-        self.editor = Some(draft);
-        self.fork_source = None;
-        self.type_editor = None;
-        self.property_editor = None;
-        self.dialog.invalidate();
-        self.editor_mode = EditorMode::Edit;
-        self.child_selected = 0;
-        self.create_focus = CreateFocus::Types;
-        self.create_type_offset = 0;
-        self.screen = Screen::TaxonomyEditor;
-    }
-
-    fn open_new_type_form(&mut self) {
-        self.open_type_editor(None);
-    }
-
-    fn open_type_editor(&mut self, target: Option<usize>) {
-        let draft = match target {
-            Some(index) => self
-                .editor
-                .as_ref()
-                .and_then(|editor| editor.types.get(index))
-                .cloned(),
-            None => Some(TypeDraft {
-                id: String::new(),
-                description: String::new(),
-                schema_version: 1,
-                properties: Vec::new(),
-            }),
-        };
-        if let Some(draft) = draft {
-            self.create_focus = CreateFocus::Types;
-            self.type_editor = Some(TypeEditorState::new(target, draft));
-            self.property_editor = None;
-            self.screen = Screen::TypeEditor;
-        }
-    }
-
-    fn open_property_editor(&mut self, target: Option<usize>) {
-        let draft = match target {
-            Some(index) => self
-                .type_editor
-                .as_ref()
-                .and_then(|editor| editor.draft.properties.get(index))
-                .cloned(),
-            None => Some(PropertyDraft::empty()),
-        };
-        if let Some(draft) = draft {
-            if let Some(editor) = &mut self.type_editor {
-                editor.focus = CreateFocus::Types;
-            }
-            self.property_editor = Some(PropertyEditorState::new(target, draft));
-            self.screen = Screen::PropertyEditor;
-        }
-    }
-
-    fn complete_type(&mut self) -> Result<(), String> {
-        let child = self.type_editor.as_ref().ok_or("type draft is missing")?;
-        let candidate = child.candidate()?;
-        let target = child.target;
-        let parent = self.editor.as_mut().ok_or("taxonomy draft is missing")?;
-        if parent
-            .types
-            .iter()
-            .enumerate()
-            .any(|(index, kind)| Some(index) != target && kind.id == candidate.id)
-        {
-            return Err(format!(
-                "A type named \"{}\" already exists in this taxonomy.",
-                candidate.id
-            ));
-        }
-        let index = if let Some(index) = target {
-            *parent.types.get_mut(index).ok_or("type is missing")? = candidate;
-            index
-        } else {
-            parent.types.push(candidate);
-            parent.types.len() - 1
-        };
-        self.child_selected = index + 1;
-        self.create_focus = CreateFocus::Types;
-        self.type_editor = None;
-        self.screen = Screen::TaxonomyEditor;
-        Ok(())
-    }
-
-    fn complete_property(&mut self) -> Result<(), String> {
-        let child = self
-            .property_editor
-            .as_ref()
-            .ok_or("property draft is missing")?;
-        let candidate = child.candidate()?;
-        let target = child.target;
-        let parent = self.type_editor.as_mut().ok_or("type draft is missing")?;
-        if parent
-            .draft
-            .properties
-            .iter()
-            .enumerate()
-            .any(|(index, property)| Some(index) != target && property.key == candidate.key)
-        {
-            return Err(format!(
-                "A property named \"{}\" already exists in this type.",
-                candidate.key
-            ));
-        }
-        let index = if let Some(index) = target {
-            *parent
-                .draft
-                .properties
-                .get_mut(index)
-                .ok_or("property is missing")? = candidate;
-            index
-        } else {
-            parent.draft.properties.push(candidate);
-            parent.draft.properties.len() - 1
-        };
-        parent.selected = index + 1;
-        parent.focus = CreateFocus::Types;
-        self.property_editor = None;
-        self.screen = Screen::TypeEditor;
-        Ok(())
-    }
-
-    fn stage_editor(&mut self, mode: EditorMode) {
-        if let (Some(editors), Some(draft)) = (&self.create_text, &mut self.editor) {
-            if editors.used() > CREATE_TEXT_LIMIT {
-                self.status = Some(Notice::error(CREATE_TEXT_LIMIT_NOTICE.into()));
-                return;
-            }
-            editors.sync_draft(draft);
-        }
-        let Some(mut candidate) = self.editor.clone() else {
-            return;
-        };
-        if let Some(initial) = &self.initial_editor {
-            candidate.description = edited_prose(
-                std::mem::take(&mut candidate.description),
-                &initial.description,
-            );
-        }
-        let result = candidate.build().and_then(|taxonomy| {
-            let id = taxonomy.id().clone();
-            let session = self
-                .global
-                .as_mut()
-                .ok_or("The Library is unavailable.".to_owned())?;
-            match (mode, &self.fork_source) {
-                (EditorMode::Create, Some(source)) => session
-                    .fork_taxonomy(
-                        source.id(),
-                        id.clone(),
-                        taxonomy.description().clone(),
-                        taxonomy.commit_types().to_vec(),
-                    )
-                    .map(|()| true),
-                (EditorMode::Create, None) => session.create_taxonomy(taxonomy).map(|()| true),
-                (EditorMode::Edit, _) => session.update_taxonomy(
-                    &id,
-                    taxonomy.description().clone(),
-                    taxonomy.commit_types().to_vec(),
-                ),
-            }
-            .map(|staged| staged.then_some(id))
-        });
-        match result {
-            Ok(staged) => {
-                self.leave_create_taxonomy();
-                self.status = Some(Notice::info(staged.map_or_else(
-                    || "No changes to stage.".into(),
-                    |id| format!("Staged taxonomy \"{id}\". Ctrl+S reviews before applying."),
-                )));
-            }
-            Err(error) => self.status = Some(Notice::error(error)),
-        }
-    }
-
     fn session(&self, destination: ConfigurationDestination) -> Option<&ConfigurationSession> {
         match destination {
             ConfigurationDestination::Global => self.global.as_ref(),
@@ -2103,38 +1173,17 @@ impl State {
             .map(|catalog| catalog.taxonomies().to_vec())
     }
 
-    fn catalog_error(&self) -> Option<String> {
-        self.global.as_ref().map_or_else(
-            || {
-                Some(if self.global_error.is_empty() {
-                    "The Library is unavailable.".into()
-                } else {
-                    self.global_error.clone()
-                })
-            },
-            |session| session.catalog().err(),
-        )
+    fn library_error(&self) -> String {
+        if self.global_error.is_empty() {
+            "The Library is unavailable.".into()
+        } else {
+            self.global_error.clone()
+        }
     }
 
-    /// The Library as the outline reads it, rebuilt from the Global session on each call.
-    fn library(&self) -> Option<LibraryDraft> {
-        self.global
-            .as_ref()
-            .map(|session| LibraryDraft::from_configuration(session.global()))
-    }
-
-    /// The taxonomy that owns the outline's selected row.
-    fn selected_taxonomy(&self) -> Option<Taxonomy> {
-        let library = self.library()?;
-        let name = self
-            .taxonomies
-            .selected(&library)?
-            .taxonomy()
-            .name()
-            .to_owned();
-        self.catalog()?
-            .into_iter()
-            .find(|taxonomy| taxonomy.id().as_str() == name)
+    /// The working Library of the Global session.
+    fn library(&self) -> Option<&LibraryDraft> {
+        self.global.as_ref().and_then(ConfigurationSession::library)
     }
 
     fn scope_dirty(&self, destination: ConfigurationDestination) -> bool {
@@ -2158,12 +1207,8 @@ impl State {
             area,
         );
         let terminal = frame.area();
-        // Embedded browsing fits beneath the shell header; taxonomy editors keep their full height.
-        self.too_small = terminal.width < MINIMUM_WIDTH
-            || terminal.height < MINIMUM_HEIGHT
-            || (self.creating_taxonomy() && area.height < MINIMUM_HEIGHT);
+        self.too_small = terminal.width < MINIMUM_WIDTH || terminal.height < MINIMUM_HEIGHT;
         if self.too_small {
-            self.breadcrumb_area = Rect::default();
             self.tab_areas = [Rect::default(); 2];
             if let Some(question) = self.confirmation() {
                 self.dialog.render(frame, area, &question);
@@ -2182,30 +1227,12 @@ impl State {
         let [menu, content] =
             Layout::horizontal([Constraint::Length(MENU_WIDTH), Constraint::Min(1)]).areas(main);
         self.render_menu(frame, menu);
-        let body = if self.creating_taxonomy() {
-            let [breadcrumb, body] =
-                Layout::vertical([Constraint::Length(BREADCRUMB_HEIGHT), Constraint::Min(1)])
-                    .areas(content);
-            self.render_breadcrumb(frame, breadcrumb);
-            body
-        } else {
-            self.breadcrumb_area = Rect::default();
-            content
-        };
+        let body = content;
         let hints = if let Some(question) = self.confirmation() {
-            match self.screen.clone() {
-                Screen::ConfirmDiscardCreate(return_to)
-                | Screen::ConfirmDiscardChild(return_to) => {
-                    self.render_editor_background(frame, body, &return_to);
-                }
-                Screen::ConfirmRemoveType(_) => {
-                    self.render_editor_background(frame, body, &Screen::TaxonomyEditor);
-                }
-                Screen::ConfirmRemoveProperty(_) => {
-                    self.render_editor_background(frame, body, &Screen::TypeEditor);
-                }
-                _ if self.category == Category::Project => self.render_project(frame, body),
-                _ => self.render_taxonomies(frame, body),
+            if self.category == Category::Project {
+                self.render_project(frame, body);
+            } else {
+                self.render_taxonomies(frame, body);
             }
             self.dialog.render(frame, body, &question);
             confirmation::hints(question.choices)
@@ -2213,11 +1240,9 @@ impl State {
             match self.screen.clone() {
                 Screen::Home if self.category == Category::Taxonomies => {
                     self.render_taxonomies(frame, body);
-                    let line = self.taxonomies.status_line(
-                        self.library().as_ref(),
-                        self.embedded,
-                        footer.width,
-                    );
+                    let line =
+                        self.taxonomies
+                            .status_line(self.library(), self.embedded, footer.width);
                     frame.render_widget(Paragraph::new(line), footer);
                     Vec::new()
                 }
@@ -2245,44 +1270,11 @@ impl State {
                         ("esc", "back"),
                     ]
                 }
-                Screen::TaxonomyEditor => {
-                    self.render_taxonomy_editor(frame, body);
-                    vec![
-                        ("esc", "back"),
-                        ("enter", "next/open"),
-                        ("ctrl+s", "stage"),
-                        ("/", "commands"),
-                    ]
-                }
-                Screen::TypeEditor => {
-                    self.render_type_editor(frame, body);
-                    vec![
-                        ("esc", "back"),
-                        ("↑/↓", "move"),
-                        ("enter", "next/open"),
-                        ("ctrl+s", "complete"),
-                    ]
-                }
-                Screen::PropertyEditor => {
-                    self.render_property_editor(frame, body);
-                    vec![
-                        ("esc", "back"),
-                        ("↑/↓", "move"),
-                        ("←/→", "choice"),
-                        ("ctrl+s", "complete"),
-                    ]
-                }
                 Screen::Review(destination) => {
                     self.render_review(frame, body, destination);
                     vec![("enter", "apply"), ("esc", "back"), ("↑/↓", "scroll")]
                 }
-                Screen::Delete
-                | Screen::Leave
-                | Screen::ScopeChange(_)
-                | Screen::ConfirmDiscardCreate(_)
-                | Screen::ConfirmDiscardChild(_)
-                | Screen::ConfirmRemoveType(_)
-                | Screen::ConfirmRemoveProperty(_) => Vec::new(),
+                Screen::Leave | Screen::ScopeChange(_) | Screen::ConfirmRemove(_) => Vec::new(),
             }
         };
         // The Taxonomies outline draws its own footer and leaves no hints.
@@ -2352,37 +1344,6 @@ impl State {
         }
     }
 
-    fn render_breadcrumb(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        frame.render_widget(Block::bordered().border_style(frame_style()), area);
-        let row = Rect::new(
-            area.x.saturating_add(1),
-            area.y.saturating_add(1),
-            area.width.saturating_sub(2),
-            1,
-        );
-        let label = "Library";
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(format!(" {label}"), Style::default().fg(Color::Yellow)),
-                Span::raw(self.editor_breadcrumb()),
-            ])),
-            row,
-        );
-        render_header_underline(frame, row, i32::from(row.x), label);
-        let width = u16::try_from(Line::from(label).width())
-            .unwrap_or(u16::MAX)
-            .saturating_add(2);
-        self.breadcrumb_area = Rect::new(row.x, row.y, width.min(row.width), 2);
-    }
-
-    fn render_editor_background(&mut self, frame: &mut Frame<'_>, area: Rect, screen: &Screen) {
-        match screen {
-            Screen::TypeEditor => self.render_type_editor(frame, area),
-            Screen::PropertyEditor => self.render_property_editor(frame, area),
-            _ => self.render_taxonomy_editor(frame, area),
-        }
-    }
-
     fn render_notice(&self, frame: &mut Frame<'_>, area: Rect) {
         let load_error = if matches!(self.screen, Screen::Home) {
             match self.category {
@@ -2390,7 +1351,7 @@ impl State {
                     || Some(self.project_error.clone()),
                     ConfigurationSession::source_error,
                 ),
-                Category::Taxonomies => self.catalog_error(),
+                Category::Taxonomies => self.global.is_none().then(|| self.library_error()),
             }
         } else {
             None
@@ -2539,7 +1500,9 @@ impl State {
         };
         let inherited = ProjectConfig::inherited();
         let config = session.project_config().unwrap_or(&inherited);
-        let baseline = session.global();
+        let Some(baseline) = session.global() else {
+            return self.project_error.clone();
+        };
         let effective = resolve_effective_configuration(baseline, config);
         let available = effective.as_ref().map_or_else(
             |error| format!("Unresolved: {error}"),
@@ -2670,9 +1633,8 @@ impl State {
 
     fn render_taxonomies(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let focused = matches!(self.screen, Screen::Home) && self.home_focus == HomeFocus::Content;
-        let library = self.library();
-        self.taxonomies
-            .render(frame, area, library.as_ref(), focused);
+        let library = self.global.as_ref().and_then(ConfigurationSession::library);
+        self.taxonomies.render(frame, area, library, focused);
     }
 
     fn render_settings(
@@ -2749,85 +1711,6 @@ impl State {
             parts[1],
             &mut state,
         );
-    }
-
-    fn render_taxonomy_editor(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let Some(editor) = &self.editor else {
-            return;
-        };
-        let [taxonomy, types] =
-            Layout::vertical([Constraint::Length(8), Constraint::Min(4)]).areas(area);
-        self.create_areas = [taxonomy, types];
-        if let Some(text) = &mut self.create_text {
-            render_metadata_frame(
-                frame,
-                taxonomy,
-                "Taxonomy",
-                text,
-                self.create_focus,
-                self.editor_mode == EditorMode::Edit,
-            );
-        }
-
-        let types_focused = self.create_focus == CreateFocus::Types;
-        let types_style = focus_frame_style(types_focused);
-        let content_width = types.width.saturating_sub(2);
-        let id_width = create_types_id_width(&editor.types, content_width);
-        let mut rows = vec![
-            Row::new(vec![
-                Cell::from(if self.child_selected == 0 { "›" } else { " " }),
-                Cell::from(CREATE_TYPES_ADD_LABEL),
-                Cell::from(""),
-            ])
-            .style(row_style(0)),
-        ];
-        rows.extend(editor.types.iter().enumerate().map(|(index, kind)| {
-            Row::new(vec![
-                Cell::from(if self.child_selected == index + 1 {
-                    "›"
-                } else {
-                    " "
-                }),
-                Cell::from(kind.id.as_str()),
-                Cell::from(kind.description.as_str()),
-            ])
-            .style(row_style(index + 1))
-        }));
-        let mut state = TableState::default();
-        state.select(Some(self.child_selected.min(rows.len().saturating_sub(1))));
-        frame.render_stateful_widget(
-            Table::new(
-                rows,
-                [
-                    Constraint::Length(CREATE_TYPES_MARKER_WIDTH),
-                    Constraint::Length(id_width),
-                    Constraint::Min(1),
-                ],
-            )
-            .column_spacing(CREATE_TYPES_COLUMN_SPACING)
-            .block(
-                Block::bordered()
-                    .border_style(types_style)
-                    .title_style(types_style)
-                    .title("Types"),
-            )
-            .row_highlight_style(selected_style(types_focused)),
-            types,
-            &mut state,
-        );
-        self.create_type_offset = state.offset();
-    }
-
-    fn render_type_editor(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        if let Some(editor) = &mut self.type_editor {
-            editor.render(frame, area);
-        }
-    }
-
-    fn render_property_editor(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        if let Some(editor) = &mut self.property_editor {
-            editor.render(frame, area);
-        }
     }
 
     fn render_review(
@@ -2940,15 +1823,6 @@ fn project_guidance(status: &str) -> &'static str {
     }
 }
 
-const fn policy_label(requirement: &PropertyRequirement) -> &'static str {
-    match requirement {
-        PropertyRequirement::Required => "required",
-        PropertyRequirement::Recommended => "recommended",
-        PropertyRequirement::Optional => "optional",
-        PropertyRequirement::Conditional(_) => "conditional",
-    }
-}
-
 fn split_result(
     result: Result<ConfigurationSession, String>,
 ) -> (Option<ConfigurationSession>, String) {
@@ -2960,121 +1834,6 @@ fn split_result(
 
 fn contains(area: Rect, x: u16, y: u16) -> bool {
     x >= area.x && x < area.right() && y >= area.y && y < area.bottom()
-}
-
-fn render_header_underline(frame: &mut Frame<'_>, area: Rect, label_x: i32, label: &str) {
-    for offset in 0..label.chars().count() {
-        let x = label_x
-            .saturating_add(1)
-            .saturating_add(i32::try_from(offset).unwrap_or(i32::MAX));
-        if let Ok(column) = u16::try_from(x)
-            && column >= area.x
-            && column < area.right()
-        {
-            frame.buffer_mut()[(column, area.y + 1)]
-                .set_symbol("─")
-                .set_fg(Color::Yellow);
-        }
-    }
-}
-
-fn render_taxonomy_heading(frame: &mut Frame<'_>, area: Rect, title: &str) {
-    frame.render_widget(
-        Paragraph::new(taxonomy_heading_line(title, area.width)),
-        area,
-    );
-}
-
-fn taxonomy_heading_line(title: &str, width: u16) -> Line<'static> {
-    let rule_width = usize::from(width).saturating_sub(title.len() + 1);
-    Line::from(vec![
-        Span::styled(title.to_owned(), section_heading_style().fg(Color::White)),
-        Span::styled(format!(" {}", "⠒".repeat(rule_width)), frame_style()),
-    ])
-}
-
-fn render_text_area(frame: &mut Frame<'_>, text: &TextArea<'_>, area: Rect, focused: bool) {
-    frame.render_widget(text, area);
-    if focused
-        && let Some(cursor) = text.rendered_cursor_position()
-        && contains(area, cursor.x, cursor.y)
-    {
-        frame.buffer_mut()[(cursor.x, cursor.y)]
-            .set_style(Style::default().add_modifier(Modifier::REVERSED));
-    }
-}
-
-fn render_counter(frame: &mut Frame<'_>, area: Rect, used: usize, limit: usize) {
-    let counter = format!(" {used}/{limit} ");
-    let width = u16::try_from(counter.len())
-        .unwrap_or(u16::MAX)
-        .min(area.width.saturating_sub(2));
-    frame.render_widget(
-        Paragraph::new(counter).style(Style::default().fg(Color::White).bg(JET_BLACK)),
-        Rect::new(
-            area.right().saturating_sub(width + 1),
-            area.bottom() - 1,
-            width,
-            1,
-        ),
-    );
-}
-
-fn render_metadata_frame(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    title: &str,
-    text: &mut CreateTextEditors,
-    focus: CreateFocus,
-    name_locked: bool,
-) {
-    let style = focus_frame_style(focus != CreateFocus::Types);
-    frame.render_widget(
-        Block::bordered()
-            .title(title)
-            .border_style(style)
-            .title_style(style),
-        area,
-    );
-    let x = area.x + 1;
-    let width = area.width.saturating_sub(2);
-    let heading = if name_locked {
-        noted_heading_line("Name", Some("fixed after creation".into()), width)
-    } else {
-        name_heading_line("Name", &text.name.lines().join("\n"), width)
-    };
-    frame.render_widget(Paragraph::new(heading), Rect::new(x, area.y + 1, width, 1));
-    render_text_area(
-        frame,
-        &text.name,
-        Rect::new(x, area.y + 2, width, 1),
-        focus == CreateFocus::Name,
-    );
-    render_taxonomy_heading(frame, Rect::new(x, area.y + 4, width, 1), "Description");
-    render_text_area(
-        frame,
-        &text.description,
-        Rect::new(x, area.y + 5, width, 2),
-        focus == CreateFocus::Description,
-    );
-    render_counter(frame, area, text.used(), text.limit);
-}
-
-fn create_types_id_width(types: &[TypeDraft], content_width: u16) -> u16 {
-    let measured = types
-        .iter()
-        .map(|kind| u16::try_from(Line::from(kind.id.as_str()).width()).unwrap_or(u16::MAX))
-        .fold(
-            u16::try_from(Line::from(CREATE_TYPES_ADD_LABEL).width()).unwrap_or(u16::MAX),
-            u16::max,
-        )
-        .max(1);
-    let maximum = content_width
-        .saturating_sub(CREATE_TYPES_MARKER_WIDTH)
-        .saturating_sub(CREATE_TYPES_COLUMN_SPACING.saturating_mul(2))
-        .saturating_sub(1)
-        .max(1);
-    measured.min(maximum)
 }
 
 fn reorder_available(available: &mut [TaxonomyId], selected: &Option<TaxonomyId>, down: bool) {
@@ -3096,7 +1855,13 @@ fn reorder_available(available: &mut [TaxonomyId], selected: &Option<TaxonomyId>
 mod tests {
     use std::cell::{Cell, RefCell};
 
-    use gitserious_app::{GlobalConfiguration, ProjectLock, ProjectState, RepositoryRoot};
+    use gitserious_app::{
+        DraftField, GlobalConfiguration, ProjectLock, ProjectState, RepositoryRoot,
+    };
+    use gitserious_core::{
+        CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
+        PropertyRequirement, SchemaVersion, TaxonomyVersion,
+    };
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -3123,33 +1888,22 @@ mod tests {
         }
     }
 
-    /// Stages a fork without edits, as staging the fork editor unchanged does.
-    trait ForkUnchanged {
-        fn fork_unchanged(&mut self, source: &TaxonomyId, target: TaxonomyId)
-        -> Result<(), String>;
+    /// Forks `source` under the name `target`, as `f` and typing a name do.
+    fn fork_as(
+        session: &mut ConfigurationSession,
+        source: &str,
+        target: &str,
+    ) -> Result<NodeId, Box<dyn std::error::Error>> {
+        let library = session.library_mut().ok_or("a Global session")?;
+        let source = library.find_path(&[source]).ok_or("missing source")?;
+        let fork = library.fork(&source)?;
+        library.edit(&fork, DraftEdit::Text(DraftField::Name, target))?;
+        Ok(fork)
     }
 
-    impl ForkUnchanged for ConfigurationSession {
-        fn fork_unchanged(
-            &mut self,
-            source: &TaxonomyId,
-            target: TaxonomyId,
-        ) -> Result<(), String> {
-            let source_taxonomy = self
-                .catalog()?
-                .find(source)
-                .cloned()
-                .ok_or("the fork source is not installed")?;
-            self.fork_taxonomy(
-                source,
-                target,
-                source_taxonomy.description().clone(),
-                source_taxonomy.commit_types().to_vec(),
-            )
-        }
-    }
-
-    fn child_editor_workspace() -> Result<(Workspace, Taxonomy), Box<dyn std::error::Error>> {
+    /// A Library with the custom taxonomy `original` and one type whose property's description
+    /// is longer than its field's limit.
+    fn custom_workspace() -> Result<(Workspace, Taxonomy), Box<dyn std::error::Error>> {
         let source = Taxonomy::new(
             TaxonomyId::new("original")?,
             TaxonomyVersion::new(3)?,
@@ -3177,6 +1931,14 @@ mod tests {
         Ok((workspace, source))
     }
 
+    fn library(state: &State) -> Result<&LibraryDraft, Box<dyn std::error::Error>> {
+        Ok(state.library().ok_or("the Library loads")?)
+    }
+
+    fn cursor(state: &State) -> Vec<String> {
+        state.taxonomies.observe(state.library()).cursor_path
+    }
+
     impl ConfigurationWorkspace for Workspace {
         fn load(
             &self,
@@ -3190,9 +1952,9 @@ mod tests {
 
         fn save(&self, session: &ConfigurationSession) -> Result<ConfigurationSession, String> {
             self.saves.set(self.saves.get() + 1);
-            match session.destination() {
-                ConfigurationDestination::Global => *self.global.borrow_mut() = session.clone(),
-                ConfigurationDestination::Project => *self.project.borrow_mut() = session.clone(),
+            match session.root() {
+                None => *self.global.borrow_mut() = session.clone(),
+                Some(_) => *self.project.borrow_mut() = session.clone(),
             }
             Ok(session.clone())
         }
@@ -3215,43 +1977,12 @@ mod tests {
         })
     }
 
-    fn stage_creation(state: &mut State, workspace: &Workspace) {
-        state.handle_event(key(KeyCode::Char('/')), workspace);
-        state.handle_event(Event::Paste("stage".into()), workspace);
-        state.handle_event(key(KeyCode::Enter), workspace);
-    }
-
-    fn rename_creation(
-        state: &mut State,
-        workspace: &Workspace,
-        name: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        state.create_focus = CreateFocus::Name;
-        let length = state
-            .create_text
-            .as_ref()
-            .ok_or("missing text")?
-            .name
-            .lines()[0]
-            .chars()
-            .count();
-        for _ in 0..length {
-            state.handle_event(key(KeyCode::Left), workspace);
-        }
-        for _ in 0..length {
-            state.handle_event(key(KeyCode::Delete), workspace);
-        }
-        state.handle_event(Event::Paste(name.into()), workspace);
-        Ok(())
-    }
-
     fn select_taxonomy(state: &mut State, index: usize) {
-        let library = state
-            .library()
-            .unwrap_or_else(|| unreachable!("the Library loads"));
-        state
-            .taxonomies
-            .select(library.taxonomies()[index].id().clone());
+        let id = state.library().map_or_else(
+            || unreachable!("the Library loads"),
+            |library| library.taxonomies()[index].id().clone(),
+        );
+        state.taxonomies.select(id);
     }
 
     fn text(terminal: &Terminal<TestBackend>) -> String {
@@ -3473,12 +2204,16 @@ mod tests {
         );
 
         let mut authored = ConfigurationSession::open_global(GlobalConfiguration::default());
+        fork_as(&mut authored, "conventional", "team")?;
+        let authored = authored
+            .library()
+            .and_then(|library| library.build().ok())
+            .ok_or("the fork builds")?;
         let team = TaxonomyId::new("team")?;
-        authored.fork_unchanged(&TaxonomyId::new("conventional")?, team.clone())?;
         let config = ProjectConfig::new(1, Some(team.clone()), Some(vec![team]))?;
         let lock = ProjectLock::capture(
             &config,
-            &resolve_effective_configuration(authored.global(), &config)?,
+            &resolve_effective_configuration(&authored, &config)?,
         )?;
         state.project = Some(ConfigurationSession::open_project(
             RepositoryRoot::new(std::env::temp_dir())?,
@@ -3489,890 +2224,6 @@ mod tests {
         assert!(pinned.contains("Commit taxonomy\n  team"));
         assert!(pinned.contains("Source unavailable"));
         assert!(!pinned.contains("commit blocked"));
-        Ok(())
-    }
-
-    #[test]
-    fn create_taxonomy_edits_fields_and_stages_through_commands()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor)
-                && state.editor_mode == EditorMode::Create
-        );
-        assert_eq!(state.create_focus, CreateFocus::Name);
-
-        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        terminal.draw(|frame| state.render(frame))?;
-        let rendered = text(&terminal);
-        assert!(row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Config"));
-        assert!(rendered.contains("Name"));
-        assert!(rendered.contains("Description"));
-        assert!(rendered.contains("+ add type"));
-        assert!(!rendered.contains("Metadata"));
-        assert!(rendered.contains("/: commands"));
-        assert!(
-            row_text(
-                &terminal,
-                0,
-                state.create_areas[0].bottom() - 1,
-                MINIMUM_WIDTH
-            )
-            .contains(" 0/80 ")
-        );
-        assert!(
-            row_text(&terminal, 0, MINIMUM_HEIGHT - 1, MINIMUM_WIDTH)
-                .starts_with("esc: back  enter: next/open  ctrl+s: stage  /: commands")
-        );
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Config"));
-
-        state.handle_event(Event::Paste("team".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("Team changes".into()), &workspace);
-        assert_eq!(state.create_focus, CreateFocus::Description);
-        assert_eq!(
-            state
-                .create_text
-                .as_ref()
-                .ok_or("missing text")?
-                .name
-                .lines(),
-            &["team"]
-        );
-        assert_eq!(
-            state
-                .create_text
-                .as_ref()
-                .ok_or("missing text")?
-                .description
-                .lines()
-                .join("\n"),
-            "Team changes"
-        );
-        state.handle_event(
-            Event::Key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::ALT)),
-            &workspace,
-        );
-        assert_eq!(
-            state
-                .create_text
-                .as_ref()
-                .ok_or("missing text")?
-                .description
-                .lines()
-                .join("\n"),
-            "Team changes/"
-        );
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert!(matches!(state.status, Some(Notice::Error(_))));
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor)
-                && state.editor_mode == EditorMode::Create
-        );
-        assert!(!state.scope_dirty(ConfigurationDestination::Global));
-
-        state.handle_event(key(KeyCode::Char('/')), &workspace);
-        assert!(matches!(
-            state.home_overlay,
-            Some(HomeOverlay::CreatePalette(_))
-        ));
-        state.handle_event(Event::Paste("stage".into()), &workspace);
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(matches!(state.status, Some(Notice::Error(_))));
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor)
-                && state.editor_mode == EditorMode::Create
-        );
-
-        state.handle_event(key(KeyCode::Char('/')), &workspace);
-        state.handle_event(Event::Paste("add".into()), &workspace);
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(matches!(state.screen, Screen::TypeEditor));
-        state.handle_event(Event::Paste("feat".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("New feature".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor)
-                && state.editor_mode == EditorMode::Create
-        );
-        assert_eq!(state.create_focus, CreateFocus::Types);
-        assert_eq!(state.child_selected, 1);
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(matches!(state.screen, Screen::TypeEditor));
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(!row_text(&terminal, 0, 0, MINIMUM_WIDTH).contains("Create Taxonomy"));
-        state.handle_event(key(KeyCode::Esc), &workspace);
-
-        state.handle_event(key(KeyCode::Char('/')), &workspace);
-        state.handle_event(Event::Paste("stage".into()), &workspace);
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(matches!(state.screen, Screen::Home));
-        assert!(state.scope_dirty(ConfigurationDestination::Global));
-        let staged = state
-            .global
-            .as_ref()
-            .ok_or("missing global")?
-            .catalog()?
-            .find(&TaxonomyId::new("team")?)
-            .cloned()
-            .ok_or("missing staged taxonomy")?;
-        assert_eq!(staged.description().to_string(), "Team changes/");
-        assert_eq!(workspace.saves.get(), 0);
-        Ok(())
-    }
-
-    #[test]
-    fn create_taxonomy_mouse_focus_and_cancel_leave_no_draft()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        terminal.draw(|frame| state.render(frame))?;
-        let taxonomy = state.create_areas[0];
-        assert!(
-            row_text(&terminal, 0, MINIMUM_HEIGHT - 1, MINIMUM_WIDTH)
-                .starts_with("esc: back  enter: next/open  ctrl+s: stage  /: commands")
-        );
-        assert!(!row_text(&terminal, 0, MINIMUM_HEIGHT - 1, MINIMUM_WIDTH).contains('|'));
-        state.handle_event(key(KeyCode::Tab), &workspace);
-        assert_eq!(state.create_focus, CreateFocus::Name);
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: taxonomy.x + 1,
-                row: taxonomy.y + 4,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        assert_eq!(state.create_focus, CreateFocus::Name);
-        state.handle_event(Event::Paste("A description".into()), &workspace);
-        assert_eq!(
-            state
-                .create_text
-                .as_ref()
-                .ok_or("missing text")?
-                .name
-                .lines(),
-            &["A description"]
-        );
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
-        state.handle_event(key(KeyCode::Char('y')), &workspace);
-        assert!(matches!(state.screen, Screen::Home));
-        assert!(state.editor.is_none());
-        assert_eq!(workspace.saves.get(), 0);
-        Ok(())
-    }
-
-    #[test]
-    fn create_taxonomy_cursor_edits_and_crosses_sections() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        terminal.draw(|frame| state.render(frame))?;
-        let taxonomy = state.create_areas[0];
-        assert_eq!(
-            terminal.backend().buffer()[(taxonomy.x, taxonomy.y + 1)].fg,
-            Color::Yellow
-        );
-        assert!(
-            (taxonomy.x + 1..taxonomy.right() - 1)
-                .all(|x| terminal.backend().buffer()[(x, taxonomy.y + 2)].bg == JET_BLACK)
-        );
-        assert!(
-            terminal.backend().buffer()[(taxonomy.x + 1, taxonomy.y + 2)]
-                .modifier
-                .contains(Modifier::REVERSED)
-        );
-        assert!(
-            row_text(
-                &terminal,
-                taxonomy.x + 1,
-                taxonomy.y + 1,
-                taxonomy.width - 2
-            )
-            .contains("Name ⠒")
-        );
-        assert!(
-            row_text(
-                &terminal,
-                taxonomy.x + 1,
-                taxonomy.y + 4,
-                taxonomy.width - 2
-            )
-            .contains("Description ⠒")
-        );
-
-        state.handle_event(Event::Paste("team".into()), &workspace);
-        state.handle_event(key(KeyCode::Left), &workspace);
-        state.handle_event(key(KeyCode::Left), &workspace);
-        state.handle_event(Event::Paste("X".into()), &workspace);
-        assert_eq!(
-            state
-                .create_text
-                .as_ref()
-                .ok_or("missing text")?
-                .name
-                .lines(),
-            &["teXam"]
-        );
-        state.handle_event(key(KeyCode::Backspace), &workspace);
-        state.handle_event(key(KeyCode::Delete), &workspace);
-        assert_eq!(
-            state
-                .create_text
-                .as_ref()
-                .ok_or("missing text")?
-                .name
-                .lines(),
-            &["tem"]
-        );
-        state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.create_focus, CreateFocus::Description);
-        state.handle_event(
-            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
-            &workspace,
-        );
-        state.handle_event(Event::Paste("second".into()), &workspace);
-        state.handle_event(key(KeyCode::Up), &workspace);
-        state.handle_event(Event::Paste("first".into()), &workspace);
-        assert_eq!(
-            state
-                .create_text
-                .as_ref()
-                .ok_or("missing text")?
-                .description
-                .lines()
-                .join("\n"),
-            "first\nsecond"
-        );
-        state.handle_event(key(KeyCode::Down), &workspace);
-        let cursor = state
-            .create_text
-            .as_ref()
-            .ok_or("missing text")?
-            .description
-            .cursor();
-        state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.create_focus, CreateFocus::Types);
-        state.handle_event(key(KeyCode::Up), &workspace);
-        assert_eq!(state.create_focus, CreateFocus::Description);
-        assert_eq!(
-            state
-                .create_text
-                .as_ref()
-                .ok_or("missing text")?
-                .description
-                .cursor(),
-            cursor
-        );
-        state.handle_event(key(KeyCode::BackTab), &workspace);
-        assert_eq!(state.create_focus, CreateFocus::Description);
-        state.handle_event(key(KeyCode::Up), &workspace);
-        state.handle_event(key(KeyCode::Up), &workspace);
-        assert_eq!(state.create_focus, CreateFocus::Name);
-        assert_eq!(
-            state
-                .create_text
-                .as_ref()
-                .ok_or("missing text")?
-                .name
-                .cursor()
-                .1,
-            2
-        );
-        terminal.draw(|frame| state.render(frame))?;
-        let reversed = (taxonomy.y..taxonomy.bottom())
-            .flat_map(|y| (taxonomy.x..taxonomy.right()).map(move |x| (x, y)))
-            .filter(|&(x, y)| {
-                terminal.backend().buffer()[(x, y)]
-                    .modifier
-                    .contains(Modifier::REVERSED)
-            })
-            .count();
-        assert_eq!(reversed, 1);
-        Ok(())
-    }
-
-    #[test]
-    fn create_description_scrolls_with_cursor_at_minimum_and_wide_sizes()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(
-            Event::Paste(
-                (0..20)
-                    .map(|n| n.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            ),
-            &workspace,
-        );
-        for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
-            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-            terminal.draw(|frame| state.render(frame))?;
-            let taxonomy = state.create_areas[0];
-            assert!(
-                (taxonomy.y + 4..taxonomy.bottom() - 1)
-                    .any(|y| row_text(&terminal, 0, y, width).contains("│19"))
-            );
-            assert!(row_text(&terminal, 0, taxonomy.y + 4, width).contains("Description ⠒"));
-            assert_eq!(
-                state
-                    .create_text
-                    .as_ref()
-                    .ok_or("missing text")?
-                    .description
-                    .cursor()
-                    .0,
-                19
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn create_taxonomy_counts_visible_characters_and_caps_all_text_edits()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("team".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("e\u{301}👩‍💻".into()), &workspace);
-        state.handle_event(Event::Paste("x".repeat(73)), &workspace);
-        assert_eq!(state.create_text.as_ref().ok_or("missing text")?.used(), 79);
-        state.handle_event(
-            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
-            &workspace,
-        );
-        assert_eq!(state.create_text.as_ref().ok_or("missing text")?.used(), 80);
-
-        for (width, height, types_height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT, 6), (120, 30, 18)] {
-            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-            terminal.draw(|frame| state.render(frame))?;
-            let [taxonomy, types] = state.create_areas;
-            assert_eq!(taxonomy.height, 8);
-            assert_eq!(types.height, types_height);
-            assert_eq!(types.y, taxonomy.bottom());
-            let counter = " 80/80 ";
-            let counter_x = taxonomy.right() - u16::try_from(counter.len())? - 1;
-            assert_eq!(
-                row_text(
-                    &terminal,
-                    counter_x,
-                    taxonomy.bottom() - 1,
-                    u16::try_from(counter.len())?
-                ),
-                counter
-            );
-        }
-
-        state.handle_event(key(KeyCode::Char('z')), &workspace);
-        state.handle_event(
-            Event::Key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::ALT)),
-            &workspace,
-        );
-        state.handle_event(
-            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
-            &workspace,
-        );
-        assert_eq!(state.create_text.as_ref().ok_or("missing text")?.used(), 80);
-        state.handle_event(key(KeyCode::Backspace), &workspace);
-        assert_eq!(state.create_text.as_ref().ok_or("missing text")?.used(), 79);
-        state.handle_event(key(KeyCode::Left), &workspace);
-        state.handle_event(Event::Paste("AB".into()), &workspace);
-        let editors = state.create_text.as_ref().ok_or("missing text")?;
-        assert_eq!(editors.used(), 80);
-        assert!(editors.description.lines().join("\n").ends_with("Ax"));
-        assert!(matches!(state.status, Some(Notice::Info(_))));
-
-        state
-            .create_text
-            .as_mut()
-            .ok_or("missing text")?
-            .description
-            .insert_str("overflow");
-        state.stage_editor(EditorMode::Create);
-        assert!(matches!(state.status, Some(Notice::Error(ref message)) if message.contains("80")));
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor)
-                && state.editor_mode == EditorMode::Create
-        );
-        assert!(!state.scope_dirty(ConfigurationDestination::Global));
-        Ok(())
-    }
-
-    #[test]
-    fn create_taxonomy_stages_from_wide_layout_and_types_remain_mouse_selectable()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
-        terminal.draw(|frame| state.render(frame))?;
-        state.handle_event(Event::Paste("team".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("Team changes".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("feat".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("Feature".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        let types = state.create_areas[1];
-        state.child_selected = 0;
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: types.x + 2,
-                row: types.y + 2,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        assert_eq!(state.create_focus, CreateFocus::Types);
-        assert_eq!(state.child_selected, 1);
-        state.handle_event(key(KeyCode::Char('/')), &workspace);
-        state.handle_event(Event::Paste("stage".into()), &workspace);
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(matches!(state.screen, Screen::Home));
-        assert!(state.scope_dirty(ConfigurationDestination::Global));
-        assert_eq!(workspace.saves.get(), 0);
-        Ok(())
-    }
-
-    #[test]
-    fn creation_headings_stay_white_while_the_active_widget_frame_is_yellow()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
-            let mut state = State::new(&workspace);
-            state.category = Category::Taxonomies;
-            state.home_focus = HomeFocus::Content;
-            state.handle_event(key(KeyCode::Char('n')), &workspace);
-            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-            for focus in [
-                CreateFocus::Name,
-                CreateFocus::Description,
-                CreateFocus::Types,
-            ] {
-                terminal.draw(|frame| state.render(frame))?;
-                assert_eq!(state.create_focus, focus);
-                let [taxonomy, types] = state.create_areas;
-                let buffer = terminal.backend().buffer();
-                for y in [taxonomy.y + 1, taxonomy.y + 4] {
-                    assert_eq!(buffer[(taxonomy.x + 1, y)].fg, Color::White);
-                    assert!(
-                        buffer[(taxonomy.x + 1, y)]
-                            .modifier
-                            .contains(Modifier::BOLD)
-                    );
-                    assert_eq!(buffer[(taxonomy.right() - 2, y)].fg, Color::DarkGray);
-                }
-                let (taxonomy_color, types_color) = if focus == CreateFocus::Types {
-                    (Color::DarkGray, Color::Yellow)
-                } else {
-                    (Color::Yellow, Color::DarkGray)
-                };
-                for x in [taxonomy.x, taxonomy.x + 1] {
-                    assert_eq!(buffer[(x, taxonomy.y)].fg, taxonomy_color);
-                }
-                for x in [types.x, types.x + 1] {
-                    assert_eq!(buffer[(x, types.y)].fg, types_color);
-                }
-                state.handle_event(key(KeyCode::Down), &workspace);
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn builtin_forks_copy_every_field_require_a_new_name_and_keep_the_fork_breadcrumb()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        for index in 0..3 {
-            select_taxonomy(&mut state, index);
-            let source = state.selected_taxonomy().ok_or("missing source")?;
-            assert!(
-                source.id().as_str().graphemes(true).count()
-                    + source.description().as_str().graphemes(true).count()
-                    <= CREATE_TEXT_LIMIT
-            );
-            state.handle_event(key(KeyCode::Char('f')), &workspace);
-            assert_eq!(
-                state
-                    .create_text
-                    .as_ref()
-                    .ok_or("missing text")?
-                    .name
-                    .cursor(),
-                (0, source.id().as_str().chars().count())
-            );
-            assert_eq!(
-                state.editor.as_ref().ok_or("missing draft")?.build()?,
-                source.fork(source.id().clone())
-            );
-            assert_eq!(
-                state
-                    .create_text
-                    .as_ref()
-                    .ok_or("missing text")?
-                    .description
-                    .lines()
-                    .join("\n"),
-                source.description().as_str()
-            );
-            stage_creation(&mut state, &workspace);
-            assert!(
-                matches!(state.status, Some(Notice::Error(ref message)) if message.contains("new taxonomy name"))
-            );
-            assert!(!state.scope_dirty(ConfigurationDestination::Global));
-            state.handle_event(key(KeyCode::Esc), &workspace);
-            assert!(state.editor.is_none());
-            assert!(state.fork_source.is_none());
-        }
-
-        select_taxonomy(&mut state, 0);
-        let source = state.selected_taxonomy().ok_or("missing source")?;
-        state.handle_event(key(KeyCode::Char('f')), &workspace);
-        rename_creation(&mut state, &workspace, "Research")?;
-        stage_creation(&mut state, &workspace);
-        assert!(
-            matches!(state.status, Some(Notice::Error(ref message)) if message == "A taxonomy named \"research\" already exists in the Library.")
-        );
-        rename_creation(&mut state, &workspace, &source.id().as_str().to_uppercase())?;
-        stage_creation(&mut state, &workspace);
-        assert!(
-            matches!(state.status, Some(Notice::Error(ref message)) if message.contains("new taxonomy name"))
-        );
-        rename_creation(&mut state, &workspace, "2fa")?;
-        stage_creation(&mut state, &workspace);
-        assert!(
-            matches!(state.status, Some(Notice::Error(ref message)) if message == "Taxonomy name must start with a letter: \"2fa\".")
-        );
-        rename_creation(&mut state, &workspace, "team")?;
-
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(matches!(state.screen, Screen::TypeEditor));
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(matches!(state.screen, Screen::TypeEditor));
-        state.handle_event(Event::Paste(" Updated.".into()), &workspace);
-        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(row_text(&terminal, 0, 1, MINIMUM_WIDTH).contains("/ fork taxonomy"));
-        let breadcrumb = state.breadcrumb_area;
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: breadcrumb.x + 1,
-                row: breadcrumb.y + 1,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        let mut expected_draft = state.editor.as_ref().ok_or("missing draft")?.clone();
-        state
-            .create_text
-            .as_ref()
-            .ok_or("missing text")?
-            .sync_draft(&mut expected_draft);
-        let expected = expected_draft.build()?;
-        for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
-            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-            terminal.draw(|frame| state.render(frame))?;
-            assert!(row_text(&terminal, 0, 1, width).contains("/ fork taxonomy"));
-            assert!(!row_text(&terminal, 0, 1, width).contains("/ create taxonomy"));
-        }
-        stage_creation(&mut state, &workspace);
-        assert!(matches!(state.screen, Screen::Home));
-        let catalog = state.global.as_ref().ok_or("missing global")?.catalog()?;
-        assert_eq!(catalog.find(source.id()), Some(&source));
-        assert_eq!(catalog.find(&TaxonomyId::new("team")?), Some(&expected));
-        assert_eq!(expected.version(), TaxonomyVersion::V1);
-        assert_eq!(
-            expected.derived_from(),
-            Some(&TaxonomyLineage::new(source.id().clone(), source.version()))
-        );
-        assert_eq!(workspace.saves.get(), 0);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert!(matches!(
-            state.screen,
-            Screen::Review(ConfigurationDestination::Global)
-        ));
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        assert_eq!(workspace.saves.get(), 1);
-        assert_eq!(
-            workspace
-                .global
-                .borrow()
-                .catalog()?
-                .find(&TaxonomyId::new("team")?),
-            Some(&expected)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn custom_forks_preserve_long_text_and_record_the_direct_source_snapshot()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let source = Taxonomy::new(
-            TaxonomyId::new("original-team")?,
-            TaxonomyVersion::new(5)?,
-            Description::new("Long source description.\n".repeat(10))?,
-            Some(TaxonomyLineage::new(
-                TaxonomyId::new("conventional")?,
-                TaxonomyVersion::V1,
-            )),
-            vec![
-                CommitTypeDefinition::new(
-                    SchemaVersion::new(3)?,
-                    CommitTypeId::new("custom")?,
-                    "Custom purpose",
-                    vec![
-                        PropertyDefinition::new(
-                            PropertyKey::new("evidence")?,
-                            "All supporting evidence",
-                            PropertyRequirement::Conditional(PropertyCondition::new(
-                                ConditionId::new("changed")?,
-                                "Required when behavior changes",
-                            )?),
-                        )?,
-                        PropertyDefinition::new(
-                            PropertyKey::new("notes")?,
-                            "Additional notes",
-                            PropertyRequirement::Recommended,
-                        )?,
-                    ],
-                )?,
-                gitserious_core::built_in_taxonomies()[0].commit_types()[0].clone(),
-            ],
-        )?;
-        let workspace = Workspace::new();
-        *workspace.global.borrow_mut() =
-            ConfigurationSession::open_global(GlobalConfiguration::new(
-                1,
-                TaxonomyId::new("conventional")?,
-                vec![TaxonomyId::new("conventional")?],
-                vec![source.clone()],
-            )?);
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        select_taxonomy(&mut state, 3);
-        state.handle_event(key(KeyCode::Char('f')), &workspace);
-        assert_eq!(
-            state.editor.as_ref().ok_or("missing draft")?.build()?,
-            source.fork(source.id().clone())
-        );
-        let original_count = state.create_text.as_ref().ok_or("missing text")?.used();
-        assert!(original_count > CREATE_TEXT_LIMIT);
-        assert_eq!(
-            state
-                .create_text
-                .as_ref()
-                .ok_or("missing text")?
-                .description
-                .lines()
-                .join("\n"),
-            source.description().as_str()
-        );
-        stage_creation(&mut state, &workspace);
-        assert!(matches!(state.status, Some(Notice::Error(ref message)) if message.contains("80")));
-        assert!(!state.scope_dirty(ConfigurationDestination::Global));
-        state.handle_event(key(KeyCode::Down), &workspace);
-        let before_edit = state.create_text.as_ref().ok_or("missing text")?.used();
-        state.handle_event(key(KeyCode::Char('x')), &workspace);
-        assert_eq!(
-            state.create_text.as_ref().ok_or("missing text")?.used(),
-            before_edit
-        );
-        assert!(matches!(state.status, Some(Notice::Info(ref message)) if message.contains("80")));
-        state
-            .create_text
-            .as_mut()
-            .ok_or("missing text")?
-            .description
-            .move_cursor(CursorMove::End);
-        state.handle_event(key(KeyCode::Backspace), &workspace);
-        assert_eq!(
-            state.create_text.as_ref().ok_or("missing text")?.used(),
-            before_edit - 1
-        );
-        state
-            .create_text
-            .as_mut()
-            .ok_or("missing text")?
-            .description
-            .select_all();
-        state.handle_event(Event::Paste("Edited snapshot".into()), &workspace);
-        rename_creation(&mut state, &workspace, "forked-team")?;
-        select_taxonomy(&mut state, 0);
-        stage_creation(&mut state, &workspace);
-        assert!(matches!(state.screen, Screen::Home));
-        let catalog = state.global.as_ref().ok_or("missing global")?.catalog()?;
-        let fork = catalog
-            .find(&TaxonomyId::new("forked-team")?)
-            .ok_or("missing fork")?;
-        assert_eq!(fork.description().as_str(), "Edited snapshot");
-        assert_eq!(fork.commit_types(), source.commit_types());
-        assert_eq!(fork.version(), TaxonomyVersion::V1);
-        assert_eq!(
-            fork.derived_from(),
-            Some(&TaxonomyLineage::new(source.id().clone(), source.version()))
-        );
-        assert_eq!(catalog.find(source.id()), Some(&source));
-        assert_eq!(workspace.saves.get(), 0);
-        Ok(())
-    }
-
-    #[test]
-    fn fork_uses_the_project_guard_and_child_discard_confirmation()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        select_taxonomy(&mut state, 0);
-        state
-            .project
-            .as_mut()
-            .ok_or("missing project")?
-            .initialize_project()?;
-        state.handle_event(key(KeyCode::Char('f')), &workspace);
-        assert!(matches!(
-            state.screen,
-            Screen::ScopeChange(PendingAction::Fork)
-        ));
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        assert!(state.editor.is_none());
-        state.handle_event(key(KeyCode::Char('f')), &workspace);
-        state.handle_event(key(KeyCode::Char('d')), &workspace);
-        assert!(state.fork_source.is_some());
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(row_text(&terminal, 0, 1, 120).contains("/ fork taxonomy"));
-        let breadcrumb = state.breadcrumb_area;
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: breadcrumb.x + 1,
-                row: breadcrumb.y,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
-        state.handle_event(key(KeyCode::Char('y')), &workspace);
-        assert!(matches!(state.screen, Screen::Home));
-        assert!(state.editor.is_none());
-        assert!(state.create_text.is_none());
-        assert!(state.fork_source.is_none());
-        assert!(!state.scope_dirty(ConfigurationDestination::Global));
-        assert_eq!(workspace.saves.get(), 0);
-        Ok(())
-    }
-
-    #[test]
-    fn create_breadcrumb_sits_above_editor_widgets_beside_the_inert_menu()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        terminal.draw(|frame| state.render(frame))?;
-        let content_x = MENU_WIDTH;
-        let content_width = MINIMUM_WIDTH - MENU_WIDTH;
-        assert!(row_text(&terminal, 0, 0, content_x).contains("Config"));
-        assert!(row_text(&terminal, 0, 1, content_x).contains("Project"));
-        assert!(row_text(&terminal, 0, 2, content_x).contains("Taxonomies"));
-        assert!(
-            row_text(&terminal, content_x, 1, content_width).contains("Library / create taxonomy")
-        );
-        assert_eq!(state.tab_areas, [Rect::default(); 2]);
-
-        let [taxonomy, types] = state.create_areas;
-        for pane in [taxonomy, types] {
-            assert_eq!(pane.x, content_x);
-            assert_eq!(pane.width, content_width);
-        }
-        assert_eq!(taxonomy.y, BREADCRUMB_HEIGHT);
-        assert_eq!(taxonomy.height, 8);
-        assert_eq!(types.height, 6);
-        assert_eq!(types.y, taxonomy.bottom());
-        assert_eq!(types.bottom(), MINIMUM_HEIGHT - 1);
-
-        let breadcrumb = state.breadcrumb_area;
-        assert_eq!((breadcrumb.x, breadcrumb.y), (content_x + 1, 1));
-        let label = &terminal.backend().buffer()[(breadcrumb.x + 1, 1)];
-        let underline = &terminal.backend().buffer()[(breadcrumb.x + 1, 2)];
-        assert_eq!(label.symbol(), "L");
-        assert_eq!(label.fg, Color::Yellow);
-        assert_eq!(underline.symbol(), "─");
-        assert_eq!(underline.fg, Color::Yellow);
-
-        state.handle_event(click(Rect::new(1, 1, 1, 1)), &workspace);
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor)
-                && state.editor_mode == EditorMode::Create
-        );
-        assert_eq!(state.category, Category::Taxonomies);
-
-        let mut wide = Terminal::new(TestBackend::new(120, 30))?;
-        wide.draw(|frame| state.render(frame))?;
-        let [taxonomy, types] = state.create_areas;
-        assert!(
-            [taxonomy, types]
-                .into_iter()
-                .all(|pane| pane.x == content_x && pane.width == 120 - content_x)
-        );
-        let mut small = Terminal::new(TestBackend::new(MINIMUM_WIDTH - 1, MINIMUM_HEIGHT))?;
-        small.draw(|frame| state.render(frame))?;
-        assert!(text(&small).contains("Terminal too small"));
-        assert_eq!(state.breadcrumb_area, Rect::default());
-
-        terminal.draw(|frame| state.render(frame))?;
-        state.handle_event(click(state.breadcrumb_area), &workspace);
-        assert!(matches!(state.screen, Screen::Home));
-        assert!(state.editor.is_none());
-        terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(state.breadcrumb_area, Rect::default());
-        assert!(!text(&terminal).contains("create taxonomy /"));
-        assert!(row_text(&terminal, content_x, 0, 11).starts_with("┌Taxonomies"));
         Ok(())
     }
 
@@ -4387,7 +2238,7 @@ mod tests {
     fn outline_lists_every_taxonomy_and_the_inspector_describes_the_selection()
     -> Result<(), Box<dyn std::error::Error>> {
         for (width, height) in [(87, 40), (MINIMUM_WIDTH, MINIMUM_HEIGHT)] {
-            let (workspace, _) = child_editor_workspace()?;
+            let (workspace, _) = custom_workspace()?;
             let mut state = State::new(&workspace);
             state.handle_event(key(KeyCode::Char('2')), &workspace);
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
@@ -4482,7 +2333,7 @@ mod tests {
                 .count(),
         )?;
         assert_eq!(buffer[(policy_x, policy_y)].fg, Color::Cyan);
-        assert_eq!(buffer[(policy_x, policy_y)].bg, Color::Rgb(40, 40, 40));
+        assert_eq!(buffer[(policy_x, policy_y)].bg, Color::Rgb(60, 60, 60));
         assert_eq!(buffer[(policy_x - 2, policy_y)].fg, Color::Gray);
 
         state.handle_event(key(KeyCode::Char('e')), &workspace);
@@ -4491,23 +2342,6 @@ mod tests {
             &state.status,
             Some(Notice::Error(message)) if message.starts_with("Built-in taxonomies are read-only")
         ));
-        state.handle_event(key(KeyCode::Char('f')), &workspace);
-        assert_eq!(
-            state
-                .fork_source
-                .as_ref()
-                .map(|source| source.id().to_string()),
-            Some("conventional".into())
-        );
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        assert!(matches!(state.screen, Screen::Home));
-
-        let cursor = |state: &State| {
-            state
-                .taxonomies
-                .observe(state.library().as_ref())
-                .cursor_path
-        };
         assert_eq!(cursor(&state), ["conventional", "feat", "constraints"]);
         state.handle_event(key(KeyCode::Left), &workspace);
         assert_eq!(cursor(&state), ["conventional", "feat"]);
@@ -4552,10 +2386,7 @@ mod tests {
         let name = first.split_whitespace().nth(1).ok_or("missing first row")?;
         state.handle_event(click(Rect::new(MENU_WIDTH + 1, 1, 1, 1)), &workspace);
         assert_eq!(
-            state
-                .taxonomies
-                .observe(state.library().as_ref())
-                .cursor_path,
+            state.taxonomies.observe(state.library()).cursor_path,
             ["conventional", name]
         );
         Ok(())
@@ -4604,12 +2435,6 @@ mod tests {
         assert_eq!(state.category, Category::Taxonomies);
         state.handle_event(key(KeyCode::Right), &workspace);
         assert_eq!(state.home_focus, HomeFocus::Content);
-        let cursor = |state: &State| {
-            state
-                .taxonomies
-                .observe(state.library().as_ref())
-                .cursor_path
-        };
         state.handle_event(key(KeyCode::Right), &workspace);
         assert_eq!(cursor(&state), ["conventional"]);
         state.handle_event(key(KeyCode::Right), &workspace);
@@ -4633,109 +2458,6 @@ mod tests {
         state.handle_event(key(KeyCode::Char('1')), &workspace);
         assert_eq!(state.category, Category::Project);
         assert_eq!(state.home_focus, HomeFocus::Content);
-    }
-
-    #[test]
-    fn create_header_persists_in_child_and_breadcrumb_confirms_discard()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        assert!(matches!(state.screen, Screen::TypeEditor));
-        state.handle_event(Event::Paste("feat".into()), &workspace);
-        let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(row_text(&terminal, 0, 0, 120).contains("Config"));
-        assert!(!row_text(&terminal, 0, 0, 120).contains("Create Taxonomy"));
-        assert!(row_text(&terminal, 0, 1, 120).contains("/ create taxonomy"));
-        assert!(
-            row_text(&terminal, 0, 1, 120).contains("/ create taxonomy / add type"),
-            "{}",
-            row_text(&terminal, 0, 1, 120)
-        );
-        let breadcrumb = state.breadcrumb_area;
-        let click = Event::Mouse(ratatui::crossterm::event::MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: breadcrumb.x,
-            row: breadcrumb.y,
-            modifiers: KeyModifiers::NONE,
-        });
-        state.handle_event(click.clone(), &workspace);
-        assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(text(&terminal).contains("Discard new taxonomy and return to Library?"));
-        assert!(
-            row_text(&terminal, 0, 1, 120).contains("/ create taxonomy / add type"),
-            "{}",
-            row_text(&terminal, 0, 1, 120)
-        );
-        state.handle_event(Event::Paste("ignored".into()), &workspace);
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        assert!(matches!(state.screen, Screen::TypeEditor));
-        assert_eq!(
-            state
-                .type_editor
-                .as_ref()
-                .ok_or("missing type")?
-                .text
-                .name
-                .lines()[0],
-            "feat"
-        );
-        state.handle_event(click, &workspace);
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        assert!(matches!(state.screen, Screen::TypeEditor));
-        let breadcrumb = state.breadcrumb_area;
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: breadcrumb.x,
-                row: breadcrumb.y,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        state.handle_event(key(KeyCode::Char('y')), &workspace);
-        assert!(matches!(state.screen, Screen::Home));
-        assert!(state.editor.is_none());
-        assert_eq!(workspace.saves.get(), 0);
-        Ok(())
-    }
-
-    #[test]
-    fn fork_add_type_breadcrumb_and_esc_pops_to_taxonomy() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        select_taxonomy(&mut state, 0);
-        state.handle_event(key(KeyCode::Char('f')), &workspace);
-        assert!(state.fork_source.is_some());
-        let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(row_text(&terminal, 0, 1, 120).contains("/ fork taxonomy"));
-        assert!(!row_text(&terminal, 0, 1, 120).contains("/ add type"));
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        assert!(matches!(state.screen, Screen::TypeEditor));
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(
-            row_text(&terminal, 0, 1, 120).contains("/ fork taxonomy / add type"),
-            "{}",
-            row_text(&terminal, 0, 1, 120)
-        );
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor)
-                && state.editor_mode == EditorMode::Create
-        );
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(row_text(&terminal, 0, 1, 120).contains("/ fork taxonomy"));
-        assert!(!row_text(&terminal, 0, 1, 120).contains("/ add type"));
-        Ok(())
     }
 
     #[test]
@@ -4785,11 +2507,8 @@ mod tests {
             "f"
         );
         state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor)
-                && state.editor_mode == EditorMode::Create
-        );
-        assert!(state.fork_source.is_some());
+        assert!(state.taxonomies.editing());
+        assert_eq!(cursor(&state), ["conventional-fork"]);
         assert!(state.home_overlay.is_none());
         assert_eq!(workspace.saves.get(), 0);
         Ok(())
@@ -4859,19 +2578,6 @@ mod tests {
             );
             state.handle_event(key(KeyCode::Enter), &workspace);
             assert_eq!(state.category, Category::Taxonomies);
-            state.handle_event(key(KeyCode::Char('n')), &workspace);
-            state.handle_event(key(KeyCode::Char('/')), &workspace);
-            terminal.draw(|frame| state.render(frame))?;
-            assert!(text(&terminal).contains("add type"));
-            let Some(HomeOverlay::CreatePalette(palette)) = &state.home_overlay else {
-                return Err("missing create palette".into());
-            };
-            let list = palette.list_area;
-            let stage_row = (list.y..list.bottom())
-                .map(|y| row_text(&terminal, list.x, y, list.width))
-                .find(|row| row.starts_with("validate and stage taxonomy"))
-                .ok_or("missing stage command")?;
-            assert!(stage_row.ends_with("ctrl+s"), "{stage_row:?}");
         }
         Ok(())
     }
@@ -4990,15 +2696,20 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         state.handle_event(key(KeyCode::Char('?')), &workspace);
         terminal.draw(|frame| state.render(frame))?;
-        let help = centered_rect(58, 13, Rect::new(0, 0, MINIMUM_WIDTH, MINIMUM_HEIGHT - 1));
+        let help = centered_rect(58, 14, Rect::new(0, 0, MINIMUM_WIDTH, MINIMUM_HEIGHT - 1));
         let content_x = help.x + 2;
         let content_width = help.width - 4;
         let switch_row = row_text(&terminal, content_x, help.y + 2, content_width);
-        let edit_row = row_text(&terminal, content_x, help.y + 6, content_width);
+        let reorder_row = row_text(&terminal, content_x, help.y + 5, content_width);
+        let edit_row = row_text(&terminal, content_x, help.y + 7, content_width);
+        let quit_row = row_text(&terminal, content_x, help.y + 11, content_width);
         assert!(switch_row.starts_with("Switch Project / Taxonomies"));
         assert!(switch_row.ends_with("1/2/click"));
+        assert!(reorder_row.starts_with("Reorder a type or property"));
+        assert!(reorder_row.ends_with("alt+↑/↓"));
         assert!(edit_row.starts_with("New / edit / fork / delete"));
         assert!(edit_row.ends_with("n/e/f/d"));
+        assert!(quit_row.starts_with("Quit"));
         state.handle_event(key(KeyCode::Enter), &workspace);
         state.handle_event(
             Event::Mouse(ratatui::crossterm::event::MouseEvent {
@@ -5032,7 +2743,7 @@ mod tests {
         state.handle_event(key(KeyCode::Enter), &workspace);
         assert!(matches!(
             state.screen,
-            Screen::ScopeChange(PendingAction::Create)
+            Screen::ScopeChange(PendingAction::Library(LibraryAction::Create))
         ));
         assert_eq!(workspace.saves.get(), 0);
         Ok(())
@@ -5122,20 +2833,10 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
-        state
-            .global
-            .as_mut()
-            .ok_or("missing global")?
-            .fork_unchanged(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
+        let session = state.global.as_mut().ok_or("missing global")?;
+        fork_as(session, "conventional", "team")?;
         for index in 0..40 {
-            state
-                .global
-                .as_mut()
-                .ok_or("missing global")?
-                .fork_unchanged(
-                    &TaxonomyId::new("conventional")?,
-                    TaxonomyId::new(format!("more-{index}"))?,
-                )?;
+            fork_as(session, "conventional", &format!("more-{index}"))?;
         }
         let session = state.global.as_mut().ok_or("missing global")?;
         let available = session
@@ -5230,7 +2931,7 @@ mod tests {
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         assert!(matches!(
             state.screen,
-            Screen::ScopeChange(PendingAction::Create)
+            Screen::ScopeChange(PendingAction::Library(LibraryAction::Create))
         ));
         assert_eq!(workspace.saves.get(), 0);
         state.handle_event(key(KeyCode::Esc), &workspace);
@@ -5240,10 +2941,8 @@ mod tests {
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         state.handle_event(key(KeyCode::Char('a')), &workspace);
         assert_eq!(workspace.saves.get(), 1);
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor)
-                && state.editor_mode == EditorMode::Create
-        );
+        assert!(matches!(state.screen, Screen::Home) && state.taxonomies.editing());
+        assert_eq!(cursor(&state), [""]);
         assert_eq!(state.active_scope, ConfigurationDestination::Global);
         Ok(())
     }
@@ -5258,34 +2957,40 @@ mod tests {
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
         assert!(matches!(state.status, Some(Notice::Error(_))));
-        state.handle_event(key(KeyCode::Char('f')), &workspace);
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor)
-                && state.editor_mode == EditorMode::Create
-        );
-        assert!(state.fork_source.is_some());
-        state.handle_event(key(KeyCode::Esc), &workspace);
         state.handle_event(key(KeyCode::Char('d')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
+        assert!(matches!(state.status, Some(Notice::Error(_))));
+        state.handle_event(key(KeyCode::Char('f')), &workspace);
+        assert!(state.taxonomies.editing());
+        assert_eq!(cursor(&state), ["conventional-fork"]);
+        let fork = library(&state)?
+            .find_path(&["conventional-fork"])
+            .ok_or("missing fork")?;
         state
             .global
             .as_mut()
+            .and_then(ConfigurationSession::library_mut)
             .ok_or("missing global")?
-            .fork_unchanged(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
-        select_taxonomy(&mut state, 3);
+            .edit(&fork, DraftEdit::Text(DraftField::Name, "team"))?;
+        state.handle_event(key(KeyCode::Esc), &workspace);
+        assert!(!state.taxonomies.editing());
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Forked from  conventional@2"));
         let team = row_text(&terminal, MENU_WIDTH, 4, 100 - MENU_WIDTH);
-        assert!(team.contains("▌▸ team"));
+        assert!(team.contains("▌▾ team"));
         assert!(team.trim_end().ends_with("custom  │"));
         state.handle_event(key(KeyCode::Char('e')), &workspace);
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor) && state.editor_mode == EditorMode::Edit
-        );
+        assert!(matches!(
+            state.taxonomies.observe(state.library()).mode,
+            taxonomies::Mode::Edit {
+                field: DraftField::Name,
+                ..
+            }
+        ));
         state.handle_event(key(KeyCode::Esc), &workspace);
         state.handle_event(key(KeyCode::Char('d')), &workspace);
-        assert!(matches!(state.screen, Screen::Delete));
+        assert!(matches!(&state.screen, Screen::ConfirmRemove(node) if node == &fork));
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
@@ -5349,11 +3054,11 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.active_scope = ConfigurationDestination::Global;
-        state
-            .global
-            .as_mut()
-            .ok_or("missing global")?
-            .fork_unchanged(&TaxonomyId::new("conventional")?, TaxonomyId::new("team")?)?;
+        fork_as(
+            state.global.as_mut().ok_or("missing global")?,
+            "conventional",
+            "team",
+        )?;
         state.open_review();
         assert!(matches!(
             state.screen,
@@ -5394,15 +3099,22 @@ mod tests {
         );
         let mut state = State::new(&workspace);
         state.active_scope = ConfigurationDestination::Global;
-        state
+        let library = state
             .global
             .as_mut()
-            .ok_or("missing global")?
-            .update_taxonomy(
-                &TaxonomyId::new("team")?,
-                Description::new("Team changes")?,
-                types(&["fix", "release"])?,
-            )?;
+            .and_then(ConfigurationSession::library_mut)
+            .ok_or("missing global")?;
+        let team = library.find_path(&["team"]).ok_or("missing team")?;
+        library.edit(
+            &team,
+            DraftEdit::Text(DraftField::Description, "Team changes"),
+        )?;
+        for removed in ["fix", "hotfix"] {
+            let removed = library
+                .find_path(&["team", removed])
+                .ok_or("missing type")?;
+            library.edit(&removed, DraftEdit::Remove)?;
+        }
         state.open_review();
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
@@ -5416,8 +3128,9 @@ mod tests {
             .iter()
             .position(|row| row.contains("│  edited   team v1 -> v2: description; type "))
             .ok_or("the edited line is not on screen")?;
+        let wrapped = rows[edited + 1].split('│').nth(3).unwrap_or_default();
         assert!(
-            rows[edited + 1].contains("│           hotfix removed; types reordered "),
+            wrapped.starts_with("           ") && !wrapped[11..].starts_with(' '),
             "the wrapped row does not start under the taxonomy id: {:?}",
             rows[edited + 1]
         );
@@ -5448,913 +3161,30 @@ mod tests {
     }
 
     #[test]
-    fn create_types_list_uses_columns_without_property_counts()
+    fn remove_dialog_invalidates_mouse_targets_after_resize()
     -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
+        let (workspace, _) = custom_workspace()?;
         let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("team".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("Team changes".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("feat".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("Feature".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("fix".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(
-            Event::Paste("Bug fix with a longer description".into()),
-            &workspace,
-        );
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
-        terminal.draw(|frame| state.render(frame))?;
-        let types = state.create_areas[1];
-        let mut found_add = false;
-        let mut id_columns = Vec::new();
-        for y in types.y + 1..types.bottom() - 1 {
-            let row = row_text(&terminal, types.x + 1, y, types.width - 2);
-            if row.contains(CREATE_TYPES_ADD_LABEL) {
-                found_add = true;
-            }
-            if row.contains("feat") || row.contains("Bug fix") {
-                // Display-column 3 is the id column start (marker is 1 cell wide
-                // + 2 spacing cells); byte indices can't be compared because "›"
-                // is multi-byte.
-                let from_id: String = row.chars().skip(3).collect();
-                id_columns.push(from_id);
-            }
-            assert!(!row.contains("properties)"), "unexpected count: {row:?}");
-        }
-        assert!(found_add);
-        assert_eq!(id_columns.len(), 2);
-        assert!(id_columns[0].starts_with("feat"), "{}", id_columns[0]);
-        assert!(id_columns[1].starts_with("fix"), "{}", id_columns[1]);
-        // Id column is padded to the add-label width so descriptions align.
-        let desc0: String = id_columns[0]
-            .chars()
-            .skip(CREATE_TYPES_ADD_LABEL.len() + 2)
-            .collect();
-        let desc1: String = id_columns[1]
-            .chars()
-            .skip(CREATE_TYPES_ADD_LABEL.len() + 2)
-            .collect();
-        assert!(desc0.starts_with("Feature"), "{desc0:?}");
-        assert!(desc1.starts_with("Bug fix"), "{desc1:?}");
-        Ok(())
-    }
-
-    #[test]
-    fn types_and_properties_complete_locally_in_create_fork_and_edit()
-    -> Result<(), Box<dyn std::error::Error>> {
-        for action in ['n', 'f', 'e'] {
-            let (workspace, source) = child_editor_workspace()?;
-            let mut state = State::new(&workspace);
-            state.category = Category::Taxonomies;
-            state.home_focus = HomeFocus::Content;
-            select_taxonomy(&mut state, 3);
-            state.handle_event(key(KeyCode::Char(action)), &workspace);
-            let initial_types = state.editor.as_ref().ok_or("missing taxonomy")?.types.len();
-            state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-            assert!(matches!(state.screen, Screen::TypeEditor));
-            state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-            assert!(matches!(state.screen, Screen::PropertyEditor));
-            state.handle_event(Event::Paste("intent".into()), &workspace);
-            state.handle_event(key(KeyCode::Down), &workspace);
-            state.handle_event(Event::Paste("Why this change is needed".into()), &workspace);
-            for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
-                let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-                terminal.draw(|frame| state.render(frame))?;
-                assert!(row_text(&terminal, 0, 1, width).contains("/ add type / add p"));
-                assert!(row_text(&terminal, 0, height - 1, width).contains("ctrl+s: complete"));
-                assert!(text(&terminal).contains("31/100"));
-            }
-            state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-            assert!(matches!(state.screen, Screen::TypeEditor));
-            assert_eq!(
-                state
-                    .type_editor
-                    .as_ref()
-                    .ok_or("missing type")?
-                    .draft
-                    .properties
-                    .len(),
-                1
-            );
-            assert_eq!(
-                state.editor.as_ref().ok_or("missing taxonomy")?.types.len(),
-                initial_types
-            );
-            for _ in 0..3 {
-                state.handle_event(key(KeyCode::Up), &workspace);
-            }
-            assert_eq!(
-                state.type_editor.as_ref().ok_or("missing type")?.focus,
-                CreateFocus::Name
-            );
-            state.handle_event(Event::Paste("feat".into()), &workspace);
-            state.handle_event(key(KeyCode::Down), &workspace);
-            state.handle_event(Event::Paste("Feature change".into()), &workspace);
-            for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
-                let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-                terminal.draw(|frame| state.render(frame))?;
-                assert!(text(&terminal).contains("+ add property"));
-                assert!(text(&terminal).contains("required"));
-                let [metadata, properties] =
-                    state.type_editor.as_ref().ok_or("missing type")?.areas;
-                assert_eq!(metadata.height, 8);
-                assert_eq!(metadata.bottom(), properties.y);
-                assert_eq!(
-                    terminal.backend().buffer()[(metadata.x, metadata.y)].fg,
-                    Color::Yellow
-                );
-                assert!(row_text(&terminal, 0, metadata.bottom() - 1, width).contains("18/80"));
-            }
-            state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-            assert!(matches!(state.screen, Screen::TaxonomyEditor));
-            assert_eq!(
-                state.editor.as_ref().ok_or("missing taxonomy")?.types.len(),
-                initial_types + 1
-            );
-            if action == 'e' {
-                state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-            } else {
-                rename_creation(
-                    &mut state,
-                    &workspace,
-                    if action == 'n' { "created" } else { "forked" },
-                )?;
-                if action == 'n' {
-                    state.handle_event(key(KeyCode::Down), &workspace);
-                    state.handle_event(Event::Paste("Created taxonomy".into()), &workspace);
-                }
-                stage_creation(&mut state, &workspace);
-            }
-            assert!(matches!(state.screen, Screen::Home));
-            assert_eq!(workspace.saves.get(), 0);
-            let id = TaxonomyId::new(match action {
-                'n' => "created",
-                'f' => "forked",
-                _ => "original",
-            })?;
-            let catalog = state.global.as_ref().ok_or("missing global")?.catalog()?;
-            let stored = catalog.find(&id).ok_or("missing staged taxonomy")?;
-            let kind = stored.commit_types().last().ok_or("missing type")?;
-            assert_eq!(kind.id().as_str(), "feat");
-            assert_eq!(kind.properties()[0].key().as_str(), "intent");
-            assert_eq!(
-                *kind.properties()[0].requirement(),
-                PropertyRequirement::Required
-            );
-            if action != 'n' {
-                assert_eq!(stored.commit_types()[0], source.commit_types()[0]);
-            }
-            if action == 'f' {
-                assert_eq!(catalog.find(source.id()), Some(&source));
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn edited_properties_preserve_schema_and_policy_until_type_completion()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (workspace, source) = child_editor_workspace()?;
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
+        state.handle_event(key(KeyCode::Char('2')), &workspace);
         select_taxonomy(&mut state, 3);
-        state.handle_event(key(KeyCode::Char('e')), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(matches!(state.screen, Screen::PropertyEditor));
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert!(
-            matches!(state.status, Some(Notice::Error(ref message)) if message.contains("100"))
-        );
-        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(
-            row_text(&terminal, 0, 1, MINIMUM_WIDTH)
-                .contains("/ edit taxonomy / edit type / edit p")
-        );
-        let property = state.property_editor.as_mut().ok_or("missing property")?;
-        property.focus = child_editor::PropertyFocus::Description;
-        property.text.description.select_all();
-        state.handle_event(Event::Paste("Edited notes".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert!(matches!(state.screen, Screen::TypeEditor));
-        assert_eq!(
-            state
-                .editor
-                .as_ref()
-                .ok_or("missing taxonomy")?
-                .build()?
-                .commit_types()[0],
-            source.commit_types()[0]
-        );
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        let draft = &state.editor.as_ref().ok_or("missing taxonomy")?.types[0];
-        assert_eq!(draft.schema_version, 4);
-        assert_eq!(draft.properties[0].description, "Edited notes");
-        assert_eq!(
-            draft.properties[0].requirement,
-            PropertyRequirement::Optional
-        );
-        assert_eq!(
-            workspace.global.borrow().catalog()?.find(source.id()),
-            Some(&source)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn duplicate_validation_and_discard_confirmations_preserve_parent_drafts()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (workspace, source) = child_editor_workspace()?;
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        select_taxonomy(&mut state, 3);
-        state.handle_event(key(KeyCode::Char('e')), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("existing".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("Duplicate".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert!(
-            matches!(state.status, Some(Notice::Error(ref message)) if message.contains("already exists"))
-        );
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        assert!(matches!(state.screen, Screen::ConfirmDiscardChild(_)));
-        state.handle_event(key(KeyCode::Char('y')), &workspace);
-        state.open_type_editor(Some(0));
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("notes".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("Duplicate property".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert!(
-            matches!(state.status, Some(Notice::Error(ref message)) if message.contains("already exists"))
-        );
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        assert!(matches!(state.screen, Screen::ConfirmDiscardChild(_)));
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        assert!(matches!(state.screen, Screen::PropertyEditor));
-        let property = state.property_editor.as_mut().ok_or("missing property")?;
-        property.focus = child_editor::PropertyFocus::Name;
-        property.text.name.select_all();
-        state.handle_event(Event::Paste("intent".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert_eq!(
-            state
-                .type_editor
-                .as_ref()
-                .ok_or("missing type")?
-                .draft
-                .properties
-                .len(),
-            2
-        );
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        state.handle_event(key(KeyCode::Char('y')), &workspace);
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor) && state.editor_mode == EditorMode::Edit
-        );
-        assert_eq!(
-            state
-                .editor
-                .as_ref()
-                .ok_or("missing taxonomy")?
-                .build()?
-                .commit_types(),
-            source.commit_types()
-        );
-        assert_eq!(workspace.saves.get(), 0);
-        Ok(())
-    }
-
-    #[test]
-    fn staging_an_unchanged_edit_reports_that_nothing_was_staged()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (workspace, source) = child_editor_workspace()?;
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        select_taxonomy(&mut state, 3);
-        let library = state.global.clone().ok_or("missing global")?;
-        state.handle_event(key(KeyCode::Char('e')), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-
-        assert!(
-            matches!(state.status, Some(Notice::Info(ref message)) if message == "No changes to stage.")
-        );
-        assert!(matches!(state.screen, Screen::Home));
-        assert_eq!(state.category, Category::Taxonomies);
-        assert_eq!(
-            state.global.as_ref().map(ConfigurationSession::global),
-            Some(library.global())
-        );
-
-        state.handle_event(key(KeyCode::Char('e')), &workspace);
-        state.handle_event(key(KeyCode::Up), &workspace);
-        state
-            .create_text
-            .as_mut()
-            .ok_or("missing text")?
-            .description
-            .move_cursor(CursorMove::End);
-        state.handle_event(Event::Paste(" revised".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-
-        assert!(
-            matches!(state.status, Some(Notice::Info(ref message)) if message.starts_with("Staged taxonomy \"original\"."))
-        );
-        let staged = state
-            .global
-            .as_ref()
-            .ok_or("missing global")?
-            .catalog()?
-            .find(source.id())
-            .cloned()
-            .ok_or("missing taxonomy")?;
-        assert_eq!(staged.description().as_ref(), "Original taxonomy revised");
-        assert_eq!(staged.version(), TaxonomyVersion::new(4)?);
-        Ok(())
-    }
-
-    #[test]
-    fn property_list_mouse_selection_changes_focus_without_moving_text_cursors()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (workspace, _) = child_editor_workspace()?;
-        for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
-            let mut state = State::new(&workspace);
-            state.category = Category::Taxonomies;
-            state.home_focus = HomeFocus::Content;
-            select_taxonomy(&mut state, 3);
-            state.handle_event(key(KeyCode::Char('f')), &workspace);
-            state.open_type_editor(Some(0));
-            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-            terminal.draw(|frame| state.render(frame))?;
-            let [metadata, properties] = state.type_editor.as_ref().ok_or("missing type")?.areas;
-            state.handle_event(
-                Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                    kind: MouseEventKind::Down(MouseButton::Left),
-                    column: properties.x + 2,
-                    row: properties.y + 2,
-                    modifiers: KeyModifiers::NONE,
-                }),
-                &workspace,
-            );
-            assert_eq!(
-                state.type_editor.as_ref().ok_or("missing type")?.selected,
-                1
-            );
-            terminal.draw(|frame| state.render(frame))?;
-            assert_eq!(
-                terminal.backend().buffer()[(metadata.x, metadata.y)].fg,
-                Color::DarkGray
-            );
-            assert_eq!(
-                terminal.backend().buffer()[(properties.x, properties.y)].fg,
-                Color::Yellow
-            );
-            assert!(
-                row_text(&terminal, properties.x, properties.y + 2, properties.width)
-                    .contains("optional")
-            );
-            state.handle_event(
-                Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                    kind: MouseEventKind::Down(MouseButton::Left),
-                    column: metadata.x + 2,
-                    row: metadata.y + 2,
-                    modifiers: KeyModifiers::NONE,
-                }),
-                &workspace,
-            );
-            assert_eq!(
-                state.type_editor.as_ref().ok_or("missing type")?.focus,
-                CreateFocus::Types
-            );
-            assert_eq!(
-                state
-                    .type_editor
-                    .as_ref()
-                    .ok_or("missing type")?
-                    .text
-                    .name
-                    .cursor(),
-                (0, "existing".len())
-            );
-            state.handle_event(key(KeyCode::Enter), &workspace);
-            terminal.draw(|frame| state.render(frame))?;
-            assert!(row_text(&terminal, 0, 1, width).contains("/ edit type / edit p"));
-            assert!(text(&terminal).contains("135/100"));
-            state.handle_event(key(KeyCode::Esc), &workspace);
-            assert!(matches!(state.screen, Screen::TypeEditor));
-            state.handle_event(key(KeyCode::Esc), &workspace);
-            assert!(
-                matches!(state.screen, Screen::TaxonomyEditor)
-                    && state.editor_mode == EditorMode::Create
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn taxonomy_escape_confirms_only_changed_drafts_and_supports_mouse_choices()
-    -> Result<(), Box<dyn std::error::Error>> {
-        for (action, width, height) in [('n', 60, 18), ('f', 120, 30), ('e', 60, 18)] {
-            let (workspace, source) = child_editor_workspace()?;
-            let mut state = State::new(&workspace);
-            state.category = Category::Taxonomies;
-            state.home_focus = HomeFocus::Content;
-            select_taxonomy(&mut state, 3);
-            state.handle_event(key(KeyCode::Char(action)), &workspace);
-            assert!(!state.taxonomy_is_dirty());
-            state.handle_event(key(KeyCode::Esc), &workspace);
-            assert!(matches!(state.screen, Screen::Home));
-            state.handle_event(key(KeyCode::Char(action)), &workspace);
-            if action == 'e' {
-                state.handle_event(key(KeyCode::Up), &workspace);
-                state.handle_event(Event::Paste(" changed".into()), &workspace);
-            } else {
-                state.handle_event(Event::Paste("x".into()), &workspace);
-            }
-            assert!(state.taxonomy_is_dirty());
-            let draft = state.editor.clone();
-            let cursor = state.create_text.as_ref().map(|text| text.name.cursor());
-            state.handle_event(key(KeyCode::Esc), &workspace);
-            assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
-            assert!(state.dialog.buttons.is_none());
-            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-            terminal.draw(|frame| state.render(frame))?;
-            assert!(text(&terminal).contains("Discard Taxonomy"));
-            let buttons = state.dialog.buttons.ok_or("missing buttons")?;
-            state.handle_event(click(Rect::new(0, 0, 1, 1)), &workspace);
-            state.handle_event(Event::Paste("ignored".into()), &workspace);
-            state.handle_event(key(KeyCode::Down), &workspace);
-            assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
-            state.handle_event(click(buttons.keep), &workspace);
-            assert!(matches!(state.screen, Screen::TaxonomyEditor));
-            assert_eq!(state.editor, draft);
-            assert_eq!(
-                state.create_text.as_ref().map(|text| text.name.cursor()),
-                cursor
-            );
-            assert!(state.dialog.buttons.is_none());
-            state.handle_event(key(KeyCode::Esc), &workspace);
-            state.handle_event(click(buttons.confirm), &workspace);
-            assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
-            state.handle_event(key(KeyCode::Enter), &workspace);
-            assert!(state.taxonomy_is_dirty());
-            state.handle_event(key(KeyCode::Esc), &workspace);
-            terminal.draw(|frame| state.render(frame))?;
-            let buttons = state.dialog.buttons.ok_or("missing buttons")?;
-            state.handle_event(click(buttons.confirm), &workspace);
-            assert!(matches!(state.screen, Screen::Home));
-            assert!(state.editor.is_none());
-            assert!(state.initial_editor.is_none());
-            assert!(state.dialog.buttons.is_none());
-            assert_eq!(
-                workspace.global.borrow().catalog()?.find(source.id()),
-                Some(&source)
-            );
-            assert_eq!(workspace.saves.get(), 0);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn child_buttons_and_library_breadcrumb_preserve_discard_scope()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("feat".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("Feature".into()), &workspace);
-        let type_cursor = state
-            .type_editor
-            .as_ref()
-            .ok_or("missing type")?
-            .text
-            .description
-            .cursor();
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("intent".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("Why".into()), &workspace);
-        let property_cursor = state
-            .property_editor
-            .as_ref()
-            .ok_or("missing property")?
-            .text
-            .description
-            .cursor();
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(text(&terminal).contains("Discard Property"));
-        let buttons = state.dialog.buttons.ok_or("missing buttons")?;
-        state.handle_event(click(buttons.keep), &workspace);
-        assert!(matches!(state.screen, Screen::PropertyEditor));
-        assert_eq!(
-            state
-                .property_editor
-                .as_ref()
-                .ok_or("missing property")?
-                .text
-                .description
-                .cursor(),
-            property_cursor
-        );
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        let buttons = state.dialog.buttons.ok_or("missing buttons")?;
-        state.handle_event(click(buttons.confirm), &workspace);
-        assert!(state.property_editor.is_none());
-        assert!(
-            state
-                .type_editor
-                .as_ref()
-                .ok_or("missing type")?
-                .draft
-                .properties
-                .is_empty()
-        );
-        assert_eq!(
-            state
-                .type_editor
-                .as_ref()
-                .ok_or("missing type")?
-                .text
-                .description
-                .cursor(),
-            type_cursor
-        );
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(text(&terminal).contains("Discard Type"));
-        let buttons = state.dialog.buttons.ok_or("missing buttons")?;
-        state.handle_event(click(buttons.keep), &workspace);
-        assert_eq!(
-            state
-                .type_editor
-                .as_ref()
-                .ok_or("missing type")?
-                .text
-                .description
-                .cursor(),
-            type_cursor
-        );
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        let buttons = state.dialog.buttons.ok_or("missing buttons")?;
-        state.handle_event(click(buttons.confirm), &workspace);
-        assert!(
-            state
-                .editor
-                .as_ref()
-                .ok_or("missing taxonomy")?
-                .types
-                .is_empty()
-        );
-        assert!(!state.taxonomy_is_dirty());
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("feat".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("Feature".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert!(state.taxonomy_is_dirty());
-        assert_eq!(
-            state.editor.as_ref().ok_or("missing taxonomy")?.types.len(),
-            1
-        );
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        assert!(matches!(state.screen, Screen::TaxonomyEditor));
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("new-property".into()), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        let breadcrumb = state.breadcrumb_area;
-        state.handle_event(click(breadcrumb), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(text(&terminal).contains("Discard Taxonomy"));
-        let buttons = state.dialog.buttons.ok_or("missing buttons")?;
-        state.handle_event(click(buttons.keep), &workspace);
-        assert!(matches!(state.screen, Screen::PropertyEditor));
-        assert_eq!(
-            state
-                .property_editor
-                .as_ref()
-                .ok_or("missing property")?
-                .text
-                .name
-                .lines(),
-            &["new-property"]
-        );
-        state.handle_event(click(breadcrumb), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        let buttons = state.dialog.buttons.ok_or("missing buttons")?;
-        state.handle_event(click(buttons.confirm), &workspace);
-        assert!(matches!(state.screen, Screen::Home));
-        assert!(
-            state.editor.is_none()
-                && state.type_editor.is_none()
-                && state.property_editor.is_none()
-        );
-        assert_eq!(workspace.saves.get(), 0);
-        Ok(())
-    }
-
-    #[test]
-    fn configuration_discard_dialog_invalidates_mouse_targets_after_resize()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("team".into()), &workspace);
-        state.handle_event(key(KeyCode::Esc), &workspace);
+        state.handle_event(key(KeyCode::Char('d')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
+        assert!(text(&terminal).contains("Stage the deletion of \"original\"?"));
         let old = state.dialog.buttons.ok_or("missing buttons")?;
         state.handle_event(Event::Resize(30, 7), &workspace);
         assert!(state.dialog.buttons.is_none());
         state.handle_event(click(old.confirm), &workspace);
-        assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
+        assert!(matches!(state.screen, Screen::ConfirmRemove(_)));
         let mut tiny = Terminal::new(TestBackend::new(30, 7))?;
         tiny.draw(|frame| state.render(frame))?;
         assert!(state.dialog.buttons.is_none());
         state.handle_event(click(old.keep), &workspace);
-        assert!(matches!(state.screen, Screen::ConfirmDiscardCreate(_)));
+        assert!(matches!(state.screen, Screen::ConfirmRemove(_)));
         state.handle_event(key(KeyCode::Esc), &workspace);
-        assert!(matches!(state.screen, Screen::TaxonomyEditor));
-        assert!(state.taxonomy_is_dirty());
-        assert_eq!(
-            state
-                .create_text
-                .as_ref()
-                .ok_or("missing text")?
-                .name
-                .lines(),
-            &["team"]
-        );
-        assert_eq!(workspace.saves.get(), 0);
-        Ok(())
-    }
-
-    fn heading_row(terminal: &Terminal<TestBackend>, heading: &str) -> Option<String> {
-        let area = terminal.backend().buffer().area;
-        (0..area.height)
-            .map(|y| row_text(terminal, 0, y, area.width))
-            .find(|row| row.contains(&format!("{heading} ⠒")))
-    }
-
-    fn error_text(state: &State) -> Option<&str> {
-        match &state.status {
-            Some(Notice::Error(message)) => Some(message),
-            _ => None,
-        }
-    }
-
-    #[test]
-    fn create_name_heading_previews_the_saved_identifier_without_rewriting_the_name()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        let long = "Release Notes ".repeat(5);
-        let long_note = format!(
-            "saves as {}",
-            "release-notes-".repeat(5).trim_end_matches('-')
-        );
-        for (name, compact, wide) in [
-            (
-                "Team Changes",
-                "saves as team-changes",
-                "saves as team-changes",
-            ),
-            ("2fa", "start with a letter", "start with a letter"),
-            ("Café", "use letters a-z", "use letters a-z"),
-            ("!!!", "use letters a-z", "use letters a-z"),
-            (
-                long.as_str(),
-                "saves as release-notes-release-notes-rel…",
-                long_note.as_str(),
-            ),
-            ("team-changes", "", ""),
-            ("", "", ""),
-        ] {
-            rename_creation(&mut state, &workspace, name)?;
-            assert_eq!(state.status.as_ref().map(|_| ()), None);
-            for (width, height, note) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT, compact), (120, 30, wide)]
-            {
-                let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-                terminal.draw(|frame| state.render(frame))?;
-                let heading = heading_row(&terminal, "Name").ok_or("missing Name heading")?;
-                assert_eq!(heading.chars().count(), usize::from(width));
-                if note.is_empty() {
-                    assert!(heading.ends_with("⠒│"), "{name:?}: {heading:?}");
-                } else {
-                    assert!(
-                        heading.ends_with(&format!(" {note}│")),
-                        "{name:?}: {heading:?}"
-                    );
-                }
-            }
-            assert_eq!(
-                state
-                    .create_text
-                    .as_ref()
-                    .ok_or("missing text")?
-                    .name
-                    .lines(),
-                &[name.to_owned()]
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn child_names_complete_as_identifiers_and_report_plain_errors()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("Breaking\nChange".into()), &workspace);
-        assert!(state.status.is_none());
-        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        terminal.draw(|frame| state.render(frame))?;
-        let heading = heading_row(&terminal, "Name").ok_or("missing Name heading")?;
-        assert!(
-            heading.ends_with(" saves as breaking-change│"),
-            "{heading:?}"
-        );
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(
-            Event::Paste("  Changes that break callers.  \n\n".into()),
-            &workspace,
-        );
-
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("two words".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("Why it matters \n".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(key(KeyCode::Right), &workspace);
-        state.handle_event(key(KeyCode::Right), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("Behavior\r\nChanged".into()), &workspace);
-        assert!(state.status.is_none());
-        for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
-            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-            terminal.draw(|frame| state.render(frame))?;
-            let heading =
-                heading_row(&terminal, "Condition name").ok_or("missing condition heading")?;
-            assert!(
-                heading.ends_with(" saves as behavior-changed│"),
-                "{heading:?}"
-            );
-            if height > MINIMUM_HEIGHT {
-                let heading = heading_row(&terminal, "Name").ok_or("missing Name heading")?;
-                assert!(heading.ends_with(" saves as two-words│"), "{heading:?}");
-            }
-        }
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("\nWhen callers break.\n\n".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert!(state.status.is_none());
-        assert!(matches!(state.screen, Screen::TypeEditor));
-        let property = &state
-            .type_editor
-            .as_ref()
-            .ok_or("missing type")?
-            .draft
-            .properties[0];
-        assert_eq!(property.key, "two-words");
-        assert_eq!(property.description, "Why it matters");
-        let PropertyRequirement::Conditional(condition) = &property.requirement else {
-            return Err("missing condition".into());
-        };
-        assert_eq!(condition.id().as_str(), "behavior-changed");
-        assert_eq!(condition.rationale(), "When callers break.");
-
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert!(state.status.is_none());
-        let types = &state.editor.as_ref().ok_or("missing taxonomy")?.types;
-        assert_eq!(types.len(), 1);
-        assert_eq!(types[0].id, "breaking-change");
-        assert_eq!(types[0].description, "Changes that break callers.");
-        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(text(&terminal).contains("breaking-change"));
-
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("BREAKING change".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("Duplicate".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert_eq!(
-            error_text(&state),
-            Some("A type named \"breaking-change\" already exists in this taxonomy.")
-        );
-        assert!(matches!(state.screen, Screen::TypeEditor));
-        assert_eq!(
-            state.editor.as_ref().ok_or("missing taxonomy")?.types.len(),
-            1
-        );
-
-        for (name, message) in [
-            ("2fa", "Type name must start with a letter: \"2fa\"."),
-            (
-                "Café",
-                "Type name can't use \"é\". Use letters a-z and digits.",
-            ),
-            ("!!!", "Type name needs a letter."),
-            ("   ", "Type name is required."),
-        ] {
-            let editor = state.type_editor.as_mut().ok_or("missing type")?;
-            editor.focus = CreateFocus::Name;
-            editor.text.name.select_all();
-            state.handle_event(Event::Paste(name.into()), &workspace);
-            state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-            assert_eq!(error_text(&state), Some(message));
-            assert!(matches!(state.screen, Screen::TypeEditor));
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn staging_trims_edited_prose_and_names_the_staged_identifier()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("Team Changes".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste(" \n ".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('n')), &workspace);
-        state.handle_event(Event::Paste("feat".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(Event::Paste("Feature".into()), &workspace);
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        stage_creation(&mut state, &workspace);
-        assert_eq!(
-            error_text(&state),
-            Some("Taxonomy description is required.")
-        );
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor)
-                && state.editor_mode == EditorMode::Create
-        );
-
-        state.create_focus = CreateFocus::Description;
-        state
-            .create_text
-            .as_mut()
-            .ok_or("missing text")?
-            .description
-            .select_all();
-        state.handle_event(Event::Paste("  Team changes \n\n".into()), &workspace);
-        stage_creation(&mut state, &workspace);
         assert!(matches!(state.screen, Screen::Home));
-        assert!(matches!(
-            state.status,
-            Some(Notice::Info(ref message))
-                if message == "Staged taxonomy \"team-changes\". Ctrl+S reviews before applying."
-        ));
-        let staged = state
-            .global
-            .as_ref()
-            .ok_or("missing global")?
-            .catalog()?
-            .find(&TaxonomyId::new("team-changes")?)
-            .cloned()
-            .ok_or("missing staged taxonomy")?;
-        assert_eq!(staged.description().as_str(), "Team changes");
-        assert_eq!(staged.commit_types()[0].id().as_str(), "feat");
+        assert!(!state.any_dirty());
+        assert_eq!(workspace.saves.get(), 0);
         Ok(())
     }
 
@@ -6365,30 +3195,63 @@ mod tests {
         assert_eq!(sentence("Apply now?"), "Apply now?");
         assert_eq!(sentence(""), "");
 
-        let kind = TypeDraft {
-            id: "release".into(),
-            description: " ".into(),
-            schema_version: 1,
-            properties: Vec::new(),
+        let mut library = LibraryDraft::from_configuration(GlobalConfiguration::default());
+        let sentences = |library: &LibraryDraft| {
+            library
+                .problems()
+                .iter()
+                .map(|problem| problem_sentence(library, problem))
+                .collect::<Vec<_>>()
         };
-        assert_eq!(kind.build(), Err("Type description is required.".into()));
-        let property = PropertyDraft {
-            key: "notes".into(),
-            description: " ".into(),
-            ..PropertyDraft::empty()
+        let edit = |library: &mut LibraryDraft, node: &NodeId, edit: DraftEdit<'_>| {
+            library
+                .edit(node, edit)
+                .unwrap_or_else(|refusal| unreachable!("{refusal}"))
         };
+        let team = library.create_taxonomy();
         assert_eq!(
-            property.build(),
-            Err("Property description is required.".into())
+            sentences(&library),
+            [
+                "Taxonomy name is required.",
+                "Taxonomy description is required.",
+                "Add a type before applying the taxonomy."
+            ]
         );
-        let taxonomy = TaxonomyDraft {
-            id: "team".into(),
-            description: "Team changes".into(),
-            ..TaxonomyDraft::empty()
-        };
+        edit(
+            &mut library,
+            &team,
+            DraftEdit::Text(DraftField::Name, "Team"),
+        );
+        edit(
+            &mut library,
+            &team,
+            DraftEdit::Text(DraftField::Description, "Team changes"),
+        );
+        let release = edit(&mut library, &team, DraftEdit::AddType);
+        edit(
+            &mut library,
+            &release,
+            DraftEdit::Text(DraftField::Name, "release"),
+        );
+        let notes = edit(&mut library, &release, DraftEdit::AddProperty);
+        edit(
+            &mut library,
+            &notes,
+            DraftEdit::Text(DraftField::Name, "notes"),
+        );
+        edit(
+            &mut library,
+            &notes,
+            DraftEdit::Policy(gitserious_app::Policy::Conditional),
+        );
         assert_eq!(
-            taxonomy.build(),
-            Err("Add a type before staging the taxonomy.".into())
+            sentences(&library),
+            [
+                "Type description is required.",
+                "Property description is required.",
+                "Condition name is required.",
+                "Condition rationale is required."
+            ]
         );
     }
 
@@ -6410,239 +3273,372 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn every_built_in_entry_fits_its_editor_budget() {
-        fn length(text: &str) -> usize {
-            text.graphemes(true).count()
+    fn press(state: &mut State, workspace: &Workspace, keys: &[KeyCode]) {
+        for &code in keys {
+            state.handle_event(key(code), workspace);
         }
-        let mut over = Vec::new();
-        for taxonomy in gitserious_core::built_in_taxonomies() {
-            let used = length(taxonomy.id().as_str()) + length(taxonomy.description().as_str());
-            if used > CREATE_TEXT_LIMIT {
-                over.push(format!("{} {used}/{CREATE_TEXT_LIMIT}", taxonomy.id()));
-            }
-            for kind in taxonomy.commit_types() {
-                let used = length(kind.id().as_str()) + length(kind.description());
-                if used > child_editor::TYPE_LIMIT {
-                    over.push(format!(
-                        "{}/{} {used}/{}",
-                        taxonomy.id(),
-                        kind.id(),
-                        child_editor::TYPE_LIMIT
-                    ));
-                }
-                for property in kind.properties() {
-                    let used = length(property.key().as_str()) + length(property.description());
-                    if used > child_editor::PROPERTY_LIMIT {
-                        over.push(format!(
-                            "{}/{}/{} {used}/{}",
-                            taxonomy.id(),
-                            kind.id(),
-                            property.key(),
-                            child_editor::PROPERTY_LIMIT
-                        ));
-                    }
-                }
-            }
+    }
+
+    fn field(state: &State) -> Option<DraftField> {
+        match state.taxonomies.observe(state.library()).mode {
+            taxonomies::Mode::Edit { field, .. } => Some(field),
+            taxonomies::Mode::Nav => None,
         }
-        assert!(
-            over.is_empty(),
-            "built-in entries over their editor budget:\n{}",
-            over.join("\n")
+    }
+
+    fn text_of(
+        state: &State,
+        path: &[&str],
+        field: DraftField,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let library = library(state)?;
+        let node = library.find_path(path).ok_or("missing node")?;
+        Ok(library
+            .text(&node, field)
+            .ok_or("missing field")?
+            .to_owned())
+    }
+
+    fn notice(state: &State) -> Option<&str> {
+        match &state.status {
+            Some(Notice::Error(message) | Notice::Info(message)) => Some(message),
+            None => None,
+        }
+    }
+
+    /// `2`, then the `notes` property of `original` with its type expanded.
+    fn open_notes(state: &mut State, workspace: &Workspace) {
+        state.handle_event(key(KeyCode::Char('2')), workspace);
+        select_taxonomy(state, 3);
+        press(
+            state,
+            workspace,
+            &[
+                KeyCode::Right,
+                KeyCode::Right,
+                KeyCode::Right,
+                KeyCode::Down,
+            ],
         );
     }
 
     #[test]
-    fn text_fields_open_at_the_end_and_take_home_and_end() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let (workspace, _) = child_editor_workspace()?;
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        select_taxonomy(&mut state, 3);
-        state.handle_event(key(KeyCode::Char('e')), &workspace);
-        state.handle_event(key(KeyCode::Up), &workspace);
-        let description = |state: &State| -> Result<_, Box<dyn std::error::Error>> {
-            let text = &state
-                .create_text
-                .as_ref()
-                .ok_or("missing text")?
-                .description;
-            Ok((text.lines().join("\n"), text.cursor()))
-        };
-        assert_eq!(description(&state)?, ("Original taxonomy".into(), (0, 17)));
-        state.handle_event(key(KeyCode::Home), &workspace);
-        assert_eq!(description(&state)?.1, (0, 0));
-        state.handle_event(key(KeyCode::End), &workspace);
-        for character in " notes".chars() {
-            state.handle_event(key(KeyCode::Char(character)), &workspace);
+    fn a_custom_property_edits_in_place_and_each_field_holds_at_most_its_limit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (width, height) in [(87, 40), (MINIMUM_WIDTH, MINIMUM_HEIGHT)] {
+            let (workspace, _) = custom_workspace()?;
+            let mut state = State::new(&workspace);
+            open_notes(&mut state, &workspace);
+            assert_eq!(cursor(&state), ["original", "existing", "notes"]);
+            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+            terminal.draw(|frame| state.render(frame))?;
+            let screen = rows(&terminal).join("\n");
+            assert!(screen.contains("5/80"), "{screen}");
+            assert!(screen.contains("130/100"), "{screen}");
+            let footer = row_text(&terminal, 0, height - 1, width);
+            assert!(footer.starts_with(" NAV  · property  e edit"), "{footer}");
+            assert!(footer.contains("←/→ policy"), "{footer}");
+
+            press(&mut state, &workspace, &[KeyCode::Char('e')]);
+            assert_eq!(field(&state), Some(DraftField::Name));
+            terminal.draw(|frame| state.render(frame))?;
+            let footer = row_text(&terminal, 0, height - 1, width);
+            assert!(
+                footer.starts_with(" EDIT  · property  enter next field  esc done"),
+                "{footer}"
+            );
+            assert!(footer.contains("ctrl+s review"), "{footer}");
+            assert!(matches!(state.screen, Screen::Home));
+
+            press(
+                &mut state,
+                &workspace,
+                &[KeyCode::Char('q'), KeyCode::Char('1'), KeyCode::Char('/')],
+            );
+            assert!(state.home_overlay.is_none());
+            let name = ["original", "existing", "notesq1/"];
+            assert_eq!(text_of(&state, &name, DraftField::Name)?, "notesq1/");
+            state.handle_event(Event::Paste("x".repeat(100)), &workspace);
+            let long = format!("notesq1/{}", "x".repeat(72));
+            assert_eq!(
+                text_of(
+                    &state,
+                    &["original", "existing", long.as_str()],
+                    DraftField::Name
+                )?
+                .len(),
+                80
+            );
+            assert_eq!(notice(&state), Some("Name is limited to 80 characters."));
+
+            press(&mut state, &workspace, &[KeyCode::Enter]);
+            assert_eq!(field(&state), Some(DraftField::Description));
+            let path = ["original", "existing", long.as_str()];
+            press(&mut state, &workspace, &[KeyCode::Char('y')]);
+            assert_eq!(text_of(&state, &path, DraftField::Description)?.len(), 130);
+            assert_eq!(
+                notice(&state),
+                Some("Description is limited to 100 characters.")
+            );
+            press(&mut state, &workspace, &[KeyCode::Backspace]);
+            assert_eq!(text_of(&state, &path, DraftField::Description)?.len(), 129);
+
+            press(
+                &mut state,
+                &workspace,
+                &[KeyCode::Enter, KeyCode::Right, KeyCode::Left, KeyCode::Left],
+            );
+            assert_eq!(field(&state), Some(DraftField::Policy));
+            press(&mut state, &workspace, &[KeyCode::Enter]);
+            assert_eq!(field(&state), Some(DraftField::Condition));
+            for character in "risky".chars() {
+                press(&mut state, &workspace, &[KeyCode::Char(character)]);
+            }
+            press(&mut state, &workspace, &[KeyCode::Enter]);
+            assert_eq!(field(&state), Some(DraftField::Rationale));
+            terminal.draw(|frame| state.render(frame))?;
+            assert!(rows(&terminal).join("\n").contains("5/80"));
+            press(&mut state, &workspace, &[KeyCode::Enter]);
+            assert_eq!(field(&state), Some(DraftField::Name));
+
+            press(&mut state, &workspace, &[KeyCode::Esc]);
+            assert_eq!(field(&state), None);
+            assert!(matches!(state.screen, Screen::Home));
+            assert!(state.any_dirty());
+            press(&mut state, &workspace, &[KeyCode::Right, KeyCode::Left]);
+            assert_eq!(text_of(&state, &path, DraftField::Condition)?, "risky");
+            assert_eq!(workspace.saves.get(), 0);
         }
-        assert_eq!(
-            description(&state)?,
-            ("Original taxonomy notes".into(), (0, 23))
-        );
         Ok(())
     }
 
     #[test]
-    fn edit_opens_the_create_editor_with_its_name_fixed() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let (workspace, source) = child_editor_workspace()?;
+    fn a_stored_taxonomy_edits_its_description_and_keeps_its_name()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (workspace, _) = custom_workspace()?;
         let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
+        state.handle_event(key(KeyCode::Char('2')), &workspace);
         select_taxonomy(&mut state, 3);
-        state.handle_event(key(KeyCode::Char('e')), &workspace);
-        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        press(
+            &mut state,
+            &workspace,
+            &[KeyCode::Char('e'), KeyCode::Enter, KeyCode::Home],
+        );
+        assert_eq!(field(&state), Some(DraftField::Description));
+        press(
+            &mut state,
+            &workspace,
+            &[KeyCode::Char('A'), KeyCode::End, KeyCode::Char('.')],
+        );
+        assert_eq!(
+            text_of(&state, &["original"], DraftField::Description)?,
+            "AOriginal taxonomy."
+        );
+        assert_eq!(cursor(&state), ["original"]);
+        let version = library(&state)?.version(
+            &library(&state)?
+                .find_path(&["original"])
+                .ok_or("original")?,
+        );
+        assert_eq!(version, TaxonomyVersion::new(4).ok());
+        Ok(())
+    }
+
+    #[test]
+    fn add_rows_new_and_fork_create_blank_drafts_and_open_their_name()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (workspace, _) = custom_workspace()?;
+        let mut state = State::new(&workspace);
+        open_notes(&mut state, &workspace);
+        press(&mut state, &workspace, &[KeyCode::Down]);
+        assert_eq!(cursor(&state), ["original", "existing", "+ add property"]);
+        let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
         terminal.draw(|frame| state.render(frame))?;
-        let rendered = text(&terminal);
-        assert!(rendered.contains("fixed after creation"));
-        assert!(rendered.contains("Original taxonomy"));
-        assert!(rendered.contains(CREATE_TYPES_ADD_LABEL));
-        assert!(rendered.contains("existing"));
-        assert!(!rendered.contains("Metadata"));
-        assert_eq!(state.create_focus, CreateFocus::Types);
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("│▌    └ + add property"), "{screen}");
+        assert!(screen.contains("│   + add type"), "{screen}");
 
-        for _ in 0..3 {
-            state.handle_event(key(KeyCode::Up), &workspace);
+        press(&mut state, &workspace, &[KeyCode::Enter]);
+        assert_eq!(field(&state), Some(DraftField::Name));
+        assert_eq!(cursor(&state), ["original", "existing", ""]);
+        for character in "verification".chars() {
+            press(&mut state, &workspace, &[KeyCode::Char(character)]);
         }
-        assert_eq!(state.create_focus, CreateFocus::Description);
-        state.handle_event(Event::Paste("renamed".into()), &workspace);
-        assert_eq!(
-            state
-                .create_text
-                .as_ref()
-                .ok_or("missing text")?
-                .name
-                .lines()
-                .join("\n"),
-            source.id().as_str()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn failed_staging_keeps_the_edited_description_as_typed()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (workspace, _) = child_editor_workspace()?;
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        select_taxonomy(&mut state, 3);
-        state.handle_event(key(KeyCode::Char('e')), &workspace);
-        state.handle_event(key(KeyCode::Up), &workspace);
-        assert_eq!(state.create_focus, CreateFocus::Description);
-        state
-            .create_text
-            .as_mut()
-            .ok_or("missing text")?
-            .description
-            .select_all();
-        state.handle_event(Event::Paste("  Edited notes \n".into()), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.child_selected, 1);
-        state.handle_event(key(KeyCode::Char('d')), &workspace);
-        assert!(matches!(state.screen, Screen::ConfirmRemoveType(0)));
-        state.handle_event(key(KeyCode::Char('y')), &workspace);
+        assert_eq!(cursor(&state), ["original", "existing", "verification"]);
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert_eq!(
-            error_text(&state),
-            Some("Add a type before staging the taxonomy.")
-        );
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor) && state.editor_mode == EditorMode::Edit
-        );
-        assert_eq!(
-            state
-                .create_text
-                .as_ref()
-                .ok_or("missing text")?
-                .description
-                .lines()
-                .join("\n"),
-            "  Edited notes \n"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn natural_names_create_and_stage_a_taxonomy_with_ctrl_s_at_every_level()
-    -> Result<(), Box<dyn std::error::Error>> {
-        fn send(state: &mut State, workspace: &Workspace, event: Event) {
-            state.handle_event(event, workspace);
-            assert_eq!(error_text(state), None);
-        }
-        fn type_text(state: &mut State, workspace: &Workspace, text: &str) {
-            for character in text.chars() {
-                send(state, workspace, key(KeyCode::Char(character)));
-            }
-        }
-        fn assert_preview(
-            state: &mut State,
-            heading: &str,
-            note: &str,
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
-                let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-                terminal.draw(|frame| state.render(frame))?;
-                let row = heading_row(&terminal, heading).ok_or("missing heading")?;
-                assert!(row.ends_with(&format!(" {note}│")), "{row:?}");
-            }
-            Ok(())
-        }
-
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        send(&mut state, &workspace, key(KeyCode::Char('n')));
-        type_text(&mut state, &workspace, "Team Changes");
-        assert_preview(&mut state, "Name", "saves as team-changes")?;
-        send(&mut state, &workspace, key(KeyCode::Enter));
-        type_text(&mut state, &workspace, "Changes our team ships");
-
-        send(&mut state, &workspace, ctrl(KeyCode::Char('n')));
-        type_text(&mut state, &workspace, "Breaking change");
-        assert_preview(&mut state, "Name", "saves as breaking-change")?;
-        send(&mut state, &workspace, key(KeyCode::Enter));
-        type_text(&mut state, &workspace, "Changes that break callers");
-
-        send(&mut state, &workspace, ctrl(KeyCode::Char('n')));
-        type_text(&mut state, &workspace, "two words");
-        assert_preview(&mut state, "Name", "saves as two-words")?;
-        send(&mut state, &workspace, key(KeyCode::Enter));
-        type_text(&mut state, &workspace, "What the change breaks");
-
-        send(&mut state, &workspace, ctrl(KeyCode::Char('s')));
-        assert!(matches!(state.screen, Screen::TypeEditor));
-        send(&mut state, &workspace, ctrl(KeyCode::Char('s')));
-        assert!(
-            matches!(state.screen, Screen::TaxonomyEditor)
-                && state.editor_mode == EditorMode::Create
-        );
-        send(&mut state, &workspace, ctrl(KeyCode::Char('s')));
         assert!(matches!(state.screen, Screen::Home));
-        assert!(matches!(
-            state.status,
-            Some(Notice::Info(ref message))
-                if message == "Staged taxonomy \"team-changes\". Ctrl+S reviews before applying."
-        ));
-        let staged = state
-            .global
-            .as_ref()
-            .ok_or("missing global")?
-            .catalog()?
-            .find(&TaxonomyId::new("team-changes")?)
-            .cloned()
-            .ok_or("missing staged taxonomy")?;
-        let [kind] = staged.commit_types() else {
-            return Err("expected one type".into());
-        };
-        assert_eq!(kind.id().as_str(), "breaking-change");
-        assert_eq!(kind.properties().len(), 1);
-        assert_eq!(kind.properties()[0].key().as_str(), "two-words");
+        assert_eq!(notice(&state), Some("Property description is required."));
+
+        press(
+            &mut state,
+            &workspace,
+            &[KeyCode::Esc, KeyCode::Down, KeyCode::Down],
+        );
+        assert_eq!(cursor(&state), ["original", "+ add type"]);
+        press(&mut state, &workspace, &[KeyCode::Enter]);
+        assert_eq!(cursor(&state), ["original", ""]);
+        assert_eq!(field(&state), Some(DraftField::Name));
+
+        press(&mut state, &workspace, &[KeyCode::Esc, KeyCode::Char('n')]);
+        assert_eq!(cursor(&state), [""]);
+        assert_eq!(field(&state), Some(DraftField::Name));
+        press(&mut state, &workspace, &[KeyCode::Esc]);
+        select_taxonomy(&mut state, 1);
+        press(&mut state, &workspace, &[KeyCode::Char('f')]);
+        assert_eq!(cursor(&state), ["research-fork"]);
+        assert_eq!(field(&state), Some(DraftField::Name));
         assert_eq!(workspace.saves.get(), 0);
         Ok(())
+    }
+
+    #[test]
+    fn removing_a_property_asks_first_and_lands_on_its_type()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (workspace, _) = custom_workspace()?;
+        let mut state = State::new(&workspace);
+        open_notes(&mut state, &workspace);
+        press(&mut state, &workspace, &[KeyCode::Char('d')]);
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(text(&terminal).contains("Remove property \"notes\" from type"));
+        assert!(row_text(&terminal, 0, MINIMUM_HEIGHT - 1, MINIMUM_WIDTH).contains("y: remove"));
+        press(&mut state, &workspace, &[KeyCode::Char('y')]);
+        assert!(matches!(state.screen, Screen::Home));
+        assert_eq!(cursor(&state), ["original", "existing"]);
+        assert!(
+            library(&state)?
+                .find_path(&["original", "existing", "notes"])
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn alt_arrows_reorder_a_custom_type_and_the_cursor_follows()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (workspace, _) = custom_workspace()?;
+        let mut state = State::new(&workspace);
+        let draft = state
+            .global
+            .as_mut()
+            .and_then(ConfigurationSession::library_mut)
+            .ok_or("missing global")?;
+        let original = draft.find_path(&["original"]).ok_or("missing original")?;
+        let added = draft.edit(&original, DraftEdit::AddType)?;
+        draft.edit(&added, DraftEdit::Text(DraftField::Name, "added"))?;
+        open_notes(&mut state, &workspace);
+        press(&mut state, &workspace, &[KeyCode::Up]);
+        assert_eq!(cursor(&state), ["original", "existing"]);
+        let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(row_text(&terminal, 0, 29, 120).contains("alt+↑/↓ reorder"));
+
+        let alt = |code| Event::Key(KeyEvent::new(code, KeyModifiers::ALT));
+        state.handle_event(alt(KeyCode::Down), &workspace);
+        assert_eq!(cursor(&state), ["original", "existing"]);
+        let types = |state: &State| -> Result<Vec<String>, Box<dyn std::error::Error>> {
+            Ok(library(state)?.taxonomies()[3]
+                .types()
+                .iter()
+                .map(|commit_type| commit_type.name().to_owned())
+                .collect())
+        };
+        assert_eq!(types(&state)?, ["added", "existing"]);
+        state.handle_event(alt(KeyCode::Down), &workspace);
+        assert_eq!(types(&state)?, ["added", "existing"]);
+        state.handle_event(alt(KeyCode::Up), &workspace);
+        assert_eq!(types(&state)?, ["existing", "added"]);
+        assert_eq!(cursor(&state), ["original", "existing"]);
+
+        select_taxonomy(&mut state, 0);
+        press(&mut state, &workspace, &[KeyCode::Right, KeyCode::Down]);
+        let before = cursor(&state);
+        state.handle_event(alt(KeyCode::Down), &workspace);
+        assert_ne!(
+            cursor(&state),
+            before,
+            "alt+↓ on a built-in type only moves the cursor"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn deleting_a_selected_taxonomy_is_refused_before_its_dialog()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (workspace, source) = custom_workspace()?;
+        *workspace.global.borrow_mut() =
+            ConfigurationSession::open_global(GlobalConfiguration::new(
+                1,
+                TaxonomyId::new("conventional")?,
+                vec![
+                    TaxonomyId::new("conventional")?,
+                    TaxonomyId::new("original")?,
+                ],
+                vec![source],
+            )?);
+        let mut state = State::new(&workspace);
+        state.handle_event(key(KeyCode::Char('2')), &workspace);
+        select_taxonomy(&mut state, 3);
+        press(&mut state, &workspace, &[KeyCode::Char('d')]);
+        assert!(matches!(state.screen, Screen::Home));
+        assert_eq!(
+            notice(&state),
+            Some("Taxonomy \"original\" is not installed.")
+        );
+        assert!(library(&state)?.find_path(&["original"]).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn quitting_with_unapplied_changes_asks_first() -> Result<(), Box<dyn std::error::Error>> {
+        let (workspace, _) = custom_workspace()?;
+        let mut state = State::new(&workspace);
+        open_notes(&mut state, &workspace);
+        assert!(!state.handle_event(key(KeyCode::Char('e')), &workspace));
+        assert!(!state.handle_event(key(KeyCode::Char('q')), &workspace));
+        assert!(!state.handle_event(key(KeyCode::Esc), &workspace));
+        assert!(state.any_dirty());
+        assert!(!state.handle_event(key(KeyCode::Char('q')), &workspace));
+        assert!(matches!(state.screen, Screen::Leave));
+        press(&mut state, &workspace, &[KeyCode::Char('n')]);
+        assert!(matches!(state.screen, Screen::Home));
+        assert!(state.any_dirty());
+        Ok(())
+    }
+
+    #[test]
+    fn every_built_in_entry_fits_its_field_limits() {
+        let library = LibraryDraft::from_configuration(GlobalConfiguration::default());
+        let fields = [
+            DraftField::Name,
+            DraftField::Description,
+            DraftField::Condition,
+            DraftField::Rationale,
+        ];
+        for taxonomy in library.taxonomies() {
+            let ids = std::iter::once(taxonomy.id()).chain(taxonomy.types().iter().flat_map(
+                |commit_type| {
+                    std::iter::once(commit_type.id()).chain(
+                        commit_type
+                            .properties()
+                            .iter()
+                            .map(gitserious_app::PropertyNode::id),
+                    )
+                },
+            ));
+            for id in ids {
+                for field in fields {
+                    let (Some(text), Some(limit)) = (library.text(id, field), field.limit()) else {
+                        continue;
+                    };
+                    assert!(
+                        text.chars().count() <= limit,
+                        "{:?} {field:?} has {} characters",
+                        library.node(id).map(NodeRef::names),
+                        text.chars().count()
+                    );
+                }
+            }
+        }
     }
 }

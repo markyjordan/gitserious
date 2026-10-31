@@ -4,59 +4,61 @@
 //! [`Alphabet`], up to the seed's depth bound, and checks every entry of [`PROPERTIES`] on every
 //! transition, the keys that reach the seed's [`Start`] included. An outline start names the row
 //! to start on by its names, and the check finds the keys: `2`, then `down` until the selected
-//! row matches each name and `right` to expand it before the next. Seeds that open one of the
-//! taxonomy, type, or property editors start from literal keys and a readiness predicate. A seed explores every key in [`INPUTS`] unless it
-//! names a smaller alphabet, which lets it reach deeper for the same number of replays. After a
-//! seed's exploration, each of its [`Reach`] goals must have seen every expected value in some
-//! explored state. A state is rebuilt by replaying its keys into a fresh fake workspace and
-//! rendering into a [`TestBackend`] after every event, as the terminal loop does. Two states merge
-//! only when their [`Snapshot`]s print the same, and properties read nothing but snapshots, so a
-//! merge never hides a difference that a property can see. A key that quits the editor ends its
-//! branch, and the properties judge it as a transition that drops every draft. Exploration is
-//! breadth first, so a counterexample is a shortest one for its seed.
+//! row matches each name and `right` to expand it before the next, then `e` and `enter` until
+//! EDIT sits on the seed's field. Other seeds start from literal keys and a readiness predicate.
+//! A seed explores every key in [`INPUTS`] unless it names a smaller alphabet, which lets it
+//! reach deeper for the same number of replays. After a seed's exploration, each of its
+//! [`Reach`] goals must have seen every expected value in some explored state. A state is rebuilt
+//! by replaying its keys into a fresh fake workspace and rendering into a [`TestBackend`] after
+//! every event, as the terminal loop does. Two states merge only when their [`Snapshot`]s print
+//! the same, and properties read nothing but snapshots, so a merge never hides a difference that
+//! a property can see. A key that quits the editor ends its branch, and the properties judge it
+//! as a transition that drops every draft. Exploration is breadth first, so a counterexample is a
+//! shortest one for its seed.
 //!
 //! To add a property of every transition, write a [`Check`] and add it to [`PROPERTIES`]. To add a
 //! property of what a seed can reach, add a [`Reach`] to that seed. Add to [`Snapshot`] any field
 //! either one reads that the snapshot does not hold yet.
 //!
-//! P1, no silent draft loss. A taxonomy draft, type editor, or property editor with unsaved changes
-//! closes only after the user confirms the discard or after its changes reach the parent draft or
-//! the staged Library. Without it, a user loses typed work without a warning. A stage that the
-//! session reports as `No changes to stage.` also closes a draft legitimately: its text differs
-//! from the original only in whitespace that staging trims, and the notice says so.
+//! P1, the unapplied draft is dropped only by apply or a confirmed discard. While the Library
+//! has unapplied changes, a key clears them or quits only when it answers the Quit or Unapplied
+//! Changes dialog, applies from the review, confirms a Remove dialog, or is an edit key that
+//! returns the draft to what is stored (a text key in EDIT, ←/→ on a policy, or alt+↑/↓ in NAV).
+//! Without it, esc, a tab, or a stray key throws away typed work without a warning.
 //!
-//! P2, an unchanged edit stages nothing. Ctrl+S in the edit editor while the taxonomy draft has no
-//! unsaved changes leaves the staged Library as it was. Without it, an edit that changes nothing
-//! advances the taxonomy's version and rewrites the user's configuration on apply.
+//! P2, a NAV/EDIT round trip with no edit leaves the session clean. From Taxonomies with no
+//! unapplied changes and no overlay, only a key that creates or edits a draft (`n`, `f`, enter on
+//! an add row, ←/→ on a policy, alt+↑/↓ in NAV, or a text key in EDIT) leaves unapplied changes. Without it,
+//! entering EDIT, moving between fields, or esc advances a taxonomy's version and rewrites the
+//! user's configuration on apply.
 //!
 //! P3, the review names every taxonomy change. While the Global review shows, every custom
 //! taxonomy whose content differs between the saved and the staged Library appears in the frame
 //! as `created`, `edited`, or `deleted` followed by its id. Without it, a user applies a change
 //! that the review did not show.
 //!
-//! P4, the property editor reaches every policy. From a new property editor, the arrow keys and
-//! enter alone set the editor to every requirement level (required, recommended, conditional,
-//! optional). Without it, a property needs a hand edit of `config.toml` to take a level the
+//! P4, the Inspector's Policy reaches every policy. From a custom property in NAV, the arrow keys
+//! and enter alone set the property to every policy (required, recommended, conditional,
+//! optional). Without it, a property needs a hand edit of `config.toml` to take a policy the
 //! editor cannot set.
 //!
-//! P5, an edit keeps the taxonomy's name. While the editor edits an existing taxonomy, its Name
-//! field holds the name the taxonomy was opened with. Without it, a user could rename a taxonomy
-//! that projects pin by name, and staging would fail or address the wrong taxonomy.
+//! P5, a stored taxonomy's name never changes. Every custom taxonomy the configuration stores
+//! keeps the name it was loaded with. Without it, a user could rename a taxonomy that projects pin
+//! by name, and apply would address the wrong taxonomy.
 //!
-//! P6, no key grows an entry past its budget. A taxonomy, type, or property's name and description
-//! share one budget sized to the element that shows them: 80 characters for a taxonomy or type and
-//! 100 for a property. No key leaves an open editor's entry longer than its budget and longer than
-//! before. Without it, a user can type text that misshapes the editor's rows or that staging later
-//! refuses.
+//! P6, no key grows a field past its own limit. Name and Condition hold at most 80 characters and
+//! Description and Rationale at most 100, on every taxonomy, type, and property. No key leaves a
+//! field of a custom node that existed before the key longer than its limit and longer than
+//! before. Without it, a user can type text that misshapes the Inspector's rows.
 //!
 //! P7, every alert is a whole sentence. Every notice a reachable state shows starts with a capital
 //! letter, ends a sentence, avoids the application's own words (`session`, `save`, `global
 //! configuration`), and appears in the frame in full. Without it, raw domain errors and clipped
 //! toasts reach the screen.
 //!
-//! P8, removals go through their dialog. A type leaves the taxonomy draft, or a property leaves its
-//! type, only when the user answers y on the Remove Type or Remove Property dialog. Without it, one
-//! stray d drops a type with all of its properties.
+//! P8, removals go through their dialog. A type or property leaves the Library only when the user
+//! answers y on its Remove or Delete dialog, or discards on the Unapplied Changes dialog. Without
+//! it, one stray d drops a type with all of its properties.
 //!
 //! P9, the footer shows the dialog's choices. While any confirmation is open, the footer row shows
 //! each of its choices as `key: label`, the same pairs as the dialog's buttons. Without it, the
@@ -66,40 +68,44 @@
 //! - Only the keyboard events in [`INPUTS`]. Mouse, paste, and resize events are out of scope.
 //! - One terminal of `MINIMUM_WIDTH` by `MINIMUM_HEIGHT` cells. Mouse hit areas that rendering
 //!   records are not projected.
-//! - The property editor's scroll position and the child editors' initial drafts are private to
-//!   `child_editor`. The snapshot sees them only through the rendered frame and each editor's
-//!   `is_dirty`. It reads the property editor's policy through a test-only view that returns the
-//!   label the editor renders.
-//! - `State` runs standalone, not inside the unified shell, so `ConfigView::request_leave_editor`
-//!   is not driven.
+//! - `State` runs standalone, not inside the unified shell, so the shell's own quit dialog and its
+//!   tab keys are not driven.
 //! - Workspace saves always succeed, and the project starts uninitialized.
 //! - P3 reads the frame, so it sees only the review rows that fit the viewport. Every seed's review
 //!   fits without scrolling.
-//! - P4 explores only the up, down, left, right, and enter keys from one new property editor. It
-//!   reads the editor's policy, not the frame.
+//! - P4 explores only the up, down, left, right, and enter keys from one custom property. It reads
+//!   the selected property's policy in the Library, not the frame.
+//! - P6 checks fields of custom nodes that existed before the key; a fork copies its source's
+//!   text as it is.
 //! - The Taxonomies outline is seen through `taxonomies::Observation`: the raw cursor and expanded
-//!   node ids, the selected row's names, the scroll offsets, and the mode.
-//! - A pass covers the nine seeds to their depth bounds, not every reachable state. Every replay
-//!   renders each frame in a debug build, so the bounds keep the check near 45 seconds on six
-//!   cores. The editor seeds get the deeper bound because P1 lives in the editors. The P4 seed's
-//!   bound is deep enough to expand every state its five keys reach.
+//!   node ids, the selected row's names, the scroll offsets, and the mode with its field and text
+//!   cursor. The Library is seen through the Global session, so a draft edit changes the snapshot.
+//! - A pass covers the seeds to their depth bounds, not every reachable state. Every replay
+//!   renders each frame in a debug build, so the bounds keep the check near a minute on six
+//!   cores. A new taxonomy and the Description at its limit get the deeper bound because typing
+//!   and the limit live there. The P4 seed's bound is deep enough to expand every state its five
+//!   keys reach.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use gitserious_app::GlobalConfiguration;
+use gitserious_app::{DraftField, GlobalConfiguration, NodeRef};
+use gitserious_core::{
+    CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
+    PropertyRequirement, SchemaVersion, TaxonomyVersion,
+};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use unicode_segmentation::UnicodeSegmentation;
 
-use super::child_editor::PropertyFocus;
 use super::taxonomies::{Mode, Observation};
 use super::tests::Workspace;
 use super::*;
-use crate::confirmation::{self, Answer, ConfirmDialog, DISCARD, REMOVE};
+use crate::confirmation::{self, Answer, ConfirmDialog, DISCARD_AND_QUIT, REMOVE};
 
 const fn press(code: KeyCode, modifiers: KeyModifiers) -> Event {
     Event::Key(KeyEvent::new(code, modifiers))
@@ -116,6 +122,8 @@ const INPUTS: &[(&str, Event)] = &[
     ("backtab", press(KeyCode::BackTab, KeyModifiers::SHIFT)),
     ("up", plain(KeyCode::Up)),
     ("down", plain(KeyCode::Down)),
+    ("alt+up", press(KeyCode::Up, KeyModifiers::ALT)),
+    ("alt+down", press(KeyCode::Down, KeyModifiers::ALT)),
     ("left", plain(KeyCode::Left)),
     ("right", plain(KeyCode::Right)),
     ("home", plain(KeyCode::Home)),
@@ -123,10 +131,6 @@ const INPUTS: &[(&str, Event)] = &[
     ("backspace", plain(KeyCode::Backspace)),
     ("delete", plain(KeyCode::Delete)),
     ("ctrl+s", press(KeyCode::Char('s'), KeyModifiers::CONTROL)),
-    ("ctrl+n", press(KeyCode::Char('n'), KeyModifiers::CONTROL)),
-    ("alt+up", press(KeyCode::Up, KeyModifiers::ALT)),
-    ("alt+down", press(KeyCode::Down, KeyModifiers::ALT)),
-    ("alt+enter", press(KeyCode::Enter, KeyModifiers::ALT)),
     ("/", plain(KeyCode::Char('/'))),
     ("?", plain(KeyCode::Char('?'))),
     ("n", plain(KeyCode::Char('n'))),
@@ -155,13 +159,19 @@ enum Start {
     /// The Taxonomies outline with the row these names lead to selected, in `mode`.
     Outline {
         path: &'static [&'static str],
-        mode: Mode,
+        mode: StartMode,
     },
     /// The state these keys reach, which `ready` must accept.
     Keys {
         keys: &'static [&'static str],
         ready: fn(&Snapshot) -> bool,
     },
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum StartMode {
+    Nav,
+    Edit(DraftField),
 }
 
 /// The keys a seed explores after its start.
@@ -178,13 +188,15 @@ struct Reach {
     expected: &'static [&'static str],
 }
 
+const SUMMARY: &[&str] = &["team", "release", "summary"];
+
 const SEEDS: &[Seed] = &[
     Seed {
         name: "built-ins at Taxonomies",
         workspace: built_ins,
         start: Start::Outline {
             path: &["conventional"],
-            mode: Mode::Nav,
+            mode: StartMode::Nav,
         },
         depth: 2,
         alphabet: Alphabet::Every,
@@ -195,7 +207,7 @@ const SEEDS: &[Seed] = &[
         workspace: team_library,
         start: Start::Outline {
             path: &["team"],
-            mode: Mode::Nav,
+            mode: StartMode::Nav,
         },
         depth: 2,
         alphabet: Alphabet::Every,
@@ -205,43 +217,54 @@ const SEEDS: &[Seed] = &[
         name: "team release expanded at Taxonomies",
         workspace: team_library,
         start: Start::Outline {
-            path: &["team", "release", "summary"],
-            mode: Mode::Nav,
+            path: SUMMARY,
+            mode: StartMode::Nav,
         },
         depth: 2,
         alphabet: Alphabet::Every,
         reaches: &[],
     },
     Seed {
-        name: "built-ins with the create editor open",
+        name: "a new taxonomy in EDIT on its Name",
         workspace: built_ins,
         start: Start::Keys {
             keys: &["2", "n"],
-            ready: creating,
+            ready: |snapshot| editing(snapshot) == Some(DraftField::Name),
         },
         depth: 3,
         alphabet: Alphabet::Every,
         reaches: &[],
     },
     Seed {
-        name: "a fork of conventional open at its full budget",
+        name: "a fork of conventional in EDIT on its Name",
         workspace: built_ins,
         start: Start::Keys {
             keys: &["2", "f"],
-            ready: forking,
+            ready: |snapshot| editing(snapshot) == Some(DraftField::Name),
         },
         depth: 2,
         alphabet: Alphabet::Every,
         reaches: &[],
     },
     Seed {
-        name: "team with the edit editor open",
+        name: "team in EDIT on its Description at the limit",
         workspace: team_library,
-        start: Start::Keys {
-            keys: &["2", "down", "down", "down", "e"],
-            ready: editing,
+        start: Start::Outline {
+            path: &["team"],
+            mode: StartMode::Edit(DraftField::Description),
         },
         depth: 3,
+        alphabet: Alphabet::Every,
+        reaches: &[],
+    },
+    Seed {
+        name: "team summary in EDIT on its Name",
+        workspace: team_library,
+        start: Start::Outline {
+            path: SUMMARY,
+            mode: StartMode::Edit(DraftField::Name),
+        },
+        depth: 2,
         alphabet: Alphabet::Every,
         reaches: &[],
     },
@@ -249,8 +272,8 @@ const SEEDS: &[Seed] = &[
         name: "team edited at Taxonomies",
         workspace: team_library,
         start: Start::Keys {
-            keys: &["2", "down", "down", "down", "e", "up", "a", "ctrl+s"],
-            ready: team_selected,
+            keys: &["2", "down", "down", "down", "e", "backspace", "esc"],
+            ready: |snapshot| at_outline(snapshot) && snapshot.unapplied,
         },
         depth: 2,
         alphabet: Alphabet::Every,
@@ -260,35 +283,39 @@ const SEEDS: &[Seed] = &[
         name: "a fork created and team deleted at Taxonomies",
         workspace: team_library,
         start: Start::Keys {
-            keys: &[
-                "2",
-                "f",
-                "backspace",
-                "ctrl+s",
-                "down",
-                "down",
-                "down",
-                "d",
-                "y",
-            ],
-            ready: at_outline,
+            keys: &["2", "f", "esc", "up", "d", "y"],
+            ready: |snapshot| at_outline(snapshot) && snapshot.unapplied,
         },
         depth: 2,
         alphabet: Alphabet::Every,
         reaches: &[],
     },
     Seed {
-        name: "team with a new property editor open",
+        name: "a new property from its add row in EDIT on its Name",
         workspace: team_library,
         start: Start::Keys {
-            keys: &["2", "down", "down", "down", "e", "down", "enter", "ctrl+n"],
-            ready: adding_property,
+            keys: &[
+                "2", "down", "down", "down", "right", "right", "right", "down", "down", "down",
+                "enter",
+            ],
+            ready: |snapshot| editing(snapshot) == Some(DraftField::Name),
         },
-        depth: 13,
+        depth: 2,
+        alphabet: Alphabet::Every,
+        reaches: &[],
+    },
+    Seed {
+        name: "team summary's policy in NAV",
+        workspace: team_library,
+        start: Start::Outline {
+            path: SUMMARY,
+            mode: StartMode::Nav,
+        },
+        depth: 5,
         alphabet: Alphabet::Only(&["up", "down", "left", "right", "enter"]),
         reaches: &[Reach {
-            name: "P4, the property editor reaches every policy",
-            observe: editor_policy,
+            name: "P4, the Inspector's Policy reaches every policy",
+            observe: selected_policy,
             expected: &["required", "recommended", "conditional", "optional"],
         }],
     },
@@ -309,28 +336,12 @@ fn selects(snapshot: &Snapshot, path: &[&str]) -> bool {
         .eq(path.iter().copied())
 }
 
-fn team_selected(snapshot: &Snapshot) -> bool {
-    at_outline(snapshot) && selects(snapshot, &["team"])
-}
-
-fn creating(snapshot: &Snapshot) -> bool {
-    matches!(snapshot.screen, Screen::TaxonomyEditor) && snapshot.editor_mode == EditorMode::Create
-}
-
-fn forking(snapshot: &Snapshot) -> bool {
-    creating(snapshot) && snapshot.fork_source.is_some()
-}
-
-fn editing(snapshot: &Snapshot) -> bool {
-    matches!(snapshot.screen, Screen::TaxonomyEditor) && snapshot.editor_mode == EditorMode::Edit
-}
-
-fn adding_property(snapshot: &Snapshot) -> bool {
-    matches!(snapshot.screen, Screen::PropertyEditor)
-        && snapshot
-            .property_editor
-            .as_ref()
-            .is_some_and(|editor| editor.target.is_none())
+/// The field EDIT sits on, if the outline is in EDIT.
+fn editing(snapshot: &Snapshot) -> Option<DraftField> {
+    match &snapshot.taxonomies.mode {
+        Mode::Edit { field, .. } if at_outline(snapshot) => Some(*field),
+        _ => None,
+    }
 }
 
 #[expect(
@@ -348,21 +359,31 @@ fn team_library() -> Result<Workspace, String> {
     Ok(workspace)
 }
 
+/// `team` with a Description at its limit and one type with two properties, so a property can
+/// move.
 fn team_configuration() -> Result<GlobalConfiguration, Box<dyn std::error::Error>> {
+    let description = format!("Team taxonomy{}", ".".repeat(87));
     let team = Taxonomy::new(
         TaxonomyId::new("team")?,
         TaxonomyVersion::new(1)?,
-        Description::new("Team taxonomy")?,
+        Description::new(description)?,
         None,
         vec![CommitTypeDefinition::new(
             SchemaVersion::new(1)?,
             CommitTypeId::new("release")?,
             "Release notes",
-            vec![PropertyDefinition::new(
-                PropertyKey::new("summary")?,
-                "What shipped",
-                PropertyRequirement::Required,
-            )?],
+            vec![
+                PropertyDefinition::new(
+                    PropertyKey::new("summary")?,
+                    "What shipped",
+                    PropertyRequirement::Required,
+                )?,
+                PropertyDefinition::new(
+                    PropertyKey::new("notes")?,
+                    "Anything else",
+                    PropertyRequirement::Optional,
+                )?,
+            ],
         )?],
     )?;
     let conventional = TaxonomyId::new("conventional")?;
@@ -372,48 +393,6 @@ fn team_configuration() -> Result<GlobalConfiguration, Box<dyn std::error::Error
         vec![conventional],
         vec![team],
     )?)
-}
-
-#[derive(Debug)]
-#[expect(dead_code, reason = "the fingerprint reads these fields through Debug")]
-struct Text {
-    lines: Vec<String>,
-    cursor: (usize, usize),
-}
-
-impl Text {
-    fn of(area: &TextArea<'_>) -> Self {
-        Self {
-            lines: area.lines().to_vec(),
-            cursor: area.cursor(),
-        }
-    }
-}
-
-#[derive(Debug)]
-#[expect(dead_code, reason = "the fingerprint reads these fields through Debug")]
-struct TypeEditorView {
-    target: Option<usize>,
-    draft: TypeDraft,
-    name: Text,
-    description: Text,
-    focus: CreateFocus,
-    selected: usize,
-    offset: usize,
-    dirty: bool,
-}
-
-#[derive(Debug)]
-#[expect(dead_code, reason = "the fingerprint reads these fields through Debug")]
-struct PropertyEditorView {
-    target: Option<usize>,
-    name: Text,
-    description: Text,
-    condition_name: Text,
-    condition_rationale: Text,
-    focus: PropertyFocus,
-    policy: &'static str,
-    dirty: bool,
 }
 
 /// Everything a user can observe or that later input can affect, as a property sees it.
@@ -427,23 +406,14 @@ struct Snapshot {
     active_scope: ConfigurationDestination,
     taxonomies: Observation,
     overlay: Option<String>,
-    child_selected: usize,
-    create_focus: CreateFocus,
-    create_type_offset: usize,
     scroll: u16,
     project_scroll: u16,
     status: Option<String>,
-    editor_mode: EditorMode,
-    draft: Option<TaxonomyDraft>,
-    initial_draft: Option<TaxonomyDraft>,
-    draft_dirty: bool,
-    create_text: Option<[Text; 2]>,
-    fork_source: Option<String>,
-    type_editor: Option<TypeEditorView>,
-    property_editor: Option<PropertyEditorView>,
     settings: Option<SettingsDraft>,
     global: Option<ConfigurationSession>,
     project: Option<ConfigurationSession>,
+    /// Whether the Library has changes apply would write.
+    unapplied: bool,
     load_errors: [String; 2],
     saved: [ConfigurationSession; 2],
     dialog: String,
@@ -461,58 +431,21 @@ impl Snapshot {
             home_focus: state.home_focus,
             project_section: state.project_section,
             active_scope: state.active_scope,
-            taxonomies: state.taxonomies.observe(state.library().as_ref()),
+            taxonomies: state.taxonomies.observe(state.library()),
             overlay: state
                 .home_overlay
                 .as_ref()
                 .map(|overlay| format!("{overlay:?}")),
-            child_selected: state.child_selected,
-            create_focus: state.create_focus,
-            create_type_offset: state.create_type_offset,
             scroll: state.scroll,
             project_scroll: state.project_scroll,
             status: state.status.as_ref().map(|notice| match notice {
                 Notice::Error(message) => format!("error: {message}"),
                 Notice::Info(message) => format!("info: {message}"),
             }),
-            editor_mode: state.editor_mode,
-            draft: state.editor.clone(),
-            initial_draft: state.initial_editor.clone(),
-            draft_dirty: state.taxonomy_is_dirty(),
-            create_text: state
-                .create_text
-                .as_ref()
-                .map(|text| [Text::of(&text.name), Text::of(&text.description)]),
-            fork_source: state
-                .fork_source
-                .as_ref()
-                .map(|source| format!("{source:?}")),
-            type_editor: state.type_editor.as_ref().map(|editor| TypeEditorView {
-                target: editor.target,
-                draft: editor.draft.clone(),
-                name: Text::of(&editor.text.name),
-                description: Text::of(&editor.text.description),
-                focus: editor.focus,
-                selected: editor.selected,
-                offset: editor.offset,
-                dirty: editor.is_dirty(),
-            }),
-            property_editor: state
-                .property_editor
-                .as_ref()
-                .map(|editor| PropertyEditorView {
-                    target: editor.target,
-                    name: Text::of(&editor.text.name),
-                    description: Text::of(&editor.text.description),
-                    condition_name: Text::of(&editor.condition_name),
-                    condition_rationale: Text::of(&editor.condition_rationale),
-                    focus: editor.focus,
-                    policy: editor.policy_label(),
-                    dirty: editor.is_dirty(),
-                }),
             settings: state.settings.clone(),
             global: state.global.clone(),
             project: state.project.clone(),
+            unapplied: state.scope_dirty(ConfigurationDestination::Global),
             load_errors: [state.global_error.clone(), state.project_error.clone()],
             saved: [
                 workspace.global.borrow().clone(),
@@ -535,8 +468,24 @@ impl Snapshot {
         }
     }
 
-    fn staged_library(&self) -> Option<&GlobalConfiguration> {
-        self.global.as_ref().map(ConfigurationSession::global)
+    fn library(&self) -> Option<&LibraryDraft> {
+        self.global.as_ref().and_then(ConfigurationSession::library)
+    }
+
+    fn staged_library(&self) -> Option<GlobalConfiguration> {
+        self.library().and_then(|library| library.build().ok())
+    }
+
+    /// The Library the fake workspace stores: the last applied session's Library.
+    fn stored_library(&self) -> Option<GlobalConfiguration> {
+        self.saved[0]
+            .library()
+            .and_then(|library| library.build().ok())
+    }
+
+    /// Whether the Taxonomies outline takes `input` with no overlay in the way.
+    fn outline_takes_keys(&self) -> bool {
+        at_outline(self) && self.overlay.is_none()
     }
 }
 
@@ -544,19 +493,25 @@ impl Snapshot {
 type Check = fn(&Snapshot, &Event, Option<&Snapshot>) -> Result<(), String>;
 
 const PROPERTIES: &[(&str, Check)] = &[
-    ("P1, no silent draft loss", no_silent_draft_loss),
     (
-        "P2, an unchanged edit stages nothing",
-        unchanged_edit_stages_nothing,
+        "P1, the unapplied draft is dropped only by apply or a confirmed discard",
+        no_silent_draft_loss,
+    ),
+    (
+        "P2, a NAV/EDIT round trip with no edit leaves the session clean",
+        round_trips_leave_the_session_clean,
     ),
     (
         "P3, the review names every taxonomy change",
         review_names_every_taxonomy_change,
     ),
-    ("P5, an edit keeps the taxonomy's name", edit_keeps_the_name),
     (
-        "P6, no key grows an entry past its budget",
-        no_key_grows_past_the_budget,
+        "P5, a stored taxonomy's name never changes",
+        stored_names_never_change,
+    ),
+    (
+        "P6, no key grows a field past its own limit",
+        no_key_grows_a_field_past_its_limit,
     ),
     (
         "P7, every alert is a whole sentence",
@@ -572,35 +527,217 @@ const PROPERTIES: &[(&str, Check)] = &[
     ),
 ];
 
+fn answer(choices: &[confirmation::Choice], input: &Event) -> Option<Answer> {
+    ConfirmDialog::default().handle_event(choices, input)
+}
+
+/// Whether `input` is a key that edits a draft in place from `before`: a text key in EDIT, ←/→,
+/// which cycle a policy, or alt+↑/↓ in NAV, which reorder a type or property.
+fn edits(before: &Snapshot, input: &Event) -> bool {
+    let Event::Key(key) = input else {
+        return false;
+    };
+    if !before.outline_takes_keys() {
+        return false;
+    }
+    match key.code {
+        KeyCode::Left | KeyCode::Right => true,
+        KeyCode::Up | KeyCode::Down => {
+            matches!(before.taxonomies.mode, Mode::Nav) && key.modifiers.contains(KeyModifiers::ALT)
+        }
+        KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete => {
+            matches!(before.taxonomies.mode, Mode::Edit { .. })
+                && !key.modifiers.contains(KeyModifiers::CONTROL)
+        }
+        _ => false,
+    }
+}
+
+fn no_silent_draft_loss(
+    before: &Snapshot,
+    input: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    if !before.unapplied || after.is_some_and(|after| after.unapplied) {
+        return Ok(());
+    }
+    let legitimate = match &before.screen {
+        Screen::Leave => answer(DISCARD_AND_QUIT, input) == Some(Answer::Confirm),
+        Screen::ScopeChange(_) => matches!(
+            answer(APPLY_OR_DISCARD, input),
+            Some(Answer::Confirm | Answer::Alternate)
+        ),
+        Screen::Review(_) => {
+            after.is_some_and(|after| format!("{:?}", after.saved) != format!("{:?}", before.saved))
+        }
+        Screen::ConfirmRemove(_) => answer(REMOVE, input) == Some(Answer::Confirm),
+        Screen::Home => edits(before, input),
+        Screen::Settings(_) => false,
+    };
+    if legitimate {
+        return Ok(());
+    }
+    Err(match after {
+        None => "The editor quit with unapplied Library changes and no confirmed discard.".into(),
+        Some(_) => "The Library's unapplied changes went away without apply, a confirmed \
+                    discard, or an edit."
+            .into(),
+    })
+}
+
+fn round_trips_leave_the_session_clean(
+    before: &Snapshot,
+    input: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    if before.unapplied
+        || !before.outline_takes_keys()
+        || !after.is_some_and(|after| after.unapplied)
+    {
+        return Ok(());
+    }
+    let creates = matches!(before.taxonomies.mode, Mode::Nav)
+        && matches!(
+            input,
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('n' | 'f') | KeyCode::Enter,
+                ..
+            })
+        );
+    if creates || edits(before, input) {
+        return Ok(());
+    }
+    Err("A key that edits nothing left the Library with unapplied changes.".into())
+}
+
+fn stored_names_never_change(
+    _: &Snapshot,
+    _: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    let Some(library) = after.and_then(Snapshot::library) else {
+        return Ok(());
+    };
+    for taxonomy in library.taxonomies() {
+        if let NodeId::Loaded(path) = taxonomy.id()
+            && taxonomy.origin() == TaxonomyOrigin::Custom
+            && path.names().first().map(String::as_str) != Some(taxonomy.name())
+        {
+            return Err(format!(
+                "The stored taxonomy {:?} now reads {:?}.",
+                path.names(),
+                taxonomy.name()
+            ));
+        }
+    }
+    Ok(())
+}
+
+const TEXT_FIELDS: [DraftField; 4] = [
+    DraftField::Name,
+    DraftField::Description,
+    DraftField::Condition,
+    DraftField::Rationale,
+];
+
+/// Every custom node's text fields and their lengths in characters.
+fn field_lengths(library: &LibraryDraft) -> HashMap<(NodeId, &'static str), usize> {
+    let mut lengths = HashMap::new();
+    for taxonomy in library
+        .taxonomies()
+        .iter()
+        .filter(|taxonomy| taxonomy.origin() == TaxonomyOrigin::Custom)
+    {
+        let ids =
+            std::iter::once(taxonomy.id()).chain(taxonomy.types().iter().flat_map(|commit_type| {
+                std::iter::once(commit_type.id()).chain(
+                    commit_type
+                        .properties()
+                        .iter()
+                        .map(gitserious_app::PropertyNode::id),
+                )
+            }));
+        for id in ids {
+            for field in TEXT_FIELDS {
+                if let Some(text) = library.text(id, field) {
+                    lengths.insert((id.clone(), field.label()), text.graphemes(true).count());
+                }
+            }
+        }
+    }
+    lengths
+}
+
+fn no_key_grows_a_field_past_its_limit(
+    before: &Snapshot,
+    _: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    let (Some(old), Some(new)) = (before.library(), after.and_then(Snapshot::library)) else {
+        return Ok(());
+    };
+    let old = field_lengths(old);
+    for ((id, label), length) in field_lengths(new) {
+        let limit = TEXT_FIELDS
+            .iter()
+            .find(|field| field.label() == label)
+            .and_then(|field| field.limit())
+            .unwrap_or(usize::MAX);
+        if let Some(&previous) = old.get(&(id.clone(), label))
+            && length > limit
+            && length > previous
+        {
+            return Err(format!(
+                "{label} of {id:?} grew from {previous} to {length} characters, past its limit \
+                 of {limit}."
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The ids of every custom type and property.
+fn children(library: &LibraryDraft) -> HashSet<NodeId> {
+    library
+        .taxonomies()
+        .iter()
+        .filter(|taxonomy| taxonomy.origin() == TaxonomyOrigin::Custom)
+        .flat_map(gitserious_app::TaxonomyNode::types)
+        .flat_map(|commit_type| {
+            std::iter::once(commit_type.id().clone()).chain(
+                commit_type
+                    .properties()
+                    .iter()
+                    .map(|property| property.id().clone()),
+            )
+        })
+        .collect()
+}
+
 fn removals_go_through_their_dialog(
     before: &Snapshot,
     input: &Event,
     after: Option<&Snapshot>,
 ) -> Result<(), String> {
-    let Some(after) = after else {
+    let (Some(old), Some(new)) = (before.library(), after.and_then(Snapshot::library)) else {
         return Ok(());
     };
-    let confirmed = ConfirmDialog::default().handle_event(REMOVE, input) == Some(Answer::Confirm);
-    let types = |snapshot: &Snapshot| snapshot.draft.as_ref().map(|draft| draft.types.len());
-    let properties = |snapshot: &Snapshot| {
-        snapshot
-            .type_editor
-            .as_ref()
-            .map(|editor| editor.draft.properties.len())
+    let new = children(new);
+    if children(old).is_subset(&new) {
+        return Ok(());
+    }
+    let confirmed = match before.screen {
+        Screen::ConfirmRemove(_) => answer(REMOVE, input) == Some(Answer::Confirm),
+        Screen::ScopeChange(_) => matches!(
+            answer(APPLY_OR_DISCARD, input),
+            Some(Answer::Confirm | Answer::Alternate)
+        ),
+        _ => false,
     };
-    if let (Some(old), Some(new)) = (types(before), types(after))
-        && new < old
-        && !(matches!(before.screen, Screen::ConfirmRemoveType(_)) && confirmed)
-    {
-        return Err("A type left the draft without a confirmed Remove Type dialog.".into());
+    if confirmed {
+        return Ok(());
     }
-    if let (Some(old), Some(new)) = (properties(before), properties(after))
-        && new < old
-        && !(matches!(before.screen, Screen::ConfirmRemoveProperty(_)) && confirmed)
-    {
-        return Err("A property left the type without a confirmed Remove Property dialog.".into());
-    }
-    Ok(())
+    Err("A type or property left the Library without a confirmed Remove dialog.".into())
 }
 
 fn the_footer_shows_the_dialogs_choices(
@@ -655,169 +792,6 @@ fn every_alert_is_a_whole_sentence(
     })
 }
 
-struct ChildEditor {
-    name: &'static str,
-    dirty: fn(&Snapshot) -> Option<bool>,
-    parent: fn(&Snapshot) -> String,
-}
-
-const CHILD_EDITORS: [ChildEditor; 2] = [
-    ChildEditor {
-        name: "type editor",
-        dirty: |snapshot| snapshot.type_editor.as_ref().map(|editor| editor.dirty),
-        parent: |snapshot| format!("{:?}", snapshot.draft),
-    },
-    ChildEditor {
-        name: "property editor",
-        dirty: |snapshot| snapshot.property_editor.as_ref().map(|editor| editor.dirty),
-        parent: |snapshot| format!("{:?}", snapshot.type_editor.as_ref().map(|e| &e.draft)),
-    },
-];
-
-fn no_silent_draft_loss(
-    before: &Snapshot,
-    input: &Event,
-    after: Option<&Snapshot>,
-) -> Result<(), String> {
-    let chose_discard =
-        ConfirmDialog::default().handle_event(DISCARD, input) == Some(Answer::Confirm);
-    let staged_nothing =
-        after.is_some_and(|after| after.status.as_deref() == Some("info: No changes to stage."));
-    if before.draft_dirty
-        && after.is_none_or(|after| after.draft.is_none())
-        && !(matches!(before.screen, Screen::ConfirmDiscardCreate(_)) && chose_discard)
-        && !staged_nothing
-        && after.is_none_or(|after| after.staged_library() == before.staged_library())
-    {
-        return Err(
-            "The taxonomy draft had unsaved changes and closed without a confirmed \
-             discard or a staged change."
-                .into(),
-        );
-    }
-    for child in CHILD_EDITORS {
-        if (child.dirty)(before) == Some(true)
-            && after.is_none_or(|after| (child.dirty)(after).is_none())
-            && !(matches!(before.screen, Screen::ConfirmDiscardChild(_)) && chose_discard)
-            && after.is_none_or(|after| (child.parent)(after) == (child.parent)(before))
-        {
-            return Err(format!(
-                "The {} had unsaved changes and closed without a confirmed discard or a change \
-                 to its parent draft.",
-                child.name
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// One editor's name and description, and the budget they share.
-struct Budgeted {
-    owner: &'static str,
-    fields: fn(&Snapshot) -> Option<[&Text; 2]>,
-    limit: usize,
-}
-
-const BUDGETED: [Budgeted; 3] = [
-    Budgeted {
-        owner: "taxonomy",
-        fields: |snapshot| {
-            snapshot
-                .create_text
-                .as_ref()
-                .map(|[name, description]| [name, description])
-        },
-        limit: CREATE_TEXT_LIMIT,
-    },
-    Budgeted {
-        owner: "type",
-        fields: |snapshot| {
-            snapshot
-                .type_editor
-                .as_ref()
-                .map(|editor| [&editor.name, &editor.description])
-        },
-        limit: child_editor::TYPE_LIMIT,
-    },
-    Budgeted {
-        owner: "property",
-        fields: |snapshot| {
-            snapshot
-                .property_editor
-                .as_ref()
-                .map(|editor| [&editor.name, &editor.description])
-        },
-        limit: child_editor::PROPERTY_LIMIT,
-    },
-];
-
-fn used(fields: [&Text; 2]) -> usize {
-    fields
-        .iter()
-        .map(|field| field.lines.join("\n").graphemes(true).count())
-        .sum()
-}
-
-fn no_key_grows_past_the_budget(
-    before: &Snapshot,
-    _: &Event,
-    after: Option<&Snapshot>,
-) -> Result<(), String> {
-    let Some(after) = after else {
-        return Ok(());
-    };
-    for Budgeted {
-        owner,
-        fields,
-        limit,
-    } in BUDGETED
-    {
-        if let (Some(old), Some(new)) = (fields(before), fields(after)) {
-            let (old, new) = (used(old), used(new));
-            if new > limit && new > old {
-                return Err(format!(
-                    "The {owner} name and description grew from {old} to {new} characters, past \
-                     its budget of {limit}."
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn edit_keeps_the_name(_: &Snapshot, _: &Event, after: Option<&Snapshot>) -> Result<(), String> {
-    let Some(after) = after.filter(|after| after.editor_mode == EditorMode::Edit) else {
-        return Ok(());
-    };
-    if let (Some([name, _]), Some(initial)) = (&after.create_text, &after.initial_draft)
-        && name.lines.join("\n") != initial.id
-    {
-        return Err(format!(
-            "The edit editor's Name field reads {:?}, not the taxonomy's name {:?}.",
-            name.lines.join("\n"),
-            initial.id
-        ));
-    }
-    Ok(())
-}
-
-fn unchanged_edit_stages_nothing(
-    before: &Snapshot,
-    input: &Event,
-    after: Option<&Snapshot>,
-) -> Result<(), String> {
-    let stage = Event::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
-    if matches!(before.screen, Screen::TaxonomyEditor)
-        && before.editor_mode == EditorMode::Edit
-        && !before.draft_dirty
-        && *input == stage
-        && after.is_some_and(|after| after.staged_library() != before.staged_library())
-    {
-        return Err("Ctrl+S staged a change from an edit draft with no unsaved changes.".into());
-    }
-    Ok(())
-}
-
 fn find<'a>(library: &'a [Taxonomy], id: &TaxonomyId) -> Option<&'a Taxonomy> {
     library.iter().find(|taxonomy| taxonomy.id() == id)
 }
@@ -835,10 +809,10 @@ fn review_names_every_taxonomy_change(
     }) else {
         return Ok(());
     };
-    let saved = after.saved[0].global().custom_taxonomies();
-    let staged = after
-        .staged_library()
-        .map_or(&[][..], GlobalConfiguration::custom_taxonomies);
+    let saved = after.stored_library().unwrap_or_default();
+    let saved = saved.custom_taxonomies();
+    let staged = after.staged_library().unwrap_or_default();
+    let staged = staged.custom_taxonomies();
     let changes = staged
         .iter()
         .filter_map(|taxonomy| match find(saved, taxonomy.id()) {
@@ -877,12 +851,14 @@ fn review_names_every_taxonomy_change(
     Ok(())
 }
 
-fn editor_policy(snapshot: &Snapshot) -> Option<String> {
-    snapshot
-        .property_editor
-        .as_ref()
-        .filter(|_| matches!(snapshot.screen, Screen::PropertyEditor))
-        .map(|editor| editor.policy.to_owned())
+/// The policy of the property the outline has selected.
+fn selected_policy(snapshot: &Snapshot) -> Option<String> {
+    let library = snapshot.library()?;
+    let node = library.find_path(&snapshot.taxonomies.cursor_path)?;
+    match library.node(&node)? {
+        NodeRef::Property { property, .. } => Some(property.policy().label().to_owned()),
+        _ => None,
+    }
 }
 
 /// Replays `keys` from a fresh workspace. Returns `None` when the last key quit the editor.
@@ -1025,7 +1001,20 @@ fn start(seed: &Seed) -> Result<(Vec<usize>, Snapshot), String> {
                     advance(seed, &mut keys, &mut state, "down")?;
                 }
             }
-            at_outline(&state) && selects(&state, path) && state.taxonomies.mode == mode
+            if let StartMode::Edit(field) = mode {
+                advance(seed, &mut keys, &mut state, "e")?;
+                for _ in 0..8 {
+                    if editing(&state) == Some(field) {
+                        break;
+                    }
+                    advance(seed, &mut keys, &mut state, "enter")?;
+                }
+            }
+            let reached = match mode {
+                StartMode::Nav => editing(&state).is_none(),
+                StartMode::Edit(field) => editing(&state) == Some(field),
+            };
+            at_outline(&state) && selects(&state, path) && reached
         }
     };
     if !ready {
