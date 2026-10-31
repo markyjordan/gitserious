@@ -398,6 +398,24 @@ fn removing_a_selected_taxonomy_is_a_selection_problem() -> TestResult {
             kind: ProblemKind::Selection(_),
         }]
     ));
+    let zeta = find(&draft, &["zeta"])?;
+    draft.edit(&zeta, DraftEdit::Text(DraftField::Description, ""))?;
+    assert_eq!(
+        draft.problems(),
+        [
+            Problem {
+                site: ProblemSite::Field(zeta, DraftField::Description),
+                kind: ProblemKind::Blank,
+            },
+            Problem {
+                site: ProblemSite::Selection,
+                kind: ProblemKind::Selection(ConfigurationError::UnknownTaxonomy(TaxonomyId::new(
+                    "team"
+                )?)),
+            },
+        ],
+        "a field problem elsewhere does not hide the selection problem"
+    );
     Ok(())
 }
 

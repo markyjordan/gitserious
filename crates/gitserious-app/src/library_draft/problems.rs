@@ -11,6 +11,7 @@ use gitserious_core::{
 use super::{
     DraftField, LibraryDraft, LoadedPath, NodeId, Policy, PropertyNode, TaxonomyNode, TypeNode,
 };
+use crate::taxonomy_policy::validate_selection;
 use crate::{ConfigurationError, GlobalConfiguration, TaxonomyOrigin};
 
 /// Where a problem sits.
@@ -134,17 +135,30 @@ pub(super) fn build(draft: &LibraryDraft) -> Result<GlobalConfiguration, Vec<Pro
             _ => {}
         }
     }
+    let installed = draft
+        .taxonomies
+        .iter()
+        .filter_map(|taxonomy| TaxonomyId::from_label(&taxonomy.name).ok())
+        .collect::<Vec<_>>();
+    if let Err(error) = validate_selection(
+        |id| installed.contains(id),
+        &draft.default,
+        &draft.available,
+    ) {
+        problems.push(selection(error));
+    }
     if !problems.is_empty() {
         return Err(problems);
     }
-    GlobalConfiguration::new(1, draft.default.clone(), draft.available.clone(), custom).map_err(
-        |error| {
-            vec![Problem {
-                site: ProblemSite::Selection,
-                kind: ProblemKind::Selection(error),
-            }]
-        },
-    )
+    GlobalConfiguration::new(1, draft.default.clone(), draft.available.clone(), custom)
+        .map_err(|error| vec![selection(error)])
+}
+
+const fn selection(error: ConfigurationError) -> Problem {
+    Problem {
+        site: ProblemSite::Selection,
+        kind: ProblemKind::Selection(error),
+    }
 }
 
 fn is_staged_for_deletion(draft: &LibraryDraft, id: &TaxonomyId) -> bool {

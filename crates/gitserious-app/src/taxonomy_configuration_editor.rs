@@ -4,9 +4,9 @@ use std::path::Path;
 use gitserious_core::TaxonomyId;
 
 use crate::{
-    GlobalConfiguration, GlobalConfigurationStore, LibraryDraft, ProjectConfig, ProjectLock,
-    ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot, TaxonomyCatalog,
-    resolve_effective_configuration,
+    GlobalConfiguration, GlobalConfigurationStore, LibraryDraft, Problem, ProjectConfig,
+    ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
+    TaxonomyCatalog, resolve_effective_configuration,
 };
 
 /// Persistence destination edited by one reviewed session.
@@ -239,13 +239,10 @@ impl ConfigurationSession {
         Ok(())
     }
 
-    /// Validates and renders a semantic review without saving.
-    pub fn review(&self) -> Result<String, String> {
+    /// The changes apply would write and, for the Library, every problem that blocks apply.
+    pub fn review(&self) -> Result<Review, String> {
         match &self.scope {
             Scope::Global(library) => {
-                let working = library
-                    .build()
-                    .map_err(|problems| first_problem(&problems))?;
                 let original = library.persisted();
                 let mut sections = vec!["GLOBAL CONFIGURATION".to_owned()];
                 let changes = library.changes();
@@ -258,7 +255,7 @@ impl ConfigurationSession {
                     sections.push(format!("Taxonomies\n{}", lines.join("\n")));
                 }
                 let before = original.default_taxonomy();
-                let after = working.default_taxonomy();
+                let after = library.default_taxonomy();
                 sections.push(if before == after {
                     format!("Default\n  {after}")
                 } else {
@@ -266,14 +263,17 @@ impl ConfigurationSession {
                 });
                 sections.push(format!(
                     "Available\n  {}",
-                    working
+                    library
                         .available_taxonomies()
                         .iter()
                         .map(ToString::to_string)
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
-                Ok(sections.join("\n\n"))
+                Ok(Review {
+                    changes: sections.join("\n\n"),
+                    problems: library.problems(),
+                })
             }
             Scope::Project(project) => {
                 let config = project
@@ -282,24 +282,35 @@ impl ConfigurationSession {
                     .ok_or("project initialization has not been staged")?;
                 let effective = resolve_effective_configuration(&project.global, config)
                     .map_err(|error| error.to_string())?;
-                Ok(format!(
-                    "PROJECT CONFIGURATION\n\nDefault\n  {}\n\nAvailable\n  {}\n\nPortable lock\n  {} taxonomy snapshots",
-                    effective.default_taxonomy(),
-                    effective
-                        .taxonomies()
-                        .iter()
-                        .map(|taxonomy| taxonomy.id().to_string())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    effective.taxonomies().len(),
-                ))
+                Ok(Review {
+                    changes: format!(
+                        "PROJECT CONFIGURATION\n\nDefault\n  {}\n\nAvailable\n  {}\n\nPortable lock\n  {} taxonomy snapshots",
+                        effective.default_taxonomy(),
+                        effective
+                            .taxonomies()
+                            .iter()
+                            .map(|taxonomy| taxonomy.id().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        effective.taxonomies().len(),
+                    ),
+                    problems: Vec::new(),
+                })
             }
         }
     }
 }
 
-/// The first problem's text, until the review lists every problem.
-fn first_problem(problems: &[crate::Problem]) -> String {
+/// What apply would write, and what keeps it from applying.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Review {
+    pub changes: String,
+    /// Apply refuses while this is not empty.
+    pub problems: Vec<Problem>,
+}
+
+/// The first problem's text, for the callers that need a Library that builds.
+fn first_problem(problems: &[Problem]) -> String {
     problems
         .first()
         .map_or_else(|| "the Library does not build".into(), ToString::to_string)
@@ -375,7 +386,9 @@ where
     }
 
     fn save(&self, session: &ConfigurationSession) -> Result<ConfigurationSession, String> {
-        session.review()?;
+        if let Some(problem) = session.review()?.problems.first() {
+            return Err(problem.to_string());
+        }
         match &session.scope {
             Scope::Global(library) => {
                 let working = library

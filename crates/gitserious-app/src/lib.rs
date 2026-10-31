@@ -41,7 +41,7 @@ pub use taxonomy_authoring_context::{
 };
 pub use taxonomy_configuration_editor::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
-    edit_configuration,
+    Review, edit_configuration,
 };
 pub use taxonomy_policy::{
     ConfigurationError, EffectiveConfiguration, GlobalConfiguration, ProjectConfig, ProjectLock,

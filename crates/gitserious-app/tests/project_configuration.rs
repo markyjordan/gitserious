@@ -228,7 +228,7 @@ fn project_mutations_require_the_project_destination_and_initialized_state()
     assert!(absent.review().is_err());
     absent.initialize_project()?;
     assert!(absent.initialize_project().is_err());
-    assert!(absent.review()?.contains("PROJECT CONFIGURATION"));
+    assert!(absent.review()?.changes.contains("PROJECT CONFIGURATION"));
     Ok(())
 }
 
