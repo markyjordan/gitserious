@@ -26,6 +26,8 @@ use crate::theme::{
     section_heading_style, selected_style,
 };
 
+#[cfg(test)]
+mod copy_tests;
 mod home_overlay;
 #[cfg(test)]
 mod model_check;
@@ -103,11 +105,8 @@ impl ConfigView {
     /// Which keys the shell may take before Config sees them.
     pub(crate) fn shell_keys(&self) -> ShellKeys {
         match (&self.state.screen, &self.state.home_overlay) {
-            (Screen::Home, None)
-                if self.state.category == Category::Taxonomies
-                    && self.state.taxonomies.editing() =>
-            {
-                ShellKeys::TabsOnly
+            (Screen::Home, None) if self.state.category == Category::Taxonomies => {
+                self.state.taxonomies.shell_keys()
             }
             (Screen::Home, None) => ShellKeys::Navigation,
             _ => ShellKeys::None,
@@ -424,7 +423,7 @@ impl State {
             return false;
         }
         if let Event::Mouse(mouse) = event {
-            if self.too_small {
+            if self.too_small || self.taxonomies.shell_keys() == ShellKeys::None {
                 return false;
             }
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
@@ -1017,7 +1016,8 @@ impl State {
         }
         if matches!(
             action,
-            PendingAction::Library(LibraryAction::Edit) | PendingAction::Delete
+            PendingAction::Library(LibraryAction::Edit | LibraryAction::Copy)
+                | PendingAction::Delete
         ) && self
             .library()
             .and_then(|library| self.taxonomies.selected(library))
@@ -2606,13 +2606,13 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         state.handle_event(key(KeyCode::Char('?')), &workspace);
         terminal.draw(|frame| state.render(frame))?;
-        let help = centered_rect(58, 14, Rect::new(0, 0, MINIMUM_WIDTH, MINIMUM_HEIGHT - 1));
+        let help = centered_rect(58, 15, Rect::new(0, 0, MINIMUM_WIDTH, MINIMUM_HEIGHT - 1));
         let content_x = help.x + 2;
         let content_width = help.width - 4;
         let switch_row = row_text(&terminal, content_x, help.y + 2, content_width);
         let reorder_row = row_text(&terminal, content_x, help.y + 5, content_width);
         let edit_row = row_text(&terminal, content_x, help.y + 7, content_width);
-        let quit_row = row_text(&terminal, content_x, help.y + 11, content_width);
+        let quit_row = row_text(&terminal, content_x, help.y + 12, content_width);
         assert!(switch_row.starts_with("Switch Project / Taxonomies"));
         assert!(switch_row.ends_with("1/2/click"));
         assert!(reorder_row.starts_with("Reorder a type or property"));
@@ -3190,7 +3190,7 @@ mod tests {
     fn field(state: &State) -> Option<DraftField> {
         match state.taxonomies.observe(state.library()).mode {
             taxonomies::Mode::Edit { field, .. } => Some(field),
-            taxonomies::Mode::Nav => None,
+            taxonomies::Mode::Nav | taxonomies::Mode::CopyTo { .. } => None,
         }
     }
 
@@ -3244,7 +3244,7 @@ mod tests {
             assert!(screen.contains("5/80"), "{screen}");
             assert!(screen.contains("130/100"), "{screen}");
             let footer = row_text(&terminal, 0, height - 1, width);
-            assert!(footer.starts_with(" NAV  · property  e edit"), "{footer}");
+            assert!(footer.starts_with(" NAV  · property  c copy"), "{footer}");
             assert!(footer.contains("←/→ policy"), "{footer}");
 
             press(&mut state, &workspace, &[KeyCode::Char('e')]);

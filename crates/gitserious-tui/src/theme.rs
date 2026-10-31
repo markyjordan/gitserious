@@ -70,7 +70,7 @@ pub(crate) fn command_hints(hints: &[(&str, &str)]) -> Line<'static> {
     Line::from(spans)
 }
 
-fn footer_hints(hints: &[(&str, &str)]) -> Line<'static> {
+pub(crate) fn footer_hints(hints: &[(&str, &str)]) -> Line<'static> {
     let mut spans = Vec::with_capacity(hints.len().saturating_mul(3));
     for (index, (key, action)) in hints.iter().copied().enumerate() {
         if index > 0 {

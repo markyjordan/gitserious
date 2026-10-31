@@ -6,8 +6,8 @@
 //! to start on by its names, and the check finds the keys: `2`, then `down` until the selected
 //! row matches each name and `right` to expand it before the next, then `e` and `enter` until
 //! EDIT sits on the seed's field. Other seeds start from literal keys and a readiness predicate.
-//! A seed explores every key in [`INPUTS`] unless it names a smaller alphabet, which lets it
-//! reach deeper for the same number of replays. After a seed's exploration, each of its
+//! A seed explores every key in [`INPUTS`] but those in [`NAMED_ONLY`] unless it names a smaller
+//! alphabet, which lets it reach deeper for the same number of replays. After a seed's exploration, each of its
 //! [`Reach`] goals must have seen every expected value in some explored state. A state is rebuilt
 //! by replaying its keys into a fresh fake workspace and rendering into a [`TestBackend`] after
 //! every event, as the terminal loop does. Two states merge only when their [`Snapshot`]s print
@@ -28,7 +28,8 @@
 //!
 //! P2, a NAV/EDIT round trip with no edit leaves the session clean. From Taxonomies with no
 //! unapplied changes and no overlay, only a key that creates or edits a draft (`n`, `f`, enter on
-//! an add row, ←/→ on a policy, alt+↑/↓ in NAV, or a text key in EDIT) leaves unapplied changes. Without it,
+//! an add row or in the copy picker, ←/→ on a policy, alt+↑/↓ in NAV, or a text key in EDIT)
+//! leaves unapplied changes. Without it,
 //! entering EDIT, moving between fields, or esc advances a taxonomy's version and rewrites the
 //! user's configuration on apply.
 //!
@@ -63,16 +64,17 @@
 //! answers y on its Remove or Delete dialog, or discards on the Unapplied Changes dialog. Without
 //! it, one stray d drops a type with all of its properties.
 //!
-//! P9, the footer shows the dialog's choices. While any confirmation is open, the footer row shows
-//! each of its choices as `key: label`, the same pairs as the dialog's buttons. Without it, the
-//! footer and the dialog disagree about which key does what.
+//! P9, the footer shows the dialog's choices. While any confirmation or the copy picker is open,
+//! the footer row shows each of its choices as `key: label`, the same pairs as the dialog's
+//! buttons. Without it, the footer and the dialog disagree about which key does what.
 //!
 //! P10, unapplied changes and problems agree everywhere they show. After every key, the count the
 //! Config tab badge shows equals the Library's `ChangeSet::count()`; on Home the sidebar reads `●
 //! N unapplied` with that count, or no unapplied line at zero; every outline row shows `▲ invalid
 //! N` exactly when N problems sit on its node, or on its node or beneath it while it is collapsed,
 //! and otherwise `+ new` or `~ modified` exactly when its node carries that mark; and the footer
-//! shows `▲ invalid N` for the selected node the same way. Without it, the tab, the sidebar, the
+//! shows `▲ invalid N` for the selected node the same way, except while the copy picker covers
+//! the rows and the footer. Without it, the tab, the sidebar, the
 //! rows, and the footer disagree about what apply would write, a problem hides under a collapsed
 //! row, or an expanded parent repeats the count its visible rows already show.
 //!
@@ -80,6 +82,11 @@
 //! workspace stores while the staged Library has a problem. Without it, enter on the review or
 //! apply on the Unapplied Changes dialog writes a Library that does not build, and the fake
 //! workspace, which saves whatever it is given, would show it.
+//!
+//! P12, a copy and its source change apart. A key on Home changes the text or policy of at most
+//! one property that exists before and after it, so editing a copy never changes its source, nor
+//! the reverse. Apply and discard, which replace the whole Library, happen off Home. Without it,
+//! a copy shares its source's fields and an edit to one rewrites the other.
 //!
 //! Scope limits:
 //! - Only the keyboard events in [`INPUTS`]. Mouse, paste, and resize events are out of scope.
@@ -97,6 +104,10 @@
 //!   the selected property's policy in the Library, not the frame.
 //! - P6 checks fields of custom nodes that existed before the key; a fork copies its source's
 //!   text as it is.
+//! - Only the two copy seeds press `c`, from their own twelve keys, to depth 3: the copy picker
+//!   and P12's copies are seen from there; the other seeds check that no edit touches two
+//!   properties at once. A built-in property's `c` and a taxonomy with one type are left to unit
+//!   tests.
 //! - The Taxonomies outline is seen through `taxonomies::Observation`: the raw cursor and expanded
 //!   node ids, the selected row's names, the scroll offsets, and the mode with its field and text
 //!   cursor. The Library is seen through the Global session, so a draft edit changes the snapshot.
@@ -113,7 +124,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use gitserious_app::{DraftField, GlobalConfiguration, Mark, NodeRef, ProblemSite};
+use gitserious_app::{
+    DraftField, GlobalConfiguration, Mark, NodeRef, ProblemSite, TaxonomyNode, TypeNode,
+};
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
     PropertyRequirement, SchemaVersion, TaxonomyVersion,
@@ -161,9 +174,27 @@ const INPUTS: &[(&str, Event)] = &[
     ("y", plain(KeyCode::Char('y'))),
     ("q", plain(KeyCode::Char('q'))),
     ("a", plain(KeyCode::Char('a'))),
+    ("c", plain(KeyCode::Char('c'))),
     ("1", plain(KeyCode::Char('1'))),
     ("2", plain(KeyCode::Char('2'))),
     ("space", plain(KeyCode::Char(' '))),
+];
+
+const NAMED_ONLY: &[&str] = &["c"];
+
+const COPY_KEYS: &[&str] = &[
+    "esc",
+    "enter",
+    "up",
+    "down",
+    "left",
+    "right",
+    "e",
+    "a",
+    "backspace",
+    "space",
+    "c",
+    "ctrl+s",
 ];
 
 struct Seed {
@@ -354,7 +385,49 @@ const SEEDS: &[Seed] = &[
             expected: &["required", "recommended", "conditional", "optional"],
         }],
     },
+    Seed {
+        name: "summary copied to hotfix, on the source in NAV",
+        workspace: team_pair_library,
+        start: Start::Keys {
+            keys: COPY_SUMMARY,
+            ready: |snapshot| copied(snapshot) && selects(snapshot, SUMMARY),
+        },
+        depth: 3,
+        alphabet: Alphabet::Only(COPY_KEYS),
+        reaches: &[],
+    },
+    Seed {
+        name: "summary copied to hotfix, on the copy in NAV",
+        workspace: team_pair_library,
+        start: Start::Keys {
+            keys: &[
+                "2", "down", "down", "down", "right", "right", "right", "down", "c", "space",
+                "enter", "down", "down", "down", "down", "down",
+            ],
+            ready: |snapshot| copied(snapshot) && selects(snapshot, &["team", "hotfix", "summary"]),
+        },
+        depth: 3,
+        alphabet: Alphabet::Only(COPY_KEYS),
+        reaches: &[],
+    },
 ];
+
+const COPY_SUMMARY: &[&str] = &[
+    "2", "down", "down", "down", "right", "right", "right", "down", "c", "space", "enter",
+];
+
+fn copied(snapshot: &Snapshot) -> bool {
+    at_outline(snapshot)
+        && matches!(snapshot.taxonomies.mode, Mode::Nav)
+        && snapshot.library().is_some_and(|library| {
+            library
+                .taxonomies()
+                .iter()
+                .flat_map(TaxonomyNode::types)
+                .flat_map(TypeNode::properties)
+                .any(|property| property.copied_from().is_some())
+        })
+}
 
 fn at_outline(snapshot: &Snapshot) -> bool {
     matches!(snapshot.screen, Screen::Home)
@@ -388,22 +461,46 @@ fn built_ins() -> Result<Workspace, String> {
 }
 
 fn team_library() -> Result<Workspace, String> {
+    workspace_of(team_configuration(Vec::new()))
+}
+
+fn team_pair_library() -> Result<Workspace, String> {
+    let hotfix = || -> Result<CommitTypeDefinition, Box<dyn std::error::Error>> {
+        Ok(CommitTypeDefinition::new(
+            SchemaVersion::new(1)?,
+            CommitTypeId::new("hotfix")?,
+            "Urgent fixes",
+            vec![PropertyDefinition::new(
+                PropertyKey::new("cause")?,
+                "Why it broke",
+                PropertyRequirement::Required,
+            )?],
+        )?)
+    };
+    workspace_of(hotfix().and_then(|hotfix| team_configuration(vec![hotfix])))
+}
+
+fn workspace_of(
+    configuration: Result<GlobalConfiguration, Box<dyn std::error::Error>>,
+) -> Result<Workspace, String> {
     let workspace = Workspace::new();
     *workspace.global.borrow_mut() =
-        ConfigurationSession::open_global(team_configuration().map_err(|error| error.to_string())?);
+        ConfigurationSession::open_global(configuration.map_err(|error| error.to_string())?);
     Ok(workspace)
 }
 
 /// `team` with a Description at its limit and one type with two properties, so a property can
-/// move.
-fn team_configuration() -> Result<GlobalConfiguration, Box<dyn std::error::Error>> {
+/// move, then the `more` types.
+fn team_configuration(
+    more: Vec<CommitTypeDefinition>,
+) -> Result<GlobalConfiguration, Box<dyn std::error::Error>> {
     let description = format!("Team taxonomy{}", ".".repeat(87));
     let team = Taxonomy::new(
         TaxonomyId::new("team")?,
         TaxonomyVersion::new(1)?,
         Description::new(description)?,
         None,
-        vec![CommitTypeDefinition::new(
+        std::iter::once(CommitTypeDefinition::new(
             SchemaVersion::new(1)?,
             CommitTypeId::new("release")?,
             "Release notes",
@@ -419,7 +516,9 @@ fn team_configuration() -> Result<GlobalConfiguration, Box<dyn std::error::Error
                     PropertyRequirement::Optional,
                 )?,
             ],
-        )?],
+        )?)
+        .chain(more)
+        .collect(),
     )?;
     let conventional = TaxonomyId::new("conventional")?;
     Ok(GlobalConfiguration::new(
@@ -490,12 +589,16 @@ impl Snapshot {
                 workspace.project.borrow().clone(),
             ],
             dialog: format!("{:?}", state.dialog),
-            dialog_hints: state.confirmation().map(|question| {
-                confirmation::hints(question.choices)
-                    .into_iter()
-                    .map(|(hint, label)| format!("{hint}: {label}"))
-                    .collect()
-            }),
+            dialog_hints: state
+                .confirmation()
+                .map(|question| confirmation::hints(question.choices))
+                .or_else(|| state.taxonomies.picker_hints())
+                .map(|hints| {
+                    hints
+                        .into_iter()
+                        .map(|(hint, label)| format!("{hint}: {label}"))
+                        .collect()
+                }),
             too_small: state.too_small,
             frame: buffer
                 .content
@@ -571,6 +674,10 @@ const PROPERTIES: &[(&str, Check)] = &[
         "P11, the saved Library never changes while problems exist",
         problems_keep_the_saved_library,
     ),
+    (
+        "P12, a copy and its source change apart",
+        a_copy_and_its_source_change_apart,
+    ),
 ];
 
 fn answer(choices: &[confirmation::Choice], input: &Event) -> Option<Answer> {
@@ -642,14 +749,18 @@ fn round_trips_leave_the_session_clean(
     {
         return Ok(());
     }
-    let creates = matches!(before.taxonomies.mode, Mode::Nav)
-        && matches!(
-            input,
-            Event::Key(KeyEvent {
-                code: KeyCode::Char('n' | 'f') | KeyCode::Enter,
-                ..
-            })
-        );
+    let mode = &before.taxonomies.mode;
+    let creates = match input {
+        Event::Key(KeyEvent {
+            code: KeyCode::Char('n' | 'f'),
+            ..
+        }) => matches!(mode, Mode::Nav),
+        Event::Key(KeyEvent {
+            code: KeyCode::Enter,
+            ..
+        }) => matches!(mode, Mode::Nav | Mode::CopyTo { .. }),
+        _ => false,
+    };
     if creates || edits(before, input) {
         return Ok(());
     }
@@ -846,7 +957,7 @@ fn unapplied_changes_agree_everywhere(
     let Some(library) = after.library() else {
         return Ok(());
     };
-    if after.category != Category::Taxonomies {
+    if after.category != Category::Taxonomies || after.dialog_hints.is_some() {
         return Ok(());
     }
     let problems = library.problems();
@@ -922,6 +1033,51 @@ fn problems_keep_the_saved_library(
         .is_some_and(|library| !library.problems().is_empty());
     if blocked && format!("{:?}", after.saved[0]) != format!("{:?}", before.saved[0]) {
         return Err("The saved Library changed while the staged Library had problems.".into());
+    }
+    Ok(())
+}
+
+fn property_contents(library: &LibraryDraft) -> HashMap<NodeId, String> {
+    library
+        .taxonomies()
+        .iter()
+        .flat_map(TaxonomyNode::types)
+        .flat_map(TypeNode::properties)
+        .map(|property| {
+            let fields = (
+                property.name(),
+                property.description(),
+                property.policy(),
+                library.text(property.id(), DraftField::Condition),
+                library.text(property.id(), DraftField::Rationale),
+            );
+            (property.id().clone(), format!("{fields:?}"))
+        })
+        .collect()
+}
+
+fn a_copy_and_its_source_change_apart(
+    before: &Snapshot,
+    _: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    let (Some(old), Some(new)) = (before.library(), after.and_then(Snapshot::library)) else {
+        return Ok(());
+    };
+    if !matches!(before.screen, Screen::Home) {
+        return Ok(());
+    }
+    let old = property_contents(old);
+    let changed = property_contents(new)
+        .into_iter()
+        .filter(|(id, fields)| old.get(id).is_some_and(|before| before != fields))
+        .map(|(id, _)| id)
+        .collect::<Vec<_>>();
+    if changed.len() > 1 {
+        return Err(format!(
+            "One key changed the fields of {} properties at once: {changed:?}.",
+            changed.len()
+        ));
     }
     Ok(())
 }
@@ -1273,7 +1429,9 @@ fn input_indices(seed: &Seed, labels: &[&str]) -> Result<Vec<usize>, String> {
 fn explore(seed: &Seed) -> Result<Coverage, String> {
     let started = Instant::now();
     let alphabet = match seed.alphabet {
-        Alphabet::Every => (0..INPUTS.len()).collect(),
+        Alphabet::Every => (0..INPUTS.len())
+            .filter(|&input| !NAMED_ONLY.contains(&INPUTS[input].0))
+            .collect(),
         Alphabet::Only(labels) => input_indices(seed, labels)?,
     };
     let (prefix, before) = start(seed)?;

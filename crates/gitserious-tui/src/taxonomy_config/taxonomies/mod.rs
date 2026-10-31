@@ -1,7 +1,8 @@
 //! The Taxonomies section: one outline of Taxonomy › Type › Property above an Inspector that
 //! describes the selected row and edits it in place. The view keeps only the cursor, the
-//! expanded nodes, scroll offsets, and NAV or EDIT with a text cursor; every edit goes straight
-//! to the Library draft, and rows and field text come from it on every render and key.
+//! expanded nodes, scroll offsets, and NAV, EDIT with a text cursor, or the copy picker with its
+//! choices; every edit goes straight to the Library draft, and rows and field text come from it
+//! on every render and key.
 
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -18,14 +19,18 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::contains;
 use super::naming::{problem_sentence, refusal_sentence, single_line};
-use crate::theme::{AMBER, JET_BLACK, ZEBRA_BACKGROUND, focus_frame_style, navigation_key_style};
+use super::{ShellKeys, contains};
+use crate::theme::{
+    AMBER, JET_BLACK, ZEBRA_BACKGROUND, focus_frame_style, footer_hints, navigation_key_style,
+    navigation_style,
+};
 use outline::Row;
 pub(super) use outline::RowKey;
 
 mod inspector;
 mod outline;
+mod picker;
 
 const DIM: Style = Style::new().fg(Color::Gray);
 const KEY_STYLE: Style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
@@ -132,7 +137,8 @@ pub(super) struct TaxonomiesView {
 }
 
 /// NAV moves through the outline. EDIT types into one field of the selected node; `cursor` is
-/// a grapheme index into that field's text in the draft.
+/// a grapheme index into that field's text in the draft. `CopyTo` picks the types the selected
+/// property is copied to; `cursor` indexes its `copy_targets`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) enum Mode {
     #[default]
@@ -141,6 +147,11 @@ pub(super) enum Mode {
         node: NodeId,
         field: DraftField,
         cursor: usize,
+    },
+    CopyTo {
+        property: NodeId,
+        cursor: usize,
+        chosen: BTreeSet<NodeId>,
     },
 }
 
@@ -153,6 +164,8 @@ pub(super) enum LibraryAction {
     Add,
     Policy { forward: bool },
     Move { down: bool },
+    Copy,
+    CopyChosen,
 }
 
 /// What a NAV key did.
@@ -184,6 +197,22 @@ impl TaxonomiesView {
         self.mode = Mode::Nav;
     }
 
+    pub(super) const fn shell_keys(&self) -> ShellKeys {
+        match self.mode {
+            Mode::Nav => ShellKeys::Navigation,
+            Mode::Edit { .. } => ShellKeys::TabsOnly,
+            Mode::CopyTo { .. } => ShellKeys::None,
+        }
+    }
+
+    pub(super) fn picker_hints(&self) -> Option<Vec<(&'static str, &'static str)>> {
+        matches!(self.mode, Mode::CopyTo { .. }).then(|| {
+            std::iter::once(("↑/↓", "move"))
+                .chain(picker::CHOICES)
+                .collect()
+        })
+    }
+
     fn selected_row<'a>(&self, library: &'a LibraryDraft) -> Option<Row<'a>> {
         let rows = outline::rows(library, &self.expanded);
         let index = outline::resolve(&rows, self.cursor.as_ref(), library);
@@ -196,8 +225,31 @@ impl TaxonomiesView {
     }
 
     /// NAV keys: move, expand, collapse, scroll the Inspector, and the keys that change the
-    /// Library, which come back as an action.
+    /// Library, which come back as an action. The open picker takes every key.
     pub(super) fn key(&mut self, key: KeyEvent, library: &LibraryDraft) -> Nav {
+        if let Mode::CopyTo {
+            property,
+            cursor,
+            chosen,
+        } = &mut self.mode
+        {
+            let targets = library.copy_targets(property);
+            match key.code {
+                KeyCode::Esc => self.mode = Mode::Nav,
+                KeyCode::Enter => return Nav::Act(LibraryAction::CopyChosen),
+                KeyCode::Up => *cursor = cursor.saturating_sub(1),
+                KeyCode::Down => *cursor = (*cursor + 1).min(targets.len().saturating_sub(1)),
+                KeyCode::Char(' ') => {
+                    if let Some(target) = targets.get(*cursor)
+                        && !chosen.remove(target.id())
+                    {
+                        chosen.insert(target.id().clone());
+                    }
+                }
+                _ => {}
+            }
+            return Nav::Handled;
+        }
         let rows = outline::rows(library, &self.expanded);
         let index = outline::resolve(&rows, self.cursor.as_ref(), library);
         let Some(&row) = rows.get(index) else {
@@ -211,6 +263,9 @@ impl TaxonomiesView {
             KeyCode::Char('e') if plain => return Nav::Act(LibraryAction::Edit),
             KeyCode::Char('f') if plain => return Nav::Act(LibraryAction::Fork),
             KeyCode::Char('n') if plain => return Nav::Act(LibraryAction::Create),
+            KeyCode::Char('c') if plain && matches!(row, Row::Node(NodeRef::Property { .. })) => {
+                return Nav::Act(LibraryAction::Copy);
+            }
             KeyCode::Left | KeyCode::Right
                 if custom && matches!(row, Row::Node(NodeRef::Property { .. })) =>
             {
@@ -315,6 +370,22 @@ impl TaxonomiesView {
                 self.select(moved);
                 return Ok(());
             }
+            (LibraryAction::Copy, _) => {
+                if library.copy_targets(&node).is_empty() {
+                    let taxonomy = library.node(&node).map(|node| node.taxonomy().name());
+                    return Err(format!(
+                        "Taxonomy \"{}\" has no other type to copy to.",
+                        taxonomy.unwrap_or_default()
+                    ));
+                }
+                self.mode = Mode::CopyTo {
+                    property: node,
+                    cursor: 0,
+                    chosen: BTreeSet::new(),
+                };
+                return Ok(());
+            }
+            (LibraryAction::CopyChosen, _) => return self.copy_chosen(library),
             (LibraryAction::Add, RowKey::Node(_)) => {
                 return Err(refused(EditRefusal::NotApplicable));
             }
@@ -324,6 +395,40 @@ impl TaxonomiesView {
         }
         self.open(node, field, library);
         Ok(())
+    }
+
+    fn copy_chosen(&mut self, library: &mut LibraryDraft) -> Result<(), String> {
+        let Mode::CopyTo {
+            property, chosen, ..
+        } = &self.mode
+        else {
+            return Ok(());
+        };
+        let targets = library
+            .copy_targets(property)
+            .into_iter()
+            .map(|target| target.id().clone())
+            .filter(|target| chosen.contains(target))
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            return Err("Choose at least one type with space.".into());
+        }
+        match library.edit(property, DraftEdit::CopyTo(&targets)) {
+            Ok(_) => {
+                self.expanded.extend(targets);
+                self.mode = Mode::Nav;
+                Ok(())
+            }
+            Err(EditRefusal::Taken { target }) => {
+                let name = |id: &NodeId| library.node(id).and_then(|node| node.names().pop());
+                Err(format!(
+                    "Type \"{}\" already has a property \"{}\"; nothing was copied.",
+                    name(&targets[target]).unwrap_or_default(),
+                    name(property).unwrap_or_default(),
+                ))
+            }
+            Err(refusal) => Err(refusal_sentence(refusal, None)),
+        }
     }
 
     /// Selects `node`, shows it, and enters EDIT on `field` with the cursor after its text.
@@ -552,6 +657,14 @@ impl TaxonomiesView {
                 &mut self.inspector_offset,
             );
         }
+        if let Mode::CopyTo {
+            property,
+            cursor,
+            chosen,
+        } = &self.mode
+        {
+            picker::render(frame, area, library, property, *cursor, chosen);
+        }
     }
 
     /// The footer: mode, the selected row's kind and chip, then its keys. The reorder and arrow
@@ -562,6 +675,9 @@ impl TaxonomiesView {
         embedded: bool,
         width: u16,
     ) -> Line<'static> {
+        if let Some(hints) = self.picker_hints() {
+            return footer_hints(&hints).style(navigation_style());
+        }
         let row = library.and_then(|library| self.selected_row(library));
         let editing = self.editing();
         let mut chip = vec![if editing {
@@ -597,6 +713,8 @@ impl TaxonomiesView {
             }
             if editing {
                 hints.extend([("enter", "next field"), ("esc", "done")]);
+            } else if !built_in && matches!(node, NodeRef::Property { .. }) {
+                hints.extend([("c", "copy to…"), ("←/→", "policy")]);
             } else if matches!(row, Row::Node(_)) {
                 if !built_in {
                     hints.push(("e", "edit"));
@@ -604,9 +722,6 @@ impl TaxonomiesView {
                 hints.extend([("f", "fork"), ("n", "new")]);
                 if !built_in {
                     hints.push(("d", "delete"));
-                    if matches!(node, NodeRef::Property { .. }) {
-                        hints.push(("←/→", "policy"));
-                    }
                     if !matches!(node, NodeRef::Taxonomy(_)) {
                         hints.push(("alt+↑/↓", "reorder"));
                     }

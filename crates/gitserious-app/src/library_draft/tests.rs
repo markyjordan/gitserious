@@ -904,3 +904,140 @@ fn the_schema_is_the_last_valid_build_while_a_taxonomy_has_problems() -> TestRes
     );
     Ok(())
 }
+
+#[test]
+fn a_copy_is_a_new_property_of_its_own_that_names_its_source_type_until_applied() -> TestResult {
+    let mut draft = LibraryDraft::from_configuration(team()?);
+    let cause = find(&draft, &["zeta", "fix", "cause"])?;
+    let fix = find(&draft, &["zeta", "fix"])?;
+    let targets = [
+        find(&draft, &["zeta", "feat"])?,
+        find(&draft, &["zeta", "refactor"])?,
+    ];
+    let names = |draft: &LibraryDraft| -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        draft
+            .copy_targets(&cause)
+            .iter()
+            .take(3)
+            .map(|commit_type| Ok(commit_type.name().to_owned()))
+            .collect()
+    };
+    assert_eq!(names(&draft)?, ["feat", "refactor", "perf"]);
+    assert_eq!(draft.edit(&cause, DraftEdit::CopyTo(&targets))?, cause);
+
+    let copies = [
+        find(&draft, &["zeta", "feat", "cause"])?,
+        find(&draft, &["zeta", "refactor", "cause"])?,
+    ];
+    let changes = checked(&draft);
+    for copy in &copies {
+        assert!(matches!(copy, NodeId::Local(_)));
+        assert_eq!(changes.mark(copy), Some(Mark::New));
+        let Some(NodeRef::Property { property, .. }) = draft.node(copy) else {
+            return Err("a copy is a property".into());
+        };
+        assert_eq!(property.copied_from(), Some(&fix));
+        assert_eq!(property.policy(), Policy::Required);
+        assert_eq!(
+            draft.text(copy, DraftField::Description),
+            draft.text(&cause, DraftField::Description)
+        );
+    }
+    assert_ne!(copies[0], copies[1]);
+    assert_eq!(changes.count(), 2);
+    assert_eq!(
+        lines(&changes),
+        ["edited   zeta v1 -> v2: property feat.cause added; property refactor.cause added"]
+    );
+
+    let policy = |draft: &LibraryDraft, id: &NodeId| match draft.node(id) {
+        Some(NodeRef::Property { property, .. }) => Some(property.policy()),
+        _ => None,
+    };
+    draft.edit(&copies[0], DraftEdit::Policy(Policy::Conditional))?;
+    draft.edit(&copies[0], DraftEdit::Text(DraftField::Condition, "risky"))?;
+    assert_eq!(policy(&draft, &cause), Some(Policy::Required));
+    assert_eq!(draft.text(&cause, DraftField::Condition), Some(""));
+    draft.edit(
+        &cause,
+        DraftEdit::Text(DraftField::Description, "Why it broke."),
+    )?;
+    draft.edit(&cause, DraftEdit::Policy(Policy::Optional))?;
+    assert_eq!(policy(&draft, &copies[0]), Some(Policy::Conditional));
+    assert_eq!(policy(&draft, &copies[1]), Some(Policy::Required));
+    assert_ne!(
+        draft.text(&copies[1], DraftField::Description),
+        Some("Why it broke.")
+    );
+
+    draft.edit(
+        &copies[0],
+        DraftEdit::Text(DraftField::Rationale, "Risky fixes need a cause."),
+    )?;
+    let applied = LibraryDraft::from_configuration(
+        draft.build().map_err(|problems| format!("{problems:?}"))?,
+    );
+    let reloaded = find(&applied, &["zeta", "feat", "cause"])?;
+    let Some(NodeRef::Property { property, .. }) = applied.node(&reloaded) else {
+        return Err("the copy is stored".into());
+    };
+    assert_eq!(property.copied_from(), None);
+    assert_eq!(property.policy(), Policy::Conditional);
+    Ok(())
+}
+
+#[test]
+fn a_copy_writes_nothing_when_any_target_has_the_key_or_is_not_another_type_of_its_taxonomy()
+-> TestResult {
+    let mut draft = LibraryDraft::from_configuration(team()?);
+    let cause = find(&draft, &["zeta", "fix", "cause"])?;
+    let refactor = find(&draft, &["zeta", "refactor"])?;
+    let perf = find(&draft, &["zeta", "perf"])?;
+    let fix = find(&draft, &["zeta", "fix"])?;
+    let release = find(&draft, &["team", "release"])?;
+    let decision = find(&draft, &["zeta", "fix", "decision"])?;
+    let before = format!("{draft:?}");
+    for (source, targets, refusal) in [
+        (
+            &cause,
+            vec![refactor.clone(), fix],
+            EditRefusal::Taken { target: 1 },
+        ),
+        (
+            &cause,
+            vec![refactor.clone(), refactor.clone()],
+            EditRefusal::Taken { target: 1 },
+        ),
+        (
+            &decision,
+            vec![perf.clone(), refactor.clone()],
+            EditRefusal::Taken { target: 0 },
+        ),
+        (
+            &cause,
+            vec![perf.clone(), release],
+            EditRefusal::NotApplicable,
+        ),
+        (
+            &cause,
+            vec![perf.clone(), cause.clone()],
+            EditRefusal::NotApplicable,
+        ),
+        (&refactor, vec![perf.clone()], EditRefusal::NotApplicable),
+    ] {
+        assert_eq!(
+            draft.edit(source, DraftEdit::CopyTo(&targets)),
+            Err(refusal)
+        );
+        assert_eq!(format!("{draft:?}"), before);
+    }
+    let built_in = find(&draft, &["conventional", "fix", "cause"])?;
+    let conventional_feat = find(&draft, &["conventional", "feat"])?;
+    assert_eq!(
+        draft.edit(&built_in, DraftEdit::CopyTo(&[conventional_feat])),
+        Err(EditRefusal::ReadOnly)
+    );
+    assert!(draft.copy_targets(&built_in).is_empty());
+    assert_eq!(format!("{draft:?}"), before);
+    Ok(())
+}
