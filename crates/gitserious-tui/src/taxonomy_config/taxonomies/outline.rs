@@ -264,14 +264,7 @@ fn row_line(
                     .join(" · ");
                 left.push(Span::styled(summary, DIM));
             }
-            let mut right = vec![Span::styled(
-                commit_type.properties().len().to_string(),
-                DIM,
-            )];
-            if let Some(chip) = chip {
-                right.extend([Span::raw("  "), chip.span()]);
-            }
-            (left, right)
+            (left, chip.map(Chip::span).into_iter().collect())
         }
         Row::Node(NodeRef::Property {
             taxonomy,

@@ -283,9 +283,9 @@ mod tests {
             "{screen}"
         );
         assert_eq!(screen.matches("▲ invalid 1").count(), 3, "{screen}");
-        let footer = rows(&terminal).pop().unwrap_or_default();
+        let footer = rows(&terminal).into_iter().rev().nth(1).unwrap_or_default();
         assert!(
-            footer.starts_with(" EDIT  · property ·  ▲ invalid 1 "),
+            footer.starts_with("  EDIT  · property ·  ▲ invalid 1 "),
             "{footer}"
         );
         let buffer = terminal.backend().buffer();
