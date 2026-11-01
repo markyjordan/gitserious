@@ -737,9 +737,8 @@ impl TaxonomiesView {
             left.extend(hint_spans(hints));
             let mut right = Vec::new();
             if !trailing.is_empty() {
-                right.push(Span::styled("│", DIM));
-                right.extend(hint_spans(trailing));
-                right.push(Span::raw(" "));
+                right.push(Span::styled("│ ", DIM));
+                right.extend(hint_spans(trailing).into_iter().skip(1));
             }
             (left, right)
         };

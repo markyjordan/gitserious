@@ -613,6 +613,15 @@ impl Snapshot {
         self.global.as_ref().and_then(ConfigurationSession::library)
     }
 
+    fn footer(&self) -> &str {
+        let inset = matches!(self.screen, Screen::Home) && self.category == Category::Taxonomies;
+        self.frame
+            .lines()
+            .rev()
+            .nth(usize::from(inset))
+            .unwrap_or_default()
+    }
+
     fn staged_library(&self) -> Option<GlobalConfiguration> {
         self.library().and_then(|library| library.build().ok())
     }
@@ -906,7 +915,7 @@ fn the_footer_shows_the_dialogs_choices(
     else {
         return Ok(());
     };
-    let footer = after.frame.lines().last().unwrap_or_default();
+    let footer = after.footer();
     hints
         .iter()
         .find(|hint| !footer.contains(hint.as_str()))
@@ -1005,7 +1014,7 @@ fn unapplied_changes_agree_everywhere(
             }
         }
     }
-    let footer = rows.last().copied().unwrap_or_default();
+    let footer = after.footer();
     if let Some(count) = library
         .find_path(&after.taxonomies.cursor_path)
         .map(|id| invalid(&id))

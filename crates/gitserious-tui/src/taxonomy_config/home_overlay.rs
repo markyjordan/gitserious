@@ -47,7 +47,7 @@ impl HomeCommand {
             Self::Fork => "Fork taxonomy",
             Self::Delete => "Delete taxonomy",
             Self::SwitchTab => match category {
-                Category::Project => "Switch to Taxonomies",
+                Category::Project => "Switch to Library",
                 Category::Taxonomies => "Switch to Project",
             },
             Self::Help => "Help",
@@ -248,7 +248,7 @@ fn render_palette(
 fn render_help(frame: &mut Frame<'_>, area: Rect, category: Category) {
     let rows: &[(&str, &str)] = match category {
         Category::Project => &[
-            ("Switch Project / Taxonomies", "1/2/click"),
+            ("Switch Project / Library", "1/2/click"),
             ("Focus menu or sections", "←/→"),
             ("Move between sections", "↑/↓"),
             ("Configure project", "enter"),
@@ -259,7 +259,7 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, category: Category) {
             ("Quit", "esc/q"),
         ],
         Category::Taxonomies => &[
-            ("Switch Project / Taxonomies", "1/2/click"),
+            ("Switch Project / Library", "1/2/click"),
             ("Expand, collapse, or go up", "←/→/enter"),
             ("Move selection", "↑/↓"),
             ("Reorder a type or property", "alt+↑/↓"),

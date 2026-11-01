@@ -133,7 +133,7 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
         rows.iter()
             .any(|row| row.contains("c copy to other types…   d delete"))
     );
-    assert!(rows[39].contains("c copy to…  ←/→ policy"), "{}", rows[39]);
+    assert!(rows[38].contains("c copy to…  ←/→ policy"), "{}", rows[38]);
 
     press(&mut state, &workspace, &[KeyCode::Char('c')]);
     assert_eq!(state.taxonomies.shell_keys(), ShellKeys::None);
@@ -146,9 +146,9 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
         rows.contains("[ ] fix") && rows.contains("[ ] docs"),
         "{rows}"
     );
-    let footer = rows.lines().last().unwrap_or_default();
+    let footer = rows.lines().rev().nth(1).unwrap_or_default();
     assert!(
-        footer.starts_with("↑/↓: move  space: toggle  enter: copy  esc: cancel"),
+        footer.starts_with(" ↑/↓: move  space: toggle  enter: copy  esc: cancel"),
         "{footer}"
     );
     press(&mut state, &workspace, &[KeyCode::Enter]);
