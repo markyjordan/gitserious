@@ -21,8 +21,9 @@ use crate::author::{AuthoringCheckpoint, embedded_author};
 use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT};
 use crate::taxonomy_config::{ConfigView, ShellKeys};
 use crate::theme::{
-    AMBER, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, block_title, centered_rect, command_hints,
-    frame_style, navigation_key_style, normalize_background, render_navigation_row,
+    AMBER, FOOTER_HEIGHT, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, block_title, centered_rect,
+    command_hints, frame_style, navigation_key_style, normalize_background, render_footer_block,
+    render_navigation_row,
 };
 use commit_view::CommitView;
 use home_logo::{HomeLogo, render_home_logo, resolve_dev_theme};
@@ -558,7 +559,9 @@ impl Shell {
                 self.config.render(frame, body);
             } else {
                 let [content, footer] =
-                    Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(body);
+                    Layout::vertical([Constraint::Min(1), Constraint::Length(FOOTER_HEIGHT)])
+                        .areas(body);
+                let footer = render_footer_block(frame, footer);
                 match self.section {
                     Section::Home => {
                         let block = Block::bordered().border_style(frame_style());
@@ -601,8 +604,13 @@ impl Shell {
         }
         self.render_overlay(frame, area);
         if matches!(self.overlay, Some(Overlay::QuitConfirm)) {
-            let footer = Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1);
-            frame.render_widget(Clear, footer);
+            let footer = Rect::new(
+                area.x,
+                area.bottom().saturating_sub(FOOTER_HEIGHT),
+                area.width,
+                FOOTER_HEIGHT,
+            );
+            let footer = render_footer_block(frame, footer);
             render_navigation_row(frame, footer, &confirmation::hints(DISCARD_AND_QUIT));
         }
         normalize_background(frame, area);
@@ -872,7 +880,7 @@ mod tests {
             terminal.resize(Rect::new(0, 0, width, height))?;
             terminal.draw(|frame| shell.render(frame, &[]))?;
             let buffer = terminal.backend().buffer();
-            let content = height - 4;
+            let content = height - 6;
             let outline = content.div_ceil(2);
             let inspector_y = 3 + outline;
             let x = (0..width)
@@ -880,14 +888,44 @@ mod tests {
                 .ok_or("outline border")?;
             assert_eq!(buffer[(x, inspector_y - 1)].symbol(), "└");
             assert_eq!(buffer[(x, inspector_y)].symbol(), "┌");
-            assert_eq!(buffer[(x, height - 2)].symbol(), "└");
-            assert_eq!(outline - (height - 1 - inspector_y), content % 2);
+            assert_eq!(buffer[(x, height - 4)].symbol(), "└");
+            assert_eq!(outline - (height - 3 - inspector_y), content % 2);
             if height == 40 {
-                assert_eq!(outline, 18);
-                assert_eq!(height - 1 - inspector_y, 18);
+                assert_eq!(outline, 17);
+                assert_eq!(height - 3 - inspector_y, 17);
             }
-            assert_eq!(buffer[(1, height - 1)].symbol(), " ");
-            assert_eq!(buffer[(2, height - 1)].symbol(), "N");
+            assert_eq!(buffer[(1, height - 2)].symbol(), " ");
+            assert_eq!(buffer[(2, height - 2)].symbol(), "N");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn every_root_footer_keeps_hints_between_blank_black_padding_rows()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let services = Services;
+        for (width, height) in [(87, 40), (MINIMUM_WIDTH, MINIMUM_HEIGHT)] {
+            let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
+            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+            for section in Section::ALL {
+                shell.execute(Action::Select(section), &services);
+                if section == Section::Config {
+                    shell.handle_event(key(KeyCode::Char('2')), &services, &[]);
+                }
+                terminal.draw(|frame| shell.render(frame, &[]))?;
+                let buffer = terminal.backend().buffer();
+                for y in [height - FOOTER_HEIGHT, height - 1] {
+                    for x in 0..width {
+                        assert_eq!(buffer[(x, y)].symbol(), " ", "{section:?}");
+                        assert_eq!(buffer[(x, y)].bg, JET_BLACK, "{section:?}");
+                    }
+                }
+                for x in [0, width - 1] {
+                    assert_eq!(buffer[(x, height - 2)].symbol(), " ");
+                    assert_eq!(buffer[(x, height - 2)].bg, JET_BLACK);
+                }
+                assert!((1..width - 1).any(|x| buffer[(x, height - 2)].symbol() != " "));
+            }
         }
         Ok(())
     }
@@ -1135,14 +1173,17 @@ mod tests {
         assert!(rendered(&terminal).contains("Discard unapplied changes and quit?"));
         let buffer = terminal.backend().buffer();
         let footer = (0..100)
-            .map(|x| buffer[(x, 29)].symbol())
+            .map(|x| buffer[(x, 28)].symbol())
             .collect::<String>();
-        assert_eq!(footer.trim_end(), "y: discard and quit  enter/esc/n: stay");
+        assert_eq!(footer.trim_end(), " y: discard and quit  enter/esc/n: stay");
         assert_eq!(
             shell.handle_event(key(KeyCode::Char('n')), &services, &[]),
             None
         );
         assert!(shell.overlay.is_none());
+        assert!(
+            (0..100).all(|x| buffer[(x, 29)].symbol() == " " && buffer[(x, 29)].bg == JET_BLACK)
+        );
         Ok(())
     }
 
@@ -1210,11 +1251,11 @@ mod tests {
             // No blank gap: the Home frame starts directly under the nav box.
             assert_eq!(buffer[(0, 3)].symbol(), "┌");
             assert_eq!(buffer[(width - 1, 3)].symbol(), "┐");
-            assert_eq!(buffer[(0, height - 2)].symbol(), "└");
-            assert_eq!(buffer[(width - 1, height - 2)].symbol(), "┘");
+            assert_eq!(buffer[(0, height - 4)].symbol(), "└");
+            assert_eq!(buffer[(width - 1, height - 4)].symbol(), "┘");
             // Wordmark graphic is present (block/dither cells, not plain text).
             let body: String = (0..width)
-                .flat_map(|x| (4..height - 2).map(move |y| (x, y)))
+                .flat_map(|x| (4..height - 4).map(move |y| (x, y)))
                 .map(|(x, y)| buffer[(x, y)].symbol())
                 .collect();
             assert!(body.contains('█'), "home should render the block wordmark");
@@ -1248,16 +1289,16 @@ mod tests {
                 .ok_or("missing logo row")?;
             assert!(logo_row < version_row, "logo must sit above version");
             let footer: String = (0..width)
-                .map(|x| buffer[(x, height - 1)].symbol())
+                .map(|x| buffer[(x, height - 2)].symbol())
                 .collect();
-            assert!(footer.starts_with("tab/shift+tab: switch  /: commands  ?: help  q: quit"));
+            assert!(footer.starts_with(" tab/shift+tab: switch  /: commands  ?: help  q: quit"));
             assert!(
-                buffer[(0, height - 1)]
+                buffer[(1, height - 2)]
                     .modifier
                     .contains(ratatui::style::Modifier::BOLD)
             );
             assert!(
-                !buffer[(16, height - 1)]
+                !buffer[(17, height - 2)]
                     .modifier
                     .contains(ratatui::style::Modifier::BOLD)
             );

@@ -617,7 +617,7 @@ impl Snapshot {
     }
 
     fn footer(&self) -> &str {
-        self.frame.lines().next_back().unwrap_or_default()
+        self.frame.lines().rev().nth(1).unwrap_or_default()
     }
 
     fn staged_library(&self) -> Option<GlobalConfiguration> {

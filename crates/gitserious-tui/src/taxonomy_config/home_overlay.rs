@@ -1,6 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
+use ratatui::text::Line;
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph};
 
 use super::Category;
@@ -273,10 +274,13 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, category: Category) {
             ("Quit", "esc/q"),
         ],
     };
-    let height = u16::try_from(rows.len() + 4).unwrap_or(u16::MAX);
+    let height = u16::try_from(rows.len() + 3).unwrap_or(u16::MAX);
     let popup = centered_rect(58, height.min(area.height), area);
     frame.render_widget(Clear, popup);
-    frame.render_widget(popup_block(), popup);
+    frame.render_widget(
+        popup_block().title_bottom(Line::from(" [esc] close ").centered()),
+        popup,
+    );
     let content_x = popup.x.saturating_add(2);
     let content_width = popup.width.saturating_sub(4);
     frame.render_widget(
@@ -297,7 +301,7 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, category: Category) {
             .y
             .saturating_add(2)
             .saturating_add(u16::try_from(index).unwrap_or(u16::MAX));
-        if y >= popup.bottom().saturating_sub(2) {
+        if y >= popup.bottom().saturating_sub(1) {
             break;
         }
         frame.render_widget(
@@ -309,13 +313,4 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, category: Category) {
             Rect::new(key_x, y, key_width, 1),
         );
     }
-    frame.render_widget(
-        Paragraph::new("[esc] close").centered(),
-        Rect::new(
-            content_x,
-            popup.bottom().saturating_sub(2),
-            content_width,
-            1,
-        ),
-    );
 }

@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Clear, Padding, Paragraph};
 
 pub(crate) const MINIMUM_WIDTH: u16 = 66;
 pub(crate) const MINIMUM_HEIGHT: u16 = 18;
@@ -84,6 +84,19 @@ pub(crate) fn footer_hints(hints: &[(&str, &str)]) -> Line<'static> {
         spans.push(Span::raw(action.to_owned()));
     }
     Line::from(spans)
+}
+
+pub(crate) const FOOTER_HEIGHT: u16 = 3;
+
+/// The footer owns its padding; hints and mode chips occupy only its inner row.
+pub(crate) fn render_footer_block(frame: &mut Frame<'_>, area: Rect) -> Rect {
+    let block = Block::default()
+        .padding(Padding::uniform(1))
+        .style(Style::new().fg(Color::White).bg(JET_BLACK));
+    let inner = block.inner(area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    inner
 }
 
 pub(crate) fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &[(&str, &str)]) {
