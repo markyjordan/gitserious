@@ -22,8 +22,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use super::naming::{problem_sentence, refusal_sentence, single_line};
 use super::{ShellKeys, contains};
 use crate::theme::{
-    AMBER, JET_BLACK, ZEBRA_BACKGROUND, focus_frame_style, footer_hints, navigation_key_style,
-    navigation_style,
+    ACCENT, AMBER, JET_BLACK, ZEBRA_BACKGROUND, block_title, focus_frame_style, footer_hints,
+    navigation_key_style, navigation_style,
 };
 use outline::Row;
 pub(super) use outline::RowKey;
@@ -33,7 +33,7 @@ mod outline;
 mod picker;
 
 const DIM: Style = Style::new().fg(Color::Gray);
-const KEY_STYLE: Style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+const KEY_STYLE: Style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
 const BADGE_STYLE: Style = Style::new().fg(Color::Gray).bg(ZEBRA_BACKGROUND);
 const BAND: Style = Style::new().bg(Color::Rgb(40, 40, 40));
 const EDIT_CHIP: Style = Style::new()
@@ -604,7 +604,7 @@ impl TaxonomiesView {
             self.outline_area = Rect::default();
             let block = Block::bordered()
                 .border_style(focus_frame_style(focused))
-                .title("Taxonomies");
+                .title(block_title("Taxonomies"));
             frame.render_widget(
                 Paragraph::new("Taxonomy library unavailable."),
                 block.inner(outline_area),
@@ -667,8 +667,6 @@ impl TaxonomiesView {
         }
     }
 
-    /// The footer: mode, the selected row's kind and chip, then its keys. The reorder and arrow
-    /// hints go first and the trailing keys next, front to back, when the row is narrow.
     pub(super) fn status_line(
         &self,
         library: Option<&LibraryDraft>,
@@ -716,6 +714,13 @@ impl TaxonomiesView {
             } else if !built_in && matches!(node, NodeRef::Property { .. }) {
                 hints.extend([("c", "copy to…"), ("←/→", "policy")]);
             } else if matches!(row, Row::Node(_)) {
+                if outline::has_children(row) {
+                    hints.push(if self.expanded.contains(node.id()) {
+                        ("enter/←", "close")
+                    } else {
+                        ("enter/→", "open")
+                    });
+                }
                 if !built_in {
                     hints.push(("e", "edit"));
                 }
@@ -746,7 +751,7 @@ impl TaxonomiesView {
             Line::from(left.clone()).width() + Line::from(right.clone()).width() < width
         };
         let mut candidate = line(&hints, &trailing);
-        for optional in ["alt+↑/↓", "↑/↓"] {
+        for optional in ["alt+↑/↓", "↑/↓", "d", "n", "f", "e"] {
             if fits(&candidate) {
                 break;
             }

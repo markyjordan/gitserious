@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Para
 
 use super::Category;
 use crate::theme::{
-    JET_BLACK, centered_rect, frame_style, navigation_key_style, section_heading_style,
+    JET_BLACK, block_title, centered_rect, frame_style, navigation_key_style, section_heading_style,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -195,7 +195,7 @@ fn render_palette(
         Paragraph::new(format!("/{}▌", state.query)).block(
             Block::bordered()
                 .border_style(frame_style())
-                .title("Search"),
+                .title(block_title("Search")),
         ),
         Rect::new(
             content_x.saturating_sub(1),

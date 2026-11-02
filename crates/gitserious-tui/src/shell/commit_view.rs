@@ -8,7 +8,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 
-use crate::theme::{frame_style, navigation_key_style, section_heading_style};
+use crate::theme::{block_title, frame_style, navigation_key_style, section_heading_style};
 
 #[derive(Clone)]
 struct TreeRow {
@@ -146,7 +146,7 @@ impl CommitView {
         frame.render_widget(Paragraph::new(summary_text), summary);
         let block = Block::bordered()
             .border_style(frame_style())
-            .title("Changes");
+            .title(block_title("Changes"));
         self.list_area = block.inner(tree);
         let items: Vec<_> = self
             .rows

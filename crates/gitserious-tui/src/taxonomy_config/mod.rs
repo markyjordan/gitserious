@@ -21,9 +21,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::theme::{
-    JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, centered_rect, focus_frame_style, frame_style,
-    navigation_key_style, normalize_background, render_navigation_row, row_style,
-    section_heading_style, selected_style,
+    ACCENT, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, block_title, centered_rect,
+    focus_frame_style, frame_style, navigation_key_style, normalize_background,
+    render_navigation_row, row_style, section_heading_style, selected_style,
 };
 
 #[cfg(test)]
@@ -1251,7 +1251,7 @@ impl State {
             Block::bordered()
                 .border_style(style)
                 .title_style(style)
-                .title("Menu"),
+                .title(block_title("Menu")),
             area,
         );
         for category in Category::ALL {
@@ -1267,7 +1267,7 @@ impl State {
                 (
                     navigation_key_style(),
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(ACCENT)
                         .add_modifier(Modifier::UNDERLINED),
                 )
             } else {
@@ -1346,7 +1346,7 @@ impl State {
             Block::bordered()
                 .border_style(style)
                 .title_style(style)
-                .title("Project"),
+                .title(block_title("Project")),
             columns[0],
         );
         let root = self
@@ -1421,7 +1421,7 @@ impl State {
         frame.render_widget(
             Block::bordered()
                 .border_style(frame_style())
-                .title(self.project_section.label()),
+                .title(block_title(self.project_section.label())),
             columns[1],
         );
         let detail = Rect::new(
@@ -1646,10 +1646,10 @@ impl State {
                 .block(
                     Block::bordered()
                         .border_style(frame_style())
-                        .title(match destination {
+                        .title(block_title(match destination {
                             ConfigurationDestination::Global => "Global availability",
                             ConfigurationDestination::Project => "Project availability",
-                        }),
+                        })),
                 )
                 .highlight_style(navigation_key_style()),
             parts[1],
@@ -1949,14 +1949,16 @@ mod tests {
                 .is_none()
         );
         let buffer = terminal.backend().buffer();
-        assert!(row_text(&terminal, 0, 0, 100).contains("Menu"));
+        assert!(row_text(&terminal, 0, 0, 100).starts_with("┌ Menu ─"));
+        assert!(row_text(&terminal, MENU_WIDTH, 0, 100 - MENU_WIDTH).starts_with("┌ Project ─"));
+        assert!(home.contains("┌ Commit ─"));
         assert_eq!(buffer[(0, 0)].symbol(), "┌");
         assert_eq!(buffer[(MENU_WIDTH - 1, 0)].symbol(), "┐");
         assert_eq!(buffer[(MENU_WIDTH - 1, 28)].symbol(), "┘");
         assert_eq!(buffer[(MENU_WIDTH, 0)].symbol(), "┌");
         assert_eq!(buffer[(99, 0)].symbol(), "┐");
         assert_ne!(buffer[(MENU_WIDTH + 1, 1)].symbol(), " ");
-        assert_eq!(buffer[(MENU_WIDTH + 1, 1)].fg, Color::Yellow);
+        assert_eq!(buffer[(MENU_WIDTH + 1, 1)].fg, ACCENT);
         let project_columns = pane_columns(Rect::new(MENU_WIDTH, 0, 100 - MENU_WIDTH, 29));
         assert!(
             row_text(
@@ -1968,13 +1970,13 @@ mod tests {
             .starts_with("Commit taxonomy")
         );
         assert_eq!(buffer[(2, 1)].symbol(), "1");
-        assert_eq!(buffer[(2, 1)].bg, Color::Yellow);
-        assert_eq!(buffer[(5, 1)].fg, Color::Yellow);
+        assert_eq!(buffer[(2, 1)].bg, ACCENT);
+        assert_eq!(buffer[(5, 1)].fg, ACCENT);
         assert!(buffer[(5, 1)].modifier.contains(Modifier::UNDERLINED));
         assert_eq!(buffer[(0, 28)].symbol(), "└");
         assert_eq!(buffer[(0, 29)].symbol(), "←");
         assert_eq!(buffer[(3, 29)].symbol(), ":");
-        assert!((0..100).all(|x| buffer[(x, 29)].bg == Color::Yellow));
+        assert!((0..100).all(|x| buffer[(x, 29)].bg == ACCENT));
 
         state.handle_event(key(KeyCode::Right), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
@@ -2164,8 +2166,12 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| state.render(frame))?;
             let screen = rows(&terminal);
-            assert!(screen[0].starts_with("┌Menu"));
-            assert!(row_text(&terminal, MENU_WIDTH, 0, 11).starts_with("┌Taxonomies"));
+            assert!(screen[0].starts_with("┌ Menu ─"));
+            assert!(row_text(&terminal, MENU_WIDTH, 0, 14).starts_with("┌ Taxonomies ─"));
+            let buffer = terminal.backend().buffer();
+            assert_eq!(buffer[(MENU_WIDTH, 0)].fg, Color::Rgb(80, 160, 255));
+            assert_eq!(buffer[(MENU_WIDTH + 1, 1)].fg, Color::Rgb(80, 160, 255));
+            assert_eq!(buffer[(1, height - 2)].bg, Color::Rgb(80, 160, 255));
             assert!(screen[2].contains(" 2  Library"));
             let outline = |name: &str| {
                 screen
@@ -2179,12 +2185,12 @@ mod tests {
             assert!(outline("infra-ops").trim_end().ends_with("built-in  │"));
             assert!(outline("original").trim_end().ends_with("custom  │"));
             let text = screen.join("\n");
-            assert!(text.contains("┌Inspector"));
+            assert!(text.contains("┌ Inspector ─"));
             assert!(text.contains("Taxonomy conventional"));
             assert!(text.contains("Version      2"));
             assert!(
                 screen[usize::from(height) - 2]
-                    .starts_with("  NAV  · taxonomy ·  ◇ read-only   f fork  n new")
+                    .starts_with("  NAV  · taxonomy ·  ◇ read-only   enter/→ open")
             );
             if height == 40 {
                 assert!(text.contains("Types        11"));
@@ -2196,10 +2202,7 @@ mod tests {
             terminal.draw(|frame| state.render(frame))?;
             let screen = rows(&terminal);
             assert!(screen.join("\n").contains("Taxonomy original"));
-            assert!(
-                screen[usize::from(height) - 2]
-                    .starts_with("  NAV  · taxonomy  e edit  f fork  n new  d delete")
-            );
+            assert!(screen[usize::from(height) - 2].starts_with("  NAV  · taxonomy  enter/→ open"));
         }
         Ok(())
     }
@@ -2337,8 +2340,54 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(87, 36))?;
         terminal.draw(|frame| state.render(frame))?;
         let footer = row_text(&terminal, 0, 34, 87);
-        assert!(footer.starts_with("  NAV  · taxonomy ·  ◇ read-only   f fork  n new  ↑/↓ move"));
+        assert!(footer.starts_with("  NAV  · taxonomy ·  ◇ read-only   enter/→ open"));
         assert!(footer.trim_end().ends_with("│ tab tabs  / cmds  ? help"));
+        Ok(())
+    }
+
+    #[test]
+    fn taxonomy_footer_keeps_open_and_close_shortcuts_at_compact_widths()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (87, 40)] {
+            for embedded in [false, true] {
+                for (taxonomy, commit_type) in [
+                    ("conventional", None),
+                    ("conventional", Some("feat")),
+                    ("original", None),
+                    ("original", Some("existing")),
+                ] {
+                    let (workspace, _) = custom_workspace()?;
+                    let mut state = State::new(&workspace);
+                    state.embedded = embedded;
+                    state.handle_event(key(KeyCode::Char('2')), &workspace);
+                    let parent = library(&state)?
+                        .find_path(&[taxonomy])
+                        .ok_or("missing taxonomy")?;
+                    state.taxonomies.select(parent);
+                    if let Some(commit_type) = commit_type {
+                        state.handle_event(key(KeyCode::Right), &workspace);
+                        let node = library(&state)?
+                            .find_path(&[taxonomy, commit_type])
+                            .ok_or("missing type")?;
+                        state.taxonomies.select(node);
+                    }
+                    let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+                    for (shortcut, absent, next) in [
+                        ("enter/→ open", "enter/← close", KeyCode::Enter),
+                        ("enter/← close", "enter/→ open", KeyCode::Left),
+                        ("enter/→ open", "enter/← close", KeyCode::Right),
+                    ] {
+                        terminal.draw(|frame| state.render(frame))?;
+                        let footer = row_text(&terminal, 0, height - 2, width);
+                        assert!(footer.contains(shortcut), "{footer}");
+                        assert!(!footer.contains(absent), "{footer}");
+                        assert!(!footer.contains('…'), "{footer}");
+                        assert!(footer.contains("? help"), "{footer}");
+                        state.handle_event(key(next), &workspace);
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2381,13 +2430,12 @@ mod tests {
                         footer.starts_with(&format!(" {mode} · taxonomy · ")),
                         "{footer}"
                     );
+                    if !editing {
+                        assert!(footer.contains("enter/→ open"), "{footer}");
+                    }
                     let buffer = terminal.backend().buffer();
                     let mode_width = u16::try_from(mode.chars().count())?;
-                    let mode_background = if editing {
-                        crate::theme::AMBER
-                    } else {
-                        Color::Yellow
-                    };
+                    let mode_background = if editing { crate::theme::AMBER } else { ACCENT };
                     assert!((1..=mode_width).all(|x| buffer[(x, y)].bg == mode_background));
                     assert_eq!(buffer[(mode_width + 1, y)].bg, JET_BLACK);
                     let badge = format!(" {label} ");
@@ -2607,7 +2655,7 @@ mod tests {
             assert!(state.home_overlay.is_none());
             terminal.draw(|frame| state.render(frame))?;
             let footer = row_text(&terminal, 0, height - 2, width);
-            assert!(footer.starts_with("  NAV  · taxonomy ·  ◇ read-only   f fork  n new"));
+            assert!(footer.starts_with("  NAV  · taxonomy ·  ◇ read-only   enter/→ open"));
             assert!(footer.trim_end().ends_with("│ / cmds  ? help"));
             state.handle_event(key(KeyCode::Char('/')), &workspace);
             assert!(matches!(state.home_overlay, Some(HomeOverlay::Palette(_))));
@@ -2769,7 +2817,7 @@ mod tests {
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Commands"));
         assert!(text(&terminal).contains("╔"));
-        assert!(text(&terminal).contains("Search"));
+        assert!(text(&terminal).contains("┌ Search ─"));
         assert!(text(&terminal).contains("▌"));
         let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
             return Err("palette missing".into());
@@ -3340,6 +3388,8 @@ mod tests {
             let footer = row_text(&terminal, 0, height - 2, width);
             assert!(footer.starts_with("  NAV  · property  c copy"), "{footer}");
             assert!(footer.contains("←/→ policy"), "{footer}");
+            assert!(!footer.contains("enter/→ open"), "{footer}");
+            assert!(!footer.contains("enter/← close"), "{footer}");
 
             press(&mut state, &workspace, &[KeyCode::Char('e')]);
             assert_eq!(field(&state), Some(DraftField::Name));
@@ -3461,6 +3511,10 @@ mod tests {
         let screen = rows(&terminal).join("\n");
         assert!(screen.contains("│▌    └ + add property"), "{screen}");
         assert!(screen.contains("│   + add type"), "{screen}");
+        let footer = row_text(&terminal, 0, 38, 87);
+        assert!(footer.contains("enter add"), "{footer}");
+        assert!(!footer.contains("enter/→ open"), "{footer}");
+        assert!(!footer.contains("enter/← close"), "{footer}");
 
         press(&mut state, &workspace, &[KeyCode::Enter]);
         assert_eq!(field(&state), Some(DraftField::Name));

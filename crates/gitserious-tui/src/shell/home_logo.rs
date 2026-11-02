@@ -6,7 +6,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use crate::theme::JET_BLACK;
+use crate::theme::{ACCENT, JET_BLACK};
 
 /// Width of the wordmark in terminal cells.
 pub(super) const LOGO_WIDTH: u16 = 49;
@@ -293,18 +293,26 @@ pub(super) const BONE_WHISPER: LogoTheme = LogoTheme {
     glyphs: ['█', '█', '█', '█'],
 };
 
+pub(super) const BLUE: LogoTheme = LogoTheme {
+    name: "blue",
+    id: "blue",
+    base: ACCENT,
+    ..YELLOW_EPILEPTIC_DREAMS
+};
+
 /// Internal registry. Dev switches themes by id; no user-facing UI yet.
-pub(super) const ALL_THEMES: [&LogoTheme; 6] = [
+pub(super) const ALL_THEMES: [&LogoTheme; 7] = [
     &YELLOW_EPILEPTIC_DREAMS,
     &AMBER_TERMINAL,
     &GLACIER_DRIFT,
     &SYNTHWAVE_SUNSET,
     &STIPPLE_MIST,
     &BONE_WHISPER,
+    &BLUE,
 ];
 
 /// Default shown on launch. Change this line during dev to swap.
-pub(super) const DEFAULT_THEME: &LogoTheme = &YELLOW_EPILEPTIC_DREAMS;
+pub(super) const DEFAULT_THEME: &LogoTheme = &BLUE;
 
 /// Dev-only lookup by id or name (case-insensitive).
 #[must_use]
@@ -567,7 +575,7 @@ mod tests {
                 Some(theme.id)
             );
         }
-        assert_eq!(DEFAULT_THEME.id, YELLOW_EPILEPTIC_DREAMS.id);
+        assert_eq!(DEFAULT_THEME.id, "blue");
     }
 
     #[test]
