@@ -1231,11 +1231,8 @@ impl State {
         }
         let inset_footer =
             matches!(self.screen, Screen::Home) && self.category == Category::Taxonomies;
-        let [main, footer] = Layout::vertical([
-            Constraint::Min(1),
-            Constraint::Length(if inset_footer { 2 } else { 1 }),
-        ])
-        .areas(area);
+        let [main, footer] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
         let footer = if inset_footer {
             Rect::new(footer.x + 1, footer.y, footer.width.saturating_sub(2), 1)
         } else {
@@ -2233,7 +2230,23 @@ mod tests {
             let buffer = terminal.backend().buffer();
             assert_eq!(buffer[(MENU_WIDTH, 0)].fg, Color::Rgb(80, 160, 255));
             assert_eq!(buffer[(MENU_WIDTH + 1, 1)].fg, Color::Rgb(80, 160, 255));
-            assert_eq!(buffer[(1, height - 2)].bg, Color::Rgb(80, 160, 255));
+            assert_eq!(buffer[(1, height - 1)].bg, Color::Rgb(80, 160, 255));
+            for label in [" built-in ", " ◇ read-only "] {
+                let mut count = 0;
+                for (y, line) in screen.iter().enumerate() {
+                    for (start, _) in line.match_indices(label) {
+                        let x = line[..start].chars().count();
+                        for dx in 0..label.chars().count() {
+                            let cell = &buffer[(u16::try_from(x + dx)?, u16::try_from(y)?)];
+                            assert_eq!(cell.fg, Color::Black);
+                            assert_eq!(cell.bg, Color::White);
+                        }
+                        count += 1;
+                    }
+                }
+                assert!(count > 0, "missing {label}");
+            }
+
             assert!(screen[2].contains(" 2  Library"));
             let outline = |name: &str| {
                 screen
@@ -2251,7 +2264,7 @@ mod tests {
             assert!(text.contains("Taxonomy conventional"));
             assert!(text.contains("Version      2"));
             assert!(
-                screen[usize::from(height) - 2]
+                screen[usize::from(height) - 1]
                     .starts_with("  NAV  · taxonomy ·  ◇ read-only   enter/→ open")
             );
             if height == 40 {
@@ -2264,7 +2277,7 @@ mod tests {
             terminal.draw(|frame| state.render(frame))?;
             let screen = rows(&terminal);
             assert!(screen.join("\n").contains("Taxonomy original"));
-            assert!(screen[usize::from(height) - 2].starts_with("  NAV  · taxonomy  enter/→ open"));
+            assert!(screen[usize::from(height) - 1].starts_with("  NAV  · taxonomy  enter/→ open"));
         }
         Ok(())
     }
@@ -2401,7 +2414,7 @@ mod tests {
         state.handle_event(key(KeyCode::Char('2')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(87, 36))?;
         terminal.draw(|frame| state.render(frame))?;
-        let footer = row_text(&terminal, 0, 34, 87);
+        let footer = row_text(&terminal, 0, 35, 87);
         assert!(footer.starts_with("  NAV  · taxonomy ·  ◇ read-only   enter/→ open"));
         assert!(footer.trim_end().ends_with("│ tab tabs  / cmds  ? help"));
         Ok(())
@@ -2440,7 +2453,7 @@ mod tests {
                         ("enter/→ open", "enter/← close", KeyCode::Right),
                     ] {
                         terminal.draw(|frame| state.render(frame))?;
-                        let footer = row_text(&terminal, 0, height - 2, width);
+                        let footer = row_text(&terminal, 0, height - 1, width);
                         assert!(footer.contains(shortcut), "{footer}");
                         assert!(!footer.contains(absent), "{footer}");
                         assert!(!footer.contains('…'), "{footer}");
@@ -2485,7 +2498,7 @@ mod tests {
                         state.handle_event(key(KeyCode::Char('e')), &workspace);
                     }
                     terminal.draw(|frame| state.render(frame))?;
-                    let y = height - 2;
+                    let y = height - 1;
                     let footer = row_text(&terminal, 0, y, width);
                     let mode = if editing { " EDIT " } else { " NAV " };
                     assert!(
@@ -2499,6 +2512,14 @@ mod tests {
                     let mode_width = u16::try_from(mode.chars().count())?;
                     let mode_background = if editing { crate::theme::AMBER } else { ACCENT };
                     assert!((1..=mode_width).all(|x| buffer[(x, y)].bg == mode_background));
+                    for (index, symbol) in mode.chars().enumerate() {
+                        let cell = &buffer[(1 + u16::try_from(index)?, y)];
+                        assert_eq!(cell.symbol(), symbol.to_string());
+                        assert_eq!(cell.fg, JET_BLACK);
+                        assert_eq!(cell.modifier, Modifier::BOLD);
+                    }
+                    assert_eq!(buffer[(1, y - 1)].symbol(), "─");
+
                     assert_eq!(buffer[(mode_width + 1, y)].bg, JET_BLACK);
                     let badge = format!(" {label} ");
                     let start = footer.find(&badge).ok_or("missing state pill")?;
@@ -2511,10 +2532,6 @@ mod tests {
                         assert_eq!(buffer[(x, y)].symbol(), " ");
                         assert_eq!(buffer[(x, y)].bg, JET_BLACK);
                     }
-                    assert!((0..width).all(|x| {
-                        buffer[(x, height - 1)].symbol() == " "
-                            && buffer[(x, height - 1)].bg == JET_BLACK
-                    }));
                 }
             }
         }
@@ -2584,7 +2601,7 @@ mod tests {
         state.home_focus = HomeFocus::Content;
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(row_text(&terminal, 0, 28, 100).contains("f fork  n new  ↑/↓ move"));
+        assert!(row_text(&terminal, 0, 29, 100).contains("f fork  n new  ↑/↓ move"));
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Commands"));
@@ -2716,7 +2733,7 @@ mod tests {
             assert_eq!(state.category, Category::Taxonomies);
             assert!(state.home_overlay.is_none());
             terminal.draw(|frame| state.render(frame))?;
-            let footer = row_text(&terminal, 0, height - 2, width);
+            let footer = row_text(&terminal, 0, height - 1, width);
             assert!(footer.starts_with("  NAV  · taxonomy ·  ◇ read-only   enter/→ open"));
             assert!(footer.trim_end().ends_with("│ / cmds  ? help"));
             state.handle_event(key(KeyCode::Char('/')), &workspace);
@@ -2811,13 +2828,13 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         state.handle_event(key(KeyCode::Char('?')), &workspace);
         terminal.draw(|frame| state.render(frame))?;
-        let help = centered_rect(58, 15, Rect::new(0, 0, MINIMUM_WIDTH, MINIMUM_HEIGHT - 2));
+        let help = centered_rect(58, 16, Rect::new(0, 0, MINIMUM_WIDTH, MINIMUM_HEIGHT - 1));
         let content_x = help.x + 2;
         let content_width = help.width - 4;
         let switch_row = row_text(&terminal, content_x, help.y + 2, content_width);
         let reorder_row = row_text(&terminal, content_x, help.y + 5, content_width);
         let edit_row = row_text(&terminal, content_x, help.y + 7, content_width);
-        let quit_row = row_text(&terminal, content_x, help.y + 12, content_width);
+        let quit_row = row_text(&terminal, content_x, help.y + 13, content_width);
         assert!(switch_row.starts_with("Switch Project / Library"));
         assert!(switch_row.ends_with("1/2/click"));
         assert!(reorder_row.starts_with("Reorder a type or property"));
@@ -2873,7 +2890,7 @@ mod tests {
         state.home_focus = HomeFocus::Content;
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(row_text(&terminal, 0, 16, MINIMUM_WIDTH).contains("? help"));
+        assert!(row_text(&terminal, 0, MINIMUM_HEIGHT - 1, MINIMUM_WIDTH).contains("? help"));
         let project_tab = state.tab_areas[Category::Project.index()];
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         terminal.draw(|frame| state.render(frame))?;
@@ -3013,7 +3030,7 @@ mod tests {
         state.global = None;
         state.global_error = "global load failed".into();
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(45, 26)].fg, Color::Red);
+        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, Color::Red);
         assert!(text(&terminal).contains("Global load failed."));
         Ok(())
     }
@@ -3436,6 +3453,90 @@ mod tests {
     }
 
     #[test]
+    fn property_navigation_keeps_policy_and_frames_follow_nav_and_edit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use gitserious_app::Policy;
+        for embedded in [false, true] {
+            for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (87, 40)] {
+                let (workspace, _) = custom_workspace()?;
+                let mut state = State::new(&workspace);
+                state.embedded = embedded;
+                open_notes(&mut state, &workspace);
+                let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+                let policy = |state: &State| -> Result<Policy, Box<dyn std::error::Error>> {
+                    let library = library(state)?;
+                    let id = library
+                        .find_path(&["original", "existing", "notes"])
+                        .ok_or("notes")?;
+                    match library.node(&id) {
+                        Some(NodeRef::Property { property, .. }) => Ok(property.policy()),
+                        _ => Err("notes property".into()),
+                    }
+                };
+                let initial = policy(&state)?;
+                press(&mut state, &workspace, &[KeyCode::Right]);
+                assert_eq!(cursor(&state), ["original", "existing", "notes"]);
+                assert_eq!(policy(&state)?, initial);
+                terminal.draw(|frame| state.render(frame))?;
+                let footer = row_text(&terminal, 0, height - 1, width);
+                assert!(
+                    footer.contains("e edit") && footer.contains("c copy to…"),
+                    "{footer}"
+                );
+                assert!(!footer.contains("policy"));
+                let inspector_y = (0..height)
+                    .find(|y| {
+                        row_text(&terminal, MENU_WIDTH, *y, width - MENU_WIDTH)
+                            .starts_with("┌ Inspector")
+                    })
+                    .ok_or("Inspector")?;
+                let frames = |terminal: &Terminal<TestBackend>, outline, inspector| {
+                    let buffer = terminal.backend().buffer();
+                    assert_eq!(buffer[(MENU_WIDTH, 0)].fg, outline);
+                    assert_eq!(buffer[(MENU_WIDTH, inspector_y)].fg, inspector);
+                };
+                frames(&terminal, ACCENT, ACCENT);
+                assert_eq!(
+                    state.taxonomies.observe(state.library()).inspector_offset,
+                    0
+                );
+                press(&mut state, &workspace, &[KeyCode::Left]);
+                assert_eq!(cursor(&state), ["original", "existing"]);
+                assert_eq!(policy(&state)?, initial);
+                press(
+                    &mut state,
+                    &workspace,
+                    &[
+                        KeyCode::Right,
+                        KeyCode::Char('e'),
+                        KeyCode::Enter,
+                        KeyCode::Enter,
+                    ],
+                );
+                assert_eq!(field(&state), Some(DraftField::Policy));
+                let mut reached = std::collections::BTreeSet::new();
+                for _ in 0..4 {
+                    reached.insert(policy(&state)?.label());
+                    press(&mut state, &workspace, &[KeyCode::Right]);
+                    terminal.draw(|frame| state.render(frame))?;
+                    frames(&terminal, ACCENT, crate::theme::AMBER);
+                }
+                assert_eq!(reached.len(), 4);
+                press(&mut state, &workspace, &[KeyCode::Esc]);
+                terminal.draw(|frame| state.render(frame))?;
+                frames(&terminal, ACCENT, ACCENT);
+                state.home_focus = HomeFocus::Menu;
+                terminal.draw(|frame| state.render(frame))?;
+                let inactive = crate::theme::focus_frame_style(false)
+                    .fg
+                    .ok_or("inactive color")?;
+                frames(&terminal, inactive, inactive);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn a_custom_property_edits_in_place_and_each_field_holds_at_most_its_limit()
     -> Result<(), Box<dyn std::error::Error>> {
         for (width, height) in [(87, 40), (MINIMUM_WIDTH, MINIMUM_HEIGHT)] {
@@ -3447,9 +3548,12 @@ mod tests {
             terminal.draw(|frame| state.render(frame))?;
             let screen = rows(&terminal).join("\n");
             assert!(screen.contains("130/100"), "{screen}");
-            let footer = row_text(&terminal, 0, height - 2, width);
-            assert!(footer.starts_with("  NAV  · property  c copy"), "{footer}");
-            assert!(footer.contains("←/→ policy"), "{footer}");
+            let footer = row_text(&terminal, 0, height - 1, width);
+            assert!(
+                footer.starts_with("  NAV  · property  e edit  c copy"),
+                "{footer}"
+            );
+            assert!(!footer.contains("←/→ policy"), "{footer}");
             assert!(!footer.contains("enter/→ open"), "{footer}");
             assert!(!footer.contains("enter/← close"), "{footer}");
 
@@ -3458,7 +3562,7 @@ mod tests {
             terminal.draw(|frame| state.render(frame))?;
             let screen = rows(&terminal).join("\n");
             assert!(screen.contains("5/80"), "{screen}");
-            let footer = row_text(&terminal, 0, height - 2, width);
+            let footer = row_text(&terminal, 0, height - 1, width);
             assert!(
                 footer.starts_with("  EDIT  · property  enter next field  esc done"),
                 "{footer}"
@@ -3573,7 +3677,7 @@ mod tests {
         let screen = rows(&terminal).join("\n");
         assert!(screen.contains("│▌    └ + add property"), "{screen}");
         assert!(screen.contains("│   + add type"), "{screen}");
-        let footer = row_text(&terminal, 0, 38, 87);
+        let footer = row_text(&terminal, 0, 39, 87);
         assert!(footer.contains("enter add"), "{footer}");
         assert!(!footer.contains("enter/→ open"), "{footer}");
         assert!(!footer.contains("enter/← close"), "{footer}");
@@ -3665,7 +3769,7 @@ mod tests {
         assert_eq!(cursor(&state), ["original", "existing"]);
         let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(row_text(&terminal, 0, 28, 120).contains("alt+↑/↓ reorder"));
+        assert!(row_text(&terminal, 0, 29, 120).contains("alt+↑/↓ reorder"));
 
         let alt = |code| Event::Key(KeyEvent::new(code, KeyModifiers::ALT));
         state.handle_event(alt(KeyCode::Down), &workspace);

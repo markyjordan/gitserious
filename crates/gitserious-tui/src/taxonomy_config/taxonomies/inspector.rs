@@ -12,8 +12,8 @@ use ratatui::widgets::{Block, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::super::hanging_wrap;
-use super::{BADGE_STYLE, BAND, Chips, DIM, KEY_STYLE, fit, policy_style};
-use crate::theme::{ACCENT, block_title, focus_frame_style};
+use super::{BADGE_STYLE, BAND, Chips, DIM, KEY_STYLE, READ_ONLY_STYLE, fit, policy_style};
+use crate::theme::{ACCENT, AMBER, block_title, focus_frame_style};
 
 /// Labels and the values beside them start in these columns.
 const LABEL_WIDTH: usize = 13;
@@ -50,12 +50,18 @@ pub(super) fn render(
     chips: &Chips<'_>,
     node: NodeRef<'_>,
     focus: Option<Focus>,
+    active: bool,
     offset: &mut u16,
 ) {
     let editing = focus.is_some_and(|focus| focus.cursor.is_some());
+    let frame_style = if active && editing {
+        Style::new().fg(AMBER)
+    } else {
+        focus_frame_style(active)
+    };
     let block = Block::bordered()
-        .border_style(focus_frame_style(editing))
-        .title_style(focus_frame_style(editing))
+        .border_style(frame_style)
+        .title_style(frame_style)
         .title(block_title("Inspector"));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -128,7 +134,11 @@ fn describe(
         (Some(chip), _) => vec![chip.span()],
         (None, NodeRef::Taxonomy(taxonomy)) => vec![Span::styled(
             format!(" {} ", taxonomy.origin().as_str()),
-            BADGE_STYLE,
+            if taxonomy.origin() == TaxonomyOrigin::BuiltIn {
+                READ_ONLY_STYLE
+            } else {
+                BADGE_STYLE
+            },
         )],
         (None, _) => Vec::new(),
     };

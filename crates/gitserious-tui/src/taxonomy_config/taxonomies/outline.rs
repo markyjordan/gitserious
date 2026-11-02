@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 use super::summary_scroll::{SummaryScroll, Target};
-use super::{BADGE_STYLE, BAND, Chip, Chips, DIM, fit, policy_style};
+use super::{BADGE_STYLE, BAND, Chip, Chips, DIM, READ_ONLY_STYLE, fit, policy_style};
 use crate::theme::{ACCENT, block_title, focus_frame_style, frame_style};
 
 pub(super) const ADD_TYPE: &str = "+ add type";
@@ -317,7 +317,16 @@ fn row_line(
                 Span::styled(taxonomy.name().to_owned(), name_style),
             ],
             vec![chip.map_or_else(
-                || Span::styled(format!(" {} ", taxonomy.origin().as_str()), BADGE_STYLE),
+                || {
+                    Span::styled(
+                        format!(" {} ", taxonomy.origin().as_str()),
+                        if taxonomy.origin() == gitserious_app::TaxonomyOrigin::BuiltIn {
+                            READ_ONLY_STYLE
+                        } else {
+                            BADGE_STYLE
+                        },
+                    )
+                },
                 Chip::span,
             )],
         ),

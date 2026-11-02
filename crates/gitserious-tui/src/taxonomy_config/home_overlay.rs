@@ -267,6 +267,7 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, category: Category) {
             ("New / edit / fork / delete", "n/e/f/d"),
             ("Copy a property to other types", "c"),
             ("Next field / done editing", "enter/esc"),
+            ("Change Policy while editing", "←/→"),
             ("Review changes", "ctrl+s"),
             ("Open commands", "/"),
             ("Quit", "esc/q"),

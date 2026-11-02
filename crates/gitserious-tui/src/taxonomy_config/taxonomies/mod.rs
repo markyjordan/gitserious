@@ -36,6 +36,7 @@ mod summary_scroll;
 
 const DIM: Style = Style::new().fg(Color::Gray);
 const KEY_STYLE: Style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
+const READ_ONLY_STYLE: Style = Style::new().fg(Color::Black).bg(Color::White);
 const BADGE_STYLE: Style = Style::new().fg(Color::Gray).bg(ZEBRA_BACKGROUND);
 const BAND: Style = Style::new().bg(Color::Rgb(40, 40, 40));
 const EDIT_CHIP: Style = Style::new()
@@ -118,7 +119,7 @@ impl Chip {
 
     fn span(self) -> Span<'static> {
         let style = match self {
-            Self::ReadOnly => BADGE_STYLE,
+            Self::ReadOnly => READ_ONLY_STYLE,
             Self::New => Style::new().fg(Color::Green).bg(Color::Rgb(20, 44, 24)),
             Self::Modified => Style::new().fg(AMBER).bg(Color::Rgb(52, 38, 12)),
             Self::Invalid(_) => Style::new().fg(Color::Red).bg(Color::Rgb(56, 18, 18)),
@@ -165,7 +166,6 @@ pub(super) enum LibraryAction {
     Fork,
     Edit,
     Add,
-    Policy { forward: bool },
     Move { down: bool },
     Copy,
     CopyChosen,
@@ -286,13 +286,6 @@ impl TaxonomiesView {
             KeyCode::Char('c') if plain && matches!(row, Row::Node(NodeRef::Property { .. })) => {
                 return Nav::Act(LibraryAction::Copy);
             }
-            KeyCode::Left | KeyCode::Right
-                if custom && matches!(row, Row::Node(NodeRef::Property { .. })) =>
-            {
-                return Nav::Act(LibraryAction::Policy {
-                    forward: key.code == KeyCode::Right,
-                });
-            }
             KeyCode::Up | KeyCode::Down
                 if key.modifiers.contains(KeyModifiers::ALT)
                     && custom
@@ -337,7 +330,7 @@ impl TaxonomiesView {
         Nav::Handled
     }
 
-    /// Runs a NAV action on the selected row. Every action but a policy change or a move ends in
+    /// Runs a NAV action on the selected row. Every action but a move or copy ends in
     /// EDIT on the field it opens.
     pub(super) fn act(
         &mut self,
@@ -375,16 +368,6 @@ impl TaxonomiesView {
                     .map_err(refused)?,
                 DraftField::Name,
             ),
-            (LibraryAction::Policy { forward }, _) => {
-                let Some(NodeRef::Property { property, .. }) = library.node(&node) else {
-                    return Err(refused(EditRefusal::NotApplicable));
-                };
-                let policy = property.policy().cycle(forward);
-                library
-                    .edit(&node, DraftEdit::Policy(policy))
-                    .map_err(refused)?;
-                return Ok(());
-            }
             (LibraryAction::Move { down }, _) => {
                 let moved = library
                     .edit(&node, DraftEdit::Move { down })
@@ -638,7 +621,7 @@ impl TaxonomiesView {
         };
         let rows = outline::rows(library, &self.expanded);
         let selected = outline::resolve(&rows, self.cursor.as_ref(), library);
-        let outline_focused = focused && !self.editing();
+        let outline_focused = focused;
         let animate = animate && self.navigating();
         let chips = Chips::new(library, &self.expanded);
         self.outline_area = outline::render(
@@ -664,15 +647,6 @@ impl TaxonomiesView {
                     field: *field,
                     cursor: Some(*cursor),
                 }),
-                Mode::Nav
-                    if matches!(row, Row::Node(NodeRef::Property { .. }))
-                        && !library.fields(node.id()).is_empty() =>
-                {
-                    Some(inspector::Focus {
-                        field: DraftField::Policy,
-                        cursor: None,
-                    })
-                }
                 _ => None,
             };
             inspector::render(
@@ -681,6 +655,7 @@ impl TaxonomiesView {
                 &chips,
                 node,
                 focus,
+                focused,
                 &mut self.inspector_offset,
             );
         }
@@ -739,7 +714,7 @@ impl TaxonomiesView {
             if editing {
                 hints.extend([("enter", "next field"), ("esc", "done")]);
             } else if !built_in && matches!(node, NodeRef::Property { .. }) {
-                hints.extend([("c", "copy to…"), ("←/→", "policy")]);
+                hints.extend([("e", "edit"), ("c", "copy to…")]);
             } else if matches!(row, Row::Node(_)) {
                 if outline::has_children(row) {
                     hints.push(if self.expanded.contains(node.id()) {
@@ -778,7 +753,7 @@ impl TaxonomiesView {
             Line::from(left.clone()).width() + Line::from(right.clone()).width() < width
         };
         let mut candidate = line(&hints, &trailing);
-        for optional in ["alt+↑/↓", "↑/↓", "d", "n", "f", "e"] {
+        for optional in ["alt+↑/↓", "↑/↓", "d", "n", "f"] {
             if fits(&candidate) {
                 break;
             }
