@@ -31,6 +31,7 @@ gitserious-tui = { path = "crates/gitserious-tui", version = "0.1.0" }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = { version = "0.11.0", default-features = false }
+tachyonfx = { version = "0.25.2", default-features = false, features = ["std-duration"] }
 tempfile = "3.27.0"
 toml = "1.1.4"
 tui-textarea = { package = "tui-textarea-2", version = "0.12.1", default-features = false, features = ["crossterm"] }
