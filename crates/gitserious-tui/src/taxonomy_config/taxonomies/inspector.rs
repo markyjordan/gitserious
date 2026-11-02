@@ -13,7 +13,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::super::hanging_wrap;
 use super::{BADGE_STYLE, BAND, Chips, DIM, KEY_STYLE, fit, policy_style};
-use crate::theme::focus_frame_style;
+use crate::theme::{ACCENT, block_title, focus_frame_style};
 
 /// Labels and the values beside them start in these columns.
 const LABEL_WIDTH: usize = 13;
@@ -56,7 +56,7 @@ pub(super) fn render(
     let block = Block::bordered()
         .border_style(focus_frame_style(editing))
         .title_style(focus_frame_style(editing))
-        .title("Inspector");
+        .title(block_title("Inspector"));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let width = usize::from(inner.width).saturating_sub(2);
@@ -83,7 +83,7 @@ pub(super) fn render(
                 .as_ref()
                 .is_some_and(|focused| focused.band.contains(&index));
             let gutter = if band {
-                Span::styled("▌", Style::default().fg(Color::Yellow))
+                Span::styled("▌", Style::default().fg(ACCENT))
             } else {
                 Span::raw(" ")
             };

@@ -8,19 +8,22 @@ pub(crate) const MINIMUM_WIDTH: u16 = 66;
 pub(crate) const MINIMUM_HEIGHT: u16 = 18;
 pub(crate) const JET_BLACK: Color = Color::Rgb(0, 0, 0);
 pub(crate) const ZEBRA_BACKGROUND: Color = Color::Rgb(16, 16, 16);
+pub(crate) const ACCENT: Color = Color::Rgb(80, 160, 255);
 /// Unapplied changes and EDIT.
 pub(crate) const AMBER: Color = Color::Rgb(255, 176, 0);
+
+pub(crate) fn block_title(title: &str) -> String {
+    format!(" {} ", title.trim())
+}
 
 pub(crate) fn frame_style() -> Style {
     Style::default().fg(Color::DarkGray)
 }
 pub(crate) fn section_heading_style() -> Style {
-    Style::default()
-        .fg(Color::Yellow)
-        .add_modifier(Modifier::BOLD)
+    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
 }
 pub(crate) fn navigation_style() -> Style {
-    Style::default().fg(JET_BLACK).bg(Color::Yellow)
+    Style::default().fg(JET_BLACK).bg(ACCENT)
 }
 pub(crate) fn navigation_key_style() -> Style {
     navigation_style().add_modifier(Modifier::BOLD)
@@ -47,7 +50,7 @@ pub(crate) fn selected_style(active: bool) -> Style {
 
 pub(crate) fn focus_frame_style(active: bool) -> Style {
     if active {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(ACCENT)
     } else {
         frame_style()
     }

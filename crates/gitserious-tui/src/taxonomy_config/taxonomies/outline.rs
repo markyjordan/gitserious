@@ -8,11 +8,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 use super::{BADGE_STYLE, BAND, Chip, Chips, DIM, fit, policy_style};
-use crate::theme::{focus_frame_style, frame_style};
+use crate::theme::{ACCENT, block_title, focus_frame_style, frame_style};
 
 pub(super) const ADD_TYPE: &str = "+ add type";
 pub(super) const ADD_PROPERTY: &str = "+ add property";
-const ADD_STYLE: Style = Style::new().fg(Color::LightBlue);
+const ADD_STYLE: Style = Style::new().fg(ACCENT);
 
 /// What a row stands for. The add rows are not drafts, so they name the node they add to.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -157,7 +157,7 @@ pub(super) fn render(
     let mut block = Block::bordered()
         .border_style(focus_frame_style(focused))
         .title_style(focus_frame_style(focused))
-        .title("Taxonomies");
+        .title(block_title("Taxonomies"));
     let inner = block.inner(area);
     let height = usize::from(inner.height);
     if selected < *offset {
@@ -210,7 +210,7 @@ fn row_line(
 ) -> Line<'static> {
     let bar = match (selected, focused) {
         (false, _) => Span::raw(" "),
-        (true, true) => Span::styled("▌", Style::default().fg(Color::Yellow)),
+        (true, true) => Span::styled("▌", Style::default().fg(ACCENT)),
         (true, false) => Span::styled("▌", frame_style()),
     };
     let name_style = if selected {

@@ -13,7 +13,7 @@ use super::state::{
     AuthoringSession, CatalogTab, ConfirmationAction, FieldId, FieldStatus, SCOPE_VALUE_LINE, Stage,
 };
 use crate::confirmation::{Confirmation, DISCARD};
-use crate::theme::{JET_BLACK, ZEBRA_BACKGROUND};
+use crate::theme::{ACCENT, JET_BLACK, ZEBRA_BACKGROUND};
 
 const MINIMUM_WIDTH: u16 = 60;
 const MINIMUM_HEIGHT: u16 = 18;
@@ -726,7 +726,7 @@ fn render_editor_scrollbar(frame: &mut Frame<'_>, area: Rect, status: CursorStat
 }
 
 fn render_scrollbar_thumb_row(frame: &mut Frame<'_>, area: Rect, y: u16) {
-    set_rule_cell(frame, area.x, y, "█", Style::default().fg(Color::Yellow));
+    set_rule_cell(frame, area.x, y, "█", Style::default().fg(ACCENT));
 }
 
 fn meaningful_editor_rows(editor: &TextArea<'_>) -> u16 {

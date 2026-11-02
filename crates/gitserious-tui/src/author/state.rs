@@ -1,4 +1,5 @@
 use crate::confirmation::{Answer, ConfirmDialog, DISCARD};
+use crate::theme::ACCENT;
 use gitserious_app::{CommitAuthoringContext, CommitDraftAuthorOutcome, CommitTaxonomy};
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
@@ -9,7 +10,7 @@ use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use tui_textarea::{AtomicRange, CursorMove, CursorRenderMode, Input, TextArea, WrapMode};
 
 pub(crate) const SCOPE_VALUE_LINE: usize = 2;
@@ -489,7 +490,7 @@ fn apply_heading_guards(editor: &mut TextArea<'static>, definition: &CommitTypeD
     editor.clear_custom_highlight();
     for (range, marker) in ranges {
         let style = match marker {
-            DocumentMarker::Section(_) => Style::default().fg(Color::Yellow),
+            DocumentMarker::Section(_) => Style::default().fg(ACCENT),
             DocumentMarker::Field(_) => Style::default(),
         }
         .add_modifier(Modifier::BOLD);

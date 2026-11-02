@@ -284,7 +284,10 @@ mod tests {
             for area in [buttons.confirm, buttons.keep] {
                 assert!(area.right() <= width && area.bottom() <= height);
                 for x in area.x..area.right() {
-                    assert_eq!(terminal.backend().buffer()[(x, area.y)].bg, Color::Yellow);
+                    assert_eq!(
+                        terminal.backend().buffer()[(x, area.y)].bg,
+                        crate::theme::ACCENT
+                    );
                     assert_eq!(terminal.backend().buffer()[(x, area.y)].fg, JET_BLACK);
                 }
             }

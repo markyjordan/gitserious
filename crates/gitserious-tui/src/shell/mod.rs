@@ -21,8 +21,8 @@ use crate::author::{AuthoringCheckpoint, embedded_author};
 use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT};
 use crate::taxonomy_config::{ConfigView, ShellKeys};
 use crate::theme::{
-    AMBER, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, centered_rect, command_hints, frame_style,
-    navigation_key_style, normalize_background, render_navigation_row,
+    AMBER, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, block_title, centered_rect, command_hints,
+    frame_style, navigation_key_style, normalize_background, render_navigation_row,
 };
 use commit_view::CommitView;
 use home_logo::{HomeLogo, render_home_logo, resolve_dev_theme};
@@ -616,12 +616,14 @@ impl Shell {
 
     fn render_help(&mut self, frame: &mut Frame<'_>, area: Rect, help: &[HelpPage]) {
         if let Some(page) = help.get(self.help_page) {
-            let block = Block::bordered().border_style(frame_style()).title(format!(
-                "Help — {} ({}/{})",
-                page.title,
-                self.help_page + 1,
-                help.len()
-            ));
+            let block = Block::bordered()
+                .border_style(frame_style())
+                .title(block_title(&format!(
+                    "Help — {} ({}/{})",
+                    page.title,
+                    self.help_page + 1,
+                    help.len()
+                )));
             let inner = block.inner(area);
             let paragraph = Paragraph::new(page.text.as_str()).wrap(Wrap { trim: false });
             let maximum = paragraph
@@ -683,7 +685,7 @@ impl Shell {
                 .areas(inner);
                 frame.render_widget(
                     Paragraph::new(format!("/ {}", palette.query))
-                        .block(Block::bordered().title("Search")),
+                        .block(Block::bordered().title(block_title("Search"))),
                     search,
                 );
                 let rows: Vec<_> = commands
@@ -907,17 +909,22 @@ mod tests {
         shell.handle_event(key(KeyCode::Right), &services, &help);
         assert_eq!(shell.help_page, 1);
         assert_eq!(shell.help_scroll, 0);
+        let mut terminal = Terminal::new(TestBackend::new(66, 18))?;
+        terminal.draw(|frame| shell.render(frame, &help))?;
+        assert!(rendered(&terminal).contains("┌ Help — Config (2/2) ─"));
         shell.handle_event(key(KeyCode::Tab), &services, &help);
         assert_eq!(shell.section, Section::Home);
         shell.handle_event(key(KeyCode::Char('/')), &services, &help);
+        terminal.draw(|frame| shell.render(frame, &help))?;
+        assert!(rendered(&terminal).contains("┌ Search ─"));
         shell.handle_event(Event::Paste("open commit".into()), &services, &help);
         shell.handle_event(key(KeyCode::Tab), &services, &help);
         assert_eq!(shell.section, Section::Home);
         shell.handle_event(key(KeyCode::Enter), &services, &help);
         assert_eq!(shell.section, Section::Commit);
-        let mut terminal = Terminal::new(TestBackend::new(66, 18))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert!(rendered(&terminal).contains("Staged (0)"));
+        assert!(rendered(&terminal).contains("┌ Changes ─"));
         terminal.backend_mut().resize(40, 10);
         terminal.resize(Rect::new(0, 0, 40, 10))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
@@ -1043,7 +1050,7 @@ mod tests {
         let config = shell.root_areas[Section::Config.index()];
         assert_eq!(
             terminal.backend().buffer()[(config.x + 1, config.y)].bg,
-            Color::Yellow
+            Color::Rgb(80, 160, 255)
         );
         terminal.backend_mut().resize(66, 18);
         terminal.resize(Rect::new(0, 0, 66, 18))?;
@@ -1066,12 +1073,12 @@ mod tests {
 
     #[test]
     fn home_frame_abuts_nav_and_shimmers_wordmark() -> Result<(), Box<dyn std::error::Error>> {
-        use super::home_logo::{HomeLogo, YELLOW_EPILEPTIC_DREAMS};
+        use super::home_logo::{DEFAULT_THEME, HomeLogo};
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Home, &services, None);
         // Pin to the default theme so `GITSERIOUS_LOGO_THEME` dev overrides
         // cannot make this timing-sensitive test flaky.
-        shell.home_logo = HomeLogo::with_theme(&YELLOW_EPILEPTIC_DREAMS);
+        shell.home_logo = HomeLogo::with_theme(DEFAULT_THEME);
         assert!(shell.animating(), "home should tick continuously");
         for (width, height) in [(100, 30), (66, 18)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
@@ -1088,6 +1095,12 @@ mod tests {
                 .map(|(x, y)| buffer[(x, y)].symbol())
                 .collect();
             assert!(body.contains('█'), "home should render the block wordmark");
+            assert!(
+                buffer
+                    .content()
+                    .iter()
+                    .any(|cell| { cell.symbol() == "█" && cell.fg == Color::Rgb(80, 160, 255) })
+            );
             // Version stays centered below the graphic.
             let version = format!("gitserious v{}", env!("CARGO_PKG_VERSION"));
             let text = rendered(&terminal);

@@ -18,6 +18,7 @@ use tui_textarea::{CursorMove, CursorRenderMode, TextArea, WrapMode};
 
 use crate::RatatuiCommitDraftAuthor;
 use crate::author::RatatuiCommitDraftAuthorError;
+use crate::theme::ACCENT;
 
 mod author_harness {
     pub(crate) mod state {
@@ -399,7 +400,7 @@ fn assert_black_canvas(buffer: &Buffer) {
         let x = index % width;
         let continuation = x > 0 && Line::from(buffer.content()[index - 1].symbol()).width() > 1;
         assert!(
-            continuation || matches!(cell.bg, JET_BLACK | ZEBRA_BACKGROUND | Color::Yellow),
+            continuation || matches!(cell.bg, JET_BLACK | ZEBRA_BACKGROUND | ACCENT),
             "unexpected canvas background {:?} on symbol {:?} at ({}, {})",
             cell.bg,
             cell.symbol(),
@@ -427,7 +428,7 @@ fn assert_no_box_drawing(buffer: &Buffer, width: u16, height: u16) {
     );
 }
 
-fn assert_bold_yellow_heading(
+fn assert_bold_blue_heading(
     buffer: &Buffer,
     width: u16,
     height: u16,
@@ -436,7 +437,7 @@ fn assert_bold_yellow_heading(
     let position = find_ascii(buffer, width, height, heading).ok_or("missing section heading")?;
     for offset in 0..u16::try_from(heading.chars().count())? {
         let cell = &buffer[(position.0 + offset, position.1)];
-        assert_eq!(cell.fg, Color::Yellow);
+        assert_eq!(cell.fg, Color::Rgb(80, 160, 255));
         assert!(cell.modifier.contains(Modifier::BOLD));
     }
     Ok(position)
@@ -455,7 +456,7 @@ fn assert_stage_header(
     );
     let position = find_ascii(&buffer, width, height, step).ok_or("missing active step")?;
     assert_eq!(position.1, 0);
-    assert_eq!(buffer[position].bg, Color::Yellow);
+    assert_eq!(buffer[position].bg, ACCENT);
     assert!((0..width).all(|column| !matches!(buffer[(column, 0)].symbol(), "─" | "┌" | "┐")));
     Ok(())
 }
@@ -469,10 +470,7 @@ fn assert_highlighted_footer(
     let mut terminal = Terminal::new(backend)?;
     terminal.draw(|frame| render(frame, session))?;
     for column in 0..width {
-        assert_eq!(
-            terminal.backend().buffer()[(column, height - 1)].bg,
-            Color::Yellow
-        );
+        assert_eq!(terminal.backend().buffer()[(column, height - 1)].bg, ACCENT);
     }
     Ok(())
 }
@@ -638,8 +636,8 @@ fn picker_catalog_tab_click_selects_the_visible_set() -> Result<(), Box<dyn Erro
         .first()
         .ok_or("missing conventional tab")?;
     assert_eq!(tab.kind, TypeCatalogKind::Conventional);
-    assert_eq!(buffer[(tab.area.x, tab.area.y)].bg, Color::Yellow);
-    assert_eq!(buffer[(tab.area.right() - 1, tab.area.y)].bg, Color::Yellow);
+    assert_eq!(buffer[(tab.area.x, tab.area.y)].bg, ACCENT);
+    assert_eq!(buffer[(tab.area.right() - 1, tab.area.y)].bg, ACCENT);
     assert!(
         session
             .handle_event(left_click(tab.area.x, tab.area.y))
@@ -1520,7 +1518,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert_eq!(composer_buffer[(0, 2)].symbol(), "┌");
     assert_eq!(composer_buffer[(119, 2)].symbol(), "┐");
     for heading in ["Message Properties", "Property Description"] {
-        assert_bold_yellow_heading(&composer_buffer, 120, 32, heading)?;
+        assert_bold_blue_heading(&composer_buffer, 120, 32, heading)?;
     }
     assert!(find_ascii(&composer_buffer, 120, 32, "Message form").is_none());
     assert_black_canvas(&composer_buffer);
@@ -1544,7 +1542,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
         find_ascii(&review_buffer, 100, 24, "Final Git Commit Message"),
         Some((2, 2)),
     );
-    assert_bold_yellow_heading(&review_buffer, 100, 24, "Final Git Commit Message")?;
+    assert_bold_blue_heading(&review_buffer, 100, 24, "Final Git Commit Message")?;
     assert!(find_ascii(&review_buffer, 100, 24, "Commit message").is_none());
     assert_eq!(review_buffer[(0, 3)].symbol(), "├");
     assert_eq!(review_buffer[(99, 3)].symbol(), "┤");
@@ -1567,7 +1565,7 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
     assert!(text.contains("enter/esc/n: keep editing"));
     assert!(text.contains("review and submit"));
     let buffer = rendered_buffer(&mut review, 100, 24)?;
-    assert_bold_yellow_heading(&buffer, 100, 24, "Discard Message")?;
+    assert_bold_blue_heading(&buffer, 100, 24, "Discard Message")?;
     let top_left = find_symbol(&buffer, 100, 24, "╔").ok_or("missing popup frame")?;
     assert_eq!(buffer[(top_left.0 + 57, top_left.1)].symbol(), "╗");
     assert_eq!(buffer[(top_left.0, top_left.1 + 8)].symbol(), "╚");
@@ -1577,7 +1575,7 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
         .buttons
         .ok_or("missing button hitboxes")?;
     for area in [buttons.confirm, buttons.keep] {
-        assert!((area.x..area.right()).all(|x| buffer[(x, area.y)].bg == Color::Yellow));
+        assert!((area.x..area.right()).all(|x| buffer[(x, area.y)].bg == ACCENT));
     }
     assert!(review.handle_event(left_click(0, 0)).is_none());
     assert_eq!(review.stage, Stage::Confirm);
@@ -1622,7 +1620,7 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
         assert!(too_small.too_small);
         assert!(text.contains("Terminal too small"));
         assert!(text.contains("esc/q to cancel"));
-        assert_bold_yellow_heading(&buffer, width, height, "Terminal too small")?;
+        assert_bold_blue_heading(&buffer, width, height, "Terminal too small")?;
         assert_no_box_drawing(&buffer, width, height);
         assert_black_canvas(&buffer);
         assert_eq!(
@@ -1636,7 +1634,7 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
     press(&mut small_confirmation, KeyCode::Esc);
     let buffer = rendered_buffer(&mut small_confirmation, 59, 24)?;
     assert!(small_confirmation.too_small);
-    assert_bold_yellow_heading(&buffer, 59, 24, "Discard Message")?;
+    assert_bold_blue_heading(&buffer, 59, 24, "Discard Message")?;
     assert!(find_ascii(&buffer, 59, 24, "Discard this draft?").is_some());
     assert!(find_ascii(&buffer, 59, 24, "y: discard").is_some());
     assert!(find_ascii(&buffer, 59, 24, "enter/esc/n: keep editing").is_some());
@@ -1696,8 +1694,8 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     let action = (key.0 + 8, key.1);
     assert!(buffer[key].modifier.contains(Modifier::BOLD));
     assert!(!buffer[action].modifier.contains(Modifier::BOLD));
-    assert_eq!(buffer[key].bg, Color::Yellow);
-    assert_eq!(buffer[action].bg, Color::Yellow);
+    assert_eq!(buffer[key].bg, ACCENT);
+    assert_eq!(buffer[action].bg, ACCENT);
 
     let mut picker = AuthoringSession::new(built_in_commit_types(), None);
     let buffer = rendered_buffer(&mut picker, 100, 24)?;
@@ -1853,7 +1851,7 @@ fn composer_switches_between_compact_and_wide_framed_geometry() -> Result<(), Bo
     assert!(find_ascii(&buffer, 101, 32, "type(scope):").is_some());
     assert!(find_ascii(&buffer, 101, 32, "col 1/80").is_some());
     for heading in ["Message Properties", "Property Description"] {
-        assert_bold_yellow_heading(&buffer, 101, 32, heading)?;
+        assert_bold_blue_heading(&buffer, 101, 32, heading)?;
     }
     assert!(find_ascii(&buffer, 101, 32, "Message form").is_none());
     assert_eq!(wide.composer.editor.lines(), pristine);
@@ -2016,9 +2014,9 @@ fn type_picker_uses_spaced_content_hugging_columns() -> Result<(), Box<dyn Error
     assert!(find_ascii(&buffer, 100, 24, " — ").is_none());
 
     assert_eq!(buffer[feat].fg, JET_BLACK);
-    assert_eq!(buffer[feat].bg, Color::Yellow);
+    assert_eq!(buffer[feat].bg, ACCENT);
     assert!(buffer[feat].modifier.contains(Modifier::BOLD));
-    assert!((2..98).all(|column| buffer[(column, feat.1)].bg == Color::Yellow));
+    assert!((2..98).all(|column| buffer[(column, feat.1)].bg == ACCENT));
     assert_eq!(buffer[fix].bg, ZEBRA_BACKGROUND);
     assert!((2..98).all(|column| buffer[(column, fix.1)].bg == ZEBRA_BACKGROUND));
     Ok(())
@@ -2060,7 +2058,7 @@ fn type_picker_renders_the_complete_effective_conventional_catalog() -> Result<(
         }
     }
 
-    assert!((2..118).all(|column| buffer[(column, 4)].bg == Color::Yellow));
+    assert!((2..118).all(|column| buffer[(column, 4)].bg == ACCENT));
     assert!((2..118).all(|column| buffer[(column, 5)].bg == ZEBRA_BACKGROUND));
     Ok(())
 }
@@ -2233,8 +2231,8 @@ fn composer_context_height_hugs_the_taller_of_fields_and_wrapped_guidance()
     let long_buffer = rendered_buffer(&mut long, 60, 32)?;
     let long_separator =
         find_symbol(&long_buffer, 60, 32, "┴").ok_or("missing long context separator")?;
-    let properties = assert_bold_yellow_heading(&long_buffer, 60, 32, "Message Properties")?;
-    let guidance = assert_bold_yellow_heading(&long_buffer, 60, 32, "Property Description")?;
+    let properties = assert_bold_blue_heading(&long_buffer, 60, 32, "Message Properties")?;
+    let guidance = assert_bold_blue_heading(&long_buffer, 60, 32, "Property Description")?;
     let guidance_content =
         find_ascii(&long_buffer, 60, 32, "This guidance").ok_or("missing guidance content")?;
 
@@ -2297,7 +2295,7 @@ fn fields_hud_uses_spaced_content_hugging_columns_without_clipping_names()
     assert!(requirement_column.windows(2).all(|pair| pair[0] == pair[1]));
     assert_eq!(buffer[(scope.0 - 3, scope.1)].symbol(), "○");
     assert_eq!(buffer[(scope.0 - 3, scope.1)].fg, Color::DarkGray);
-    assert_eq!(buffer[(scope.0 - 3, scope.1)].bg, Color::Yellow);
+    assert_eq!(buffer[(scope.0 - 3, scope.1)].bg, ACCENT);
     assert_eq!(buffer[(scope.0 - 2, scope.1)].symbol(), " ");
     assert_eq!(buffer[(scope.0 - 1, scope.1)].symbol(), " ");
     let name_end = scope.0 + u16::try_from("conditional-field".len())?;
@@ -2305,23 +2303,23 @@ fn fields_hud_uses_spaced_content_hugging_columns_without_clipping_names()
     assert_eq!(buffer[(name_end, scope.1)].symbol(), " ");
     assert_eq!(buffer[(name_end + 1, scope.1)].symbol(), " ");
     assert_eq!(buffer[scope].fg, JET_BLACK);
-    assert_eq!(buffer[scope].bg, Color::Yellow);
+    assert_eq!(buffer[scope].bg, ACCENT);
     assert!(buffer[scope].modifier.contains(Modifier::BOLD));
     assert_eq!(buffer[(requirement_column[0], scope.1)].fg, JET_BLACK);
-    assert_eq!(buffer[(requirement_column[0], scope.1)].bg, Color::Yellow);
-    assert!((2..35).all(|column| buffer[(column, scope.1)].bg == Color::Yellow));
+    assert_eq!(buffer[(requirement_column[0], scope.1)].bg, ACCENT);
+    assert!((2..35).all(|column| buffer[(column, scope.1)].bg == ACCENT));
     assert!((2..35).all(|column| { buffer[(column, description.1)].bg == ZEBRA_BACKGROUND }));
 
     paste(&mut wide, "api");
     let complete = rendered_buffer(&mut wide, 120, 32)?;
     assert_eq!(complete[(2, scope.1)].fg, Color::Green);
-    assert_eq!(complete[(2, scope.1)].bg, Color::Yellow);
+    assert_eq!(complete[(2, scope.1)].bg, ACCENT);
 
     let mut invalid = AuthoringSession::new(&definitions, Some(0));
     paste(&mut invalid, "bad:scope");
     let invalid = rendered_buffer(&mut invalid, 120, 32)?;
     assert_eq!(invalid[(2, scope.1)].fg, Color::Red);
-    assert_eq!(invalid[(2, scope.1)].bg, Color::Yellow);
+    assert_eq!(invalid[(2, scope.1)].bg, ACCENT);
 
     let mut narrow = AuthoringSession::new(&definitions, Some(0));
     let buffer = rendered_buffer(&mut narrow, 60, 32)?;
@@ -2531,7 +2529,7 @@ fn editor_scrollbar_uses_a_full_block_thumb_without_mutating_editor_state()
     assert_eq!(fitting.composer.editor.lines(), fitting_document);
     assert_eq!(fitting.composer.editor.cursor(), fitting_cursor);
     assert!((3..56).all(|row| {
-        fitting_buffer[(118, row)].symbol() == "█" && fitting_buffer[(118, row)].fg == Color::Yellow
+        fitting_buffer[(118, row)].symbol() == "█" && fitting_buffer[(118, row)].fg == ACCENT
     }));
     assert!((3..56).all(|row| fitting_buffer[(117, row)].symbol() == " "));
     assert!(
@@ -2559,7 +2557,7 @@ fn editor_scrollbar_uses_a_full_block_thumb_without_mutating_editor_state()
     assert!(
         top_thumb_rows
             .iter()
-            .all(|row| top[(58, *row)].fg == Color::Yellow)
+            .all(|row| top[(58, *row)].fg == ACCENT)
     );
     assert!(
         track_rows
@@ -2594,7 +2592,7 @@ fn editor_scrollbar_uses_a_full_block_thumb_without_mutating_editor_state()
     assert_eq!(tall_bottom.composer.editor.cursor(), (21, 0));
     assert_eq!(buffer[(117, 21)].symbol(), " ");
     assert_eq!(buffer[(118, 21)].symbol(), "█");
-    assert_eq!(buffer[(118, 21)].fg, Color::Yellow);
+    assert_eq!(buffer[(118, 21)].fg, ACCENT);
     assert_eq!(buffer[(117, 28)].symbol(), "─");
 
     let mut unicode = AuthoringSession::new(built_in_commit_types(), Some(0));

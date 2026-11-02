@@ -10,7 +10,7 @@ use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use super::naming::problem_sentence;
 use super::{Notice, Screen, State, hanging_wrap};
-use crate::theme::frame_style;
+use crate::theme::{block_title, frame_style};
 
 const PROBLEM: Style = Style::new().fg(Color::Red);
 
@@ -131,9 +131,11 @@ impl State {
             "Review changes — Enter to apply"
         };
         frame.render_widget(
-            paragraph
-                .scroll((self.scroll, 0))
-                .block(Block::bordered().border_style(frame_style()).title(title)),
+            paragraph.scroll((self.scroll, 0)).block(
+                Block::bordered()
+                    .border_style(frame_style())
+                    .title(block_title(title)),
+            ),
             area,
         );
         let mut hints = vec![("esc", "back"), ("↑/↓", "scroll")];
@@ -307,7 +309,7 @@ mod tests {
         terminal.draw(|frame| state.render(frame))?;
         let screen = rows(&terminal).join("\n");
         assert!(
-            screen.contains("Review changes — apply disabled"),
+            screen.contains("┌ Review changes — apply disabled ─"),
             "{screen}"
         );
         assert!(
