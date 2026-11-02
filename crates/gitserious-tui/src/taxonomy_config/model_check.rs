@@ -39,8 +39,8 @@
 //! Library with problems cannot apply (P11), so its review is not judged here. Without it, a user
 //! applies a change that the review did not show.
 //!
-//! P4, the Inspector's Policy reaches every policy. From a custom property in NAV, the arrow keys
-//! and enter alone set the property to every policy (required, recommended, conditional,
+//! P4, the Inspector's Policy reaches every policy. From a custom property in NAV, e enters
+//! the Inspector, then the arrow keys and enter reach every policy (required, recommended, conditional,
 //! optional). Without it, a property needs a hand edit of `config.toml` to take a policy the
 //! editor cannot set.
 //!
@@ -88,6 +88,9 @@
 //! the reverse. Apply and discard, which replace the whole Library, happen off Home. Without it,
 //! a copy shares its source's fields and an edit to one rewrites the other.
 //!
+//! P13, browsing arrows never edit a policy. Left returns to the property's parent and right
+//! leaves the property selected. Policy edits require EDIT.
+//!
 //! Scope limits:
 //! - Only the keyboard events in [`INPUTS`]. Mouse, paste, and resize events are out of scope.
 //! - One terminal of `MINIMUM_WIDTH` by `MINIMUM_HEIGHT` cells. Mouse hit areas that rendering
@@ -100,7 +103,7 @@
 //!   gate.
 //! - P3 reads the frame, so it sees only the review rows that fit the viewport. Every seed's review
 //!   fits without scrolling.
-//! - P4 explores only the up, down, left, right, and enter keys from one custom property. It reads
+//! - P4 explores only the e, up, down, left, right, and enter keys from one custom property. It reads
 //!   the selected property's policy in the Library, not the frame.
 //! - P6 checks fields of custom nodes that existed before the key; a fork copies its source's
 //!   text as it is.
@@ -114,7 +117,7 @@
 //! - A pass covers the seeds to their depth bounds, not every reachable state. Every replay
 //!   renders each frame in a debug build, so the bounds keep the check near a minute on six
 //!   cores. A new taxonomy and the Description at its limit get the deeper bound because typing
-//!   and the limit live there. The P4 seed's bound is deep enough to expand every state its five
+//!   and the limit live there. The P4 seed's bound is deep enough to expand every state its six
 //!   keys reach.
 
 use std::collections::{HashMap, HashSet};
@@ -361,8 +364,8 @@ const SEEDS: &[Seed] = &[
         workspace: team_library,
         start: Start::Keys {
             keys: &[
-                "2", "down", "down", "down", "right", "right", "right", "down", "right", "right",
-                "e", "enter", "enter", "enter",
+                "2", "down", "down", "down", "right", "right", "right", "down", "e", "enter",
+                "enter", "right", "right", "enter",
             ],
             ready: |snapshot| editing(snapshot) == Some(DraftField::Condition),
         },
@@ -378,7 +381,7 @@ const SEEDS: &[Seed] = &[
             mode: StartMode::Nav,
         },
         depth: 5,
-        alphabet: Alphabet::Only(&["up", "down", "left", "right", "enter"]),
+        alphabet: Alphabet::Only(&["e", "up", "down", "left", "right", "enter"]),
         reaches: &[Reach {
             name: "P4, the Inspector's Policy reaches every policy",
             observe: selected_policy,
@@ -614,12 +617,7 @@ impl Snapshot {
     }
 
     fn footer(&self) -> &str {
-        let inset = matches!(self.screen, Screen::Home) && self.category == Category::Taxonomies;
-        self.frame
-            .lines()
-            .rev()
-            .nth(usize::from(inset))
-            .unwrap_or_default()
+        self.frame.lines().next_back().unwrap_or_default()
     }
 
     fn staged_library(&self) -> Option<GlobalConfiguration> {
@@ -643,6 +641,10 @@ impl Snapshot {
 type Check = fn(&Snapshot, &Event, Option<&Snapshot>) -> Result<(), String>;
 
 const PROPERTIES: &[(&str, Check)] = &[
+    (
+        "P13, browsing arrows never edit a policy",
+        browsing_arrows_keep_policies,
+    ),
     (
         "P1, the unapplied draft is dropped only by apply or a confirmed discard",
         no_silent_draft_loss,
@@ -703,7 +705,13 @@ fn edits(before: &Snapshot, input: &Event) -> bool {
         return false;
     }
     match key.code {
-        KeyCode::Left | KeyCode::Right => true,
+        KeyCode::Left | KeyCode::Right => matches!(
+            before.taxonomies.mode,
+            Mode::Edit {
+                field: DraftField::Policy,
+                ..
+            }
+        ),
         KeyCode::Up | KeyCode::Down => {
             matches!(before.taxonomies.mode, Mode::Nav) && key.modifiers.contains(KeyModifiers::ALT)
         }
@@ -774,6 +782,27 @@ fn round_trips_leave_the_session_clean(
         return Ok(());
     }
     Err("A key that edits nothing left the Library with unapplied changes.".into())
+}
+
+fn browsing_arrows_keep_policies(
+    before: &Snapshot,
+    input: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    if before.outline_takes_keys()
+        && matches!(before.taxonomies.mode, Mode::Nav)
+        && matches!(
+            input,
+            Event::Key(KeyEvent {
+                code: KeyCode::Left | KeyCode::Right,
+                ..
+            })
+        )
+        && format!("{:?}", before.library()) != format!("{:?}", after.and_then(Snapshot::library))
+    {
+        return Err("A browsing arrow changed the Library.".into());
+    }
+    Ok(())
 }
 
 fn stored_names_never_change(

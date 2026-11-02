@@ -133,7 +133,7 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
         rows.iter()
             .any(|row| row.contains("c copy to other types…   d delete"))
     );
-    assert!(rows[38].contains("c copy to…  ←/→ policy"), "{}", rows[38]);
+    assert!(rows[39].contains("e edit  c copy to…"), "{}", rows[39]);
 
     press(&mut state, &workspace, &[KeyCode::Char('c')]);
     assert_eq!(state.taxonomies.shell_keys(), ShellKeys::None);
@@ -146,7 +146,7 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
         rows.contains("[ ] fix") && rows.contains("[ ] docs"),
         "{rows}"
     );
-    let footer = rows.lines().rev().nth(1).unwrap_or_default();
+    let footer = rows.lines().next_back().unwrap_or_default();
     assert!(
         footer.starts_with(" ↑/↓: move  space: toggle  enter: copy  esc: cancel"),
         "{footer}"
@@ -181,7 +181,16 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
     assert_eq!(cursor(&state), ["team", "fix", "constraints"]);
     let rows = screen(&mut state)?.join("\n");
     assert!(rows.contains("in team › fix  · copied from feat"), "{rows}");
-    press(&mut state, &workspace, &[KeyCode::Right]);
+    press(
+        &mut state,
+        &workspace,
+        &[
+            KeyCode::Char('e'),
+            KeyCode::Enter,
+            KeyCode::Enter,
+            KeyCode::Right,
+        ],
+    );
     assert_eq!(
         policy(&state, &["team", "fix", "constraints"]),
         Some(Policy::Optional)
