@@ -152,6 +152,7 @@ pub struct PropertyDefinition {
     key: PropertyKey,
     description: Box<str>,
     requirement: PropertyRequirement,
+    example: Option<PropertyExample>,
 }
 
 impl PropertyDefinition {
@@ -174,6 +175,7 @@ impl PropertyDefinition {
             key,
             description: description.into_boxed_str(),
             requirement,
+            example: None,
         })
     }
 
@@ -195,6 +197,17 @@ impl PropertyDefinition {
         &self.requirement
     }
 
+    #[must_use]
+    pub fn with_example(mut self, example: PropertyExample) -> Self {
+        self.example = Some(example);
+        self
+    }
+
+    #[must_use]
+    pub const fn example(&self) -> Option<&PropertyExample> {
+        self.example.as_ref()
+    }
+
     pub(crate) fn from_trusted(
         key: PropertyKey,
         description: &'static str,
@@ -204,9 +217,42 @@ impl PropertyDefinition {
             key,
             description: Box::from(description),
             requirement,
+            example: None,
         }
     }
 }
+
+/// A complete illustrative message, preserving authored formatting.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PropertyExample(Box<str>);
+
+impl PropertyExample {
+    /// # Errors
+    /// Returns an error when the example is blank.
+    pub fn new(text: impl Into<String>) -> Result<Self, PropertyExampleError> {
+        let text = text.into();
+        if is_blank(&text) {
+            return Err(PropertyExampleError);
+        }
+        Ok(Self(text.into_boxed_str()))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PropertyExampleError;
+
+impl Display for PropertyExampleError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str("example must contain non-whitespace text")
+    }
+}
+
+impl Error for PropertyExampleError {}
 
 /// An empty or whitespace-only property definition description.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -309,6 +355,23 @@ mod tests {
         assert_eq!(result, Err(PropertyDefinitionError));
         assert!(!PropertyDefinitionError.to_string().is_empty());
 
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod example_tests {
+    use super::*;
+
+    #[test]
+    fn example_preserves_message_bytes_and_rejects_blank_text() -> Result<(), Box<dyn Error>> {
+        let message = "deploy(db): ship\nverification:\n  café 👩‍💻界\n\nChecked.\n";
+        let example = PropertyExample::new(message)?;
+        assert_eq!(example.as_str(), message);
+        for blank in ["", " ", "\n\t\r"] {
+            assert_eq!(PropertyExample::new(blank), Err(PropertyExampleError));
+        }
+        assert!(!PropertyExampleError.to_string().is_empty());
         Ok(())
     }
 }

@@ -146,6 +146,7 @@ pub(super) fn problem_sentence(library: &LibraryDraft, problem: &Problem) -> Str
         ProblemKind::Blank if field == Some(DraftField::Rationale) => {
             "A conditional policy needs a rationale.".into()
         }
+        ProblemKind::Blank if field == Some(DraftField::Example) => "Example is required.".into(),
         ProblemKind::Blank => description_required(owner.0),
         ProblemKind::NoTypes => "Add a type before applying the taxonomy.".into(),
         ProblemKind::Selection(error) => sentence(&error.to_string()),

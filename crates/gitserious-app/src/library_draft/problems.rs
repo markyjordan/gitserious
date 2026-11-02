@@ -287,7 +287,22 @@ fn property_definition(
                 .map(PropertyRequirement::Conditional)
         }
     };
-    PropertyDefinition::new(key?, description?, requirement?).ok()
+    let example = property
+        .example
+        .build()
+        .map_err(|_| {
+            problems.push(Problem::field(
+                &property.id,
+                DraftField::Example,
+                ProblemKind::Blank,
+            ));
+        })
+        .ok()?;
+    let property = PropertyDefinition::new(key?, description?, requirement?).ok()?;
+    Some(match example {
+        Some(example) => property.with_example(example),
+        None => property,
+    })
 }
 
 /// Parses `name` into an identifier no sibling in `taken` has yet, and records it.
@@ -367,6 +382,9 @@ fn loaded<'a>(
         .iter()
         .find(|stored| stored.key().as_str() == key)?;
     match (field, property.requirement()) {
+        (DraftField::Example, _) => property
+            .example()
+            .map(gitserious_core::PropertyExample::as_str),
         (DraftField::Rationale, PropertyRequirement::Conditional(condition)) => {
             Some(condition.rationale())
         }

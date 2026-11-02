@@ -232,7 +232,8 @@ fn condition_and_rationale_survive_cycling_the_policy_away_and_back() -> TestRes
         &[
             DraftField::Name,
             DraftField::Description,
-            DraftField::Policy
+            DraftField::Policy,
+            DraftField::Example
         ]
     );
     assert!(draft.is_changed());
@@ -818,8 +819,7 @@ fn changes_list_outline_order_then_deleted_taxonomies_naming_each_part() -> Test
 }
 
 #[test]
-fn a_fork_finds_its_samples_through_lineage_and_other_types_fall_back_to_their_text() -> TestResult
-{
+fn a_fork_finds_its_samples_and_missing_examples_use_the_property_template() -> TestResult {
     let mut draft = LibraryDraft::from_configuration(team()?);
     let fork = draft.fork(&find(&draft, &["conventional"])?)?;
     draft.fork(&fork)?;
@@ -828,11 +828,14 @@ fn a_fork_finds_its_samples_through_lineage_and_other_types_fall_back_to_their_t
         let preview = draft
             .preview(&find(&draft, &[taxonomy, "feat", "decision"])?)
             .ok_or("a property preview")?;
-        assert_eq!(preview.subject, sample.subject(), "{taxonomy}");
-        assert_eq!(preview.earlier, ["intent"]);
         assert_eq!(
-            preview.value,
-            PreviewValue::Sample(sample.value("decision").ok_or("a decision value")?)
+            preview.message,
+            format!(
+                "{}\ndecision:\n{}",
+                sample.subject(),
+                sample.value("decision").ok_or("decision")?
+            ),
+            "{taxonomy}"
         );
     }
 
@@ -844,10 +847,9 @@ fn a_fork_finds_its_samples_through_lineage_and_other_types_fall_back_to_their_t
         DraftEdit::Text(DraftField::Description, "How it was verified."),
     )?;
     let preview = draft.preview(&verification).ok_or("a property preview")?;
-    assert_eq!(preview.earlier, ["intent", "decision", "constraints"]);
     assert_eq!(
-        preview.value,
-        PreviewValue::Placeholder("How it was verified.")
+        preview.message,
+        "feat([<scope>]): <subject>\nverification:\n<value>"
     );
     assert_eq!(
         (preview.taxonomy, preview.version),
@@ -857,8 +859,10 @@ fn a_fork_finds_its_samples_through_lineage_and_other_types_fall_back_to_their_t
     let preview = draft
         .preview(&find(&draft, &["team", "release", "summary"])?)
         .ok_or("a property preview")?;
-    assert_eq!(preview.subject, "release: Release notes");
-    assert_eq!(preview.value, PreviewValue::Placeholder("What shipped"));
+    assert_eq!(
+        preview.message,
+        "release([<scope>]): <subject>\nsummary:\n<value>"
+    );
     assert!(draft.preview(&fork).is_none());
     Ok(())
 }
@@ -1039,5 +1043,123 @@ fn a_copy_writes_nothing_when_any_target_has_the_key_or_is_not_another_type_of_i
     );
     assert!(draft.copy_targets(&built_in).is_empty());
     assert_eq!(format!("{draft:?}"), before);
+    Ok(())
+}
+
+#[test]
+fn property_examples_follow_names_until_authored_and_survive_build_copy_and_fork() -> TestResult {
+    let mut draft = LibraryDraft::from_configuration(team()?);
+    let release = find(&draft, &["team", "release"])?;
+    let property = draft.edit(&release, DraftEdit::AddProperty)?;
+    set_name(&mut draft, &property, "verification")?;
+    draft.edit(
+        &property,
+        DraftEdit::Text(DraftField::Description, "How this was checked."),
+    )?;
+    assert_eq!(
+        draft.text(&property, DraftField::Example),
+        Some("release([<scope>]): <subject>\nverification:\n<value>")
+    );
+    set_name(&mut draft, &release, "deploy")?;
+    assert_eq!(
+        draft.preview(&property).ok_or("preview")?.message,
+        "deploy([<scope>]): <subject>\nverification:\n<value>"
+    );
+    let authored = "deploy(db): ship the cache\nverification:\n  Tests passed 👩‍💻界e\u{301}\n\nStaging checked.\n";
+    draft.edit(&property, DraftEdit::Text(DraftField::Example, authored))?;
+    set_name(&mut draft, &release, "ship")?;
+    set_name(&mut draft, &property, "checks")?;
+    assert_eq!(draft.preview(&property).ok_or("preview")?.message, authored);
+    let team = find(&draft, &["team"])?;
+    let other = draft.edit(&team, DraftEdit::AddType)?;
+    set_name(&mut draft, &other, "test")?;
+    draft.edit(&other, DraftEdit::Text(DraftField::Description, "Tests."))?;
+    draft.edit(&property, DraftEdit::CopyTo(std::slice::from_ref(&other)))?;
+    assert_eq!(
+        draft.text(
+            &find(&draft, &["team", "test", "checks"])?,
+            DraftField::Example
+        ),
+        Some(authored)
+    );
+    draft.fork(&team)?;
+    assert_eq!(
+        draft
+            .preview(&find(&draft, &["team-fork", "ship", "checks"])?)
+            .ok_or("fork preview")?
+            .message,
+        authored
+    );
+    let saved = draft.build().map_err(|problems| format!("{problems:?}"))?;
+    let reopened = LibraryDraft::from_configuration(saved.clone());
+    assert_eq!(
+        reopened
+            .build()
+            .map_err(|problems| format!("{problems:?}"))?,
+        saved
+    );
+    assert_eq!(
+        reopened
+            .preview(&find(&reopened, &["team", "ship", "checks"])?)
+            .ok_or("reopened preview")?
+            .message,
+        authored
+    );
+    assert_eq!(reopened.changes().count(), 0);
+    Ok(())
+}
+
+#[test]
+fn legacy_missing_examples_stay_omitted_and_authored_edits_derive_marks_and_versions() -> TestResult
+{
+    let config = team()?;
+    let mut draft = LibraryDraft::from_configuration(config.clone());
+    let property = find(&draft, &["team", "release", "summary"])?;
+    let seed = draft
+        .text(&property, DraftField::Example)
+        .ok_or("example")?
+        .to_owned();
+    assert!(seed.contains("release([<scope>])"));
+    draft.edit(&property, DraftEdit::Text(DraftField::Example, &seed))?;
+    assert_eq!(draft.changes().count(), 0);
+    assert_eq!(
+        draft.build().map_err(|problems| format!("{problems:?}"))?,
+        config
+    );
+    let before = draft.version(&property).ok_or("version")?;
+    let authored = "release(api): publish\nsummary:\nA release.";
+    draft.edit(&property, DraftEdit::Text(DraftField::Example, authored))?;
+    assert_eq!(draft.changes().count(), 1);
+    assert_eq!(draft.changes().mark(&property), Some(Mark::Modified));
+    assert_eq!(
+        draft.version(&property).ok_or("version")?.get(),
+        before.get() + 1
+    );
+    let saved = draft.build().map_err(|problems| format!("{problems:?}"))?;
+    let mut reopened = LibraryDraft::from_configuration(saved.clone());
+    let property = find(&reopened, &["team", "release", "summary"])?;
+    reopened.edit(
+        &property,
+        DraftEdit::Text(DraftField::Example, "release: other\nsummary:\nOther."),
+    )?;
+    reopened.edit(&property, DraftEdit::Text(DraftField::Example, authored))?;
+    assert_eq!(reopened.changes().count(), 0);
+    assert_eq!(
+        reopened
+            .build()
+            .map_err(|problems| format!("{problems:?}"))?,
+        saved
+    );
+    reopened.edit(&property, DraftEdit::Text(DraftField::Example, " \n "))?;
+    assert!(reopened.build().is_err());
+    assert!(
+        reopened.problems().iter().any(
+            |problem| problem.site == ProblemSite::Field(property.clone(), DraftField::Example)
+        )
+    );
+    assert_eq!(
+        reopened.preview(&property).ok_or("blank preview")?.message,
+        " \n "
+    );
     Ok(())
 }

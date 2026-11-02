@@ -524,6 +524,26 @@ pub fn fingerprint_taxonomy(taxonomy: &Taxonomy) -> Fingerprint {
     for definition in taxonomy.commit_types() {
         fingerprint_commit_type(&mut canonical, definition);
     }
+    let examples = taxonomy
+        .commit_types()
+        .iter()
+        .flat_map(|definition| {
+            definition.properties().iter().filter_map(move |property| {
+                property
+                    .example()
+                    .map(|example| (definition.id(), property.key(), example))
+            })
+        })
+        .collect::<Vec<_>>();
+    if !examples.is_empty() {
+        canonical.text("gitserious.taxonomy.examples.v1");
+        canonical.usize(examples.len());
+        for (commit_type, property, example) in examples {
+            canonical.text(commit_type.as_str());
+            canonical.text(property.as_str());
+            canonical.text(example.as_str());
+        }
+    }
     canonical.finish()
 }
 
@@ -584,6 +604,18 @@ impl CanonicalHasher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn taxonomies_without_examples_keep_their_historical_fingerprints() {
+        let expected = [
+            "sha256:84bdeb8f84a8f0dc978c273ea22f464aead2554f985fa892cff96e174d57394d",
+            "sha256:70a48028e9e8618fe910cda767c3e4d3f5409a49a0f074e4e5604435f4f29f56",
+            "sha256:793a2aeaced5fbc17b54f03c3442f0d173cef7ddf3e5d11e09e47432c5ae0c21",
+        ];
+        for (taxonomy, expected) in built_in_taxonomies().iter().zip(expected) {
+            assert_eq!(fingerprint_taxonomy(taxonomy).to_string(), expected);
+        }
+    }
 
     #[test]
     fn config_fingerprints_are_stable_and_order_sensitive() -> Result<(), Box<dyn std::error::Error>>
