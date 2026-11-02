@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repo_root="$(git rev-parse --show-toplevel)"
-validator="$script_dir/validate-trusted-automation-review.sh"
+validator="${TRUST_REVIEW_VALIDATOR:-$script_dir/validate-trusted-automation-review.sh}"
 signature_fixture="$(command -v true)"
 failing_signature_fixture="$(command -v false)"
 fixture_dir="$(mktemp -d)"
@@ -37,6 +37,9 @@ run_fixture() {
   local author="${4:-contributor}"
   local verifier_fixture="${5:-$signature_fixture}"
   env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
+    APPROVAL_MODE="${APPROVAL_MODE:-standalone}" \
+    APPROVAL_PR_NUMBER="${APPROVAL_PR_NUMBER:-17}" \
+    APPROVAL_HEAD_SHA="${APPROVAL_HEAD_SHA:-$head_sha}" \
     PR_NUMBER=17 \
     PR_AUTHOR_LOGIN="$author" \
     PR_HEAD_SHA="$head_sha" \
@@ -202,5 +205,32 @@ printf 'malformed registry row\n' >"$registry"
 expect_fail "malformed registry" \
   run_fixture "$normal_paths" "$reviews" "$attestations"
 cp "$fixture_dir/valid-registry.tsv" "$registry"
+
+printf 'peer-maintainer\tCOLLABORATOR\t/approve-automation %s\t2026-07-12T20:05:00Z\n' \
+  "$old_sha" >"$attestations"
+APPROVAL_MODE=stack APPROVAL_PR_NUMBER=29 APPROVAL_HEAD_SHA="$old_sha" \
+  expect_pass "current top attestation covers lower maintainer head" \
+  run_fixture "$protected_paths" "$reviews" "$attestations" markyjordan
+: >"$attestations"
+printf 'peer-maintainer\tCOLLABORATOR\tAPPROVED\t2026-07-12T20:00:00Z\t%s\n' \
+  "$head_sha" >"$reviews"
+APPROVAL_MODE=stack APPROVAL_HEAD_SHA="$old_sha" \
+  expect_fail "stack ignores lower reviews" \
+  run_fixture "$protected_paths" "$reviews" "$attestations" markyjordan
+printf 'peer-maintainer\tCOLLABORATOR\t/approve-automation %s\t2026-07-12T20:05:00Z\n' \
+  "$head_sha" >"$attestations"
+APPROVAL_MODE=stack APPROVAL_HEAD_SHA="$old_sha" \
+  expect_fail "stack ignores lower-head comment" \
+  run_fixture "$protected_paths" "$reviews" "$attestations" markyjordan
+printf 'peer-maintainer\tCOLLABORATOR\t/approve-automation %s\t2026-07-12T20:05:00Z\n' \
+  "$old_sha" >"$attestations"
+APPROVAL_MODE=stack APPROVAL_HEAD_SHA="$old_sha" \
+  expect_fail "stack still requires own head signature" \
+  run_fixture "$protected_paths" "$reviews" "$attestations" markyjordan "$failing_signature_fixture"
+printf 'markyjordan\tOWNER\t/approve-automation %s\t2026-07-12T20:05:00Z\n' \
+  "$old_sha" >"$attestations"
+APPROVAL_MODE=stack APPROVAL_HEAD_SHA="$old_sha" \
+  expect_fail "stack preserves peer restriction on lower author" \
+  run_fixture "$protected_paths" "$reviews" "$attestations" markyjordan
 
 echo "Trusted automation review fixtures passed."

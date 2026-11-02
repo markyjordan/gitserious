@@ -32,6 +32,12 @@ case "$status" in
     ;;
 esac
 
+description="${TRUST_STATUS_DESCRIPTION:-$description}"
+if [[ ${#description} -gt 140 || "$description" == *$'\n'* || "$description" == *$'\r'* ]]; then
+  echo "Invalid trusted review status description." >&2
+  exit 1
+fi
+
 if [[ -z "$token" ]]; then
   echo "GH_TOKEN or GITHUB_TOKEN is required." >&2
   exit 1

@@ -25,4 +25,6 @@ for fixture in "${fixtures[@]}"; do
   bash "$test_dir/$fixture"
 done
 
+python3 "$test_dir/test-reconcile-trusted-automation-review.py"
+
 echo "CI script fixtures passed."
