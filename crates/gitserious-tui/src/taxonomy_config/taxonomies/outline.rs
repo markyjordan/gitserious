@@ -7,6 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
+use super::carousel::{Carousel, Target};
 use super::{BADGE_STYLE, BAND, Chip, Chips, DIM, fit, policy_style};
 use crate::theme::{ACCENT, block_title, focus_frame_style, frame_style};
 
@@ -153,6 +154,8 @@ pub(super) fn render(
     selected: usize,
     offset: &mut usize,
     focused: bool,
+    carousel: &mut Carousel,
+    animation_viewport: Option<Rect>,
 ) -> Rect {
     let mut block = Block::bordered()
         .border_style(focus_frame_style(focused))
@@ -175,6 +178,7 @@ pub(super) fn render(
     }
     frame.render_widget(block, area);
     let width = usize::from(inner.width).saturating_sub(1);
+    let mut target = None;
     let lines = rows
         .iter()
         .enumerate()
@@ -186,17 +190,88 @@ pub(super) fn render(
                 Row::Node(node) => chips.of(node.id()),
                 Row::AddType(_) | Row::AddProperty(..) => None,
             };
+            if index == selected
+                && let Some(viewport) = animation_viewport
+            {
+                let row_area = Rect::new(
+                    inner.x,
+                    inner.y + u16::try_from(index - *offset).unwrap_or(0),
+                    inner.width.saturating_sub(1),
+                    1,
+                );
+                target = summary_target(row, open, chip, row_area, viewport);
+            }
             row_line(row, open, chip, index == selected, focused, width)
         })
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines), inner);
+    carousel.render(frame.buffer_mut(), target);
     inner
 }
 
 /// Pads `name` to the widest of `names` plus two spaces.
 fn column<'a>(name: &str, names: impl Iterator<Item = &'a str>) -> String {
-    let width = names.map(str::len).max().unwrap_or(0) + 2;
-    format!("{name:<width$}")
+    let width = names.map(|name| Span::raw(name).width()).max().unwrap_or(0) + 2;
+    format!(
+        "{name}{}",
+        " ".repeat(width.saturating_sub(Span::raw(name).width()))
+    )
+}
+
+fn summary(commit_type: &TypeNode) -> String {
+    commit_type
+        .properties()
+        .iter()
+        .map(gitserious_app::PropertyNode::name)
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+fn summary_target(
+    row: Row<'_>,
+    open: bool,
+    chip: Option<Chip>,
+    row_area: Rect,
+    viewport: Rect,
+) -> Option<Target> {
+    let Row::Node(NodeRef::Type {
+        taxonomy,
+        commit_type,
+    }) = row
+    else {
+        return None;
+    };
+    if open {
+        return None;
+    }
+    let name = column(
+        commit_type.name(),
+        taxonomy.types().iter().map(TypeNode::name),
+    );
+    let prefix = format!("▌  ▸ {name}");
+    let prefix_width = Span::raw(&prefix).width();
+    let badge_width = chip.map_or(0, |chip| chip.span().width());
+    let room = usize::from(row_area.width)
+        .saturating_sub(badge_width + usize::from(badge_width > 0))
+        .saturating_sub(prefix_width);
+    let summary = summary(commit_type);
+    if room == 0 || Span::raw(&summary).width() <= room {
+        return None;
+    }
+    Some(Target {
+        node: commit_type.id().clone(),
+        prefix,
+        summary,
+        chip,
+        viewport,
+        area: Rect::new(
+            row_area.x + u16::try_from(prefix_width).ok()?,
+            row_area.y,
+            u16::try_from(room).ok()?,
+            1,
+        ),
+        style: BAND.patch(DIM),
+    })
 }
 
 /// One row. A taxonomy without a chip shows where it lives instead.
@@ -256,13 +331,7 @@ fn row_line(
             );
             let mut left = vec![bar, Span::raw("  "), marker, Span::styled(name, name_style)];
             if !open {
-                let summary = commit_type
-                    .properties()
-                    .iter()
-                    .map(gitserious_app::PropertyNode::name)
-                    .collect::<Vec<_>>()
-                    .join(" · ");
-                left.push(Span::styled(summary, DIM));
+                left.push(Span::styled(summary(commit_type), DIM));
             }
             (left, chip.map(Chip::span).into_iter().collect())
         }
@@ -294,4 +363,26 @@ fn row_line(
     };
     let line = fit(left, right, width);
     if selected { line.style(BAND) } else { line }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn static_columns_and_ellipsis_preserve_complete_graphemes() {
+        assert_eq!(column("界", ["a", "界"].into_iter()), "界  ");
+        assert_eq!(
+            column("e\u{301}", ["👩‍💻", "e\u{301}"].into_iter()),
+            "e\u{301}   "
+        );
+        assert_eq!(
+            fit(vec![Span::raw("a👩‍💻e\u{301}界")], vec![], 3).to_string(),
+            "a… "
+        );
+        assert_eq!(
+            fit(vec![Span::raw("e\u{301}界abc")], vec![], 4).to_string(),
+            "e\u{301}界…"
+        );
+    }
 }

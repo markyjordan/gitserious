@@ -9,7 +9,7 @@ use gitserious_app::{
     CommitAuthoringContext, HelpPage, InteractiveEntry, InteractiveUi, InteractiveWorkspace,
 };
 use ratatui::crossterm::event::{
-    self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+    Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -85,10 +85,9 @@ impl InteractiveUi for RatatuiInteractiveUi {
                 shell.advance(now.duration_since(previous));
                 previous = now;
                 terminal.draw(|frame| shell.render(frame, help))?;
-                if shell.animating() && !event::poll(Duration::from_millis(16))? {
+                let Some(event) = crate::runtime::next_event(shell.next_frame_in())? else {
                     continue;
-                }
-                let event = event::read()?;
+                };
                 // Idle time is not animation time for transitions triggered by this event.
                 previous = Instant::now();
                 if let Some(action) = shell.handle_event(event, workspace, help) {
@@ -201,10 +200,21 @@ impl Shell {
 
     fn advance(&mut self, elapsed: Duration) {
         self.home_logo.advance(elapsed);
+        self.config.advance(elapsed, self.config_visible());
     }
 
-    fn animating(&self) -> bool {
-        self.section == Section::Home
+    fn config_visible(&self) -> bool {
+        self.section == Section::Config && self.overlay.is_none() && !self.too_small
+    }
+
+    fn next_frame_in(&self) -> Option<Duration> {
+        if self.section == Section::Home {
+            Some(Duration::from_millis(16))
+        } else if self.config_visible() {
+            self.config.next_frame_in()
+        } else {
+            None
+        }
     }
 
     fn execute(&mut self, action: Action, workspace: &dyn InteractiveWorkspace) -> Option<Action> {
@@ -233,6 +243,17 @@ impl Shell {
     }
 
     fn handle_event(
+        &mut self,
+        event: Event,
+        workspace: &dyn InteractiveWorkspace,
+        help: &[HelpPage],
+    ) -> Option<Action> {
+        let action = self.handle_event_inner(event, workspace, help);
+        self.config.advance(Duration::ZERO, self.config_visible());
+        action
+    }
+
+    fn handle_event_inner(
         &mut self,
         event: Event,
         workspace: &dyn InteractiveWorkspace,
@@ -518,6 +539,7 @@ impl Shell {
     fn render(&mut self, frame: &mut Frame<'_>, help: &[HelpPage]) {
         let area = frame.area();
         self.too_small = area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT;
+        self.config.advance(Duration::ZERO, self.config_visible());
         self.root_areas = [Rect::default(); Section::ALL.len()];
         frame.render_widget(
             Block::default().style(Style::default().fg(Color::White).bg(JET_BLACK)),
@@ -719,7 +741,7 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::crossterm::event::KeyEvent;
+    use ratatui::crossterm::event::{self, KeyEvent};
 
     use super::*;
     use gitserious_app::{
@@ -809,7 +831,7 @@ mod tests {
         assert!(shell.commit.blocker.is_some());
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
         assert_eq!(shell.section, Section::Config);
-        assert!(!shell.animating());
+        assert!(shell.next_frame_in().is_none());
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let text = rendered(&terminal);
@@ -829,6 +851,69 @@ mod tests {
         assert!(rendered(&terminal).contains("Taxonomies"));
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.section, Section::Home);
+        Ok(())
+    }
+
+    #[test]
+    fn config_summary_deadline_advances_without_keys_and_resets_when_hidden()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let services = Services;
+        let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
+        let mut terminal = Terminal::new(TestBackend::new(80, 30))?;
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        for code in [
+            KeyCode::Char('2'),
+            KeyCode::Down,
+            KeyCode::Right,
+            KeyCode::Right,
+        ] {
+            shell.handle_event(key(code), &services, &[]);
+        }
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        let initial = terminal.backend().buffer().clone();
+        let hold = Duration::from_millis(800);
+        assert_eq!(shell.next_frame_in(), Some(hold));
+        shell.advance(hold);
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        assert_ne!(*terminal.backend().buffer(), initial);
+        assert_eq!(shell.next_frame_in(), Some(Duration::from_millis(150)));
+
+        shell.execute(Action::Result, &services);
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        let overlay = terminal.backend().buffer().clone();
+        shell.advance(Duration::from_secs(20));
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        assert_eq!(shell.next_frame_in(), None);
+        assert_eq!(*terminal.backend().buffer(), overlay);
+        shell.handle_event(key(KeyCode::Esc), &services, &[]);
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        assert_eq!(shell.next_frame_in(), Some(hold));
+
+        for section in [Section::Commit, Section::Help, Section::Home] {
+            shell.execute(Action::Select(section), &services);
+            terminal.draw(|frame| shell.render(frame, &[]))?;
+            assert_eq!(
+                shell.next_frame_in(),
+                if section == Section::Home {
+                    Some(Duration::from_millis(16))
+                } else {
+                    None
+                }
+            );
+            shell.advance(Duration::from_secs(20));
+            shell.execute(Action::Select(Section::Config), &services);
+            terminal.draw(|frame| shell.render(frame, &[]))?;
+            assert_eq!(shell.next_frame_in(), Some(hold));
+        }
+
+        terminal.backend_mut().resize(60, 15);
+        terminal.resize(Rect::new(0, 0, 60, 15))?;
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        assert_eq!(shell.next_frame_in(), None);
+        terminal.backend_mut().resize(80, 30);
+        terminal.resize(Rect::new(0, 0, 80, 30))?;
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        assert_eq!(shell.next_frame_in(), Some(hold));
         Ok(())
     }
 
@@ -1040,7 +1125,7 @@ mod tests {
         assert_eq!(shell.section, Section::Config);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert_eq!(shell.root_areas, original);
-        assert!(!shell.animating());
+        assert!(shell.next_frame_in().is_none());
         let header: String = (0..100)
             .map(|x| terminal.backend().buffer()[(x, 1)].symbol())
             .collect();
@@ -1079,7 +1164,7 @@ mod tests {
         // Pin to the default theme so `GITSERIOUS_LOGO_THEME` dev overrides
         // cannot make this timing-sensitive test flaky.
         shell.home_logo = HomeLogo::with_theme(DEFAULT_THEME);
-        assert!(shell.animating(), "home should tick continuously");
+        assert_eq!(shell.next_frame_in(), Some(Duration::from_millis(16)));
         for (width, height) in [(100, 30), (66, 18)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| shell.render(frame, &[]))?;
@@ -1164,7 +1249,7 @@ mod tests {
         );
         // Leaving Home stops the idle animation (unless config animates).
         shell.execute(Action::Select(Section::Commit), &services);
-        assert!(!shell.animating());
+        assert!(shell.next_frame_in().is_none());
         Ok(())
     }
 

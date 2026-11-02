@@ -1,5 +1,6 @@
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crate::confirmation::{
     self, APPLY_OR_DISCARD, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT, REMOVE,
@@ -13,7 +14,7 @@ use gitserious_app::{
 use gitserious_core::{Taxonomy, TaxonomyId};
 use ratatui::Frame;
 use ratatui::crossterm::event::{
-    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -26,6 +27,8 @@ use crate::theme::{
     render_navigation_row, row_style, section_heading_style, selected_style,
 };
 
+#[cfg(test)]
+mod carousel_tests;
 #[cfg(test)]
 mod copy_tests;
 mod home_overlay;
@@ -62,9 +65,17 @@ impl ConfigurationEditor for RatatuiTaxonomyConfigurationEditor {
         crate::runtime::run(|terminal| {
             let mut state = State::new(workspace);
             state.library_path.clone_from(&self.library_path);
+            let mut previous = Instant::now();
             loop {
+                let now = Instant::now();
+                state.advance(now.duration_since(previous), true);
+                previous = now;
                 terminal.draw(|frame| state.render(frame))?;
-                if state.handle_event(event::read()?, workspace) {
+                let Some(event) = crate::runtime::next_event(state.next_frame_in())? else {
+                    continue;
+                };
+                previous = Instant::now();
+                if state.handle_event(event, workspace) {
                     return Ok::<_, io::Error>(());
                 }
             }
@@ -91,6 +102,14 @@ impl ConfigView {
 
     pub(crate) fn render(&mut self, frame: &mut Frame<'_>, area: Rect) {
         self.state.render_at(frame, area);
+    }
+
+    pub(crate) fn advance(&mut self, elapsed: Duration, host_visible: bool) {
+        self.state.advance(elapsed, host_visible);
+    }
+
+    pub(crate) fn next_frame_in(&self) -> Option<Duration> {
+        self.state.next_frame_in()
     }
 
     /// Returns true when the configuration content requests that the shell quit.
@@ -266,6 +285,7 @@ struct State {
     dialog: ConfirmDialog,
     settings: Option<SettingsDraft>,
     too_small: bool,
+    host_visible: bool,
     project_area: Rect,
     tab_areas: [Rect; 2],
 }
@@ -296,6 +316,7 @@ impl State {
             dialog: ConfirmDialog::default(),
             settings: None,
             too_small: false,
+            host_visible: true,
             project_area: Rect::default(),
             tab_areas: [Rect::default(); 2],
         }
@@ -385,7 +406,43 @@ impl State {
         false
     }
 
+    fn animation_visible(&self) -> bool {
+        self.host_visible
+            && !self.too_small
+            && matches!(self.screen, Screen::Home)
+            && self.category == Category::Taxonomies
+            && self.home_focus == HomeFocus::Content
+            && self.home_overlay.is_none()
+            && self.taxonomies.navigating()
+    }
+
+    fn advance(&mut self, elapsed: Duration, host_visible: bool) {
+        self.host_visible = host_visible;
+        if self.animation_visible() {
+            self.taxonomies.advance(elapsed);
+        } else {
+            self.taxonomies.reset_animation();
+        }
+    }
+
+    fn next_frame_in(&self) -> Option<Duration> {
+        self.animation_visible()
+            .then(|| self.taxonomies.next_frame_in())
+            .flatten()
+    }
+
     fn handle_event(&mut self, event: Event, workspace: &dyn ConfigurationWorkspace) -> bool {
+        if matches!(event, Event::Resize(_, _)) {
+            self.taxonomies.reset_animation();
+        }
+        let quit = self.handle_event_inner(event, workspace);
+        if !self.animation_visible() {
+            self.taxonomies.reset_animation();
+        }
+        quit
+    }
+
+    fn handle_event_inner(&mut self, event: Event, workspace: &dyn ConfigurationWorkspace) -> bool {
         if matches!(&event, Event::Key(key) if key.kind == KeyEventKind::Release) {
             return false;
         }
@@ -1155,6 +1212,9 @@ impl State {
         );
         let terminal = frame.area();
         self.too_small = terminal.width < MINIMUM_WIDTH || terminal.height < MINIMUM_HEIGHT;
+        if !self.animation_visible() {
+            self.taxonomies.reset_animation();
+        }
         if self.too_small {
             self.tab_areas = [Rect::default(); 2];
             if let Some(question) = self.confirmation() {
@@ -1577,8 +1637,10 @@ impl State {
 
     fn render_taxonomies(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let focused = matches!(self.screen, Screen::Home) && self.home_focus == HomeFocus::Content;
+        let animate = self.animation_visible();
         let library = self.global.as_ref().and_then(ConfigurationSession::library);
-        self.taxonomies.render(frame, area, library, focused);
+        self.taxonomies
+            .render(frame, area, library, focused, animate);
     }
 
     fn render_settings(
