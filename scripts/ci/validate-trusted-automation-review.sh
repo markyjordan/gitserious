@@ -11,6 +11,14 @@ pr_author="${PR_AUTHOR_LOGIN:?PR_AUTHOR_LOGIN is required}"
 repository="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 signature_verifier="${MAINTAINER_SIGNATURE_VERIFIER:-$script_dir/verify-maintainer-signature.sh}"
+approval_mode="${APPROVAL_MODE:-standalone}"
+approval_pr="${APPROVAL_PR_NUMBER:-$pr_number}"
+approval_sha="${APPROVAL_HEAD_SHA:-$head_sha}"
+case "$approval_mode" in
+  standalone | stack) ;;
+  *) echo "Unknown approval mode: $approval_mode" >&2; exit 1 ;;
+esac
+[[ "$approval_pr" =~ ^[0-9]+$ && "$approval_sha" =~ ^[0-9a-fA-F]{40}$ ]] || exit 1
 
 if [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
   echo "PR_NUMBER must be numeric; got $pr_number." >&2
@@ -100,9 +108,9 @@ load_attestation_rows() {
   fi
 
   require_github_api
-  GH_TOKEN="$token" gh api --paginate "repos/${repository}/issues/${pr_number}/comments?per_page=100" \
+  GH_TOKEN="$token" gh api --paginate "repos/${repository}/issues/${approval_pr}/comments?per_page=100" \
     --jq ".[] |
-      select(.body == \"/approve-automation ${head_sha}\") |
+      select(.body == \"/approve-automation ${approval_sha}\") |
       [.user.login, .author_association, .body, .updated_at] |
       @tsv"
 }
@@ -130,6 +138,8 @@ if [[ "$author_is_maintainer" == true && "$active_count" -ge 2 ]]; then
   excluded_approver="$pr_author"
 fi
 
+trusted_approval=""
+if [[ "$approval_mode" == standalone ]]; then
 trusted_approval="$({ load_review_rows || exit $?; } | awk -F '\t' \
   -v approvers="$active_approvers" -v excluded="$excluded_approver" -v head="$head_sha" '
   BEGIN {
@@ -155,10 +165,11 @@ trusted_approval="$({ load_review_rows || exit $?; } | awk -F '\t' \
     }
   }
 ')"
+fi
 
 approval_kind=review
 if [[ -z "$trusted_approval" ]]; then
-  attestation_command="/approve-automation ${head_sha}"
+  attestation_command="/approve-automation ${approval_sha}"
   trusted_approval="$({ load_attestation_rows || exit $?; } | awk -F '\t' \
     -v approvers="$active_approvers" -v command="$attestation_command" -v excluded="$excluded_approver" '
     BEGIN {
@@ -176,7 +187,10 @@ if [[ -z "$trusted_approval" ]]; then
 fi
 
 if [[ -z "$trusted_approval" ]]; then
-  cat >&2 <<EOF
+  if [[ "$approval_mode" == stack ]]; then
+    echo "Sensitive stack changes require an exact comment on top PR #${approval_pr}: /approve-automation ${approval_sha}" >&2
+  else
+    cat >&2 <<EOF
 Protected code or supply-chain changes require trusted approval on the current PR head.
 
 Provide either:
@@ -185,6 +199,7 @@ Provide either:
 
 The reviewer or commenter must be active in the protected maintainer registry.
 EOF
+  fi
   if [[ -n "$excluded_approver" ]]; then
     echo "Because multiple maintainers are active, ${pr_author} cannot approve their own sensitive change." >&2
   fi

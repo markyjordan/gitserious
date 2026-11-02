@@ -1,0 +1,20 @@
+name: Trusted Review Wakeup
+
+on:
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  wakeup:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Wake protected reconciliation
+        run: |
+          set -euo pipefail
+          true

@@ -158,7 +158,7 @@ more explicit `ci-fixtures` recipe exercises portable policy helpers.
 | `test.yml` | Reusable locked tests and doctests on Linux, macOS, and Windows | Component of `ci-pass` |
 | `automation-quality.yml` | Reusable workflow syntax, shell, policy-fixture, CI-fixture, and zizmor analysis | `automation-quality / automation-quality` |
 | `dependency-security.yml` | Called for pull requests; also runs on relevant protected pushes, daily schedule, and manual dispatch | `dependency-security / dependency-security` |
-| `trusted-automation-review.yml` | Base-owned `pull_request_target`, review, and issue-comment trust evaluation | Exact-head commit status `trusted-automation-review` |
+| `trusted-automation-review.yml` | Default-owned PR/comment events, review wakeups, and scheduled reconciliation | Exact-head commit status `trusted-automation-review` |
 | `release-readiness.yml` | Promotion readiness and manual release rehearsal; verifies a selected real tag before checkout | `release-readiness / release-readiness` where required |
 | `build-release-binaries.yml` | Reusable four-native-target build, execution, and archive matrix | `native-four`, consumed by `ci-pass` or release orchestration |
 | `prepare-release.yml` | Protected manual creation of `release/X.Y` from validated `main` | `release-branch-management` deployment approval and run log |
@@ -184,10 +184,12 @@ result even if another aggregate is misconfigured.
 
 ## Trusted Automation Review
 
-The trust workflow uses `pull_request_target` only because it must read review
-and comment state and publish a status on an exact pull-request head. It never
-checks out or executes pull-request code. The validator, registry, fixtures,
-and status reporter come from protected base/default-branch state.
+The trust workflow reconciles current GitHub metadata on PR and comment events,
+on manual dispatch, and on an attempted five-minute schedule. A read-only review
+workflow wakes the protected writer through `workflow_run`. It never passes PR
+artifacts or code to the writer. Executable policy, the maintainer registry, keys,
+fixtures, and helpers all come from one pinned protected default-branch checkout.
+PR commit objects are fetched only for signature and ancestry verification.
 
 ```mermaid
 flowchart TD
@@ -216,7 +218,7 @@ The workflow run itself may finish after successfully reporting a blocked
 decision; the required `trusted-automation-review` commit status is the merge
 authority.
 
-### Maintainer and contributor behavior
+### Standalone maintainer and contributor behavior
 
 - Every pull request authored by an active registered maintainer must have a
   valid personal OpenPGP signature on its exact head, even if it changes only
@@ -232,6 +234,49 @@ authority.
   Stale, dismissed, superseded, malformed, or unregistered approvals fail.
 - `author_association` is retained for diagnostics but does not grant trust.
   A broad `COLLABORATOR` label is not an approval allowlist.
+
+### Native GitHub stacks
+
+For a native stack, post one comment on its current top PR:
+
+```text
+/approve-automation <full current top HEAD SHA>
+```
+
+That exact comment supplies approval for every sensitive member. Comments on
+lower PRs and approving reviews do not substitute for the top comment. The
+commenter must be an active registered maintainer eligible to approve every
+sensitive member. With multiple active maintainers, an author cannot approve
+their own sensitive layer. A mixed-author stack can therefore require an
+approver who did not author any of those layers.
+
+Every maintainer-authored member still needs its own personal OpenPGP head
+signature, including documentation-only members. Each lower head must be an
+ancestor of the approved top head. A changed lower branch cannot inherit
+approval until the stack is rebased and its current top SHA is attested again.
+GitHub-generated rebase signatures do not replace registered personal keys.
+
+The coordinator reads membership from GitHub's native Stacks API. Branch naming
+conventions alone do not establish a stack. Closed members are excluded. An
+unlinked PR returns to standalone approval rules. A new top, rebase, removed
+comment, or changed membership is reevaluated across the current scope; stale
+lower approvals are not a fallback.
+
+One repository concurrency group serializes full scans without cancelling the
+active scan. Coalesced pending events still cause a complete current-state scan.
+Before publishing success, the coordinator rereads membership, heads, approval
+evidence, and maintainer access. Drift or API failures cannot grant success.
+Statuses sharing a SHA are combined conservatively across all relevant PRs.
+
+Each status includes an evidence fingerprint. Unchanged polling performs no
+status writes, avoiding GitHub's per-SHA status limit. The required context
+remains `trusted-automation-review`. A failed context lookup is reported only
+for heads that were actually discovered, without attempting unavailable helpers.
+
+The schedule is a recovery mechanism for missed or membership-only events.
+GitHub can delay or drop scheduled runs, so revocation is eventual rather than
+an atomic merge-time guarantee. Use **Actions → Trusted Automation Review → Run
+workflow** to request a fresh reconciliation.
 
 Never have automation generate `/approve-automation`. It is a human statement
 about a specific reviewed tree.
