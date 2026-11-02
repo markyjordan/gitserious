@@ -1,35 +1,20 @@
-//! A commit message of a property's type, cut to that property's block, with the trailers a
-//! commit of its taxonomy would carry.
+//! A property's complete example message and its taxonomy provenance.
 
-use gitserious_core::{
-    CommitSample, Fingerprint, TaxonomyVersion, built_in_sample, built_in_taxonomies,
-};
+use gitserious_core::{Fingerprint, TaxonomyVersion, built_in_taxonomies};
 
-use super::{LibraryDraft, NodeId, NodeRef, PropertyNode, TaxonomyNode, problems};
+use super::{LibraryDraft, NodeId, NodeRef, TaxonomyNode, problems};
 use crate::TaxonomyOrigin;
 use crate::taxonomy_policy::fingerprint_taxonomy;
 
-/// One property's block in a message of its type. Later properties are left out.
+/// The resolved Example field text and the taxonomy it belongs to.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Preview<'a> {
-    /// The type's sample subject, else `<type>: <type description>`.
-    pub subject: String,
-    /// The keys of the properties above this one, in order.
-    pub earlier: Vec<&'a str>,
-    pub key: &'a str,
-    pub value: PreviewValue<'a>,
+    /// The same complete message displayed by the Example field.
+    pub message: &'a str,
     pub taxonomy: &'a str,
     /// The version apply would write.
     pub version: TaxonomyVersion,
     pub schema: Schema,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PreviewValue<'a> {
-    /// The value the type's sample gives this key.
-    Sample(&'static str),
-    /// No sample has this key, so the property's description stands in for a value.
-    Placeholder(&'a str),
 }
 
 /// The schema fingerprint a commit of the taxonomy would carry.
@@ -48,48 +33,17 @@ impl LibraryDraft {
     #[must_use]
     pub fn preview(&self, id: &NodeId) -> Option<Preview<'_>> {
         let NodeRef::Property {
-            taxonomy,
-            commit_type,
-            property,
+            taxonomy, property, ..
         } = self.node(id)?
         else {
             return None;
         };
-        let sample = self.sample(taxonomy, commit_type.name());
         Some(Preview {
-            subject: sample.map_or_else(
-                || format!("{}: {}", commit_type.name(), commit_type.description()),
-                |sample| sample.subject().to_owned(),
-            ),
-            earlier: commit_type
-                .properties()
-                .iter()
-                .take_while(|other| other.id() != id)
-                .map(PropertyNode::name)
-                .collect(),
-            key: property.name(),
-            value: sample
-                .and_then(|sample| sample.value(property.name()))
-                .map_or(
-                    PreviewValue::Placeholder(property.description()),
-                    PreviewValue::Sample,
-                ),
+            message: property.example.text(),
             taxonomy: taxonomy.name(),
             version: self.version(id)?,
             schema: self.schema(taxonomy),
         })
-    }
-
-    /// The sample of the type named `commit_type` in `taxonomy`, or in the built-in that
-    /// `taxonomy` was forked from, directly or through other forks.
-    fn sample(&self, taxonomy: &TaxonomyNode, commit_type: &str) -> Option<&'static CommitSample> {
-        std::iter::successors(Some(taxonomy), |node| {
-            let source = node.derived_from()?.id().as_str();
-            self.taxonomies.iter().find(|other| other.name == source)
-        })
-        .take(self.taxonomies.len())
-        .filter(|node| node.origin == TaxonomyOrigin::BuiltIn)
-        .find_map(|node| built_in_sample(&node.name, commit_type))
     }
 
     fn schema(&self, taxonomy: &TaxonomyNode) -> Schema {

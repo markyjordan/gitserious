@@ -49,7 +49,7 @@
 //! by name, and apply would address the wrong taxonomy.
 //!
 //! P6, no key grows a field past its own limit. Name and Condition hold at most 80 characters and
-//! Description and Rationale at most 100, on every taxonomy, type, and property. No key leaves a
+//! Description and Rationale at most 100, and Example at most 4096, on every node. No key leaves a
 //! field of a custom node that existed before the key longer than its limit and longer than
 //! before. Without it, a user can type text that misshapes the Inspector's rows.
 //!
@@ -86,7 +86,8 @@
 //! P12, a copy and its source change apart. A key on Home changes the text or policy of at most
 //! one property that exists before and after it, so editing a copy never changes its source, nor
 //! the reverse. Apply and discard, which replace the whole Library, happen off Home. Without it,
-//! a copy shares its source's fields and an edit to one rewrites the other.
+//! a copy shares its source's fields and an edit to one rewrites the other. Generated examples
+//! can change when their parent type is renamed; P12 compares property edits independently.
 //!
 //! P13, browsing arrows never edit a policy. Left returns to the property's parent and right
 //! leaves the property selected. Policy edits require EDIT.
@@ -155,6 +156,7 @@ const fn plain(code: KeyCode) -> Event {
 const INPUTS: &[(&str, Event)] = &[
     ("esc", plain(KeyCode::Esc)),
     ("enter", plain(KeyCode::Enter)),
+    ("alt+enter", press(KeyCode::Enter, KeyModifiers::ALT)),
     ("tab", plain(KeyCode::Tab)),
     ("backtab", press(KeyCode::BackTab, KeyModifiers::SHIFT)),
     ("up", plain(KeyCode::Up)),
@@ -368,6 +370,17 @@ const SEEDS: &[Seed] = &[
                 "enter", "right", "right", "enter",
             ],
             ready: |snapshot| editing(snapshot) == Some(DraftField::Condition),
+        },
+        depth: 2,
+        alphabet: Alphabet::Every,
+        reaches: &[],
+    },
+    Seed {
+        name: "team summary in EDIT on its multiline Example",
+        workspace: team_library,
+        start: Start::Outline {
+            path: SUMMARY,
+            mode: StartMode::Edit(DraftField::Example),
         },
         depth: 2,
         alphabet: Alphabet::Every,
@@ -715,6 +728,15 @@ fn edits(before: &Snapshot, input: &Event) -> bool {
         KeyCode::Up | KeyCode::Down => {
             matches!(before.taxonomies.mode, Mode::Nav) && key.modifiers.contains(KeyModifiers::ALT)
         }
+        KeyCode::Enter => {
+            matches!(
+                before.taxonomies.mode,
+                Mode::Edit {
+                    field: DraftField::Example,
+                    ..
+                }
+            ) && !key.modifiers.contains(KeyModifiers::ALT)
+        }
         KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete => {
             matches!(before.taxonomies.mode, Mode::Edit { .. })
                 && !key.modifiers.contains(KeyModifiers::CONTROL)
@@ -828,11 +850,12 @@ fn stored_names_never_change(
     Ok(())
 }
 
-const TEXT_FIELDS: [DraftField; 4] = [
+const TEXT_FIELDS: [DraftField; 5] = [
     DraftField::Name,
     DraftField::Description,
     DraftField::Condition,
     DraftField::Rationale,
+    DraftField::Example,
 ];
 
 /// Every custom node's text fields and their lengths in characters.
@@ -1088,6 +1111,7 @@ fn property_contents(library: &LibraryDraft) -> HashMap<NodeId, String> {
                 property.policy(),
                 library.text(property.id(), DraftField::Condition),
                 library.text(property.id(), DraftField::Rationale),
+                library.text(property.id(), DraftField::Example),
             );
             (property.id().clone(), format!("{fields:?}"))
         })
@@ -1102,6 +1126,14 @@ fn a_copy_and_its_source_change_apart(
     let (Some(old), Some(new)) = (before.library(), after.and_then(Snapshot::library)) else {
         return Ok(());
     };
+    if let Mode::Edit { node, .. } = &before.taxonomies.mode
+        && !matches!(
+            before.library().and_then(|library| library.node(node)),
+            Some(NodeRef::Property { .. })
+        )
+    {
+        return Ok(());
+    }
     if !matches!(before.screen, Screen::Home) {
         return Ok(());
     }

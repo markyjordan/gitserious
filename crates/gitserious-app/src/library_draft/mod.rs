@@ -14,6 +14,7 @@
 //! a node id across rebuilds. A node created in this session gets a local id that is never reused.
 
 mod changes;
+mod examples;
 mod preview;
 mod problems;
 
@@ -29,7 +30,8 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{ConfigurationError, GlobalConfiguration, TaxonomyOrigin};
 pub use changes::{ChangeSet, Mark};
-pub use preview::{Preview, PreviewValue, Schema};
+use examples::ExampleDraft;
+pub use preview::{Preview, Schema};
 pub use problems::{Problem, ProblemKind, ProblemSite};
 
 /// The identity of one taxonomy, type, or property draft. Never persisted.
@@ -118,6 +120,7 @@ pub enum DraftField {
     Policy,
     Condition,
     Rationale,
+    Example,
 }
 
 impl DraftField {
@@ -129,6 +132,7 @@ impl DraftField {
             Self::Policy => "Policy",
             Self::Condition => "Condition",
             Self::Rationale => "Rationale",
+            Self::Example => "Example",
         }
     }
 
@@ -139,6 +143,7 @@ impl DraftField {
             Self::Name | Self::Condition => Some(NAME_LIMIT),
             Self::Description | Self::Rationale => Some(100),
             Self::Policy => None,
+            Self::Example => Some(4096),
         }
     }
 }
@@ -153,6 +158,7 @@ const PROPERTY_FIELDS: &[DraftField] = &[
     DraftField::Name,
     DraftField::Description,
     DraftField::Policy,
+    DraftField::Example,
 ];
 const CONDITIONAL_PROPERTY_FIELDS: &[DraftField] = &[
     DraftField::Name,
@@ -160,6 +166,7 @@ const CONDITIONAL_PROPERTY_FIELDS: &[DraftField] = &[
     DraftField::Policy,
     DraftField::Condition,
     DraftField::Rationale,
+    DraftField::Example,
 ];
 
 /// One change to one node.
@@ -360,6 +367,7 @@ pub struct PropertyNode {
     condition: String,
     rationale: String,
     copied_from: Option<NodeId>,
+    example: ExampleDraft,
 }
 
 impl PropertyNode {
@@ -385,6 +393,10 @@ impl PropertyNode {
             condition,
             rationale,
             copied_from: None,
+            example: property.example().map_or_else(
+                || ExampleDraft::LegacyMissing(String::new()),
+                |example| ExampleDraft::Authored(example.as_str().to_owned()),
+            ),
         }
     }
 
@@ -505,13 +517,15 @@ impl LibraryDraft {
             .iter()
             .map(|taxonomy| TaxonomyNode::new(taxonomy, TaxonomyOrigin::Custom));
         let taxonomies = built_in.chain(custom).collect();
-        Self {
+        let mut draft = Self {
             default: configuration.default_taxonomy().clone(),
             available: configuration.available_taxonomies().to_vec(),
             persisted: configuration,
             taxonomies,
             next_local: 0,
-        }
+        };
+        draft.refresh_implicit_examples();
+        draft
     }
 
     /// The configuration this draft was loaded from.
@@ -642,16 +656,19 @@ impl LibraryDraft {
     #[must_use]
     pub fn text(&self, id: &NodeId, field: DraftField) -> Option<&str> {
         let node = self.node(id)?;
-        let (name, description) = match node {
+        let (name, description): (&str, &str) = match node {
             NodeRef::Taxonomy(taxonomy) => (&taxonomy.name, &taxonomy.description),
-            NodeRef::Type { commit_type, .. } => (&commit_type.name, &commit_type.description),
-            NodeRef::Property { property, .. } => (&property.name, &property.description),
+            NodeRef::Type { commit_type, .. } => (commit_type.name(), commit_type.description()),
+            NodeRef::Property { property, .. } => (property.name(), property.description()),
         };
         match (field, node) {
             (DraftField::Name, _) => Some(name),
             (DraftField::Description, _) => Some(description),
             (DraftField::Condition, NodeRef::Property { property, .. }) => {
                 Some(&property.condition)
+            }
+            (DraftField::Example, NodeRef::Property { property, .. }) => {
+                Some(property.example.text())
             }
             (DraftField::Rationale, NodeRef::Property { property, .. }) => {
                 Some(&property.rationale)
@@ -728,6 +745,7 @@ impl LibraryDraft {
     /// child, or after `Remove` the next sibling, else the previous one, else the parent.
     pub fn edit(&mut self, id: &NodeId, edit: DraftEdit<'_>) -> Result<NodeId, EditRefusal> {
         let landing = self.apply(id, edit)?;
+        self.refresh_implicit_examples();
         self.record_valid_builds();
         Ok(landing)
     }
@@ -747,22 +765,7 @@ impl LibraryDraft {
         }
         let address = self.address(id).ok_or(EditRefusal::Missing)?;
         match edit {
-            DraftEdit::Text(field, text) => {
-                if field == DraftField::Name
-                    && matches!(node, NodeRef::Taxonomy(t) if t.persisted())
-                {
-                    return Err(EditRefusal::NameLocked);
-                }
-                let (Some(limit), Some(current)) = (field.limit(), self.text(id, field)) else {
-                    return Err(EditRefusal::NotApplicable);
-                };
-                let length = text.graphemes(true).count();
-                if length > limit && length > current.graphemes(true).count() {
-                    return Err(EditRefusal::TooLong);
-                }
-                text.clone_into(self.text_mut(address, field));
-                Ok(id.clone())
-            }
+            DraftEdit::Text(field, text) => self.edit_text(id, address, field, text),
             DraftEdit::Policy(policy) => match address {
                 Address::Property(t, c, p) => {
                     self.taxonomies[t].types[c].properties[p].policy = policy;
@@ -798,6 +801,7 @@ impl LibraryDraft {
                         condition: String::new(),
                         rationale: String::new(),
                         copied_from: None,
+                        example: ExampleDraft::Generated(String::new()),
                     });
                     Ok(id)
                 }
@@ -875,6 +879,40 @@ impl LibraryDraft {
         Ok(())
     }
 
+    fn edit_text(
+        &mut self,
+        id: &NodeId,
+        address: Address,
+        field: DraftField,
+        text: &str,
+    ) -> Result<NodeId, EditRefusal> {
+        if field == DraftField::Name
+            && matches!(address, Address::Taxonomy(t) if self.taxonomies[t].persisted())
+        {
+            return Err(EditRefusal::NameLocked);
+        }
+        let (Some(limit), Some(current)) = (field.limit(), self.text(id, field)) else {
+            return Err(EditRefusal::NotApplicable);
+        };
+        let length = text.graphemes(true).count();
+        if length > limit && length > current.graphemes(true).count() {
+            return Err(EditRefusal::TooLong);
+        }
+        if current == text {
+            return Ok(id.clone());
+        }
+        if field == DraftField::Example {
+            let Address::Property(t, c, p) = address else {
+                return Err(EditRefusal::NotApplicable);
+            };
+            self.taxonomies[t].types[c].properties[p].example =
+                ExampleDraft::Authored(text.to_owned());
+        } else {
+            text.clone_into(self.text_mut(address, field));
+        }
+        Ok(id.clone())
+    }
+
     fn text_mut(&mut self, address: Address, field: DraftField) -> &mut String {
         match (address, field) {
             (Address::Taxonomy(t), DraftField::Name) => &mut self.taxonomies[t].name,
@@ -887,6 +925,7 @@ impl LibraryDraft {
                     DraftField::Name => &mut property.name,
                     DraftField::Condition => &mut property.condition,
                     DraftField::Rationale => &mut property.rationale,
+                    DraftField::Example => property.example.text_mut(),
                     DraftField::Description | DraftField::Policy => &mut property.description,
                 }
             }
@@ -945,6 +984,7 @@ impl LibraryDraft {
         }
         let id = fork.id.clone();
         self.taxonomies.push(fork);
+        self.refresh_implicit_examples();
         self.record_valid_builds();
         Ok(id)
     }

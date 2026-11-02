@@ -298,6 +298,7 @@ fn reordered<T>(current: &[T], stored: &[T], baseline: fn(&T) -> Option<&LoadedP
 fn same_property(property: &PropertyNode, stored: &PropertyNode) -> bool {
     same_label(PropertyKey::from_label, &property.name, &stored.name)
         && same_text(&property.description, &stored.description)
+        && property.example.saved_text() == stored.example.saved_text()
         && property.policy == stored.policy
         && (property.policy != Policy::Conditional
             || same_label(
