@@ -11,9 +11,8 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::Chip;
 
-const HOLD: Duration = Duration::from_millis(800);
+const HOLD: Duration = Duration::from_secs(3);
 const STEP: Duration = Duration::from_millis(150);
-const GAP: &str = "   ";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Target {
@@ -27,7 +26,7 @@ pub(super) struct Target {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct Carousel {
+pub(super) struct SummaryScroll {
     active: Option<Active>,
 }
 
@@ -41,19 +40,57 @@ struct Active {
 #[derive(Debug)]
 struct Strip {
     graphemes: Vec<(String, usize)>,
+    end: usize,
+    travel: Duration,
     cycle: Duration,
 }
 
 impl Strip {
-    fn new(summary: &str) -> Self {
-        let graphemes = format!("{summary}{GAP}")
+    fn new(summary: &str, width: usize) -> Self {
+        let graphemes = summary
             .graphemes(true)
             .filter(|symbol| !symbol.contains(char::is_control))
             .map(|symbol| (symbol.to_owned(), Span::raw(symbol).width()))
             .filter(|(_, width)| *width > 0)
             .collect::<Vec<_>>();
-        let cycle = STEP * u32::try_from(graphemes.len()).unwrap_or(u32::MAX);
-        Self { graphemes, cycle }
+        let mut remaining = graphemes.iter().map(|(_, width)| width).sum::<usize>();
+        let end = graphemes
+            .iter()
+            .take_while(|(_, size)| {
+                if remaining <= width {
+                    return false;
+                }
+                remaining -= size;
+                true
+            })
+            .count();
+        let travel = STEP * u32::try_from(end.saturating_sub(1)).unwrap_or(u32::MAX);
+        let cycle = HOLD * 2 + travel * 2;
+        Self {
+            graphemes,
+            end,
+            travel,
+            cycle,
+        }
+    }
+
+    fn phase(&self, elapsed: Duration) -> (usize, Duration) {
+        if elapsed < HOLD {
+            return (0, HOLD.saturating_sub(elapsed));
+        }
+        let forward = elapsed.saturating_sub(HOLD);
+        if forward < self.travel {
+            return (1 + steps(forward), STEP.saturating_sub(remainder(forward)));
+        }
+        let reverse_at = HOLD * 2 + self.travel;
+        if elapsed < reverse_at {
+            return (self.end, reverse_at.saturating_sub(elapsed));
+        }
+        let reverse = elapsed.saturating_sub(reverse_at);
+        (
+            self.end.saturating_sub(1 + steps(reverse)),
+            STEP.saturating_sub(remainder(reverse)),
+        )
     }
 
     fn paint(&self, buf: &mut Buffer, area: Rect, clip: Rect, elapsed: Duration, style: Style) {
@@ -63,15 +100,9 @@ impl Strip {
         for position in clip.positions() {
             buf[position].set_symbol(" ").set_style(style);
         }
-        let start = if elapsed < HOLD {
-            0
-        } else {
-            usize::try_from(elapsed.saturating_sub(HOLD).as_nanos() / STEP.as_nanos() + 1)
-                .unwrap_or(0)
-                % self.graphemes.len()
-        };
+        let (start, _) = self.phase(elapsed);
         let mut x = usize::from(area.x);
-        for (symbol, width) in self.graphemes.iter().cycle().skip(start) {
+        for (symbol, width) in self.graphemes.iter().skip(start) {
             let end = x + width;
             if end > usize::from(area.right()) {
                 break;
@@ -84,7 +115,15 @@ impl Strip {
     }
 }
 
-impl Carousel {
+fn steps(elapsed: Duration) -> usize {
+    usize::try_from(elapsed.as_nanos() / STEP.as_nanos()).unwrap_or(0)
+}
+
+fn remainder(elapsed: Duration) -> Duration {
+    Duration::from_nanos(u64::try_from(elapsed.as_nanos() % STEP.as_nanos()).unwrap_or(0))
+}
+
+impl SummaryScroll {
     pub(super) fn reset(&mut self) {
         self.active = None;
     }
@@ -94,26 +133,13 @@ impl Carousel {
             return;
         };
         let total = active.elapsed.as_nanos() + elapsed.as_nanos();
-        active.elapsed = if total < HOLD.as_nanos() {
-            Duration::from_nanos(u64::try_from(total).unwrap_or(0))
-        } else {
-            HOLD + Duration::from_nanos(
-                u64::try_from((total - HOLD.as_nanos()) % active.strip.cycle.as_nanos())
-                    .unwrap_or(0),
-            )
-        };
+        active.elapsed =
+            Duration::from_nanos(u64::try_from(total % active.strip.cycle.as_nanos()).unwrap_or(0));
     }
 
     pub(super) fn next_frame_in(&self) -> Option<Duration> {
-        let elapsed = self.active.as_ref()?.elapsed;
-        Some(if elapsed < HOLD {
-            HOLD.saturating_sub(elapsed)
-        } else {
-            STEP.saturating_sub(Duration::from_nanos(
-                u64::try_from(elapsed.saturating_sub(HOLD).as_nanos() % STEP.as_nanos())
-                    .unwrap_or(0),
-            ))
-        })
+        let active = self.active.as_ref()?;
+        Some(active.strip.phase(active.elapsed).1)
     }
 
     pub(super) fn render(&mut self, buf: &mut Buffer, target: Option<Target>) {
@@ -127,7 +153,7 @@ impl Carousel {
             .is_none_or(|active| active.target != target)
         {
             self.active = Some(Active {
-                strip: Arc::new(Strip::new(&target.summary)),
+                strip: Arc::new(Strip::new(&target.summary, usize::from(target.area.width))),
                 target,
                 elapsed: Duration::ZERO,
             });
@@ -136,7 +162,7 @@ impl Carousel {
             return;
         };
         let style = active.target.style;
-        let timer = EffectTimer::new(HOLD + active.strip.cycle, Interpolation::Linear);
+        let timer = EffectTimer::new(active.strip.cycle, Interpolation::Linear);
         let mut effect = fx::effect_fn_buf(
             Arc::clone(&active.strip),
             timer,
@@ -174,7 +200,7 @@ mod tests {
     }
 
     fn draw(
-        carousel: &mut Carousel,
+        summary_scroll: &mut SummaryScroll,
         target: Option<Target>,
     ) -> Result<Buffer, Box<dyn std::error::Error>> {
         let mut terminal = Terminal::new(TestBackend::new(20, 4))?;
@@ -184,7 +210,7 @@ mod tests {
                     .set_symbol("#")
                     .set_style(Style::new().fg(Color::Green).bg(Color::Red));
             }
-            carousel.render(frame.buffer_mut(), target);
+            summary_scroll.render(frame.buffer_mut(), target);
         })?;
         Ok(terminal.backend().buffer().clone())
     }
@@ -209,44 +235,86 @@ mod tests {
     }
 
     #[test]
-    fn hold_steps_and_wrap_paint_only_summary_cells() -> Result<(), Box<dyn std::error::Error>> {
+    fn holds_reversal_endpoints_and_cycles_paint_only_summary_cells()
+    -> Result<(), Box<dyn std::error::Error>> {
         let target = target("abcdefg", 4);
-        let mut carousel = Carousel::default();
-        let initial = draw(&mut carousel, Some(target.clone()))?;
+        let mut summary_scroll = SummaryScroll::default();
+        let initial = draw(&mut summary_scroll, Some(target.clone()))?;
         assert_eq!(text(&initial, target.area), "abcd");
-        assert_eq!(carousel.next_frame_in(), Some(HOLD));
-        carousel.advance(HOLD.saturating_sub(Duration::from_nanos(1)));
-        assert_eq!(draw(&mut carousel, Some(target.clone()))?, initial);
-        assert_eq!(carousel.next_frame_in(), Some(Duration::from_nanos(1)));
-        carousel.advance(Duration::from_nanos(1));
-        let moved = draw(&mut carousel, Some(target.clone()))?;
+        assert_eq!(summary_scroll.next_frame_in(), Some(HOLD));
+        summary_scroll.advance(HOLD.saturating_sub(Duration::from_nanos(1)));
+        assert_eq!(draw(&mut summary_scroll, Some(target.clone()))?, initial);
+        assert_eq!(
+            summary_scroll.next_frame_in(),
+            Some(Duration::from_nanos(1))
+        );
+        summary_scroll.advance(Duration::from_nanos(1));
+        let moved = draw(&mut summary_scroll, Some(target.clone()))?;
         assert_eq!(text(&moved, target.area), "bcde");
-        assert_eq!(carousel.next_frame_in(), Some(STEP));
+        assert_eq!(summary_scroll.next_frame_in(), Some(STEP));
         outside_unchanged(&initial, &moved, target.area);
-        carousel.advance(STEP * 6);
+        summary_scroll.advance(STEP * 2);
+        let end = draw(&mut summary_scroll, Some(target.clone()))?;
+        assert_eq!(text(&end, target.area), "defg");
+        assert_eq!(summary_scroll.next_frame_in(), Some(HOLD));
+        summary_scroll.advance(HOLD.saturating_sub(Duration::from_nanos(1)));
+        assert_eq!(draw(&mut summary_scroll, Some(target.clone()))?, end);
+        summary_scroll.advance(Duration::from_nanos(1));
         assert_eq!(
-            text(&draw(&mut carousel, Some(target.clone()))?, target.area),
-            "   a"
+            text(
+                &draw(&mut summary_scroll, Some(target.clone()))?,
+                target.area
+            ),
+            "cdef"
         );
-        carousel.advance(STEP);
-        assert_eq!(
-            text(&draw(&mut carousel, Some(target.clone()))?, target.area),
-            "  ab"
-        );
-        carousel.advance(STEP * 2);
-        assert_eq!(draw(&mut carousel, Some(target.clone()))?, initial);
-        carousel.advance(STEP);
-        assert_eq!(draw(&mut carousel, Some(target.clone()))?, moved);
-        assert_eq!(draw(&mut carousel, Some(target))?, moved);
+        summary_scroll.advance(STEP * 2);
+        assert_eq!(draw(&mut summary_scroll, Some(target.clone()))?, initial);
+        assert_eq!(summary_scroll.next_frame_in(), Some(HOLD));
+        summary_scroll.advance((HOLD * 2 + STEP * 4) * 100 + HOLD);
+        assert_eq!(draw(&mut summary_scroll, Some(target))?, moved);
         Ok(())
+    }
+
+    #[test]
+    fn finite_endpoints_fit_without_repeating_text() {
+        for (summary, width, end) in [("abcde", 4, 1), ("界abc", 4, 1), ("a界e\u{301}👩‍💻z", 5, 2)]
+        {
+            let strip = Strip::new(summary, width);
+            assert_eq!(strip.end, end);
+            let suffix = &strip.graphemes[end..];
+            assert!(suffix.iter().map(|(_, width)| width).sum::<usize>() <= width);
+            for cycle in 0..3 {
+                let mut scroll = SummaryScroll::default();
+                let target = target(summary, u16::try_from(width).unwrap_or(0));
+                let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 4));
+                scroll.render(&mut buffer, Some(target.clone()));
+                scroll.advance(strip.cycle * cycle + HOLD + strip.travel);
+                scroll.render(&mut buffer, Some(target.clone()));
+                let mut expected = String::new();
+                for (symbol, width) in suffix {
+                    expected.push_str(symbol);
+                    expected.push_str(&" ".repeat(width.saturating_sub(1)));
+                }
+                expected.push_str(
+                    &" ".repeat(width - suffix.iter().map(|(_, width)| width).sum::<usize>()),
+                );
+                assert_eq!(text(&buffer, target.area), expected);
+                assert_eq!(scroll.next_frame_in(), Some(HOLD));
+                scroll.advance(HOLD + strip.travel);
+                assert_eq!(
+                    scroll.active.as_ref().map(|active| active.elapsed),
+                    Some(Duration::ZERO)
+                );
+            }
+        }
     }
 
     #[test]
     fn elapsed_partitions_and_repeated_renders_are_identical()
     -> Result<(), Box<dyn std::error::Error>> {
         let target = target("a界e\u{301}👩‍💻z", 5);
-        let mut once = Carousel::default();
-        let mut partitioned = Carousel::default();
+        let mut once = SummaryScroll::default();
+        let mut partitioned = SummaryScroll::default();
         draw(&mut once, Some(target.clone()))?;
         draw(&mut partitioned, Some(target.clone()))?;
         let parts = [
@@ -277,12 +345,12 @@ mod tests {
             ("e\u{301}a👩‍💻界z", "e\u{301}a👩‍💻  ", "a👩‍💻 界 "),
             ("👩‍💻界e\u{301}xyz", "👩‍💻 界 e\u{301}", "界 e\u{301}xy"),
         ] {
-            let mut carousel = Carousel::default();
+            let mut summary_scroll = SummaryScroll::default();
             let target = target(source, 5);
-            let initial = draw(&mut carousel, Some(target.clone()))?;
+            let initial = draw(&mut summary_scroll, Some(target.clone()))?;
             assert_eq!(text(&initial, target.area), first, "{source}");
-            carousel.advance(HOLD);
-            let moved = draw(&mut carousel, Some(target.clone()))?;
+            summary_scroll.advance(HOLD);
+            let moved = draw(&mut summary_scroll, Some(target.clone()))?;
             assert_eq!(text(&moved, target.area), next, "{source}");
             outside_unchanged(&initial, &moved, target.area);
             for position in target.area.positions() {
@@ -297,15 +365,21 @@ mod tests {
     #[test]
     fn one_cell_and_clipped_buffer_edges_never_split_a_wide_grapheme()
     -> Result<(), Box<dyn std::error::Error>> {
-        let mut carousel = Carousel::default();
+        let mut summary_scroll = SummaryScroll::default();
         let single = target("界abcdef", 1);
         assert_eq!(
-            text(&draw(&mut carousel, Some(single.clone()))?, single.area),
+            text(
+                &draw(&mut summary_scroll, Some(single.clone()))?,
+                single.area
+            ),
             " "
         );
-        carousel.advance(HOLD);
+        summary_scroll.advance(HOLD);
         assert_eq!(
-            text(&draw(&mut carousel, Some(single.clone()))?, single.area),
+            text(
+                &draw(&mut summary_scroll, Some(single.clone()))?,
+                single.area
+            ),
             "a"
         );
         let sentinel = Cell::new("#");
@@ -313,7 +387,7 @@ mod tests {
         let before = buffer.clone();
         let mut clipped = target("界abcdef", 5);
         clipped.area = Rect::new(4, 2, 5, 1);
-        carousel.render(&mut buffer, Some(clipped.clone()));
+        summary_scroll.render(&mut buffer, Some(clipped.clone()));
         assert_eq!(
             text(&buffer, clipped.area.intersection(buffer.area)),
             " abc"
@@ -322,13 +396,13 @@ mod tests {
         clipped.area = Rect::new(8, 2, 4, 1);
         clipped.summary = "a界bcdef".into();
         let before = buffer.clone();
-        carousel.render(&mut buffer, Some(clipped.clone()));
+        summary_scroll.render(&mut buffer, Some(clipped.clone()));
         assert_eq!(text(&buffer, clipped.area.intersection(buffer.area)), "a ");
         outside_unchanged(&before, &buffer, clipped.area);
         let mut empty = single;
         empty.area.width = 0;
-        carousel.render(&mut buffer, Some(empty));
-        assert_eq!(carousel.next_frame_in(), None);
+        summary_scroll.render(&mut buffer, Some(empty));
+        assert_eq!(summary_scroll.next_frame_in(), None);
         Ok(())
     }
 
@@ -357,16 +431,16 @@ mod tests {
         changed.viewport.height += 1;
         variants.push(changed);
         for changed in variants {
-            let mut carousel = Carousel::default();
-            draw(&mut carousel, Some(original.clone()))?;
-            carousel.advance(HOLD + STEP);
-            draw(&mut carousel, Some(original.clone()))?;
-            draw(&mut carousel, Some(changed.clone()))?;
-            assert_eq!(carousel.next_frame_in(), Some(HOLD));
-            let fresh = draw(&mut Carousel::default(), Some(changed.clone()))?;
-            assert_eq!(draw(&mut carousel, Some(changed))?, fresh);
-            draw(&mut carousel, None)?;
-            assert_eq!(carousel.next_frame_in(), None);
+            let mut summary_scroll = SummaryScroll::default();
+            draw(&mut summary_scroll, Some(original.clone()))?;
+            summary_scroll.advance(HOLD + STEP);
+            draw(&mut summary_scroll, Some(original.clone()))?;
+            draw(&mut summary_scroll, Some(changed.clone()))?;
+            assert_eq!(summary_scroll.next_frame_in(), Some(HOLD));
+            let fresh = draw(&mut SummaryScroll::default(), Some(changed.clone()))?;
+            assert_eq!(draw(&mut summary_scroll, Some(changed))?, fresh);
+            draw(&mut summary_scroll, None)?;
+            assert_eq!(summary_scroll.next_frame_in(), None);
         }
         Ok(())
     }

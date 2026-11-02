@@ -871,7 +871,7 @@ mod tests {
         }
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let initial = terminal.backend().buffer().clone();
-        let hold = Duration::from_millis(800);
+        let hold = Duration::from_secs(3);
         assert_eq!(shell.next_frame_in(), Some(hold));
         shell.advance(hold);
         terminal.draw(|frame| shell.render(frame, &[]))?;

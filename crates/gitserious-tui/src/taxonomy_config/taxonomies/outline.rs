@@ -7,7 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use super::carousel::{Carousel, Target};
+use super::summary_scroll::{SummaryScroll, Target};
 use super::{BADGE_STYLE, BAND, Chip, Chips, DIM, fit, policy_style};
 use crate::theme::{ACCENT, block_title, focus_frame_style, frame_style};
 
@@ -154,7 +154,7 @@ pub(super) fn render(
     selected: usize,
     offset: &mut usize,
     focused: bool,
-    carousel: &mut Carousel,
+    summary_scroll: &mut SummaryScroll,
     animation_viewport: Option<Rect>,
 ) -> Rect {
     let mut block = Block::bordered()
@@ -205,7 +205,7 @@ pub(super) fn render(
         })
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines), inner);
-    carousel.render(frame.buffer_mut(), target);
+    summary_scroll.render(frame.buffer_mut(), target);
     inner
 }
 

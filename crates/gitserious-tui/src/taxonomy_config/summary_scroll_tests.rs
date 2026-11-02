@@ -9,7 +9,7 @@ use super::tests::Workspace;
 use super::*;
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
-const HOLD: Duration = Duration::from_millis(800);
+const HOLD: Duration = Duration::from_secs(3);
 const PREFIX_WIDTH: u16 = 14;
 
 fn key(code: KeyCode) -> Event {

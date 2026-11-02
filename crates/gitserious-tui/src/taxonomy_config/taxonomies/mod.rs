@@ -29,10 +29,10 @@ use crate::theme::{
 use outline::Row;
 pub(super) use outline::RowKey;
 
-mod carousel;
 mod inspector;
 mod outline;
 mod picker;
+mod summary_scroll;
 
 const DIM: Style = Style::new().fg(Color::Gray);
 const KEY_STYLE: Style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
@@ -136,7 +136,7 @@ pub(super) struct TaxonomiesView {
     outline_offset: usize,
     inspector_offset: u16,
     outline_area: Rect,
-    carousel: carousel::Carousel,
+    summary_scroll: summary_scroll::SummaryScroll,
 }
 
 /// NAV moves through the outline. EDIT types into one field of the selected node; `cursor` is
@@ -188,7 +188,7 @@ impl TaxonomiesView {
     fn set_cursor(&mut self, key: RowKey) {
         if self.cursor.as_ref() != Some(&key) {
             self.inspector_offset = 0;
-            self.carousel.reset();
+            self.summary_scroll.reset();
         }
         self.cursor = Some(key);
     }
@@ -202,15 +202,15 @@ impl TaxonomiesView {
     }
 
     pub(super) fn reset_animation(&mut self) {
-        self.carousel.reset();
+        self.summary_scroll.reset();
     }
 
     pub(super) fn advance(&mut self, elapsed: Duration) {
-        self.carousel.advance(elapsed);
+        self.summary_scroll.advance(elapsed);
     }
 
     pub(super) fn next_frame_in(&self) -> Option<Duration> {
-        self.carousel.next_frame_in()
+        self.summary_scroll.next_frame_in()
     }
 
     pub(super) fn leave_edit(&mut self) {
@@ -310,12 +310,12 @@ impl TaxonomiesView {
             KeyCode::Down => self.set_cursor(rows[(index + 1).min(rows.len() - 1)].key()),
             KeyCode::Right if open => self.set_cursor(rows[index + 1].key()),
             KeyCode::Right | KeyCode::Enter if outline::has_children(row) && !open => {
-                self.carousel.reset();
+                self.summary_scroll.reset();
                 self.expanded.insert(node.id().clone());
                 self.set_cursor(row.key());
             }
             KeyCode::Left | KeyCode::Enter if open => {
-                self.carousel.reset();
+                self.summary_scroll.reset();
                 self.expanded.remove(node.id());
                 self.set_cursor(row.key());
             }
@@ -624,7 +624,7 @@ impl TaxonomiesView {
         let [outline_area, inspector_area] =
             Layout::vertical([Constraint::Length(outline_height), Constraint::Min(0)]).areas(area);
         let Some(library) = library else {
-            self.carousel.reset();
+            self.summary_scroll.reset();
             self.outline_area = Rect::default();
             let block = Block::bordered()
                 .border_style(focus_frame_style(focused))
@@ -650,7 +650,7 @@ impl TaxonomiesView {
             selected,
             &mut self.outline_offset,
             outline_focused,
-            &mut self.carousel,
+            &mut self.summary_scroll,
             animate.then_some(area),
         );
         if let Some(&row) = rows.get(selected) {
