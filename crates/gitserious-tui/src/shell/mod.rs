@@ -855,6 +855,44 @@ mod tests {
     }
 
     #[test]
+    fn embedded_config_splits_the_bordered_panels_equally_after_its_header_and_footer()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let services = Services;
+        let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
+        shell.handle_event(key(KeyCode::Char('2')), &services, &[]);
+        let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
+        for (width, height) in [
+            (87, 40),
+            (87, 41),
+            (MINIMUM_WIDTH, MINIMUM_HEIGHT),
+            (87, 39),
+            (87, 40),
+        ] {
+            terminal.backend_mut().resize(width, height);
+            terminal.resize(Rect::new(0, 0, width, height))?;
+            terminal.draw(|frame| shell.render(frame, &[]))?;
+            let buffer = terminal.backend().buffer();
+            let content = height - 4;
+            let outline = content.div_ceil(2);
+            let inspector_y = 3 + outline;
+            let x = (0..width)
+                .find(|x| buffer[(*x, 3)].symbol() == "┌" && *x > 0)
+                .ok_or("outline border")?;
+            assert_eq!(buffer[(x, inspector_y - 1)].symbol(), "└");
+            assert_eq!(buffer[(x, inspector_y)].symbol(), "┌");
+            assert_eq!(buffer[(x, height - 2)].symbol(), "└");
+            assert_eq!(outline - (height - 1 - inspector_y), content % 2);
+            if height == 40 {
+                assert_eq!(outline, 18);
+                assert_eq!(height - 1 - inspector_y, 18);
+            }
+            assert_eq!(buffer[(1, height - 1)].symbol(), " ");
+            assert_eq!(buffer[(2, height - 1)].symbol(), "N");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn config_summary_deadline_advances_without_keys_and_resets_when_hidden()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
