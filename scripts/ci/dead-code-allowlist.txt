@@ -1,4 +1,6 @@
 # Dead code that check-dead-code.sh accepts, one tab-separated "file<TAB>item"
-# row each. Every entry from the #120 audit is resolved, so the list is empty.
-# Add a row only with an issue that decides it; the check fails on new
-# offenders and on stale entries.
+# row each. Add a row only with an issue that decides it; the check fails on
+# new offenders and on stale entries.
+
+# #157 preserves the public application API after removing TUI schema metadata.
+crates/gitserious-app/src/lib.rs	Schema

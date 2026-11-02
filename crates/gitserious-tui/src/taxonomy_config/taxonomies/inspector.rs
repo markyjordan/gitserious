@@ -1,8 +1,7 @@
 use std::ops::Range;
 
 use gitserious_app::{
-    DraftField, Fingerprint, NodeRef, Policy, Preview, PreviewValue, ProblemSite, Schema,
-    TaxonomyOrigin,
+    DraftField, NodeRef, Policy, Preview, PreviewValue, ProblemSite, TaxonomyOrigin,
 };
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -353,22 +352,14 @@ fn field_lines(
         .collect()
 }
 
-/// A message of the property's type under a ruled title: the subject, one line naming the
-/// blocks above, the property's own block on a band, and the trailers.
+/// A sample subject and the selected property's block, separated by blank rows.
 fn preview_lines(preview: &Preview<'_>, commit_type: &str, width: usize) -> Vec<Line<'static>> {
     let title = format!("Preview · {commit_type} message ");
     let rule = "─".repeat(width.saturating_sub(Span::raw(title.as_str()).width()));
     let mut lines = vec![Line::default(), Line::styled(format!("{title}{rule}"), DIM)];
+    lines.push(Line::default());
     lines.extend(wrapped(&preview.subject, SUBJECT, width));
-    if !preview.earlier.is_empty() {
-        let noun = if preview.earlier.len() == 1 {
-            "block"
-        } else {
-            "blocks"
-        };
-        let above = format!("… {} {noun} above …", preview.earlier.join(", "));
-        lines.push(fit(vec![Span::styled(above, DIM)], Vec::new(), width));
-    }
+    lines.push(Line::default());
     let (value, style) = match preview.value {
         PreviewValue::Sample(value) => (value, Style::new()),
         PreviewValue::Placeholder(description) => (description, PLACEHOLDER),
@@ -378,25 +369,7 @@ fn preview_lines(preview: &Preview<'_>, commit_type: &str, width: usize) -> Vec<
         .chain(wrapped(value, style, width))
         .map(|line| line.style(SAMPLE_BAND));
     lines.extend(block);
-    lines.push(Line::default());
-    let taxonomy = format!(
-        "Gitserious-Taxonomy: {}@{}",
-        preview.taxonomy, preview.version
-    );
-    let schema = match preview.schema {
-        Schema::Current(fingerprint) => short(fingerprint),
-        Schema::LastValid(fingerprint) => format!("{} (last valid)", short(fingerprint)),
-        Schema::Unavailable => "unavailable until the taxonomy is valid".to_owned(),
-    };
-    lines.extend(wrapped(&taxonomy, DIM, width));
-    lines.extend(wrapped(&format!("Gitserious-Schema: {schema}"), DIM, width));
     lines
-}
-
-/// `sha256:` and the first four hex digits.
-fn short(fingerprint: Fingerprint) -> String {
-    let full = fingerprint.to_string();
-    format!("{}…", &full[.."sha256:".len() + 4])
 }
 
 /// `text` in `style`, wrapped to `width` columns.
@@ -519,35 +492,123 @@ mod tests {
     }
 
     #[test]
-    fn a_property_previews_its_block_on_a_band_between_the_subject_and_both_trailers()
+    fn preview_has_the_same_concise_spacing_in_nav_and_edit()
     -> Result<(), Box<dyn std::error::Error>> {
-        let library = LibraryDraft::from_configuration(GlobalConfiguration::default());
-        let decision = library
-            .find_path(&["conventional", "feat", "decision"])
-            .ok_or("feat has a decision")?;
-        let node = library.node(&decision).ok_or("the node exists")?;
+        use gitserious_app::DraftField;
+        let mut library = LibraryDraft::from_configuration(GlobalConfiguration::default());
+        let source = library.find_path(&["infra-ops"]).ok_or("infra-ops")?;
+        library.fork(&source)?;
+        let property = library
+            .find_path(&["infra-ops-fork", "provision", "capacity-assumption"])
+            .ok_or("capacity-assumption")?;
+        let node = library.node(&property).ok_or("node")?;
         let expanded = BTreeSet::new();
-        let (lines, _) = describe(&Chips::new(&library, &expanded), node, None, 70, true);
-        let texts = lines.iter().map(text).collect::<Vec<_>>();
-        let preview = texts
-            .iter()
-            .position(|line| line.starts_with("Preview · feat message ─"))
-            .ok_or("a preview title")?;
-        assert_eq!(
-            texts[preview + 1..preview + 4],
-            [
-                "feat(api): rate-limit public endpoints",
-                "… intent block above …",
-                "decision:",
-            ]
-        );
-        assert_eq!(lines[preview + 3].style, SAMPLE_BAND);
-        assert_eq!(lines[preview + 4].style, SAMPLE_BAND);
-        let trailers = &texts[texts.len() - 2..];
-        assert_eq!(trailers[0], "Gitserious-Taxonomy: conventional@2");
-        assert!(trailers[1].starts_with("Gitserious-Schema: sha256:"));
-        assert!(trailers[1].ends_with('…'));
-        assert!(!texts.iter().any(|line| line == "constraints:"));
+        for width in [70, 28] {
+            let mut previews = Vec::new();
+            for focus in [
+                None,
+                Some(super::Focus {
+                    field: DraftField::Name,
+                    cursor: Some(0),
+                }),
+            ] {
+                let (lines, _) =
+                    describe(&Chips::new(&library, &expanded), node, focus, width, true);
+                let texts = lines.iter().map(text).collect::<Vec<_>>();
+                let heading = texts
+                    .iter()
+                    .position(|line| line.starts_with("Preview · provision message"))
+                    .ok_or("heading")?;
+                let key = texts
+                    .iter()
+                    .position(|line| line == "capacity-assumption:")
+                    .ok_or("key")?;
+                assert_eq!(texts[heading + 1], "");
+                assert_eq!(texts[key - 1], "");
+                let subject = texts[heading + 2..key - 1].join(" ");
+                assert_eq!(subject, "provision(db): add a read replica in eu-west");
+                assert_eq!(
+                    texts[key + 1..].join(" "),
+                    "European reads stay under 2000 qps."
+                );
+                assert!(lines[key..].iter().all(|line| line.style == SAMPLE_BAND));
+                for omitted in [
+                    "above",
+                    "Gitserious-Taxonomy",
+                    "Gitserious-Schema",
+                    "sha256:",
+                ] {
+                    assert!(!texts[heading..].iter().any(|line| line.contains(omitted)));
+                }
+                previews.push(texts[heading..].to_vec());
+            }
+            assert_eq!(previews[0], previews[1]);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn preview_without_a_sample_wraps_the_description_with_its_existing_style()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use gitserious_app::{DraftEdit, DraftField};
+        let mut library = LibraryDraft::from_configuration(GlobalConfiguration::default());
+        let taxonomy = library.create_taxonomy();
+        let commit_type = library.edit(&taxonomy, DraftEdit::AddType)?;
+        library.edit(&commit_type, DraftEdit::Text(DraftField::Name, "deploy"))?;
+        library.edit(
+            &commit_type,
+            DraftEdit::Text(DraftField::Description, "Ship the service safely"),
+        )?;
+        let property = library.edit(&commit_type, DraftEdit::AddProperty)?;
+        library.edit(&property, DraftEdit::Text(DraftField::Name, "verification"))?;
+        library.edit(
+            &property,
+            DraftEdit::Text(
+                DraftField::Description,
+                "Observe the service for five minutes.",
+            ),
+        )?;
+        let expanded = BTreeSet::new();
+        let node = library.node(&property).ok_or("node")?;
+        for focus in [
+            None,
+            Some(super::Focus {
+                field: DraftField::Description,
+                cursor: Some(0),
+            }),
+        ] {
+            let (lines, _) = describe(&Chips::new(&library, &expanded), node, focus, 28, false);
+            let texts = lines.iter().map(text).collect::<Vec<_>>();
+            let heading = texts
+                .iter()
+                .position(|line| line.starts_with("Preview · deploy message"))
+                .ok_or("heading")?;
+            let key = texts
+                .iter()
+                .position(|line| line == "verification:")
+                .ok_or("key")?;
+            assert_eq!(texts[heading + 1], "");
+            assert_eq!(texts[key - 1], "");
+            assert_eq!(
+                texts[heading + 2..key - 1].join(" "),
+                "deploy: Ship the service safely"
+            );
+            assert_eq!(
+                texts[key + 1..].join(" "),
+                "Observe the service for five minutes."
+            );
+            assert!(
+                lines[key + 1..]
+                    .iter()
+                    .flat_map(|line| &line.spans)
+                    .all(|span| span.style == super::PLACEHOLDER)
+            );
+            assert!(
+                !texts[heading..]
+                    .iter()
+                    .any(|line| line.contains("Gitserious-") || line.contains("above"))
+            );
+        }
         Ok(())
     }
 
