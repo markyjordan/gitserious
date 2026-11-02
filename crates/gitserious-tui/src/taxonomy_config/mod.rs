@@ -28,14 +28,14 @@ use crate::theme::{
 };
 
 #[cfg(test)]
-mod carousel_tests;
-#[cfg(test)]
 mod copy_tests;
 mod home_overlay;
 #[cfg(test)]
 mod model_check;
 mod naming;
 mod review;
+#[cfg(test)]
+mod summary_scroll_tests;
 mod taxonomies;
 use home_overlay::{CommandPaletteState, HomeCommand, HomeOverlay};
 use naming::sentence;
