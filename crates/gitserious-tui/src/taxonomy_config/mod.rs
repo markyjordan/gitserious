@@ -2324,7 +2324,7 @@ mod tests {
         for _ in 0..3 {
             press(&mut state, KeyCode::Down)?;
         }
-        let screen = press(&mut state, KeyCode::PageDown)?;
+        let screen = press(&mut state, KeyCode::Right)?;
         assert!(screen.contains("│▌    └ constraints  conditional"));
         assert!(screen.contains("│     ├ intent       required"));
         assert!(screen.contains("Property constraints"));
@@ -3107,7 +3107,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Forked from  conventional@2"));
-        let team = row_text(&terminal, MENU_WIDTH, 4, 100 - MENU_WIDTH);
+        let team = row_text(&terminal, MENU_WIDTH, 2, 100 - MENU_WIDTH);
         assert!(team.contains("▌▾ team"));
         assert!(team.trim_end().ends_with("+ new  │"));
         state.handle_event(key(KeyCode::Char('e')), &workspace);

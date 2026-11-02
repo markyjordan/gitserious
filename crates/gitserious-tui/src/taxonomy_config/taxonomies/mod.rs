@@ -30,6 +30,8 @@ use outline::Row;
 pub(super) use outline::RowKey;
 
 mod inspector;
+#[cfg(test)]
+mod layout_tests;
 mod outline;
 mod picker;
 mod summary_scroll;
@@ -135,6 +137,7 @@ pub(super) struct TaxonomiesView {
     expanded: BTreeSet<NodeId>,
     mode: Mode,
     outline_offset: usize,
+    anchor: Option<NodeId>,
     inspector_offset: u16,
     outline_area: Rect,
     summary_scroll: summary_scroll::SummaryScroll,
@@ -304,7 +307,7 @@ impl TaxonomiesView {
             KeyCode::Right if open => self.set_cursor(rows[index + 1].key()),
             KeyCode::Right | KeyCode::Enter if outline::has_children(row) && !open => {
                 self.summary_scroll.reset();
-                self.expanded.insert(node.id().clone());
+                self.expand(node.id(), library);
                 self.set_cursor(row.key());
             }
             KeyCode::Left | KeyCode::Enter if open => {
@@ -396,7 +399,7 @@ impl TaxonomiesView {
             }
         };
         if matches!(action, LibraryAction::Create | LibraryAction::Fork) {
-            self.expanded.insert(node.clone());
+            self.expand(&node, library);
         }
         self.open(node, field, library);
         Ok(())
@@ -436,12 +439,27 @@ impl TaxonomiesView {
         }
     }
 
+    fn expand(&mut self, node: &NodeId, library: &LibraryDraft) {
+        if matches!(library.node(node), Some(NodeRef::Taxonomy(_))) {
+            let opening = !self.expanded.contains(node);
+            for taxonomy in library.taxonomies() {
+                if taxonomy.id() != node {
+                    self.expanded.remove(taxonomy.id());
+                }
+            }
+            if opening {
+                self.anchor = Some(node.clone());
+            }
+        }
+        self.expanded.insert(node.clone());
+    }
+
     /// Selects `node`, shows it, and enters EDIT on `field` with the cursor after its text.
     fn open(&mut self, node: NodeId, field: DraftField, library: &LibraryDraft) {
         let mut ancestor = library.parent(&node);
         while let Some(id) = ancestor {
             ancestor = library.parent(&id);
-            self.expanded.insert(id);
+            self.expand(&id, library);
         }
         let cursor = library
             .text(&node, field)
@@ -592,7 +610,7 @@ impl TaxonomiesView {
         true
     }
 
-    /// Stacks the outline above the Inspector, about 40:60, keeping at least 7 Inspector rows.
+    /// Splits both bordered panels equally, giving an odd extra row to Taxonomies.
     pub(super) fn render(
         &mut self,
         frame: &mut Frame<'_>,
@@ -601,9 +619,7 @@ impl TaxonomiesView {
         focused: bool,
         animate: bool,
     ) {
-        let outline_height = (area.height * 2 / 5)
-            .max(5)
-            .min(area.height.saturating_sub(7));
+        let outline_height = area.height.div_ceil(2);
         let [outline_area, inspector_area] =
             Layout::vertical([Constraint::Length(outline_height), Constraint::Min(0)]).areas(area);
         let Some(library) = library else {
@@ -621,6 +637,12 @@ impl TaxonomiesView {
         };
         let rows = outline::rows(library, &self.expanded);
         let selected = outline::resolve(&rows, self.cursor.as_ref(), library);
+        if let Some(anchor) = self.anchor.take()
+            && let Some(index) = rows.iter().position(|row| row.node().id() == &anchor)
+        {
+            self.outline_offset = index.saturating_sub(1);
+        }
+
         let outline_focused = focused;
         let animate = animate && self.navigating();
         let chips = Chips::new(library, &self.expanded);
