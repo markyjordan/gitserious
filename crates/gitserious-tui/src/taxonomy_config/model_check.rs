@@ -1,122 +1,10 @@
-//! Bounded exhaustive check of the configuration editor's reachable states.
+//! Bounded exhaustive exploration of real Config events and rendered frames.
 //!
-//! The check drives the real [`State`] through every sequence of keys from each seed's
-//! [`Alphabet`], up to the seed's depth bound, and checks every entry of [`PROPERTIES`] on every
-//! transition, the keys that reach the seed's [`Start`] included. An outline start names the row
-//! to start on by its names, and the check finds the keys: `2`, then `down` until the selected
-//! row matches each name and `enter` to expand it before the next, then `e` and `enter` until
-//! EDIT sits on the seed's field. Other seeds start from literal keys and a readiness predicate.
-//! A seed explores every key in [`INPUTS`] but those in [`NAMED_ONLY`] unless it names a smaller
-//! alphabet, which lets it reach deeper for the same number of replays. After a seed's exploration, each of its
-//! [`Reach`] goals must have seen every expected value in some explored state. A state is rebuilt
-//! by replaying its keys into a fresh fake workspace and rendering into a [`TestBackend`] after
-//! every event, as the terminal loop does. Two states merge only when their [`Snapshot`]s print
-//! the same, and properties read nothing but snapshots, so a merge never hides a difference that
-//! a property can see. A key that quits the editor ends its branch, and the properties judge it
-//! as a transition that drops every draft. Exploration is breadth first, so a counterexample is a
-//! shortest one for its seed.
-//!
-//! To add a property of every transition, write a [`Check`] and add it to [`PROPERTIES`]. To add a
-//! property of what a seed can reach, add a [`Reach`] to that seed. Add to [`Snapshot`] any field
-//! either one reads that the snapshot does not hold yet.
-//!
-//! P1, the unapplied draft is dropped only by apply or a confirmed discard. While the Library
-//! has unapplied changes, a key clears them or quits only when it answers the Quit or Unapplied
-//! Changes dialog, applies from the review, confirms a Remove dialog, or is an edit key that
-//! returns the draft to what is stored (a text key in EDIT, ←/→ on a policy, or alt+↑/↓ in NAV).
-//! Without it, esc, a tab, or a stray key throws away typed work without a warning.
-//!
-//! P2, a NAV/EDIT round trip with no edit leaves the session clean. From Taxonomies with no
-//! unapplied changes and no overlay, only a key that creates or edits a draft (`n`, `f`, enter on
-//! an add row or in the copy picker, ←/→ on a policy, alt+↑/↓ in NAV, or a text key in EDIT)
-//! leaves unapplied changes. Without it,
-//! entering EDIT, moving between fields, or esc advances a taxonomy's version and rewrites the
-//! user's configuration on apply.
-//!
-//! P3, the review names every taxonomy change. While the Global review shows a staged Library
-//! that builds, every custom taxonomy whose content differs between the saved and the staged
-//! Library appears in the frame as `created`, `edited`, or `deleted` followed by its id. A staged
-//! Library with problems cannot apply (P11), so its review is not judged here. Without it, a user
-//! applies a change that the review did not show.
-//!
-//! P4, the Inspector's Policy reaches every policy. From a custom property in NAV, e enters
-//! the Inspector, then the arrow keys and enter reach every policy (required, recommended, conditional,
-//! optional). Without it, a property needs a hand edit of `config.toml` to take a policy the
-//! editor cannot set.
-//!
-//! P5, a stored taxonomy's name never changes. Every custom taxonomy the configuration stores
-//! keeps the name it was loaded with. Without it, a user could rename a taxonomy that projects pin
-//! by name, and apply would address the wrong taxonomy.
-//!
-//! P6, no key grows a field past its own limit. Name and Condition hold at most 80 characters and
-//! Description and Rationale at most 100, on every node. No key leaves a
-//! field of a custom node that existed before the key longer than its limit and longer than
-//! before. Without it, a user can type text that misshapes the Inspector's rows.
-//!
-//! P7, every alert is a whole sentence. Every notice a reachable state shows, and every problem
-//! under the field EDIT sits on, starts with a capital letter, ends a sentence, and avoids the
-//! application's own words (`session`, `save`, `global configuration`). A notice appears in the
-//! frame in full, and a field's problem appears right of the sidebar as `▲` and its words in
-//! order, so the Inspector scrolls it into view with its field. Without it, raw domain errors,
-//! clipped toasts, and problems scrolled out of sight reach the screen.
-//!
-//! P8, removals go through their dialog. A type or property leaves the Library only when the user
-//! answers y on its Remove or Delete dialog, or discards on the Unapplied Changes dialog. Without
-//! it, one stray d drops a type with all of its properties.
-//!
-//! P9, the footer shows the dialog's choices. While any confirmation or the copy picker is open,
-//! the footer row shows each of its choices as `key: label`, the same pairs as the dialog's
-//! buttons. Without it, the footer and the dialog disagree about which key does what.
-//!
-//! P10, unapplied changes and problems agree everywhere they show. After every key, the count the
-//! Config tab badge shows equals the Library's `ChangeSet::count()`; on Home the sidebar reads `●
-//! N unapplied` with that count, or no unapplied line at zero; every outline row shows `▲ invalid
-//! N` exactly when N problems sit on its node, or on its node or beneath it while it is collapsed,
-//! and otherwise `+ new` or `~ modified` exactly when its node carries that mark; and node status stays in the panels rather than the footer. Without it, the tab, the sidebar, the
-//! rows, and the footer disagree about what apply would write, a problem hides under a collapsed
-//! row, or an expanded parent repeats the count its visible rows already show.
-//!
-//! P11, the saved Library never changes while problems exist. No key changes the Library the
-//! workspace stores while the staged Library has a problem. Without it, enter on the review or
-//! apply on the Unapplied Changes dialog writes a Library that does not build, and the fake
-//! workspace, which saves whatever it is given, would show it.
-//!
-//! P12, a copy and its source change apart. A key on Home changes the text or policy of at most
-//! one property that exists before and after it, so editing a copy never changes its source, nor
-//! the reverse. Apply and discard, which replace the whole Library, happen off Home. Without it,
-//! a copy shares its source's fields and an edit to one rewrites the other.
-//!
-//! P13, browsing arrows only switch panel focus. Both arrows preserve the selection,
-//! expansion, and Library. Policy edits require EDIT.
-//!
-//! Scope limits:
-//! - Only the keyboard events in [`INPUTS`]. Mouse, paste, and resize events are out of scope.
-//! - One terminal of `MINIMUM_WIDTH` by `MINIMUM_HEIGHT` cells. Mouse hit areas that rendering
-//!   records are not projected.
-//! - `State` runs standalone, not inside the unified shell, so the shell's own quit dialog and its
-//!   tab keys are not driven. P10 reads the count the shell's badge shows from the same method
-//!   the shell calls; a shell test checks that the header draws it.
-//! - Workspace saves always succeed, and the project starts uninitialized. The real workspace also
-//!   refuses a Library with problems; an app test covers that, and P11 covers the editor's own
-//!   gate.
-//! - P3 reads the frame, so it sees only the review rows that fit the viewport. Every seed's review
-//!   fits without scrolling.
-//! - P4 explores only the e, up, down, left, right, and enter keys from one custom property. It reads
-//!   the selected property's policy in the Library, not the frame.
-//! - P6 checks fields of custom nodes that existed before the key; a fork copies its source's
-//!   text as it is.
-//! - Only the two copy seeds press `c`, from their own twelve keys, to depth 3: the copy picker
-//!   and P12's copies are seen from there; the other seeds check that no edit touches two
-//!   properties at once. A built-in property's `c` and a taxonomy with one type are left to unit
-//!   tests.
-//! - The Taxonomies outline is seen through `taxonomies::Observation`: the raw cursor and expanded
-//!   node ids, the selected row's names, the scroll offsets, and the mode with its field and text
-//!   cursor. The Library is seen through the Global session, so a draft edit changes the snapshot.
-//! - A pass covers the seeds to their depth bounds, not every reachable state. Every replay
-//!   renders each frame in a debug build, so the bounds keep the check near a minute on six
-//!   cores. A new taxonomy and the Description at its limit get the deeper bound because typing
-//!   and the limit live there. The P4 seed's bound is deep enough to expand every state its six
-//!   keys reach.
+//! Seeds cover blank creation, forks, existing fields, conditional policy, limits and copies.
+//! Every transition checks modal editing, direct persistence, deletion confirmation, saved
+//! eligibility badges, name locking, field limits, inline messages and copy independence.
+//! The existing breadth-first runner deduplicates snapshots and reports shortest counterexamples.
+//! Mouse, resize, write failures and the embedded shell are covered by interaction tests.
 
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
@@ -126,7 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use gitserious_app::{
-    DraftField, GlobalConfiguration, Mark, NodeRef, ProblemSite, TaxonomyNode, TypeNode,
+    DraftField, GlobalConfiguration, NodeRef, ProblemSite, TaxonomyNode, TypeNode,
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
@@ -279,6 +167,28 @@ const SEEDS: &[Seed] = &[
         reaches: &[],
     },
     Seed {
+        name: "a saved empty taxonomy in NAV",
+        workspace: empty_library,
+        start: Start::Outline {
+            path: &["unfinished"],
+            mode: StartMode::Nav,
+        },
+        depth: 2,
+        alphabet: Alphabet::Every,
+        reaches: &[],
+    },
+    Seed {
+        name: "a saved empty taxonomy with an unlocked name in EDIT",
+        workspace: empty_library,
+        start: Start::Outline {
+            path: &["unfinished"],
+            mode: StartMode::Edit(DraftField::Name),
+        },
+        depth: 2,
+        alphabet: Alphabet::Every,
+        reaches: &[],
+    },
+    Seed {
         name: "a new taxonomy in EDIT on its Name",
         workspace: built_ins,
         start: Start::Keys {
@@ -327,18 +237,18 @@ const SEEDS: &[Seed] = &[
         workspace: team_library,
         start: Start::Keys {
             keys: &["2", "down", "down", "down", "e", "backspace", "esc"],
-            ready: |snapshot| at_outline(snapshot) && snapshot.unapplied,
+            ready: |snapshot| at_outline(snapshot) && !snapshot.unapplied,
         },
         depth: 2,
         alphabet: Alphabet::Every,
         reaches: &[],
     },
     Seed {
-        name: "a fork created and team deleted at Taxonomies",
+        name: "a saved fork at Taxonomies",
         workspace: team_library,
         start: Start::Keys {
             keys: &["2", "f", "esc", "up", "d", "y"],
-            ready: |snapshot| at_outline(snapshot) && snapshot.unapplied,
+            ready: |snapshot| at_outline(snapshot) && !snapshot.unapplied,
         },
         depth: 2,
         alphabet: Alphabet::Every,
@@ -462,6 +372,30 @@ fn built_ins() -> Result<Workspace, String> {
     Ok(Workspace::new())
 }
 
+fn empty_library() -> Result<Workspace, String> {
+    let workspace = Workspace::new();
+    let record = gitserious_app::LibraryTaxonomy::new(
+        TaxonomyId::new("unfinished").map_err(|error| error.to_string())?,
+        TaxonomyVersion::V1,
+        Description::new("Awaiting its first type").map_err(|error| error.to_string())?,
+        None,
+        Vec::new(),
+        false,
+    )
+    .map_err(|error| error.to_string())?;
+    let default = GlobalConfiguration::default();
+    *workspace.global.borrow_mut() = ConfigurationSession::open_global(
+        GlobalConfiguration::new(
+            1,
+            default.default_taxonomy().clone(),
+            default.available_taxonomies().to_vec(),
+            vec![record],
+        )
+        .map_err(|error| error.to_string())?,
+    );
+    Ok(workspace)
+}
+
 fn team_library() -> Result<Workspace, String> {
     workspace_of(team_configuration(Vec::new()))
 }
@@ -551,7 +485,6 @@ struct Snapshot {
     /// Whether the Library has changes apply would write.
     unapplied: bool,
     /// The count of unapplied changes the shell's Config tab shows.
-    pending: usize,
     load_errors: [String; 2],
     saved: [ConfigurationSession; 2],
     dialog: String,
@@ -584,7 +517,6 @@ impl Snapshot {
             global: state.global.clone(),
             project: state.project.clone(),
             unapplied: state.scope_dirty(ConfigurationDestination::Global),
-            pending: state.pending_count(),
             load_errors: [state.global_error.clone(), state.project_error.clone()],
             saved: [
                 workspace.global.borrow().clone(),
@@ -653,8 +585,8 @@ const PROPERTIES: &[(&str, Check)] = &[
         round_trips_leave_the_session_clean,
     ),
     (
-        "P3, the review names every taxonomy change",
-        review_names_every_taxonomy_change,
+        "P3, navigation exposes only persisted changes",
+        navigation_is_persisted,
     ),
     (
         "P5, a stored taxonomy's name never changes",
@@ -677,8 +609,8 @@ const PROPERTIES: &[(&str, Check)] = &[
         the_footer_shows_the_dialogs_choices,
     ),
     (
-        "P10, unapplied changes and problems agree everywhere they show",
-        unapplied_changes_agree_everywhere,
+        "P10, only saved empty taxonomies show invalid badges",
+        saved_eligibility_badges,
     ),
     (
         "P11, the saved Library never changes while problems exist",
@@ -740,7 +672,16 @@ fn no_silent_draft_loss(
             after.is_some_and(|after| format!("{:?}", after.saved) != format!("{:?}", before.saved))
         }
         Screen::ConfirmRemove(_) => answer(REMOVE, input) == Some(Answer::Confirm),
-        Screen::Home => edits(before, input),
+        Screen::Home => {
+            edits(before, input)
+                || matches!(
+                    input,
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Esc,
+                        ..
+                    })
+                ) && matches!(before.taxonomies.mode, Mode::Edit { .. })
+        }
         Screen::Settings(_) => false,
     };
     if legitimate {
@@ -826,15 +767,11 @@ fn stored_names_never_change(
         return Ok(());
     };
     for taxonomy in library.taxonomies() {
-        if let NodeId::Loaded(path) = taxonomy.id()
-            && taxonomy.origin() == TaxonomyOrigin::Custom
-            && path.names().first().map(String::as_str) != Some(taxonomy.name())
+        if let Some(saved) = library.saved_taxonomy(taxonomy.id())
+            && saved.name_locked()
+            && taxonomy.name() != saved.id().as_str()
         {
-            return Err(format!(
-                "The stored taxonomy {:?} now reads {:?}.",
-                path.names(),
-                taxonomy.name()
-            ));
+            return Err("A finalized taxonomy name changed.".into());
         }
     }
     Ok(())
@@ -933,6 +870,18 @@ fn removals_go_through_their_dialog(
     if children(old).is_subset(&new) {
         return Ok(());
     }
+    if let Mode::Edit { node, .. } = &before.taxonomies.mode
+        && old.untouched_blank(node)
+        && matches!(
+            input,
+            Event::Key(KeyEvent {
+                code: KeyCode::Esc,
+                ..
+            })
+        )
+    {
+        return Ok(());
+    }
     let confirmed = match before.screen {
         Screen::ConfirmRemove(_) => answer(REMOVE, input) == Some(Answer::Confirm),
         Screen::ScopeChange(_) => matches!(
@@ -968,7 +917,7 @@ fn the_footer_shows_the_dialogs_choices(
         })
 }
 
-fn unapplied_changes_agree_everywhere(
+fn saved_eligibility_badges(
     _: &Snapshot,
     _: &Event,
     after: Option<&Snapshot>,
@@ -976,33 +925,8 @@ fn unapplied_changes_agree_everywhere(
     let Some(after) = after else {
         return Ok(());
     };
-    let changes = after
-        .library()
-        .map(LibraryDraft::changes)
-        .unwrap_or_default();
-    let count = changes.count();
-    if after.pending != count {
-        return Err(format!(
-            "The Config tab counts {} unapplied changes and the Library {count}.",
-            after.pending
-        ));
-    }
     if !matches!(after.screen, Screen::Home) || after.overlay.is_some() || after.too_small {
         return Ok(());
-    }
-    let rows = after.frame.lines().collect::<Vec<_>>();
-    let sidebar = rows
-        .iter()
-        .map(|row| {
-            row.chars()
-                .take(usize::from(MENU_WIDTH))
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let line = format!("● {count} unapplied");
-    if (count > 0 && !sidebar.contains(&line)) || (count == 0 && sidebar.contains("unapplied")) {
-        return Err(format!("The sidebar does not read {line:?}:\n{sidebar}"));
     }
     let Some(library) = after.library() else {
         return Ok(());
@@ -1010,18 +934,18 @@ fn unapplied_changes_agree_everywhere(
     if after.category != Category::Taxonomies || after.dialog_hints.is_some() {
         return Ok(());
     }
-    let problems = library.problems();
-    let invalid = |id: &NodeId| {
-        let collapsed = !after.taxonomies.expanded.contains(id);
-        problems
-            .iter()
-            .filter(|problem| {
-                std::iter::successors(problem.node().cloned(), |node| library.parent(node))
-                    .take(if collapsed { usize::MAX } else { 1 })
-                    .any(|node| &node == id)
-            })
-            .count()
-    };
+    for obsolete in [
+        "unapplied",
+        "+ new",
+        "~ modified",
+        "ctrl+s",
+        "review changes",
+    ] {
+        if after.frame.contains(obsolete) {
+            return Err(format!("Library shows {obsolete:?}."));
+        }
+    }
+    let rows = after.frame.lines().collect::<Vec<_>>();
     let area = after.taxonomies.outline_area;
     for (index, id) in after.taxonomies.visible.iter().enumerate() {
         let row = rows
@@ -1041,26 +965,14 @@ fn unapplied_changes_agree_everywhere(
                 "The outline origin badge disagrees with its node: {row:?}"
             ));
         }
-        let count = id.as_ref().map_or(0, invalid);
-        if row.contains("▲ invalid") != (count > 0)
-            || (count > 0 && !row.contains(&format!("▲ invalid {count}")))
-        {
-            return Err(format!(
-                "The outline row {:?} does not show the {count} problems its node counts.",
-                row.trim_end()
-            ));
-        }
-        let mark = id
-            .as_ref()
-            .and_then(|id| changes.mark(id))
-            .filter(|_| count == 0);
-        for (chip, shown) in [("+ new", Mark::New), ("~ modified", Mark::Modified)] {
-            if row.contains(chip) != (mark == Some(shown)) {
-                return Err(format!(
-                    "The outline row {:?} and its node's mark {mark:?} disagree about {chip:?}.",
-                    row.trim_end()
-                ));
-            }
+        let invalid = id.as_ref().is_some_and(|id| {
+            matches!(library.node(id), Some(NodeRef::Taxonomy(_)))
+                && library
+                    .saved_taxonomy(id)
+                    .is_some_and(|record| record.commit_types().is_empty())
+        });
+        if row.contains("▲ invalid") != invalid {
+            return Err(format!("Saved eligibility disagrees with row {row:?}."));
         }
     }
     let footer = after.footer();
@@ -1252,7 +1164,7 @@ fn field_problems(snapshot: &Snapshot) -> Vec<String> {
     }
     let site = ProblemSite::Field(node.clone(), *field);
     library
-        .problems()
+        .field_problems(node)
         .iter()
         .filter(|problem| problem.site == site)
         .map(|problem| problem_sentence(library, problem))
@@ -1286,66 +1198,25 @@ fn shows_in_order(frame: &str, text: &str) -> bool {
     })
 }
 
-fn find<'a>(
-    library: &'a [gitserious_app::LibraryTaxonomy],
-    id: &TaxonomyId,
-) -> Option<&'a gitserious_app::LibraryTaxonomy> {
-    library.iter().find(|taxonomy| taxonomy.id() == id)
-}
-
-fn review_names_every_taxonomy_change(
+fn navigation_is_persisted(
     _: &Snapshot,
     _: &Event,
     after: Option<&Snapshot>,
 ) -> Result<(), String> {
-    let Some(after) = after.filter(|after| {
-        matches!(
-            after.screen,
-            Screen::Review(ConfigurationDestination::Global)
-        )
-    }) else {
+    let Some(after) = after else {
         return Ok(());
     };
-    let Some(staged) = after.staged_library() else {
-        return Ok(());
-    };
-    let staged = staged.custom_taxonomies();
-    let saved = after.stored_library().unwrap_or_default();
-    let saved = saved.custom_taxonomies();
-    let changes = staged
-        .iter()
-        .filter_map(|taxonomy| match find(saved, taxonomy.id()) {
-            None => Some(("created", taxonomy.id())),
-            Some(before) if before != taxonomy => Some(("edited", taxonomy.id())),
-            Some(_) => None,
-        })
-        .chain(
-            saved
-                .iter()
-                .filter(|taxonomy| find(staged, taxonomy.id()).is_none())
-                .map(|taxonomy| ("deleted", taxonomy.id())),
-        );
-    let rows = after
-        .frame
-        .lines()
-        .map(|row| {
-            row.replace('│', " ")
-                .split_whitespace()
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    for (kind, id) in changes {
-        let named = rows.iter().any(|words| {
-            words
-                .windows(2)
-                .any(|pair| pair[0] == kind && pair[1] == id.as_str())
-        });
-        if !named {
-            return Err(format!(
-                "The Global review does not name {kind} taxonomy \"{id}\"."
-            ));
-        }
+    if matches!(
+        after.screen,
+        Screen::Review(ConfigurationDestination::Global)
+    ) {
+        return Err("Library review is reachable.".into());
+    }
+    if !matches!(after.taxonomies.mode, Mode::Edit { .. })
+        && let Some(candidate) = after.staged_library()
+        && Some(candidate) != after.stored_library()
+    {
+        return Err("A completed Library interaction was not persisted.".into());
     }
     Ok(())
 }

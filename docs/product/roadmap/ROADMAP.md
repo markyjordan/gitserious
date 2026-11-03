@@ -74,8 +74,9 @@ Provide forms for taxonomy types, property descriptions and ordering, requiremen
 levels and condition rationales. Creation and forking add to
 the library; separate Global and Project screens manage availability and defaults.
 
-Keep related edits in a session and review the complete change before applying
-it. An intermediate draft can be incomplete; saved configuration must be valid.
+Save validated Library edits on Esc. Copies, reorders, and confirmed deletions
+persist immediately. A saved taxonomy without types stays in Library but cannot
+be included in a project. Review Project changes before applying them.
 Reject unknown taxonomy references, invalid schemas, identity conflicts, and
 deleting a globally selected taxonomy. Cancellation, invalid edits, concurrent
 changes, and failed saves preserve stored configuration.

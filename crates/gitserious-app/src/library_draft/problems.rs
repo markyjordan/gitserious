@@ -17,7 +17,6 @@ use crate::{ConfigurationError, GlobalConfiguration, LibraryTaxonomy, TaxonomyOr
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProblemSite {
     Field(NodeId, DraftField),
-    Node(NodeId),
     Selection,
 }
 
@@ -28,12 +27,10 @@ pub enum ProblemKind {
     Label(LabelError),
     /// Another taxonomy, or a sibling, already has this identifier.
     Taken(String),
-    /// The configuration stores a taxonomy of this name whose deletion is not applied yet.
-    StagedForDeletion(String),
     /// A description or rationale holds no text.
     Blank,
-    /// A taxonomy has no types.
-    NoTypes,
+    /// A changed taxonomy cannot advance its persisted version.
+    VersionLimit,
     /// The default or available taxonomies do not resolve.
     Selection(ConfigurationError),
 }
@@ -49,7 +46,7 @@ impl Problem {
     #[must_use]
     pub const fn node(&self) -> Option<&NodeId> {
         match &self.site {
-            ProblemSite::Field(node, _) | ProblemSite::Node(node) => Some(node),
+            ProblemSite::Field(node, _) => Some(node),
             ProblemSite::Selection => None,
         }
     }
@@ -66,19 +63,14 @@ impl Display for Problem {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         let field = match &self.site {
             ProblemSite::Field(_, field) => field.label().to_lowercase(),
-            ProblemSite::Node(_) | ProblemSite::Selection => String::new(),
+            ProblemSite::Selection => String::new(),
         };
         match &self.kind {
             ProblemKind::Label(error) => write!(formatter, "{field}: {error}"),
             ProblemKind::Taken(id) => write!(formatter, "{field} \"{id}\" is already taken"),
-            ProblemKind::StagedForDeletion(id) => write!(
-                formatter,
-                "taxonomy \"{id}\" is staged for deletion; apply the deletion before reusing its name"
-            ),
             ProblemKind::Blank => write!(formatter, "{field} is blank"),
-            ProblemKind::NoTypes => {
-                formatter.write_str("taxonomy must contain at least one commit type")
-            }
+            ProblemKind::VersionLimit => formatter
+                .write_str("taxonomy version limit reached; fork this taxonomy to continue"),
             ProblemKind::Selection(error) => error.fmt(formatter),
         }
     }
@@ -131,17 +123,6 @@ pub(super) fn custom(draft: &LibraryDraft) -> (Vec<(usize, LibraryTaxonomy)>, Ve
             &mut taken,
             &mut problems,
         );
-        if let Some(id) = &id
-            && !taxonomy.persisted()
-            && problems.len() == before
-            && is_staged_for_deletion(draft, id)
-        {
-            problems.push(Problem::field(
-                &taxonomy.id,
-                DraftField::Name,
-                ProblemKind::StagedForDeletion(id.to_string()),
-            ));
-        }
         match (id, content(draft, taxonomy), draft.version(&taxonomy.id)) {
             (Some(id), Ok((description, types)), Some(version)) if problems.len() == before => {
                 custom.extend(
@@ -158,6 +139,11 @@ pub(super) fn custom(draft: &LibraryDraft) -> (Vec<(usize, LibraryTaxonomy)>, Ve
                 );
             }
             (_, Err(more), _) => problems.extend(more),
+            (_, Ok(_), None) => problems.push(Problem::field(
+                &taxonomy.id,
+                DraftField::Description,
+                ProblemKind::VersionLimit,
+            )),
             _ => {}
         }
     }
@@ -169,14 +155,6 @@ const fn selection(error: ConfigurationError) -> Problem {
         site: ProblemSite::Selection,
         kind: ProblemKind::Selection(error),
     }
-}
-
-fn is_staged_for_deletion(draft: &LibraryDraft, id: &TaxonomyId) -> bool {
-    draft
-        .persisted
-        .custom_taxonomies()
-        .iter()
-        .any(|stored| stored.id() == id)
 }
 
 /// A taxonomy's description and types as apply would write them.

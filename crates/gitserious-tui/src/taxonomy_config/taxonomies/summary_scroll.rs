@@ -192,7 +192,7 @@ mod tests {
             node: NodeId::Local(NonZeroU32::MIN),
             prefix: "▌  ▸ type  ".into(),
             summary: summary.into(),
-            chip: Some(Chip::Modified),
+            chip: None,
             viewport: Rect::new(0, 0, 20, 4),
             area: Rect::new(4, 2, width, 1),
             style: Style::new().fg(Color::Gray).bg(Color::Blue),
@@ -422,7 +422,7 @@ mod tests {
         changed.summary.push('z');
         variants.push(changed);
         let mut changed = original.clone();
-        changed.chip = Some(Chip::Invalid(1));
+        changed.chip = Some(Chip::Invalid);
         variants.push(changed);
         let mut changed = original.clone();
         changed.area.width += 1;

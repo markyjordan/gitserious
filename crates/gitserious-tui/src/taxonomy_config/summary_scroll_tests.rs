@@ -143,7 +143,7 @@ fn selected_overflow_animates_without_changing_its_prefix_badge_or_neighbors() -
             ),
         )?;
     let initial = draw(&mut state, &mut terminal)?;
-    let area = summary_area(&state, 12)?;
+    let area = summary_area(&state, 0)?;
     assert_eq!(state.next_frame_in(), Some(HOLD));
     state.advance(HOLD.saturating_sub(Duration::from_millis(1)), true);
     assert_eq!(draw(&mut state, &mut terminal)?, initial);

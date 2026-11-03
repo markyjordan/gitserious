@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 
 use crate::confirmation::{
     self, APPLY_OR_DISCARD, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT, REMOVE,
-    STAGE_DELETION,
 };
 use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
@@ -29,6 +28,8 @@ use crate::theme::{
 
 #[cfg(test)]
 mod copy_tests;
+#[cfg(test)]
+mod direct_tests;
 mod home_overlay;
 #[cfg(test)]
 mod model_check;
@@ -132,16 +133,12 @@ impl ConfigView {
         }
     }
 
-    pub(crate) const fn modal(&self) -> bool {
-        self.state.home_overlay.is_some()
+    pub(crate) fn modal(&self) -> bool {
+        self.state.home_overlay.is_some() || self.state.taxonomies.editing()
     }
 
     pub(crate) fn dirty(&self) -> bool {
         self.state.any_dirty() || self.state.settings.is_some()
-    }
-
-    pub(crate) fn pending_count(&self) -> usize {
-        self.state.pending_count()
     }
 }
 
@@ -224,7 +221,6 @@ enum PendingAction {
     ReviewProject,
     Library(LibraryAction),
     Delete,
-    ReviewGlobal,
 }
 
 enum Notice {
@@ -329,11 +325,8 @@ impl State {
                 match library.node(node)? {
                     NodeRef::Taxonomy(taxonomy) => (
                         "Delete Taxonomy",
-                        format!(
-                            "Stage the deletion of \"{}\"? Ctrl+S reviews it before applying.",
-                            taxonomy.name()
-                        ),
-                        STAGE_DELETION,
+                        format!("Delete taxonomy \"{}\" from the Library?", taxonomy.name()),
+                        REMOVE,
                     ),
                     NodeRef::Type { commit_type, .. } => (
                         "Remove Type",
@@ -360,17 +353,11 @@ impl State {
                 "Discard unapplied changes and quit?".to_owned(),
                 DISCARD_AND_QUIT,
             ),
-            Screen::ScopeChange(_) => {
-                let scope = match self.active_scope {
-                    ConfigurationDestination::Global => "The Library",
-                    ConfigurationDestination::Project => "This project",
-                };
-                (
-                    "Unapplied Changes",
-                    format!("{scope} has unapplied changes. Apply or discard them first?"),
-                    APPLY_OR_DISCARD,
-                )
-            }
+            Screen::ScopeChange(_) => (
+                "Unapplied Changes",
+                "This project has unapplied changes. Apply or discard them first?".into(),
+                APPLY_OR_DISCARD,
+            ),
             _ => return None,
         };
         Some(Confirmation {
@@ -433,7 +420,51 @@ impl State {
         if matches!(event, Event::Resize(_, _)) {
             self.taxonomies.reset_animation();
         }
+        let before_global = self.global.clone();
+        let before_view = self.taxonomies.clone();
+        let before_screen = self.screen.clone();
         let quit = self.handle_event_inner(event, workspace);
+        let finished_edit = before_view.editing() && !self.taxonomies.editing();
+        let immediate_change =
+            !self.taxonomies.editing() && self.scope_dirty(ConfigurationDestination::Global);
+        if (finished_edit || immediate_change)
+            && let Some(session) = self.global.as_ref()
+        {
+            let candidate = session.library().and_then(|library| library.saved().ok());
+            let result = if session.is_dirty() {
+                workspace.save(session).map(|_| ())
+            } else {
+                Ok(())
+            };
+            match result {
+                Ok(()) => {
+                    if let Some(candidate) = candidate
+                        && let Some(library) = self
+                            .global
+                            .as_mut()
+                            .and_then(ConfigurationSession::library_mut)
+                    {
+                        *library = candidate;
+                    }
+                    if immediate_change {
+                        self.status = Some(Notice::info("Saved.".into()));
+                        if !self.scope_dirty(ConfigurationDestination::Project) {
+                            self.replace_session(
+                                ConfigurationDestination::Project,
+                                workspace.load(ConfigurationDestination::Project),
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    self.global = before_global;
+                    self.taxonomies = before_view;
+                    self.screen = before_screen;
+                    self.status = Some(Notice::error(error));
+                    return false;
+                }
+            }
+        }
         if !self.animation_visible() {
             self.taxonomies.reset_animation();
         }
@@ -478,7 +509,10 @@ impl State {
             return false;
         }
         if let Event::Mouse(mouse) = event {
-            if self.too_small || self.taxonomies.picker_hints().is_some() {
+            if self.too_small
+                || self.taxonomies.picker_hints().is_some()
+                || self.taxonomies.editing()
+            {
                 return false;
             }
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
@@ -621,7 +655,6 @@ impl State {
                 self.request_global_action(PendingAction::Library(LibraryAction::Fork));
             }
             HomeCommand::Delete => self.request_global_action(PendingAction::Delete),
-            HomeCommand::ReviewLibrary => self.request_global_action(PendingAction::ReviewGlobal),
             HomeCommand::SwitchTab => self.category = self.category.next(),
             HomeCommand::Quit => {
                 // The shell confirms every pending draft once, including a retained commit review.
@@ -639,9 +672,7 @@ impl State {
 
     fn home_key(&mut self, key: KeyEvent, _workspace: &dyn ConfigurationWorkspace) -> bool {
         if self.category == Category::Taxonomies && self.taxonomies.editing() {
-            if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                self.request_global_action(PendingAction::ReviewGlobal);
-            } else if let Some(library) = self
+            if let Some(library) = self
                 .global
                 .as_mut()
                 .and_then(ConfigurationSession::library_mut)
@@ -741,9 +772,7 @@ impl State {
                 self.request_global_action(PendingAction::Delete);
             }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if self.category == Category::Taxonomies {
-                    self.request_global_action(PendingAction::ReviewGlobal);
-                } else {
+                if self.category == Category::Project {
                     self.request_project_action(PendingAction::ReviewProject);
                 }
             }
@@ -777,12 +806,6 @@ impl State {
                 return;
             }
             _ => {}
-        }
-        if self.active_scope == ConfigurationDestination::Global
-            && self.scope_dirty(ConfigurationDestination::Global)
-        {
-            self.screen = Screen::ScopeChange(action);
-            return;
         }
         self.perform_pending_action(action);
     }
@@ -960,15 +983,9 @@ impl State {
         else {
             return;
         };
-        let taxonomy = matches!(library.node(node), Some(NodeRef::Taxonomy(_)));
         match library.edit(node, DraftEdit::Remove) {
             Ok(landing) => {
                 self.taxonomies.select(landing);
-                if taxonomy {
-                    self.status = Some(Notice::info(
-                        "Deletion staged. Ctrl+S reviews before applying.".into(),
-                    ));
-                }
             }
             Err(refusal) => {
                 self.status = Some(Notice::error(naming::refusal_sentence(refusal, None)));
@@ -1008,40 +1025,16 @@ impl State {
         self.perform_pending_action(action);
     }
 
-    /// The one writer of a loaded session. A new Global session leaves EDIT, whose node may be
-    /// gone, and keeps the cursor on the row of the same names.
+    /// Replaces a reviewed or refreshed Project session.
     fn replace_session(
         &mut self,
         destination: ConfigurationDestination,
         result: Result<ConfigurationSession, String>,
     ) {
+        debug_assert_eq!(destination, ConfigurationDestination::Project);
         let (session, error) = split_result(result);
-        match destination {
-            ConfigurationDestination::Global => {
-                let path = self.library().and_then(|library| {
-                    let node = self.taxonomies.selected(library)?;
-                    Some(
-                        node.names()
-                            .into_iter()
-                            .map(str::to_owned)
-                            .collect::<Vec<_>>(),
-                    )
-                });
-                self.global = session;
-                self.global_error = error;
-                self.taxonomies.leave_edit();
-                if let Some(id) = path
-                    .zip(self.library())
-                    .and_then(|(path, library)| library.find_path(&path))
-                {
-                    self.taxonomies.select(id);
-                }
-            }
-            ConfigurationDestination::Project => {
-                self.project = session;
-                self.project_error = error;
-            }
-        }
+        self.project = session;
+        self.project_error = error;
     }
 
     fn request_global_action(&mut self, action: PendingAction) {
@@ -1129,10 +1122,6 @@ impl State {
                     self.screen = Screen::ConfirmRemove(node.id().clone());
                 }
             }
-            PendingAction::ReviewGlobal => {
-                self.active_scope = ConfigurationDestination::Global;
-                self.open_review();
-            }
         }
     }
 
@@ -1170,12 +1159,7 @@ impl State {
     }
 
     fn any_dirty(&self) -> bool {
-        self.scope_dirty(ConfigurationDestination::Global)
-            || self.scope_dirty(ConfigurationDestination::Project)
-    }
-
-    fn pending_count(&self) -> usize {
-        self.library().map_or(0, |draft| draft.changes().count())
+        self.scope_dirty(ConfigurationDestination::Project)
     }
 
     fn render(&mut self, frame: &mut Frame<'_>) {
@@ -1309,7 +1293,6 @@ impl State {
                 self.tab_areas[category.index()] = row;
             }
         }
-        taxonomies::render_pending(frame, area, self.pending_count());
     }
 
     fn render_notice(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -1899,7 +1882,20 @@ mod tests {
         fn save(&self, session: &ConfigurationSession) -> Result<ConfigurationSession, String> {
             self.saves.set(self.saves.get() + 1);
             match session.root() {
-                None => *self.global.borrow_mut() = session.clone(),
+                None => {
+                    let library = session.library().ok_or("missing Library")?;
+                    if self.global.borrow().library().map(LibraryDraft::persisted)
+                        != Some(library.persisted())
+                    {
+                        return Err("global configuration changed while editing".into());
+                    }
+                    let mut saved = session.clone();
+                    *saved.library_mut().ok_or("missing Library")? = library
+                        .saved()
+                        .map_err(|problems| format!("{problems:?}"))?;
+                    *self.global.borrow_mut() = saved.clone();
+                    return Ok(saved);
+                }
                 Some(_) => *self.project.borrow_mut() = session.clone(),
             }
             Ok(session.clone())
@@ -2566,7 +2562,7 @@ mod tests {
     fn taxonomy_footer_pills_keep_their_padding_inside_the_viewport()
     -> Result<(), Box<dyn std::error::Error>> {
         for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (87, 40)] {
-            for (description, label, background) in [
+            for (description, label, _background) in [
                 (None, "+ new", Color::Rgb(20, 44, 24)),
                 (
                     Some("Updated taxonomy"),
@@ -2624,15 +2620,7 @@ mod tests {
                     assert_eq!(buffer[(mode_width + 1, y)].bg, JET_BLACK);
                     let badge = format!(" {label} ");
                     assert!(!footer.contains(&badge));
-                    let screen = rows(&terminal);
-                    let (badge_y, line) = screen
-                        .iter()
-                        .enumerate()
-                        .find(|(_, line)| line.contains(&badge))
-                        .ok_or("missing panel status")?;
-                    let start = line.find(&badge).ok_or("badge")?;
-                    let x = u16::try_from(line[..start].chars().count())?;
-                    assert_eq!(buffer[(x, u16::try_from(badge_y)?)].bg, background);
+                    assert!(!text(&terminal).contains(&badge));
                     for x in [0, width - 1] {
                         assert_eq!(buffer[(x, y)].symbol(), " ");
                         assert_eq!(buffer[(x, y)].bg, JET_BLACK);
@@ -2758,7 +2746,7 @@ mod tests {
                 row_text(
                     &terminal,
                     palette.list_area.x,
-                    palette.list_area.y + 5,
+                    palette.list_area.y + 4,
                     palette.list_area.width
                 )
                 .trim_end(),
@@ -2967,7 +2955,7 @@ mod tests {
         let Some(palette) = &state.home_overlay else {
             return Err("palette missing".into());
         };
-        assert_eq!(palette.list_area.height, 7);
+        assert_eq!(palette.list_area.height, 6);
         assert_eq!(
             terminal.backend().buffer()[(palette.list_area.x - 1, palette.list_area.y - 3)]
                 .symbol(),
@@ -2985,7 +2973,7 @@ mod tests {
         let Some(palette) = &state.home_overlay else {
             return Err("palette missing".into());
         };
-        assert_eq!(palette.selected, 6);
+        assert_eq!(palette.selected, 5);
         assert_eq!(palette.list_offset, 0);
         assert!(
             row_text(
@@ -3021,35 +3009,6 @@ mod tests {
         );
         assert!(state.home_overlay.is_none());
         assert_eq!(state.category, Category::Taxonomies);
-        Ok(())
-    }
-
-    #[test]
-    fn review_text_still_scrolls() -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        let session = state.global.as_mut().ok_or("missing global")?;
-        fork_as(session, "conventional", "team")?;
-        for index in 0..40 {
-            fork_as(session, "conventional", &format!("more-{index}"))?;
-        }
-        let session = state.global.as_mut().ok_or("missing global")?;
-        let available = session
-            .catalog()?
-            .taxonomies()
-            .iter()
-            .map(|taxonomy| taxonomy.id().clone())
-            .collect();
-        session.configure_global(TaxonomyId::new("conventional")?, available)?;
-        state.active_scope = ConfigurationDestination::Global;
-        state.open_review();
-        terminal.draw(|frame| state.render(frame))?;
-        state.handle_event(key(KeyCode::Down), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(state.scroll > 0);
         Ok(())
     }
 
@@ -3177,12 +3136,12 @@ mod tests {
             .into_iter()
             .find(|row| row.contains("▌▾ team"))
             .ok_or("team row")?;
-        assert!(team.trim_end().ends_with("+ new  │"));
+        assert!(team.trim_end().ends_with("custom  │"));
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(matches!(
             state.taxonomies.observe(state.library()).mode,
             taxonomies::Mode::Edit {
-                field: DraftField::Name,
+                field: DraftField::Description,
                 ..
             }
         ));
@@ -3192,11 +3151,8 @@ mod tests {
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert!(matches!(
-            state.screen,
-            Screen::Review(ConfigurationDestination::Global)
-        ));
-        assert_eq!(workspace.saves.get(), 0);
+        assert!(matches!(state.screen, Screen::Home));
+        assert_eq!(workspace.saves.get(), 1);
         Ok(())
     }
 
@@ -3219,123 +3175,6 @@ mod tests {
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
         assert!(matches!(state.status, Some(Notice::Error(_))));
-        Ok(())
-    }
-
-    #[test]
-    fn global_review_resumes_after_discarding_project_draft()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state
-            .project
-            .as_mut()
-            .ok_or("missing project")?
-            .initialize_project()?;
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert!(matches!(
-            state.screen,
-            Screen::ScopeChange(PendingAction::ReviewGlobal)
-        ));
-        state.handle_event(key(KeyCode::Char('d')), &workspace);
-        assert!(matches!(state.screen, Screen::Home));
-        assert_eq!(state.active_scope, ConfigurationDestination::Global);
-        assert!(!state.scope_dirty(ConfigurationDestination::Project));
-        assert_eq!(workspace.saves.get(), 0);
-        Ok(())
-    }
-
-    #[test]
-    fn review_is_the_only_save_boundary() -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.active_scope = ConfigurationDestination::Global;
-        fork_as(
-            state.global.as_mut().ok_or("missing global")?,
-            "conventional",
-            "team",
-        )?;
-        state.open_review();
-        assert!(matches!(
-            state.screen,
-            Screen::Review(ConfigurationDestination::Global)
-        ));
-        assert_eq!(workspace.saves.get(), 0);
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        assert_eq!(workspace.saves.get(), 1);
-        Ok(())
-    }
-
-    #[test]
-    fn wrapped_review_lines_start_under_their_subject() -> Result<(), Box<dyn std::error::Error>> {
-        let types =
-            |ids: &[&str]| -> Result<Vec<CommitTypeDefinition>, Box<dyn std::error::Error>> {
-                ids.iter()
-                    .map(|id| {
-                        Ok(CommitTypeDefinition::new(
-                            SchemaVersion::new(1)?,
-                            CommitTypeId::new(*id)?,
-                            "A change",
-                            Vec::new(),
-                        )?)
-                    })
-                    .collect()
-            };
-        let team = Taxonomy::new(
-            TaxonomyId::new("team")?,
-            TaxonomyVersion::new(1)?,
-            Description::new("Team taxonomy")?,
-            None,
-            types(&["release", "fix", "hotfix"])?,
-        )?;
-        let conventional = TaxonomyId::new("conventional")?;
-        let workspace = Workspace::new();
-        *workspace.global.borrow_mut() =
-            ConfigurationSession::open_global(GlobalConfiguration::new(
-                1,
-                conventional.clone(),
-                vec![conventional],
-                vec![team.into()],
-            )?);
-        let mut state = State::new(&workspace);
-        state.active_scope = ConfigurationDestination::Global;
-        let library = state
-            .global
-            .as_mut()
-            .and_then(ConfigurationSession::library_mut)
-            .ok_or("missing global")?;
-        let team = library.find_path(&["team"]).ok_or("missing team")?;
-        library.edit(
-            &team,
-            DraftEdit::Text(DraftField::Description, "Team changes"),
-        )?;
-        for removed in ["fix", "hotfix"] {
-            let removed = library
-                .find_path(&["team", removed])
-                .ok_or("missing type")?;
-            library.edit(&removed, DraftEdit::Remove)?;
-        }
-        state.open_review();
-        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        terminal.draw(|frame| state.render(frame))?;
-
-        let frame = text(&terminal).chars().collect::<Vec<_>>();
-        let rows = frame
-            .chunks(usize::from(MINIMUM_WIDTH))
-            .map(|row| row.iter().collect::<String>())
-            .collect::<Vec<_>>();
-        let edited = rows
-            .iter()
-            .position(|row| row.contains("│  edited   team v1 -> v2: description; type "))
-            .ok_or("the edited line is not on screen")?;
-        let wrapped = rows[edited + 1].split('│').nth(3).unwrap_or_default();
-        assert!(
-            wrapped.starts_with("           ") && !wrapped[11..].starts_with(' '),
-            "the wrapped row does not start under the taxonomy id: {:?}",
-            rows[edited + 1]
-        );
         Ok(())
     }
 
@@ -3372,7 +3211,7 @@ mod tests {
         state.handle_event(key(KeyCode::Char('d')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(text(&terminal).contains("Stage the deletion of \"original\"?"));
+        assert!(text(&terminal).contains("Delete taxonomy \"original\" from the Library?"));
         let old = state.dialog.buttons.ok_or("missing buttons")?;
         state.handle_event(Event::Resize(30, 7), &workspace);
         assert!(state.dialog.buttons.is_none());
@@ -3627,6 +3466,10 @@ mod tests {
                 );
                 assert!(matches!(state.screen, Screen::Home));
                 assert!(state.confirmation().is_none());
+                if create {
+                    press(&mut state, &workspace, &[KeyCode::Enter]);
+                    state.handle_event(Event::Paste("Property purpose".into()), &workspace);
+                }
                 press(&mut state, &workspace, &[KeyCode::Esc]);
                 for width in MINIMUM_WIDTH..=140 {
                     let line = state
@@ -3651,7 +3494,7 @@ mod tests {
                     assert!(
                         footer.contains("EDIT")
                             && footer.contains("enter next field")
-                            && footer.contains("esc done"),
+                            && footer.contains("esc save"),
                         "{footer}"
                     );
                     for label in ["e edit", "c copy", "d delete"] {
@@ -3705,10 +3548,10 @@ mod tests {
             assert!(screen.contains("5/80"), "{screen}");
             let footer = row_text(&terminal, 0, height - 2, width);
             assert!(
-                footer.starts_with("  EDIT  · property  enter next field  esc done"),
+                footer.starts_with("  EDIT  · property  enter next field  esc save"),
                 "{footer}"
             );
-            assert!(footer.contains("ctrl+s review"), "{footer}");
+            assert!(!footer.contains("ctrl+s review"), "{footer}");
             assert!(matches!(state.screen, Screen::Home));
 
             press(
@@ -3762,9 +3605,9 @@ mod tests {
             press(&mut state, &workspace, &[KeyCode::Enter]);
             assert_eq!(field(&state), Some(DraftField::Name));
             press(&mut state, &workspace, &[KeyCode::Esc]);
-            assert_eq!(field(&state), None);
+            assert_eq!(field(&state), Some(DraftField::Rationale));
             assert!(matches!(state.screen, Screen::Home));
-            assert!(state.any_dirty());
+            assert!(state.scope_dirty(ConfigurationDestination::Global));
             press(&mut state, &workspace, &[KeyCode::Right, KeyCode::Left]);
             assert_eq!(text_of(&state, &path, DraftField::Condition)?, "risky");
             assert_eq!(workspace.saves.get(), 0);
@@ -3830,27 +3673,15 @@ mod tests {
         }
         assert_eq!(cursor(&state), ["original", "existing", "verification"]);
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-        assert!(matches!(state.screen, Screen::Review(_)));
-        terminal.draw(|frame| state.render(frame))?;
-        let screen = rows(&terminal).join("\n");
-        assert!(
-            screen.contains("original › existing › verification"),
-            "{screen}"
-        );
-        assert!(
-            screen.contains("▲ Property description is required."),
-            "{screen}"
-        );
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        assert_eq!(
-            notice(&state),
-            Some("Apply is disabled until 1 problem is fixed.")
-        );
-
+        assert!(matches!(state.screen, Screen::Home));
+        press(&mut state, &workspace, &[KeyCode::Esc]);
+        assert_eq!(field(&state), Some(DraftField::Description));
+        assert_eq!(notice(&state), None);
+        state.handle_event(Event::Paste("Verification evidence".into()), &workspace);
         press(
             &mut state,
             &workspace,
-            &[KeyCode::Esc, KeyCode::Esc, KeyCode::Down, KeyCode::Down],
+            &[KeyCode::Esc, KeyCode::Down, KeyCode::Down],
         );
         assert_eq!(cursor(&state), ["original", "+ add type"]);
         press(&mut state, &workspace, &[KeyCode::Enter]);
@@ -3865,7 +3696,7 @@ mod tests {
         press(&mut state, &workspace, &[KeyCode::Char('f')]);
         assert_eq!(cursor(&state), ["research-fork"]);
         assert_eq!(field(&state), Some(DraftField::Name));
-        assert_eq!(workspace.saves.get(), 0);
+        assert_eq!(workspace.saves.get(), 1);
         Ok(())
     }
 
@@ -3904,6 +3735,12 @@ mod tests {
         let original = draft.find_path(&["original"]).ok_or("missing original")?;
         let added = draft.edit(&original, DraftEdit::AddType)?;
         draft.edit(&added, DraftEdit::Text(DraftField::Name, "added"))?;
+        draft.edit(
+            &added,
+            DraftEdit::Text(DraftField::Description, "Added type"),
+        )?;
+        let saved = workspace.save(state.global.as_ref().ok_or("Global")?)?;
+        state.global = Some(saved);
         open_notes(&mut state, &workspace);
         press(&mut state, &workspace, &[KeyCode::Up]);
         assert_eq!(cursor(&state), ["original", "existing"]);
@@ -3968,19 +3805,20 @@ mod tests {
     }
 
     #[test]
-    fn quitting_with_unapplied_changes_asks_first() -> Result<(), Box<dyn std::error::Error>> {
+    fn quitting_after_a_library_save_has_no_discard_prompt()
+    -> Result<(), Box<dyn std::error::Error>> {
         let (workspace, _) = custom_workspace()?;
         let mut state = State::new(&workspace);
         open_notes(&mut state, &workspace);
-        assert!(!state.handle_event(key(KeyCode::Char('e')), &workspace));
-        assert!(!state.handle_event(key(KeyCode::Char('q')), &workspace));
-        assert!(!state.handle_event(key(KeyCode::Esc), &workspace));
-        assert!(state.any_dirty());
-        assert!(!state.handle_event(key(KeyCode::Char('q')), &workspace));
-        assert!(matches!(state.screen, Screen::Leave));
-        press(&mut state, &workspace, &[KeyCode::Char('n')]);
+        press(
+            &mut state,
+            &workspace,
+            &[KeyCode::Char('e'), KeyCode::Char('q'), KeyCode::Esc],
+        );
+        assert!(!state.any_dirty());
+        assert_eq!(workspace.saves(), 1);
+        assert!(state.handle_event(key(KeyCode::Char('q')), &workspace));
         assert!(matches!(state.screen, Screen::Home));
-        assert!(state.any_dirty());
         Ok(())
     }
 

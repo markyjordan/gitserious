@@ -222,6 +222,12 @@ fn describe(
             fact(&mut lines, "Version", &version);
             show(&mut lines, DraftField::Description);
             fact(&mut lines, "Types", &taxonomy.types().len().to_string());
+            if chip.is_some() {
+                lines.extend(problem_lines(
+                    "Add a type before this taxonomy can be included in a project.",
+                    width,
+                ));
+            }
             if let Some(source) = taxonomy.derived_from() {
                 fact(
                     &mut lines,
@@ -248,9 +254,6 @@ fn describe(
                 show(&mut lines, DraftField::Rationale);
             }
         }
-    }
-    for problem in chips.sentences(&ProblemSite::Node(id.clone())) {
-        lines.extend(problem_lines(&problem, width));
     }
     if let NodeRef::Taxonomy(taxonomy) = node {
         lines.push(Line::default());

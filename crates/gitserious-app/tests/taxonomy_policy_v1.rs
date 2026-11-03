@@ -50,7 +50,16 @@ fn fork_team(session: &mut ConfigurationSession) -> Result<NodeId, Box<dyn Error
 fn fork_creation_is_separate_from_availability() -> Result<(), Box<dyn Error>> {
     let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
     fork_team(&mut session)?;
-    assert!(session.catalog()?.find(&TaxonomyId::new("team")?).is_some());
+    assert!(
+        session
+            .library()
+            .ok_or("Library")?
+            .build()
+            .map_err(|errors| format!("{errors:?}"))?
+            .catalog()?
+            .find(&TaxonomyId::new("team")?)
+            .is_some()
+    );
     assert!(
         !session
             .library()
@@ -76,7 +85,7 @@ fn a_selected_custom_taxonomy_cannot_be_removed_without_a_problem() -> Result<()
     session.configure_global(team, available)?;
     let library = session.library_mut().ok_or("a Global session")?;
     library.edit(&fork, DraftEdit::Remove)?;
-    let problems = session.review()?.problems;
+    let problems = session.library().ok_or("Library")?.problems();
     assert!(
         matches!(
             problems.as_slice(),

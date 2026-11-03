@@ -17,7 +17,6 @@ pub(super) enum HomeCommand {
     Edit,
     Fork,
     Delete,
-    ReviewLibrary,
     SwitchTab,
     Quit,
 }
@@ -30,7 +29,6 @@ impl HomeCommand {
                 Self::Edit => "edit taxonomy",
                 Self::Fork => "fork taxonomy",
                 Self::Delete => "delete taxonomy",
-                Self::ReviewLibrary => "review changes",
                 Self::SwitchTab => "switch to project",
                 Self::Quit => "quit",
                 _ => unreachable!("Project commands are not shown in Taxonomies"),
@@ -39,7 +37,7 @@ impl HomeCommand {
         match self {
             Self::Configure => "Configure project",
             Self::Initialize => "Initialize project",
-            Self::ReviewProject | Self::ReviewLibrary => "Review changes",
+            Self::ReviewProject => "Review changes",
             Self::New => "New taxonomy",
             Self::Edit => "Edit taxonomy",
             Self::Fork => "Fork taxonomy",
@@ -56,7 +54,7 @@ impl HomeCommand {
         match self {
             Self::Configure => "enter",
             Self::Initialize => "i",
-            Self::ReviewProject | Self::ReviewLibrary => "ctrl+s",
+            Self::ReviewProject => "ctrl+s",
             Self::New => "n",
             Self::Edit => "e",
             Self::Fork => "f",
@@ -79,7 +77,6 @@ const LIBRARY_COMMANDS: &[HomeCommand] = &[
     HomeCommand::Edit,
     HomeCommand::Fork,
     HomeCommand::Delete,
-    HomeCommand::ReviewLibrary,
     HomeCommand::SwitchTab,
     HomeCommand::Quit,
 ];

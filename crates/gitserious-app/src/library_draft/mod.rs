@@ -1,17 +1,9 @@
 //! The Library as plain drafts: every taxonomy, built-ins first, with its types and properties.
 //!
-//! A draft may hold text that does not build, such as a blank name; `problems` reports it and
-//! `build` refuses it. `edit`, `create_taxonomy`, and `fork` are the only writers. Versions,
-//! problems, changes, and whether the draft differs from what it was loaded from are derived on
-//! each call.
-//!
-//! A property copied in this session names the type it was copied from; the configuration does
-//! not store that, so it is gone once the Library is applied and loaded again.
-//!
-//! Building a draft from the same configuration twice yields equal node ids, so a view can keep
-//! a node id across rebuilds. A node created in this session gets a local id that is never reused.
+//! Unsaved fields may be incomplete; `problems` reports them and `build` validates them.
+//! Successful saves acknowledge normalized values and baselines while retaining node ids.
+//! Copy provenance stays in memory, and reopening the saved configuration drops it.
 
-mod changes;
 mod problems;
 
 use std::error::Error;
@@ -25,7 +17,6 @@ use gitserious_core::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{ConfigurationError, GlobalConfiguration, LibraryTaxonomy, TaxonomyOrigin};
-pub use changes::{ChangeSet, Mark};
 pub use problems::{Problem, ProblemKind, ProblemSite};
 
 /// The identity of one taxonomy, type, or property draft. Never persisted.
@@ -656,7 +647,7 @@ impl LibraryDraft {
         }
     }
 
-    /// The version apply would write for the taxonomy that owns `id`: the stored version, one
+    /// The version saving would write for the taxonomy that owns `id`: the stored version, one
     /// past it once the content differs, and 1 for a taxonomy created or forked here.
     #[must_use]
     pub fn version(&self, id: &NodeId) -> Option<TaxonomyVersion> {
@@ -677,11 +668,15 @@ impl LibraryDraft {
         if unchanged {
             Some(stored.version())
         } else {
-            TaxonomyVersion::new(stored.version().get().saturating_add(1)).ok()
+            stored
+                .version()
+                .get()
+                .checked_add(1)
+                .and_then(|version| TaxonomyVersion::new(version).ok())
         }
     }
 
-    /// Whether apply would write anything: the draft does not build to what it was loaded from.
+    /// Whether saving would write anything: the draft does not build to what it was loaded from.
     #[must_use]
     pub fn is_changed(&self) -> bool {
         !self.build().is_ok_and(|built| built == self.persisted)
@@ -693,13 +688,115 @@ impl LibraryDraft {
         self.build().err().unwrap_or_default()
     }
 
-    /// The Library apply would write. The error lists every problem and is never empty.
+    /// The validated Library to persist. The error lists every problem and is never empty.
     pub fn build(&self) -> Result<GlobalConfiguration, Vec<Problem>> {
         problems::build(self)
     }
 
+    /// A validated snapshot acknowledged in place after persistence, retaining every node id.
+    pub fn saved(&self) -> Result<Self, Vec<Problem>> {
+        let configuration = self.build()?;
+        let mut saved = self.clone();
+        for (node, record) in saved
+            .taxonomies
+            .iter_mut()
+            .filter(|node| node.origin == TaxonomyOrigin::Custom)
+            .zip(configuration.custom_taxonomies())
+        {
+            let mut canonical = TaxonomyNode::new(record, TaxonomyOrigin::Custom);
+            canonical.id.clone_from(&node.id);
+            for (child, previous) in canonical.types.iter_mut().zip(&node.types) {
+                child.id.clone_from(&previous.id);
+                for (property, previous) in child.properties.iter_mut().zip(&previous.properties) {
+                    property.id.clone_from(&previous.id);
+                    property.copied_from.clone_from(&previous.copied_from);
+                    if property.policy != Policy::Conditional {
+                        property.condition.clone_from(&previous.condition);
+                        property.rationale.clone_from(&previous.rationale);
+                    }
+                }
+            }
+            *node = canonical;
+        }
+        saved.persisted = configuration;
+        Ok(saved)
+    }
+
+    /// The saved record of the owning custom taxonomy, independent of its current field edits.
+    #[must_use]
+    pub fn saved_taxonomy(&self, id: &NodeId) -> Option<&LibraryTaxonomy> {
+        let name = self.node(id)?.taxonomy().saved_name.as_ref()?;
+        self.persisted
+            .custom_taxonomies()
+            .iter()
+            .find(|record| record.id() == name)
+    }
+
+    /// Whether a new node still contains exactly the blank values it was created with.
+    #[must_use]
+    pub fn untouched_blank(&self, id: &NodeId) -> bool {
+        match self.node(id) {
+            Some(NodeRef::Taxonomy(node)) => {
+                node.saved_name.is_none()
+                    && node.baseline.is_none()
+                    && node.name.is_empty()
+                    && node.description.is_empty()
+                    && node.types.is_empty()
+            }
+            Some(NodeRef::Type {
+                commit_type: node, ..
+            }) => {
+                node.baseline.is_none()
+                    && node.name.is_empty()
+                    && node.description.is_empty()
+                    && node.properties.is_empty()
+            }
+            Some(NodeRef::Property { property: node, .. }) => {
+                node.baseline.is_none()
+                    && node.name.is_empty()
+                    && node.description.is_empty()
+                    && node.policy == Policy::Required
+                    && node.condition.is_empty()
+                    && node.rationale.is_empty()
+            }
+            None => false,
+        }
+    }
+
+    /// Field errors for an edited node, including collisions with siblings later in the outline.
+    #[must_use]
+    pub fn field_problems(&self, id: &NodeId) -> Vec<Problem> {
+        use gitserious_core::CommitTypeId;
+        let name = match self.node(id) {
+            Some(NodeRef::Taxonomy(node)) => {
+                TaxonomyId::from_label(&node.name).map(|id| id.to_string())
+            }
+            Some(NodeRef::Type { commit_type, .. }) => {
+                CommitTypeId::from_label(&commit_type.name).map(|id| id.to_string())
+            }
+            Some(NodeRef::Property { property, .. }) => {
+                PropertyKey::from_label(&property.name).map(|id| id.to_string())
+            }
+            None => return Vec::new(),
+        }
+        .ok();
+        let mut errors = Vec::new();
+        for mut problem in self.problems() {
+            if problem.node() == Some(id) {
+                errors.push(problem);
+            } else if let ProblemKind::Taken(taken) = &problem.kind
+                && name.as_ref() == Some(taken)
+                && problem.node().and_then(|node| self.parent(node)) == self.parent(id)
+            {
+                problem.site = ProblemSite::Field(id.clone(), DraftField::Name);
+                errors.insert(0, problem);
+            }
+        }
+        errors
+    }
+
     /// Why removing `id` would break the selection: for a taxonomy that is the default or
-    /// available, and that no other taxonomy of the same name stands in for, the error apply
+    /// available, and that no other taxonomy of the same name stands in for, the error saving
     /// would report once it is gone.
     #[must_use]
     pub fn removal_blocker(&self, id: &NodeId) -> Option<ConfigurationError> {
@@ -811,7 +908,9 @@ impl LibraryDraft {
         let Address::Property(t, c, p) = address else {
             return Err(EditRefusal::NotApplicable);
         };
-        let key = |name: &str| changes::written(PropertyKey::from_label, name);
+        let key = |name: &str| {
+            PropertyKey::from_label(name).map_or_else(|_| name.to_owned(), |key| key.to_string())
+        };
         let source = self.taxonomies[t].types[c].properties[p].clone();
         let mut into = Vec::with_capacity(targets.len());
         for (index, target) in targets.iter().enumerate() {

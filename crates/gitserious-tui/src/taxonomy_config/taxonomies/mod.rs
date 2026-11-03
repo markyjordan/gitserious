@@ -9,8 +9,8 @@ use std::ops::Range;
 use std::time::Duration;
 
 use gitserious_app::{
-    ChangeSet, DraftEdit, DraftField, EditRefusal, LibraryDraft, Mark, NodeId, NodeRef, Policy,
-    Problem, ProblemSite, TaxonomyOrigin,
+    DraftEdit, DraftField, EditRefusal, LibraryDraft, NodeId, NodeRef, Policy, Problem,
+    ProblemSite, TaxonomyOrigin,
 };
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -51,57 +51,44 @@ const INSPECTOR_PAGE: u16 = 8;
 /// A node's change or problem status in the outline and Inspector.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Chip {
-    New,
-    Modified,
-    Invalid(usize),
+    Invalid,
 }
 
-/// What one render derives from the Library for its chips and problem lines.
+/// Saved eligibility badges and current inline field errors are independent.
 pub(super) struct Chips<'a> {
     library: &'a LibraryDraft,
-    expanded: &'a BTreeSet<NodeId>,
-    changes: ChangeSet,
     problems: Vec<Problem>,
 }
 
 impl<'a> Chips<'a> {
-    fn new(library: &'a LibraryDraft, expanded: &'a BTreeSet<NodeId>) -> Self {
+    fn new(library: &'a LibraryDraft, _expanded: &'a BTreeSet<NodeId>) -> Self {
         Self {
             library,
-            expanded,
-            changes: library.changes(),
             problems: library.problems(),
         }
     }
 
-    /// A node's chip: the count of problems on it, plus those beneath it while it is collapsed
-    /// and its rows cannot show them, else its mark.
     fn of(&self, id: &NodeId) -> Option<Chip> {
-        let collapsed = !self.expanded.contains(id);
-        let invalid = self
-            .problems
-            .iter()
-            .filter_map(Problem::node)
-            .filter(|node| *node == id || (collapsed && self.beneath(node, id)))
-            .count();
-        if invalid > 0 {
-            return Some(Chip::Invalid(invalid));
-        }
-        self.changes.mark(id).map(|mark| match mark {
-            Mark::New => Chip::New,
-            Mark::Modified => Chip::Modified,
-        })
+        (matches!(self.library.node(id), Some(NodeRef::Taxonomy(_)))
+            && self
+                .library
+                .saved_taxonomy(id)
+                .is_some_and(|record| record.commit_types().is_empty()))
+        .then_some(Chip::Invalid)
     }
 
-    /// Whether `node` is `ancestor` or sits beneath it.
-    fn beneath(&self, node: &NodeId, ancestor: &NodeId) -> bool {
-        std::iter::successors(Some(node.clone()), |id| self.library.parent(id))
-            .any(|id| &id == ancestor)
-    }
-
-    /// The sentences of the problems at `site`.
     fn sentences(&self, site: &ProblemSite) -> Vec<String> {
-        self.problems
+        let errors = match site {
+            ProblemSite::Field(node, DraftField::Name)
+                if self.problems.iter().any(|problem| {
+                    matches!(problem.kind, gitserious_app::ProblemKind::Taken(_))
+                }) =>
+            {
+                self.library.field_problems(node)
+            }
+            _ => self.problems.clone(),
+        };
+        errors
             .iter()
             .filter(|problem| &problem.site == site)
             .map(|problem| problem_sentence(self.library, problem))
@@ -110,25 +97,19 @@ impl<'a> Chips<'a> {
 }
 
 impl Chip {
-    fn label(self) -> String {
-        match self {
-            Self::New => "+ new".into(),
-            Self::Modified => "~ modified".into(),
-            Self::Invalid(count) => format!("▲ invalid {count}"),
-        }
+    fn label(self) -> &'static str {
+        "▲ invalid"
     }
 
     fn span(self) -> Span<'static> {
-        let style = match self {
-            Self::New => Style::new().fg(Color::Green).bg(Color::Rgb(20, 44, 24)),
-            Self::Modified => Style::new().fg(AMBER).bg(Color::Rgb(52, 38, 12)),
-            Self::Invalid(_) => Style::new().fg(Color::Red).bg(Color::Rgb(56, 18, 18)),
-        };
-        Span::styled(format!(" {} ", self.label()), style)
+        Span::styled(
+            format!(" {} ", self.label()),
+            Style::new().fg(Color::Red).bg(Color::Rgb(56, 18, 18)),
+        )
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct TaxonomiesView {
     /// `None` until the user picks a row; the first row shows as selected.
     cursor: Option<RowKey>,
@@ -211,10 +192,6 @@ impl TaxonomiesView {
 
     pub(super) fn next_frame_in(&self) -> Option<Duration> {
         self.summary_scroll.next_frame_in()
-    }
-
-    pub(super) fn leave_edit(&mut self) {
-        self.mode = Mode::Nav;
     }
 
     pub(super) const fn shell_keys(&self) -> ShellKeys {
@@ -461,7 +438,7 @@ impl TaxonomiesView {
     }
 
     /// EDIT keys: enter and ↓ go to the next field (enter wraps), ↑ to the previous one, esc
-    /// returns to NAV with the draft kept, ←/→ cycle the policy or move the cursor, and text
+    /// focuses invalid fields or finishes a valid edit. ←/→ cycle policy or move the cursor; text
     /// keys change the field in the draft.
     pub(super) fn edit_key(
         &mut self,
@@ -485,6 +462,24 @@ impl TaxonomiesView {
         let length = text.graphemes(true).count();
         let next = match key.code {
             KeyCode::Esc => {
+                if library.untouched_blank(node) {
+                    let landing = library
+                        .edit(node, DraftEdit::Remove)
+                        .map_err(|refusal| refusal_sentence(refusal, None))?;
+                    self.mode = Mode::Nav;
+                    self.select(landing);
+                    return Ok(());
+                }
+                let errors = library.field_problems(node);
+                if let Some(problem) = errors.first() {
+                    if let ProblemSite::Field(_, invalid) = problem.site {
+                        *field = invalid;
+                        *cursor = library
+                            .text(node, invalid)
+                            .map_or(0, |text| text.graphemes(true).count());
+                    }
+                    return Ok(());
+                }
                 self.mode = Mode::Nav;
                 return Ok(());
             }
@@ -697,7 +692,7 @@ impl TaxonomiesView {
         }];
         let mut hints = Vec::new();
         let mut trailing = if editing {
-            vec![("ctrl+s", "review")]
+            Vec::new()
         } else {
             vec![("/", "cmds")]
         };
@@ -714,7 +709,7 @@ impl TaxonomiesView {
             chip.push(Span::raw(format!(" · {kind}")));
             let built_in = node.taxonomy().origin() == TaxonomyOrigin::BuiltIn;
             if editing {
-                hints.extend([("enter", "next field"), ("esc", "done")]);
+                hints.extend([("enter", "next field"), ("esc", "save")]);
             } else if !built_in && matches!(node, NodeRef::Property { .. }) {
                 hints.extend([("←/→", "focus"), ("↑/↓", "move")]);
                 hints.extend([
@@ -816,35 +811,6 @@ impl TaxonomiesView {
     }
 }
 
-/// The Config sidebar's last two rows while the Library has unapplied changes: their count, as
-/// the Config tab shows it, and the key that reviews them.
-pub(super) fn render_pending(frame: &mut Frame<'_>, menu: Rect, count: usize) {
-    if count == 0 || menu.height <= 5 {
-        return;
-    }
-    let area = Rect::new(
-        menu.x.saturating_add(1),
-        menu.bottom().saturating_sub(3),
-        menu.width.saturating_sub(2),
-        2,
-    );
-    let text = format!("● {count} unapplied");
-    let pad = if text.chars().count() < usize::from(area.width) {
-        " "
-    } else {
-        ""
-    };
-    let lines = vec![
-        Line::styled(format!("{pad}{text}"), Style::new().fg(AMBER)),
-        Line::from(vec![
-            Span::raw(pad),
-            Span::styled("ctrl+s", KEY_STYLE),
-            Span::styled(" review", DIM),
-        ]),
-    ];
-    frame.render_widget(Paragraph::new(lines), area);
-}
-
 /// Replaces the graphemes in `range` of `text` with `insert`. Returns the new text and the
 /// grapheme index just past the insertion.
 fn splice(text: &str, range: Range<usize>, insert: &str) -> (String, usize) {
@@ -859,10 +825,6 @@ fn splice(text: &str, range: Range<usize>, insert: &str) -> (String, usize) {
 /// drew which nodes, an add row as none.
 #[cfg(test)]
 #[derive(Debug)]
-#[expect(
-    dead_code,
-    reason = "the model checker's fingerprint reads these fields through Debug"
-)]
 pub(super) struct Observation {
     pub(super) outline_area: Rect,
     pub(super) visible: Vec<Option<NodeId>>,
