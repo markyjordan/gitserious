@@ -220,8 +220,7 @@ impl TaxonomiesView {
     pub(super) const fn shell_keys(&self) -> ShellKeys {
         match self.mode {
             Mode::Nav => ShellKeys::Navigation,
-            Mode::Edit { .. } => ShellKeys::TabsOnly,
-            Mode::CopyTo { .. } => ShellKeys::None,
+            Mode::Edit { .. } | Mode::CopyTo { .. } => ShellKeys::None,
         }
     }
 
@@ -708,7 +707,7 @@ impl TaxonomiesView {
         } else {
             vec![("/", "cmds"), ("?", "help")]
         };
-        if embedded {
+        if embedded && !editing {
             trailing.insert(0, ("tab", "tabs"));
         }
         if let Some(row) = row {
