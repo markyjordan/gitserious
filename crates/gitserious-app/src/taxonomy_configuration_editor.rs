@@ -144,10 +144,7 @@ impl ConfigurationSession {
     /// Returns the merged taxonomy library.
     pub fn catalog(&self) -> Result<TaxonomyCatalog, String> {
         match &self.scope {
-            Scope::Global(library) => library
-                .build()
-                .map_err(|problems| first_problem(&problems))?
-                .catalog(),
+            Scope::Global(library) => library.persisted().catalog(),
             Scope::Project(project) => project.global.catalog(),
         }
         .map_err(|error| error.to_string())
@@ -239,41 +236,11 @@ impl ConfigurationSession {
         Ok(())
     }
 
-    /// The changes apply would write and, for the Library, every problem that blocks apply.
+    /// The Project changes apply would write.
     pub fn review(&self) -> Result<Review, String> {
         match &self.scope {
-            Scope::Global(library) => {
-                let original = library.persisted();
-                let mut sections = vec!["GLOBAL CONFIGURATION".to_owned()];
-                let changes = library.changes();
-                if !changes.taxonomies().is_empty() {
-                    let lines = changes
-                        .taxonomies()
-                        .iter()
-                        .map(|change| format!("  {change}"))
-                        .collect::<Vec<_>>();
-                    sections.push(format!("Taxonomies\n{}", lines.join("\n")));
-                }
-                let before = original.default_taxonomy();
-                let after = library.default_taxonomy();
-                sections.push(if before == after {
-                    format!("Default\n  {after}")
-                } else {
-                    format!("Default\n  {before} -> {after}")
-                });
-                sections.push(format!(
-                    "Available\n  {}",
-                    library
-                        .available_taxonomies()
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-                Ok(Review {
-                    changes: sections.join("\n\n"),
-                    problems: library.problems(),
-                })
+            Scope::Global(_) => {
+                Err("Library edits save directly; only Project changes need review".into())
             }
             Scope::Project(project) => {
                 let config = project
@@ -294,19 +261,16 @@ impl ConfigurationSession {
                             .join(", "),
                         effective.taxonomies().len(),
                     ),
-                    problems: Vec::new(),
                 })
             }
         }
     }
 }
 
-/// What apply would write, and what keeps it from applying.
+/// The reviewed Project configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Review {
     pub changes: String,
-    /// Apply refuses while this is not empty.
-    pub problems: Vec<Problem>,
 }
 
 /// The first problem's text, for the callers that need a Library that builds.
@@ -386,20 +350,20 @@ where
     }
 
     fn save(&self, session: &ConfigurationSession) -> Result<ConfigurationSession, String> {
-        if let Some(problem) = session.review()?.problems.first() {
-            return Err(problem.to_string());
-        }
         match &session.scope {
             Scope::Global(library) => {
-                let working = library
-                    .build()
+                let saved = library
+                    .saved()
                     .map_err(|problems| first_problem(&problems))?;
-                if &working != library.persisted() {
+                let working = saved.persisted();
+                if working != library.persisted() {
                     self.global
-                        .compare_and_swap(library.persisted(), &working)
+                        .compare_and_swap(library.persisted(), working)
                         .map_err(|error| error.to_string())?;
                 }
-                Ok(ConfigurationSession::open_global(working))
+                Ok(ConfigurationSession {
+                    scope: Scope::Global(saved),
+                })
             }
             Scope::Project(project) => {
                 let ProjectScope {

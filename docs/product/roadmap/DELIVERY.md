@@ -24,7 +24,7 @@ taxonomy-first delivery sequence for the first release.
 ## Ownership boundaries
 
 - Core owns taxonomy and property invariants plus canonical message rendering.
-- Application owns global/project resolution, staged sessions, semantic
+- Application owns global/project resolution, validated Library records, Project drafts, semantic
   fingerprints, portable policy, and persistence ports.
 - Filesystem owns strict TOML, safe paths, compare-and-swap, atomic replacement,
   and rollback.
@@ -69,7 +69,7 @@ Add project-first left navigation, focused taxonomy browsing, progressive detail
 full-screen CRUD children, and semantic review using the commit TUI visual system.
 
 constraints:
-Only review may write. Preserve draft state on errors, require explicit scope
+Library edits save on Esc; copy, reorder, and confirmed deletion save immediately. Project writes require review. Preserve draft state on errors, require explicit scope
 transitions, support mouse and paste input, and block hidden actions when the
 terminal is too small.
 ```
@@ -98,7 +98,7 @@ taxonomy CLI selection, focused TUI navigation, and two-trailer provenance.
 - Portable locks author commits without the originating global custom taxonomy.
 - Project-config/lock mismatches fail with the path through
   `gitserious config` → Project → Review/Apply.
-- The TUI writes only after semantic review, preserves failed drafts, restores
+- The TUI saves validated Library edits directly and Project edits after review, preserves failed drafts, restores
   navigation position, and renders correctly at minimum and wide sizes.
 - Locked tests, formatting, warnings-denied Clippy, rustdoc, `just ci`, diff
   checks, and manual PTY walkthroughs pass before publication.

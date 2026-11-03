@@ -1,3 +1,7 @@
+#[path = "../../gitserious-app/tests/support/library_lookup.rs"]
+mod library_lookup;
+use library_lookup::LibraryLookup;
+
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};

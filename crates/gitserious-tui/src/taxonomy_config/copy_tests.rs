@@ -1,3 +1,4 @@
+use crate::library_lookup::LibraryLookup;
 use gitserious_app::{GlobalConfiguration, Policy};
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
@@ -11,7 +12,7 @@ use super::*;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-fn team() -> Result<Workspace, Box<dyn std::error::Error>> {
+pub(super) fn team() -> Result<Workspace, Box<dyn std::error::Error>> {
     let property = |key: &str, requirement| -> Result<_, Box<dyn std::error::Error>> {
         Ok(PropertyDefinition::new(
             PropertyKey::new(key)?,
@@ -167,7 +168,7 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
 
     assert_eq!(cursor(&state), ["team", "feat", "constraints"]);
     assert_eq!(state.taxonomies.shell_keys(), ShellKeys::Navigation);
-    assert_eq!(state.pending_count(), 2);
+    assert!(!state.scope_dirty(ConfigurationDestination::Global));
     let rows = screen(&mut state)?;
     let fix = rows
         .iter()
@@ -178,7 +179,7 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
         "{}",
         rows[fix + 2]
     );
-    assert!(rows[fix + 2].contains("+ new"), "{}", rows[fix + 2]);
+    assert!(!rows[fix + 2].contains("+ new"), "{}", rows[fix + 2]);
     assert!(rows.iter().any(|row| row.contains("▾ docs")));
 
     press(&mut state, &workspace, &[KeyCode::Down; 4]);
@@ -207,7 +208,7 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
         policy(&state, &["team", "docs", "constraints"]),
         Some(Policy::Conditional)
     );
-    assert_eq!(workspace.saves(), 0);
+    assert_eq!(workspace.saves(), 1);
     Ok(())
 }
 
@@ -308,7 +309,7 @@ fn the_copy_picker_keeps_its_choices_when_the_user_clicks_behind_it() -> TestRes
         assert_eq!(cursor(&state), ["team", "feat", "constraints"]);
     }
     press(&mut state, &workspace, &[KeyCode::Enter]);
-    assert_eq!(state.pending_count(), 1);
+    assert!(!state.scope_dirty(ConfigurationDestination::Global));
     assert_eq!(
         policy(&state, &["team", "fix", "constraints"]),
         Some(Policy::Conditional)

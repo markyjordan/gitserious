@@ -1,3 +1,4 @@
+use crate::library_lookup::LibraryLookup;
 use gitserious_app::{ConfigurationSession, GlobalConfiguration};
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
@@ -95,7 +96,10 @@ fn new_fork_and_revealed_children_collapse_only_earlier_roots() -> Result {
     let fork = view.selected(&library).ok_or("fork")?.id().clone();
     draw(&mut view, &library, 36)?;
     one_root(&view, &library, &fork);
-    view.leave_edit();
+    view.edit_key(
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        &mut library,
+    )?;
     view.act(LibraryAction::Create, &mut library)?;
     let new = view.selected(&library).ok_or("new")?.id().clone();
     for height in [36, 14, 37, 36] {

@@ -13,7 +13,7 @@ use ratatui::crossterm::event::{
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
@@ -21,23 +21,16 @@ use crate::author::{AuthoringCheckpoint, embedded_author};
 use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT};
 use crate::taxonomy_config::{ConfigView, ShellKeys};
 use crate::theme::{
-    AMBER, FOOTER_HEIGHT, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, block_title, centered_rect,
+    FOOTER_HEIGHT, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, block_title, centered_rect,
     command_hints, frame_style, navigation_key_style, normalize_background, render_footer_block,
     render_navigation_row,
 };
 use commit_view::CommitView;
 use home_logo::{HomeLogo, render_home_logo, resolve_dev_theme};
 
-/// A section's tab label; Config carries the count of unapplied Library changes.
-fn tab(section: Section, pending: usize) -> Line<'static> {
-    let mut spans = vec![Span::raw(format!(" {} ", section.label()))];
-    if section == Section::Config && pending > 0 {
-        spans.push(Span::styled(
-            format!("●{pending}"),
-            Style::new().fg(JET_BLACK).bg(AMBER),
-        ));
-    }
-    Line::from(spans)
+/// A section's tab label.
+fn tab(section: Section) -> Line<'static> {
+    Line::raw(format!(" {} ", section.label()))
 }
 
 fn quit_question() -> Confirmation<'static> {
@@ -613,8 +606,7 @@ impl Shell {
         let block = Block::bordered().border_style(frame_style());
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        let pending = self.config.pending_count();
-        let tabs = Section::ALL.map(|section| (section, tab(section, pending)));
+        let tabs = Section::ALL.map(|section| (section, tab(section)));
         let width = tabs
             .iter()
             .map(|(_, tab)| u16::try_from(tab.width()).unwrap_or(0))
@@ -987,8 +979,7 @@ mod tests {
     }
 
     #[test]
-    fn the_config_tab_counts_unapplied_changes_inside_its_click_target()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn the_config_tab_has_no_library_change_badge() -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
@@ -1002,18 +993,18 @@ mod tests {
             .nth(1)
             .unwrap_or_default()
             .to_owned();
-        assert!(header.contains(" Config ●1  Help "), "{header:?}");
+        assert!(header.contains(" Config   Help "), "{header:?}");
         let config = shell.root_areas[Section::Config.index()];
         let help = shell.root_areas[Section::Help.index()];
-        assert_eq!(config.width, 10);
+        assert_eq!(config.width, 8);
         assert_eq!(help.x, config.right() + 1);
         assert_eq!(
             header
                 .chars()
                 .skip(usize::from(config.x))
-                .take(10)
+                .take(8)
                 .collect::<String>(),
-            " Config ●1"
+            " Config "
         );
         Ok(())
     }
@@ -1035,14 +1026,20 @@ mod tests {
         }
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.section, Section::Config);
+        assert_eq!(shell.config.shell_keys(), ShellKeys::None);
+        shell.handle_event(key(KeyCode::Up), &services, &[]);
+        shell.handle_event(key(KeyCode::Backspace), &services, &[]);
+        shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.config.shell_keys(), ShellKeys::Navigation);
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
         assert_eq!(shell.section, Section::Help);
         shell.handle_event(key(KeyCode::BackTab), &services, &[]);
         assert_eq!(shell.section, Section::Config);
-        assert!(shell.config.dirty());
-        shell.handle_event(key(KeyCode::Char('q')), &services, &[]);
-        assert!(matches!(shell.overlay, Some(Overlay::QuitConfirm)));
+        assert!(!shell.config.dirty());
+        assert_eq!(
+            shell.handle_event(key(KeyCode::Char('q')), &services, &[]),
+            Some(Action::Quit)
+        );
     }
 
     #[test]

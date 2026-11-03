@@ -89,7 +89,7 @@ pub(super) fn refusal_sentence(refusal: EditRefusal, field: Option<DraftField>) 
             "Built-in taxonomies are read-only; fork one to customize it.".into()
         }
         (EditRefusal::NameLocked, _) => {
-            "A taxonomy keeps its name once it is applied; fork it to use another name.".into()
+            "A taxonomy keeps its name after its first save with types; fork it to use another name.".into()
         }
         (EditRefusal::TooLong, Some((field, limit))) => {
             format!("{} is limited to {limit} characters.", field.label())
@@ -114,7 +114,7 @@ pub(super) fn problem_sentence(library: &LibraryDraft, problem: &Problem) -> Str
     };
     let field = match &problem.site {
         ProblemSite::Field(_, field) => Some(*field),
-        ProblemSite::Node(_) | ProblemSite::Selection => None,
+        ProblemSite::Selection => None,
     };
     let raw = problem
         .node()
@@ -140,14 +140,13 @@ pub(super) fn problem_sentence(library: &LibraryDraft, problem: &Problem) -> Str
             owner.0.to_lowercase(),
             owner.2
         ),
-        ProblemKind::StagedForDeletion(id) => format!(
-            "Taxonomy \"{id}\" is staged for deletion; apply the deletion before reusing its name."
-        ),
         ProblemKind::Blank if field == Some(DraftField::Rationale) => {
             "A conditional policy needs a rationale.".into()
         }
         ProblemKind::Blank => description_required(owner.0),
-        ProblemKind::NoTypes => "Add a type before applying the taxonomy.".into(),
+        ProblemKind::VersionLimit => {
+            "Taxonomy version limit reached; fork this taxonomy to continue.".into()
+        }
         ProblemKind::Selection(error) => sentence(&error.to_string()),
     }
 }

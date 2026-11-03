@@ -1,5 +1,9 @@
 #![allow(clippy::expect_used)]
 
+#[path = "support/library_lookup.rs"]
+mod library_lookup;
+use library_lookup::LibraryLookup;
+
 use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -228,18 +232,13 @@ fn created_taxonomies_are_queryable_as_custom_library_entries() -> Result<(), Bo
         built(&session).custom_taxonomies(),
         std::slice::from_ref(&gitserious_app::LibraryTaxonomy::from(expected.clone()))
     );
-    assert_eq!(session.catalog()?.find(&id("team")), Some(&expected));
     assert_eq!(
-        session.catalog()?.origin(&id("team")),
-        Some(TaxonomyOrigin::Custom)
+        built(&session).catalog()?.find(&id("team")),
+        Some(&expected)
     );
+    assert_eq!(session.catalog()?.find(&id("team")), None);
     assert!(session.is_dirty());
-    assert!(
-        session
-            .review()?
-            .changes
-            .contains("Taxonomies\n  created  team v1, ")
-    );
+    assert!(session.review().is_err());
     Ok(())
 }
 
@@ -259,7 +258,10 @@ fn names_already_in_the_library_are_problems_until_renamed() -> Result<(), Box<d
     let release = node(&mut session, &["team", "feat"]);
     draft(&mut session).edit(&release, DraftEdit::Text(DraftField::Description, " "))?;
     assert_eq!(problems(&session), [ProblemKind::Blank]);
-    assert_eq!(session.review()?.problems.len(), 1);
+    assert_eq!(
+        session.library().ok_or("missing Library")?.problems().len(),
+        1
+    );
     assert!(session.is_dirty());
     Ok(())
 }
@@ -284,7 +286,7 @@ fn edits_in_one_session_advance_the_version_once() -> Result<(), Box<dyn Error>>
     for description in ["First revision.", "Second revision."] {
         describe(&mut session, "team", description);
         assert_eq!(
-            session.catalog()?.find(&id("team")),
+            built(&session).catalog()?.find(&id("team")),
             Some(&at_version(&original, 2, description))
         );
     }
@@ -325,7 +327,7 @@ fn edits_to_a_taxonomy_created_in_the_session_keep_its_first_version() -> Result
     describe(&mut session, "team", "Team policy.");
 
     assert_eq!(
-        session.catalog()?.find(&id("team")),
+        built(&session).catalog()?.find(&id("team")),
         Some(&at_version(&custom("team"), 1, "Team policy."))
     );
     Ok(())
@@ -398,7 +400,7 @@ fn fork_copies_a_built_in_under_a_new_identity_with_lineage() -> Result<(), Box<
     fork_as(&mut session, "research", "lab");
 
     let source = &built_in_taxonomies()[1];
-    let fork = session
+    let fork = built(&session)
         .catalog()?
         .find(&id("lab"))
         .cloned()
@@ -431,7 +433,7 @@ fn a_fork_takes_its_authored_content_and_refuses_its_source_name() -> Result<(),
         let commit_type = node(&mut session, &["team", commit_type.id().as_str()]);
         draft(&mut session).edit(&commit_type, DraftEdit::Remove)?;
     }
-    let fork = session
+    let fork = built(&session)
         .catalog()?
         .find(&id("team"))
         .cloned()
@@ -476,7 +478,7 @@ fn forks_of_custom_taxonomies_preserve_content_and_reset_the_new_version()
 
     fork_as(&mut session, "team", "team-copy");
 
-    let fork = session
+    let fork = built(&session)
         .catalog()?
         .find(&id("team-copy"))
         .cloned()
@@ -702,81 +704,57 @@ fn global_store_failures_are_reported_and_leave_the_library_unchanged() {
 }
 
 #[test]
-fn recreating_an_original_identity_cannot_reset_its_version() -> Result<(), Box<dyn Error>> {
-    let original = custom("team");
-    let revised = at_version(&original, 2, original.description().as_ref());
-    let mut session = ConfigurationSession::open_global(library(vec![revised])?);
-    let team = node(&mut session, &["team"]);
-    draft(&mut session).edit(&team, DraftEdit::Remove)?;
-
-    let fork = fork_as(&mut session, "research", "team");
-    let created = draft(&mut session).create_taxonomy();
-    draft(&mut session).edit(&created, DraftEdit::Text(DraftField::Name, "team"))?;
-
-    let staged = ProblemKind::StagedForDeletion("team".into());
-    assert_eq!(
-        problems(&session)
-            .iter()
-            .filter(|kind| **kind == staged)
-            .count(),
-        1,
-        "{:?}",
-        problems(&session)
-    );
-    draft(&mut session).edit(&created, DraftEdit::Remove)?;
-    assert_eq!(problems(&session), [staged]);
-    draft(&mut session).edit(&fork, DraftEdit::Remove)?;
-    assert_eq!(session.catalog()?.find(&id("team")), None);
+fn saved_library_keeps_node_ids_and_no_op_saves_do_not_write() -> Result<(), Box<dyn Error>> {
+    let store = FakeGlobalStore::new(GlobalConfiguration::default());
+    edit_global(&store, |workspace| {
+        let mut session = workspace.load(ConfigurationDestination::Global)?;
+        let taxonomy = fork_as(&mut session, "conventional", "team");
+        let child = node(&mut session, &["team", "feat"]);
+        let saved = workspace.save(&session)?;
+        assert_eq!(
+            saved
+                .library()
+                .and_then(|library| library.find_path(&["team"])),
+            Some(taxonomy.clone())
+        );
+        assert_eq!(
+            saved
+                .library()
+                .and_then(|library| library.find_path(&["team", "feat"])),
+            Some(child)
+        );
+        assert!(!saved.is_dirty());
+        let saved = workspace.save(&saved)?;
+        assert_eq!(store.swaps.get(), 1);
+        assert_eq!(
+            saved
+                .library()
+                .and_then(|library| library.version(&taxonomy))
+                .map(TaxonomyVersion::get),
+            Some(1)
+        );
+        Ok(())
+    })?;
     Ok(())
 }
 
 #[test]
-fn review_names_an_edited_taxonomy_and_what_changed() -> Result<(), Box<dyn Error>> {
-    let original = custom("team");
-    let mut session = ConfigurationSession::open_global(library(vec![original.clone()])?);
-
-    describe(&mut session, "team", "Team policy.");
-
-    assert_eq!(
-        session.review()?.changes,
-        "GLOBAL CONFIGURATION\n\n\
-         Taxonomies\n  edited   team v1 -> v2: description\n\n\
-         Default\n  conventional\n\n\
-         Available\n  conventional, research, infra-ops"
-    );
-    Ok(())
-}
-
-#[test]
-fn review_names_a_created_and_a_deleted_taxonomy_in_one_session() -> Result<(), Box<dyn Error>> {
-    let mut session = ConfigurationSession::open_global(library(vec![custom("team")])?);
-
-    let team = node(&mut session, &["team"]);
-    let other = draft(&mut session).fork(&team)?;
-    draft(&mut session).edit(&other, DraftEdit::Text(DraftField::Name, "other"))?;
-    draft(&mut session).edit(&team, DraftEdit::Remove)?;
-
-    let types = custom("other").commit_types().len();
-    assert!(session.review()?.changes.contains(&format!(
-        "Taxonomies\n  created  other v1, {types} types\n  deleted  team v1\n\n"
-    )));
-    Ok(())
-}
-
-#[test]
-fn review_omits_taxonomies_when_only_the_selection_changed() -> Result<(), Box<dyn Error>> {
-    let original = custom("team");
-    let mut session = ConfigurationSession::open_global(library(vec![original.clone()])?);
-
-    describe(&mut session, "team", "Team policy.");
-    describe(&mut session, "team", original.description().as_str());
-    session.configure_global(id("research"), built_in_ids())?;
-
-    assert_eq!(
-        session.review()?.changes,
-        "GLOBAL CONFIGURATION\n\n\
-         Default\n  conventional -> research\n\n\
-         Available\n  conventional, research, infra-ops"
-    );
+fn exhausted_versions_refuse_changes_without_writing() -> Result<(), Box<dyn Error>> {
+    let source = custom("team");
+    let last = at_version(&source, u16::MAX, source.description().as_str());
+    let original = library(vec![last])?;
+    let store = FakeGlobalStore::new(original.clone());
+    edit_global(&store, |workspace| {
+        let mut session = workspace.load(ConfigurationDestination::Global)?;
+        workspace.save(&session)?;
+        describe(&mut session, "team", "Cannot advance this version");
+        let error = workspace
+            .save(&session)
+            .expect_err("version overflow was saved");
+        assert!(error.contains("version limit reached"), "{error}");
+        Ok(())
+    })?;
+    assert_eq!(store.swaps.get(), 0);
+    assert_eq!(*store.current.borrow(), original);
     Ok(())
 }

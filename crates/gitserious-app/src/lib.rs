@@ -2,6 +2,9 @@
 
 #![allow(clippy::missing_errors_doc)]
 
+#[cfg(test)]
+extern crate self as gitserious_app;
+
 mod commit_draft_author;
 mod commit_writer;
 mod create_taxonomy_commit;
@@ -56,7 +59,7 @@ pub use interactive::{
     HelpPage, InteractiveEntry, InteractiveUi, InteractiveWorkspace, run_interactive,
 };
 pub use library_draft::{
-    ChangeSet, DraftEdit, DraftField, EditRefusal, LibraryDraft, Mark, NodeId, NodeRef, Policy,
-    Problem, ProblemKind, ProblemSite, PropertyNode, TaxonomyNode, TypeNode,
+    DraftEdit, DraftField, EditRefusal, LibraryDraft, NodeId, NodeRef, Policy, Problem,
+    ProblemKind, ProblemSite, PropertyNode, TaxonomyNode, TypeNode,
 };
 pub use repository_status::{BranchState, RepositoryStatus, RepositoryStatusReader, StatusEntry};
