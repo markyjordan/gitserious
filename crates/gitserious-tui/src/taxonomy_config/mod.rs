@@ -2232,7 +2232,7 @@ mod tests {
             assert!(text.contains("Version      2"));
             assert!(
                 screen[usize::from(height) - 2]
-                    .starts_with("  NAV  · taxonomy  ←/→ focus  ↑/↓ move  enter open")
+                    .starts_with("  NAV   ←/→ focus  ↑/↓ move  enter open")
             );
             if height == 40 {
                 assert!(text.contains("Types        11"));
@@ -2246,7 +2246,7 @@ mod tests {
             assert!(screen.join("\n").contains("Taxonomy original"));
             assert!(
                 screen[usize::from(height) - 2]
-                    .starts_with("  NAV  · taxonomy  ←/→ focus  ↑/↓ move  enter open")
+                    .starts_with("  NAV   ←/→ focus  ↑/↓ move  enter open")
             );
         }
         Ok(())
@@ -2350,7 +2350,7 @@ mod tests {
         assert!(screen.contains("Type feat"));
         assert!(screen.contains("in conventional"));
         assert!(screen.contains("Properties   3"));
-        assert!(screen.contains(" NAV  · type"));
+        assert!(screen.contains(" NAV "));
 
         let screen = press(&mut state, KeyCode::Enter)?;
         assert_eq!(
@@ -2373,7 +2373,7 @@ mod tests {
         assert!(screen.contains("Policy       required recommended conditional optional"));
         assert!(screen.contains("Condition    non-obvious-requirements"));
         assert!(screen.contains("Rationale    Required when"));
-        assert!(screen.contains(" NAV  · property"));
+        assert!(screen.contains(" NAV "));
         let buffer = terminal.backend().buffer();
         let (policy_x, policy_y) = (0..40)
             .find_map(|y| {
@@ -2463,7 +2463,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(87, 36))?;
         terminal.draw(|frame| state.render(frame))?;
         let footer = row_text(&terminal, 0, 34, 87);
-        assert!(footer.starts_with("  NAV  · taxonomy  ←/→ focus  ↑/↓ move  enter open"));
+        assert!(footer.starts_with("  NAV   ←/→ focus  ↑/↓ move  enter open"));
         assert!(footer.trim_end().ends_with("│ tab tabs  / cmds"));
         Ok(())
     }
@@ -2507,6 +2507,55 @@ mod tests {
                         assert!(!footer.contains('…'), "{footer}");
                         assert!(!footer.contains("? help"), "{footer}");
                         state.handle_event(key(next), &workspace);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn library_footer_omits_node_context_in_nav_and_edit() -> Result<(), Box<dyn std::error::Error>>
+    {
+        for embedded in [false, true] {
+            for width in [MINIMUM_WIDTH, 87, 140] {
+                for path in [
+                    vec!["original"],
+                    vec!["original", "existing"],
+                    vec!["original", "existing", "notes"],
+                ] {
+                    let (workspace, _) = custom_workspace()?;
+                    let mut state = State::new(&workspace);
+                    state.embedded = embedded;
+                    state.handle_event(key(KeyCode::Char('2')), &workspace);
+                    for depth in 1..=path.len() {
+                        let node = library(&state)?.find_path(&path[..depth]).ok_or("node")?;
+                        state.taxonomies.select(node);
+                        if depth < path.len() {
+                            state.handle_event(key(KeyCode::Enter), &workspace);
+                        }
+                    }
+                    let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
+                    for editing in [false, true] {
+                        if editing {
+                            state.handle_event(key(KeyCode::Char('e')), &workspace);
+                        }
+                        terminal.draw(|frame| state.render(frame))?;
+                        let footer = row_text(&terminal, 0, 38, width);
+                        for context in ["· taxonomy", "· type", "· property"] {
+                            assert!(!footer.contains(context), "{footer}");
+                        }
+                        if editing {
+                            assert!(footer.starts_with("  EDIT   enter next field  esc save"));
+                        } else {
+                            assert!(footer.starts_with("  NAV   ←/→ focus"));
+                            if width >= 87 {
+                                assert!(
+                                    footer.contains("e edit") && footer.contains("d delete"),
+                                    "{footer}"
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -2602,10 +2651,7 @@ mod tests {
                     let y = height - 2;
                     let footer = row_text(&terminal, 0, y, width);
                     let mode = if editing { " EDIT " } else { " NAV " };
-                    assert!(
-                        footer.starts_with(&format!(" {mode} · taxonomy ")),
-                        "{footer}"
-                    );
+                    assert!(footer.starts_with(&format!(" {mode}  ")), "{footer}");
                     if !editing {
                         assert!(footer.contains("enter open"), "{footer}");
                     }
@@ -2824,7 +2870,7 @@ mod tests {
             assert!(state.home_overlay.is_none());
             terminal.draw(|frame| state.render(frame))?;
             let footer = row_text(&terminal, 0, height - 2, width);
-            assert!(footer.starts_with("  NAV  · taxonomy  ←/→ focus  ↑/↓ move  enter open"));
+            assert!(footer.starts_with("  NAV   ←/→ focus  ↑/↓ move  enter open"));
             if width >= 100 {
                 assert!(footer.trim_end().ends_with("│ / cmds"));
             }
@@ -3512,13 +3558,14 @@ mod tests {
                     press(&mut state, &workspace, &[KeyCode::Esc]);
                     terminal.draw(|frame| state.render(frame))?;
                     let footer = row_text(&terminal, 0, 38, width);
-                    assert!(
-                        footer.starts_with("  NAV  · property  ←/→ focus"),
-                        "{footer}"
-                    );
+                    assert!(footer.starts_with("  NAV   ←/→ focus"), "{footer}");
                     assert!(footer.contains("d delete"), "{footer}");
                     assert!(!footer.contains('…'), "{footer}");
-                    assert_eq!(footer.contains("to other types"), width == 140, "{footer}");
+                    assert_eq!(
+                        footer.contains("to other types"),
+                        width == 140 || (width == 87 && !embedded),
+                        "{footer}"
+                    );
                     assert!(!footer.contains("? help"), "{footer}");
                     assert!(footer.starts_with(' ') && footer.ends_with(' '));
                     assert!(row_text(&terminal, 0, 39, width).trim().is_empty());
@@ -3542,10 +3589,7 @@ mod tests {
             let screen = rows(&terminal).join("\n");
             assert!(screen.contains("130/100"), "{screen}");
             let footer = row_text(&terminal, 0, height - 2, width);
-            assert!(
-                footer.starts_with("  NAV  · property  ←/→ focus"),
-                "{footer}"
-            );
+            assert!(footer.starts_with("  NAV   ←/→ focus"), "{footer}");
             assert!(!footer.contains("←/→ policy"), "{footer}");
             assert!(!footer.contains("enter open"), "{footer}");
             assert!(!footer.contains("enter close"), "{footer}");
@@ -3557,7 +3601,7 @@ mod tests {
             assert!(screen.contains("5/80"), "{screen}");
             let footer = row_text(&terminal, 0, height - 2, width);
             assert!(
-                footer.starts_with("  EDIT  · property  enter next field  esc save"),
+                footer.starts_with("  EDIT   enter next field  esc save"),
                 "{footer}"
             );
             assert!(!footer.contains("ctrl+s review"), "{footer}");

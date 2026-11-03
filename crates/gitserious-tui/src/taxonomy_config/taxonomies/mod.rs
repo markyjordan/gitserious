@@ -686,7 +686,7 @@ impl TaxonomiesView {
                 matches!(row.node(), NodeRef::Property { .. })
                     && row.node().taxonomy().origin() == TaxonomyOrigin::Custom
             });
-        let mut chip = vec![if editing {
+        let chip = vec![if editing {
             Span::styled(" EDIT ", EDIT_CHIP)
         } else {
             Span::styled(" NAV ", navigation_key_style())
@@ -702,12 +702,6 @@ impl TaxonomiesView {
         }
         if let Some(row) = row {
             let node = row.node();
-            let kind = match node {
-                NodeRef::Taxonomy(_) => "taxonomy",
-                NodeRef::Type { .. } => "type",
-                NodeRef::Property { .. } => "property",
-            };
-            chip.push(Span::raw(format!(" · {kind}")));
             let built_in = node.taxonomy().origin() == TaxonomyOrigin::BuiltIn;
             if editing {
                 hints.extend([("enter", "next field"), ("esc", "save")]);
