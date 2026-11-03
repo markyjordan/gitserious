@@ -2225,7 +2225,7 @@ mod tests {
             assert_eq!(buffer[(MENU_WIDTH, 0)].fg, Color::Rgb(80, 160, 255));
             assert_eq!(buffer[(MENU_WIDTH + 1, 1)].fg, Color::Rgb(80, 160, 255));
             assert_eq!(buffer[(1, height - 2)].bg, Color::Rgb(80, 160, 255));
-            for label in [" ◇ read-only "] {
+            for label in [" built-in ", " ◇ read-only "] {
                 let mut count = 0;
                 for (y, line) in screen.iter().enumerate() {
                     for (start, _) in line.match_indices(label) {
@@ -2233,7 +2233,7 @@ mod tests {
                         for dx in 0..label.chars().count() {
                             let cell = &buffer[(u16::try_from(x + dx)?, u16::try_from(y)?)];
                             assert_eq!(cell.fg, Color::Black);
-                            assert_eq!(cell.bg, Color::White);
+                            assert_eq!(cell.bg, Color::Rgb(230, 230, 230));
                         }
                         count += 1;
                     }
@@ -2250,8 +2250,8 @@ mod tests {
                     .unwrap_or_default()
             };
             assert!(outline("conventional").contains("│▌▸ conventional"));
-            assert!(outline("conventional").trim_end().ends_with("read-only  │"));
-            assert!(outline("infra-ops").trim_end().ends_with("read-only  │"));
+            assert!(outline("conventional").trim_end().ends_with("built-in  │"));
+            assert!(outline("infra-ops").trim_end().ends_with("built-in  │"));
             assert!(outline("original").trim_end().ends_with("custom  │"));
             let text = screen.join("\n");
             assert!(text.contains("┌ Inspector ─"));
@@ -2269,6 +2269,76 @@ mod tests {
             let screen = rows(&terminal);
             assert!(screen.join("\n").contains("Taxonomy original"));
             assert!(screen[usize::from(height) - 2].starts_with("  NAV  · taxonomy  enter/→ open"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn built_in_origin_stays_on_roots_and_read_only_stays_in_the_inspector()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for embedded in [false, true] {
+            for width in [MINIMUM_WIDTH, 87, 140] {
+                let workspace = Workspace::new();
+                let mut state = State::new(&workspace);
+                state.embedded = embedded;
+                state.handle_event(key(KeyCode::Char('2')), &workspace);
+                let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
+                for next in [
+                    None,
+                    Some(KeyCode::Right),
+                    Some(KeyCode::Right),
+                    Some(KeyCode::Enter),
+                    Some(KeyCode::Down),
+                ] {
+                    if let Some(next) = next {
+                        state.handle_event(key(next), &workspace);
+                    }
+                    terminal.draw(|frame| state.render(frame))?;
+                    let observation = state.taxonomies.observe(state.library());
+                    let area = observation.outline_area;
+                    for (index, id) in observation.visible.iter().enumerate() {
+                        let row = row_text(
+                            &terminal,
+                            area.x,
+                            area.y + u16::try_from(index)?,
+                            area.width,
+                        );
+                        let root = id
+                            .as_ref()
+                            .and_then(|id| state.library()?.node(id))
+                            .is_some_and(|node| matches!(node, NodeRef::Taxonomy(_)));
+                        assert_eq!(row.contains(" built-in "), root, "{row}");
+                        assert!(!row.contains("read-only"), "{row}");
+                    }
+                    let screen = rows(&terminal);
+                    assert_eq!(
+                        screen
+                            .iter()
+                            .filter(|row| row.contains(" ◇ read-only "))
+                            .count(),
+                        1
+                    );
+                    let buffer = terminal.backend().buffer();
+                    for label in [" built-in ", " ◇ read-only "] {
+                        for (y, line) in screen.iter().enumerate() {
+                            for (start, _) in line.match_indices(label) {
+                                let x = line[..start].chars().count();
+                                for (dx, character) in label.chars().enumerate() {
+                                    let cell = &buffer[(u16::try_from(x + dx)?, u16::try_from(y)?)];
+                                    assert_eq!(cell.symbol(), character.to_string());
+                                    assert_eq!(cell.fg, Color::Black);
+                                    assert_eq!(cell.bg, Color::Rgb(230, 230, 230));
+                                    assert_eq!(cell.modifier, Modifier::empty());
+                                }
+                            }
+                        }
+                    }
+                    let footer = row_text(&terminal, 0, 38, width);
+                    for label in ["built-in", "read-only", "e edit", "c copy", "d delete"] {
+                        assert!(!footer.contains(label), "{footer}");
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -2295,7 +2365,7 @@ mod tests {
                 .find(|row| row.contains("│▌  ▸ feat "))
                 .and_then(|row| row.rsplit('│').nth(1))
                 .map(str::trim_end),
-            Some("▌  ▸ feat      intent · decision · constraints          ◇ read-only")
+            Some("▌  ▸ feat      intent · decision · constraints")
         );
         assert!(screen.contains("│   ▸ fix       cause · decision · constraints"));
         assert!(screen.contains("Type feat"));
@@ -2310,7 +2380,7 @@ mod tests {
                 .find(|row| row.contains("│▌  ▾ feat "))
                 .and_then(|row| row.rsplit('│').nth(1))
                 .map(str::trim_end),
-            Some("▌  ▾ feat                                               ◇ read-only")
+            Some("▌  ▾ feat")
         );
         for _ in 0..3 {
             press(&mut state, KeyCode::Down)?;

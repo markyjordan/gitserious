@@ -133,14 +133,13 @@ fn describe(
         ),
     ];
     let badge = match (chip, node) {
+        _ if node.taxonomy().origin() == TaxonomyOrigin::BuiltIn => {
+            vec![Span::styled(" ◇ read-only ", READ_ONLY_STYLE)]
+        }
         (Some(chip), _) => vec![chip.span()],
         (None, NodeRef::Taxonomy(taxonomy)) => vec![Span::styled(
             format!(" {} ", taxonomy.origin().as_str()),
-            if taxonomy.origin() == TaxonomyOrigin::BuiltIn {
-                READ_ONLY_STYLE
-            } else {
-                BADGE_STYLE
-            },
+            BADGE_STYLE,
         )],
         (None, _) => Vec::new(),
     };
