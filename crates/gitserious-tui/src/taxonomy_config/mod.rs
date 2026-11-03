@@ -2206,7 +2206,7 @@ mod tests {
                         for dx in 0..label.chars().count() {
                             let cell = &buffer[(u16::try_from(x + dx)?, u16::try_from(y)?)];
                             assert_eq!(cell.fg, Color::Black);
-                            assert_eq!(cell.bg, Color::Rgb(230, 230, 230));
+                            assert_eq!(cell.bg, Color::Rgb(211, 211, 211));
                         }
                         count += 1;
                     }
@@ -2248,6 +2248,43 @@ mod tests {
                 screen[usize::from(height) - 2]
                     .starts_with("  NAV   ←/→ focus  ↑/↓ move  enter open")
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn custom_chips_keep_exact_colors_on_selected_rows_and_in_the_inspector()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for embedded in [false, true] {
+            for width in [MINIMUM_WIDTH, 87, 140] {
+                let (workspace, _) = custom_workspace()?;
+                let mut state = State::new(&workspace);
+                state.embedded = embedded;
+                state.handle_event(key(KeyCode::Char('2')), &workspace);
+                let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
+                for selected in [false, true] {
+                    if selected {
+                        select_taxonomy(&mut state, 3);
+                    }
+                    terminal.draw(|frame| state.render(frame))?;
+                    let buffer = terminal.backend().buffer();
+                    let mut count = 0;
+                    for (y, row) in rows(&terminal).iter().enumerate() {
+                        for (start, _) in row.match_indices(" custom ") {
+                            let x = row[..start].chars().count();
+                            for (dx, character) in " custom ".chars().enumerate() {
+                                let cell = &buffer[(u16::try_from(x + dx)?, u16::try_from(y)?)];
+                                assert_eq!(cell.symbol(), character.to_string());
+                                assert_eq!(cell.fg, Color::Black);
+                                assert_eq!(cell.bg, Color::Rgb(144, 238, 144));
+                                assert_eq!(cell.modifier, Modifier::empty());
+                            }
+                            count += 1;
+                        }
+                    }
+                    assert_eq!(count, if selected { 2 } else { 1 });
+                }
+            }
         }
         Ok(())
     }
@@ -2306,7 +2343,7 @@ mod tests {
                                     let cell = &buffer[(u16::try_from(x + dx)?, u16::try_from(y)?)];
                                     assert_eq!(cell.symbol(), character.to_string());
                                     assert_eq!(cell.fg, Color::Black);
-                                    assert_eq!(cell.bg, Color::Rgb(230, 230, 230));
+                                    assert_eq!(cell.bg, Color::Rgb(211, 211, 211));
                                     assert_eq!(cell.modifier, Modifier::empty());
                                 }
                             }
