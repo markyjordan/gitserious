@@ -1,8 +1,8 @@
 use gitserious_app::ConfigurationError;
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
-    PropertyDefinition, PropertyExample, PropertyKey, PropertyRequirement, SchemaVersion, Taxonomy,
-    TaxonomyId, TaxonomyLineage, TaxonomyVersion,
+    PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion, Taxonomy, TaxonomyId,
+    TaxonomyLineage, TaxonomyVersion,
 };
 use serde::{Deserialize, Serialize};
 
@@ -39,8 +39,8 @@ struct PropertyWire {
     key: String,
     description: String,
     requirement: RequirementWire,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    example: Option<String>,
+    #[serde(default, rename = "example", skip_serializing)]
+    _retired_example: Option<serde::de::IgnoredAny>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -85,9 +85,7 @@ fn property_to_wire(property: &PropertyDefinition) -> PropertyWire {
     PropertyWire {
         key: property.key().to_string(),
         description: property.description().to_owned(),
-        example: property
-            .example()
-            .map(|example| example.as_str().to_owned()),
+        _retired_example: None,
         requirement: match property.requirement() {
             PropertyRequirement::Required => RequirementWire::Required,
             PropertyRequirement::Recommended => RequirementWire::Recommended,
@@ -164,14 +162,8 @@ fn property_from_wire(wire: PropertyWire, location: &str) -> Result<PropertyDefi
             PropertyRequirement::Conditional(condition)
         }
     };
-    let property = PropertyDefinition::new(key, wire.description, requirement)
-        .map_err(|error| format!("{location}: {error}"))?;
-    match wire.example {
-        Some(example) => PropertyExample::new(example)
-            .map(|example| property.with_example(example))
-            .map_err(|error| format!("{location}.example: {error}")),
-        None => Ok(property),
-    }
+    PropertyDefinition::new(key, wire.description, requirement)
+        .map_err(|error| format!("{location}: {error}"))
 }
 
 pub(crate) fn legacy_shape(contents: &str) -> bool {

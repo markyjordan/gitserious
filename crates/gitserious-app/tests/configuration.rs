@@ -211,16 +211,11 @@ fn created_taxonomies_are_queryable_as_custom_library_entries() -> Result<(), Bo
             SchemaVersion::new(1)?,
             CommitTypeId::new("release")?,
             "Release notes",
-            vec![
-                PropertyDefinition::new(
-                    PropertyKey::new("summary")?,
-                    "What shipped",
-                    PropertyRequirement::Required,
-                )?
-                .with_example(gitserious_core::PropertyExample::new(
-                    "release([<scope>]): <subject>\nsummary:\n<value>",
-                )?),
-            ],
+            vec![PropertyDefinition::new(
+                PropertyKey::new("summary")?,
+                "What shipped",
+                PropertyRequirement::Required,
+            )?],
         )?],
     )?;
 

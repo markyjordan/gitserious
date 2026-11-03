@@ -29,8 +29,6 @@ use crate::theme::{
 use outline::Row;
 pub(super) use outline::RowKey;
 
-#[cfg(test)]
-mod example_tests;
 mod inspector;
 #[cfg(test)]
 mod layout_tests;
@@ -150,7 +148,6 @@ pub(super) struct TaxonomiesView {
     outline_offset: usize,
     anchor: Option<NodeId>,
     inspector_offset: u16,
-    example_width: usize,
     outline_area: Rect,
     summary_scroll: summary_scroll::SummaryScroll,
 }
@@ -166,8 +163,6 @@ pub(super) enum Mode {
         node: NodeId,
         field: DraftField,
         cursor: usize,
-        preferred_column: Option<usize>,
-        trailing: bool,
     },
     CopyTo {
         property: NodeId,
@@ -483,8 +478,6 @@ impl TaxonomiesView {
             node,
             field,
             cursor,
-            preferred_column: None,
-            trailing: false,
         };
     }
 
@@ -500,8 +493,6 @@ impl TaxonomiesView {
             node,
             field,
             cursor,
-            preferred_column,
-            trailing,
         } = &mut self.mode
         else {
             return Ok(());
@@ -513,40 +504,22 @@ impl TaxonomiesView {
         };
         let text = library.text(node, *field).unwrap_or_default();
         let length = text.graphemes(true).count();
-        let multiline = *field == DraftField::Example;
         let next = match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Nav;
                 return Ok(());
             }
-            KeyCode::Enter if !multiline || key.modifiers.contains(KeyModifiers::ALT) => {
-                Some((position + 1) % fields.len())
-            }
-            KeyCode::Down if !multiline => Some((position + 1).min(fields.len() - 1)),
-            KeyCode::Up if !multiline => Some(position.saturating_sub(1)),
+            KeyCode::Enter => Some((position + 1) % fields.len()),
+            KeyCode::Down => Some((position + 1).min(fields.len() - 1)),
+            KeyCode::Up => Some(position.saturating_sub(1)),
             _ => None,
         };
         if let Some(next) = next {
-            *preferred_column = None;
-            *trailing = false;
             *field = fields[next];
             *cursor = library
                 .text(node, *field)
                 .map_or(0, |text| text.graphemes(true).count());
             return Ok(());
-        }
-        if multiline && matches!(key.code, KeyCode::Up | KeyCode::Down) {
-            *cursor = text_layout::TextLayout::new(text, self.example_width.max(1)).vertical(
-                *cursor,
-                key.code == KeyCode::Down,
-                preferred_column,
-                trailing,
-            );
-            return Ok(());
-        }
-        *preferred_column = None;
-        if !matches!(key.code, KeyCode::Home | KeyCode::End) {
-            *trailing = false;
         }
         let (range, insert) = match key.code {
             KeyCode::PageUp => {
@@ -577,28 +550,13 @@ impl TaxonomiesView {
                 return Ok(());
             }
             KeyCode::Home => {
-                if multiline && !key.modifiers.contains(KeyModifiers::CONTROL) {
-                    (*cursor, *trailing) =
-                        text_layout::TextLayout::new(text, self.example_width.max(1))
-                            .edge(*cursor, false, *trailing);
-                } else {
-                    *cursor = 0;
-                    *trailing = false;
-                }
+                *cursor = 0;
                 return Ok(());
             }
             KeyCode::End => {
-                if multiline && !key.modifiers.contains(KeyModifiers::CONTROL) {
-                    (*cursor, *trailing) =
-                        text_layout::TextLayout::new(text, self.example_width.max(1))
-                            .edge(*cursor, true, *trailing);
-                } else {
-                    *cursor = length;
-                    *trailing = false;
-                }
+                *cursor = length;
                 return Ok(());
             }
-            KeyCode::Enter if multiline => (*cursor..*cursor, "\n".to_owned()),
             KeyCode::Backspace if *cursor > 0 => (*cursor - 1..*cursor, String::new()),
             KeyCode::Delete if *cursor < length => (*cursor..*cursor + 1, String::new()),
             KeyCode::Char(character)
@@ -624,8 +582,6 @@ impl TaxonomiesView {
             node,
             field,
             cursor,
-            preferred_column,
-            trailing,
         } = &mut self.mode
         else {
             return Ok(());
@@ -633,18 +589,12 @@ impl TaxonomiesView {
         let (Some(text), Some(limit)) = (library.text(node, *field), field.limit()) else {
             return Ok(());
         };
-        let pasted = if *field == DraftField::Example {
-            std::borrow::Cow::Owned(pasted.replace("\r\n", "\n").replace('\r', "\n"))
-        } else {
-            single_line(pasted)
-        };
+        let pasted = single_line(pasted);
         let room = limit.saturating_sub(text.graphemes(true).count());
         let insert = pasted.graphemes(true).take(room).collect::<String>();
         let (text, at) = splice(text, *cursor..*cursor, &insert);
         let applied = library.edit(node, DraftEdit::Text(*field, &text));
         if applied.is_ok() {
-            *preferred_column = None;
-            *trailing = false;
             *cursor = at;
         }
         if applied.is_err() || insert.len() < pasted.len() {
@@ -681,10 +631,6 @@ impl TaxonomiesView {
         let outline_height = area.height.div_ceil(2);
         let [outline_area, inspector_area] =
             Layout::vertical([Constraint::Length(outline_height), Constraint::Min(0)]).areas(area);
-        self.example_width = inspector::value_width(
-            usize::from(inspector_area.width.saturating_sub(4)),
-            DraftField::Example.limit(),
-        );
         let Some(library) = library else {
             self.summary_scroll.reset();
             self.outline_area = Rect::default();
@@ -728,12 +674,10 @@ impl TaxonomiesView {
                     node: edited,
                     field,
                     cursor,
-                    trailing,
                     ..
                 } if edited == node.id() => Some(inspector::Focus {
                     field: *field,
                     cursor: Some(*cursor),
-                    trailing: *trailing,
                 }),
                 _ => None,
             };
@@ -791,15 +735,7 @@ impl TaxonomiesView {
             };
             chip.push(Span::raw(format!(" · {kind}")));
             let built_in = node.taxonomy().origin() == TaxonomyOrigin::BuiltIn;
-            if matches!(
-                self.mode,
-                Mode::Edit {
-                    field: DraftField::Example,
-                    ..
-                }
-            ) {
-                hints.extend([("↵", "line"), ("alt+↵", "next"), ("esc", "done")]);
-            } else if editing {
+            if editing {
                 hints.extend([("enter", "next field"), ("esc", "done")]);
             } else if !built_in && matches!(node, NodeRef::Property { .. }) {
                 hints.extend([("e", "edit"), ("c", "copy to…")]);

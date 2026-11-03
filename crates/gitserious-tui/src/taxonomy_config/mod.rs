@@ -3623,13 +3623,7 @@ mod tests {
             terminal.draw(|frame| state.render(frame))?;
             assert!(rows(&terminal).join("\n").contains("5/80"));
             press(&mut state, &workspace, &[KeyCode::Enter]);
-            assert_eq!(field(&state), Some(DraftField::Example));
-            state.handle_event(
-                Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
-                &workspace,
-            );
             assert_eq!(field(&state), Some(DraftField::Name));
-
             press(&mut state, &workspace, &[KeyCode::Esc]);
             assert_eq!(field(&state), None);
             assert!(matches!(state.screen, Screen::Home));
