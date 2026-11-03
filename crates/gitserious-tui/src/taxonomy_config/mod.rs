@@ -150,8 +150,6 @@ impl ConfigView {
 pub(crate) enum ShellKeys {
     /// The shell switches sections on tab, goes Home on esc, and quits on q.
     Navigation,
-    /// The shell switches sections on tab; esc and q belong to the field being edited.
-    TabsOnly,
     None,
 }
 
@@ -480,7 +478,7 @@ impl State {
             return false;
         }
         if let Event::Mouse(mouse) = event {
-            if self.too_small || self.taxonomies.shell_keys() == ShellKeys::None {
+            if self.too_small || self.taxonomies.picker_hints().is_some() {
                 return false;
             }
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {

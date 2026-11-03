@@ -299,10 +299,7 @@ impl Shell {
             }
             if self.section == Section::Config {
                 match (self.config.shell_keys(), key.code) {
-                    (
-                        ShellKeys::Navigation | ShellKeys::TabsOnly,
-                        KeyCode::Tab | KeyCode::BackTab,
-                    ) => {
+                    (ShellKeys::Navigation, KeyCode::Tab | KeyCode::BackTab) => {
                         return self.execute(
                             Action::Select(self.section.next(key.code == KeyCode::BackTab)),
                             workspace,
@@ -1026,23 +1023,27 @@ mod tests {
     }
 
     #[test]
-    fn config_edit_keeps_tab_and_gives_esc_and_q_to_the_field() {
+    fn config_edit_locks_tabs_and_gives_esc_and_q_to_the_field() {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
         shell.handle_event(key(KeyCode::Char('2')), &services, &[]);
         shell.handle_event(key(KeyCode::Char('n')), &services, &[]);
-        assert_eq!(shell.config.shell_keys(), ShellKeys::TabsOnly);
+        assert_eq!(shell.config.shell_keys(), ShellKeys::None);
         shell.handle_event(key(KeyCode::Char('q')), &services, &[]);
         assert_eq!(shell.section, Section::Config);
         assert!(shell.overlay.is_none());
+        for code in [KeyCode::Tab, KeyCode::BackTab] {
+            shell.handle_event(key(code), &services, &[]);
+            assert_eq!(shell.section, Section::Config);
+            assert_eq!(shell.config.shell_keys(), ShellKeys::None);
+        }
+        shell.handle_event(key(KeyCode::Esc), &services, &[]);
+        assert_eq!(shell.section, Section::Config);
+        assert_eq!(shell.config.shell_keys(), ShellKeys::Navigation);
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
         assert_eq!(shell.section, Section::Help);
         shell.handle_event(key(KeyCode::BackTab), &services, &[]);
         assert_eq!(shell.section, Section::Config);
-        assert_eq!(shell.config.shell_keys(), ShellKeys::TabsOnly);
-        shell.handle_event(key(KeyCode::Esc), &services, &[]);
-        assert_eq!(shell.section, Section::Config);
-        assert_eq!(shell.config.shell_keys(), ShellKeys::Navigation);
         assert!(shell.config.dirty());
         shell.handle_event(key(KeyCode::Char('q')), &services, &[]);
         assert!(matches!(shell.overlay, Some(Overlay::QuitConfirm)));
