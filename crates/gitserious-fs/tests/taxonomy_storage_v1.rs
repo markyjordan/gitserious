@@ -89,7 +89,7 @@ fn retired_examples_load_without_writing_and_disappear_on_save() -> Result<(), B
             )?],
         )?],
     )?;
-    let global = GlobalConfiguration::new(1, id.clone(), vec![id], vec![taxonomy])?;
+    let global = GlobalConfiguration::new(1, id.clone(), vec![id], vec![taxonomy.into()])?;
     store.compare_and_swap(&before, &global)?;
     let path = directory.path().join("library/config.toml");
     let clean = fs::read_to_string(&path)?;

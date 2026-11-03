@@ -108,7 +108,7 @@ impl LibraryDraft {
     pub fn changes(&self) -> ChangeSet {
         let stored = built_in_taxonomies()
             .iter()
-            .map(|taxonomy| TaxonomyNode::new(taxonomy, TaxonomyOrigin::BuiltIn))
+            .map(|taxonomy| TaxonomyNode::new(&taxonomy.clone().into(), TaxonomyOrigin::BuiltIn))
             .chain(
                 self.persisted
                     .custom_taxonomies()

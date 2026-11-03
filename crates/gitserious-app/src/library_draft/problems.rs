@@ -4,15 +4,14 @@ use std::fmt::{self, Display, Formatter};
 
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, LabelError, PropertyCondition,
-    PropertyDefinition, PropertyKey, PropertyRequirement, Taxonomy, TaxonomyId,
-    built_in_taxonomies,
+    PropertyDefinition, PropertyKey, PropertyRequirement, TaxonomyId, built_in_taxonomies,
 };
 
 use super::{
     DraftField, LibraryDraft, LoadedPath, NodeId, Policy, PropertyNode, TaxonomyNode, TypeNode,
 };
 use crate::taxonomy_policy::validate_selection;
-use crate::{ConfigurationError, GlobalConfiguration, TaxonomyOrigin};
+use crate::{ConfigurationError, GlobalConfiguration, LibraryTaxonomy, TaxonomyOrigin};
 
 /// Where a problem sits.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -109,7 +108,7 @@ pub(super) fn build(draft: &LibraryDraft) -> Result<GlobalConfiguration, Vec<Pro
 
 /// Every custom taxonomy that builds, with its index in the draft, and the problems of the
 /// ones that do not.
-pub(super) fn custom(draft: &LibraryDraft) -> (Vec<(usize, Taxonomy)>, Vec<Problem>) {
+pub(super) fn custom(draft: &LibraryDraft) -> (Vec<(usize, LibraryTaxonomy)>, Vec<Problem>) {
     let mut problems = Vec::new();
     let mut taken = draft
         .taxonomies
@@ -146,12 +145,13 @@ pub(super) fn custom(draft: &LibraryDraft) -> (Vec<(usize, Taxonomy)>, Vec<Probl
         match (id, content(draft, taxonomy), draft.version(&taxonomy.id)) {
             (Some(id), Ok((description, types)), Some(version)) if problems.len() == before => {
                 custom.extend(
-                    Taxonomy::new(
+                    LibraryTaxonomy::new(
                         id,
                         version,
                         description,
                         taxonomy.derived_from.clone(),
                         types,
+                        taxonomy.name_locked,
                     )
                     .ok()
                     .map(|built| (index, built)),
@@ -193,12 +193,6 @@ pub(super) fn content(
         &mut problems,
     )
     .and_then(|description| Description::new(description).ok());
-    if taxonomy.types.is_empty() {
-        problems.push(Problem {
-            site: ProblemSite::Node(taxonomy.id.clone()),
-            kind: ProblemKind::NoTypes,
-        });
-    }
     let mut taken = Vec::new();
     let types = taxonomy
         .types
@@ -348,15 +342,23 @@ fn loaded<'a>(
     field: DraftField,
 ) -> Option<&'a str> {
     let (taxonomy, rest) = baseline?.names().split_first()?;
-    let taxonomy = built_in_taxonomies()
+    let (description, types) = if let Some(stored) = draft
+        .persisted
+        .custom_taxonomies()
         .iter()
-        .chain(draft.persisted.custom_taxonomies())
-        .find(|stored| stored.id().as_str() == taxonomy)?;
-    let Some((commit_type, rest)) = rest.split_first() else {
-        return Some(taxonomy.description().as_str());
+        .find(|stored| stored.id().as_str() == taxonomy)
+    {
+        (stored.description(), stored.commit_types())
+    } else {
+        let stored = built_in_taxonomies()
+            .iter()
+            .find(|stored| stored.id().as_str() == taxonomy)?;
+        (stored.description(), stored.commit_types())
     };
-    let commit_type = taxonomy
-        .commit_types()
+    let Some((commit_type, rest)) = rest.split_first() else {
+        return Some(description.as_str());
+    };
+    let commit_type = types
         .iter()
         .find(|stored| stored.id().as_str() == commit_type)?;
     let Some(key) = rest.first() else {

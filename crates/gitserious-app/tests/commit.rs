@@ -520,7 +520,12 @@ fn custom_taxonomy_commits_with_its_own_schema() -> Result<(), Box<dyn Error>> {
         )?],
     )?;
     let config = ProjectConfig::new(1, Some(ops.id().clone()), Some(vec![ops.id().clone()]))?;
-    let library = GlobalConfiguration::new(1, ops.id().clone(), vec![ops.id().clone()], vec![ops])?;
+    let library = GlobalConfiguration::new(
+        1,
+        ops.id().clone(),
+        vec![ops.id().clone()],
+        vec![ops.into()],
+    )?;
     let lock = ProjectLock::capture(
         &config,
         &resolve_effective_configuration(&library, &config)?,

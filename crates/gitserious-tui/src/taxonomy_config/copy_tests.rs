@@ -57,7 +57,7 @@ fn team() -> Result<Workspace, Box<dyn std::error::Error>> {
         1,
         conventional.clone(),
         vec![conventional],
-        vec![team],
+        vec![team.into()],
     )?);
     Ok(workspace)
 }

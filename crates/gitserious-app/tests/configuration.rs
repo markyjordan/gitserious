@@ -53,7 +53,12 @@ fn at_version(original: &Taxonomy, version: u16, description: &str) -> Taxonomy 
 }
 
 fn library(custom: Vec<Taxonomy>) -> Result<GlobalConfiguration, ConfigurationError> {
-    GlobalConfiguration::new(1, id("conventional"), built_in_ids(), custom)
+    GlobalConfiguration::new(
+        1,
+        id("conventional"),
+        built_in_ids(),
+        custom.into_iter().map(Into::into).collect(),
+    )
 }
 
 fn draft(session: &mut ConfigurationSession) -> &mut LibraryDraft {
@@ -221,7 +226,7 @@ fn created_taxonomies_are_queryable_as_custom_library_entries() -> Result<(), Bo
 
     assert_eq!(
         built(&session).custom_taxonomies(),
-        std::slice::from_ref(&expected)
+        std::slice::from_ref(&gitserious_app::LibraryTaxonomy::from(expected.clone()))
     );
     assert_eq!(session.catalog()?.find(&id("team")), Some(&expected));
     assert_eq!(
@@ -306,7 +311,7 @@ fn each_applied_edit_advances_the_version_by_one() -> Result<(), Box<dyn Error>>
 
     assert_eq!(
         store.current.borrow().custom_taxonomies(),
-        [at_version(&original, 3, "Third revision.")]
+        [at_version(&original, 3, "Third revision.").into()]
     );
     Ok(())
 }
@@ -335,7 +340,10 @@ fn deletes_refuse_built_ins_and_a_selected_taxonomy_does_not_build_until_unselec
         1,
         id("conventional"),
         available,
-        vec![custom("team"), custom("spare")],
+        vec![custom("team"), custom("spare")]
+            .into_iter()
+            .map(Into::into)
+            .collect(),
     )?;
     let mut session = ConfigurationSession::open_global(global);
 
@@ -638,7 +646,10 @@ fn reviewed_global_sessions_save_one_snapshot_and_reject_concurrent_changes()
         Ok(())
     })?;
     assert_eq!(store.swaps.get(), 1);
-    assert_eq!(store.current.borrow().custom_taxonomies(), [custom("team")]);
+    assert_eq!(
+        store.current.borrow().custom_taxonomies(),
+        [custom("team").into()]
+    );
 
     let stale = FakeGlobalStore::new(GlobalConfiguration::default());
     let error = edit_global(&stale, |workspace| {
@@ -651,7 +662,7 @@ fn reviewed_global_sessions_save_one_snapshot_and_reject_concurrent_changes()
     assert!(error.contains("changed while editing"), "{error}");
     assert_eq!(
         stale.current.borrow().custom_taxonomies(),
-        [custom("other")]
+        [custom("other").into()]
     );
     Ok(())
 }

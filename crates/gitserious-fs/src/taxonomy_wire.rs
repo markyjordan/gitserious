@@ -1,4 +1,4 @@
-use gitserious_app::ConfigurationError;
+use gitserious_app::{ConfigurationError, LibraryTaxonomy};
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
     PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion, Taxonomy, TaxonomyId,
@@ -15,6 +15,8 @@ pub(crate) struct TaxonomyWire {
     #[serde(skip_serializing_if = "Option::is_none")]
     derived_from: Option<LineageWire>,
     commit_types: Vec<CommitTypeWire>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name_locked: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -56,7 +58,12 @@ enum RequirementWire {
 }
 
 pub(crate) fn taxonomy_to_wire(taxonomy: &Taxonomy) -> TaxonomyWire {
+    library_taxonomy_to_wire(&taxonomy.clone().into())
+}
+
+pub(crate) fn library_taxonomy_to_wire(taxonomy: &LibraryTaxonomy) -> TaxonomyWire {
     TaxonomyWire {
+        name_locked: (!taxonomy.name_locked()).then_some(false),
         id: taxonomy.id().to_string(),
         version: taxonomy.version().get(),
         description: taxonomy.description().to_string(),
@@ -99,6 +106,18 @@ fn property_to_wire(property: &PropertyDefinition) -> PropertyWire {
 }
 
 pub(crate) fn taxonomy_from_wire(wire: TaxonomyWire, location: &str) -> Result<Taxonomy, String> {
+    if wire.name_locked.is_some() {
+        return Err(format!("{location}: name-locked belongs to the Library"));
+    }
+    library_taxonomy_from_wire(wire, location)?
+        .usable()
+        .ok_or_else(|| format!("{location}: taxonomy must contain at least one commit type"))
+}
+
+pub(crate) fn library_taxonomy_from_wire(
+    wire: TaxonomyWire,
+    location: &str,
+) -> Result<LibraryTaxonomy, String> {
     let id = TaxonomyId::new(wire.id).map_err(|error| format!("{location}.id: {error}"))?;
     let version = TaxonomyVersion::new(wire.version)
         .map_err(|error| format!("{location}.version: {error}"))?;
@@ -122,8 +141,15 @@ pub(crate) fn taxonomy_from_wire(wire: TaxonomyWire, location: &str) -> Result<T
             commit_type_from_wire(definition, &format!("{location}.commit-types[{index}]"))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Taxonomy::new(id, version, description, derived_from, commit_types)
-        .map_err(|error| format!("{location}: {error}"))
+    LibraryTaxonomy::new(
+        id,
+        version,
+        description,
+        derived_from,
+        commit_types,
+        wire.name_locked.unwrap_or(true),
+    )
+    .map_err(|error| format!("{location}: {error}"))
 }
 
 fn commit_type_from_wire(

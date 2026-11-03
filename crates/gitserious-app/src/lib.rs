@@ -11,6 +11,8 @@ mod global_paths;
 mod initialize_taxonomy_project;
 mod interactive;
 mod library_draft;
+mod library_taxonomy;
+pub use library_taxonomy::LibraryTaxonomy;
 mod repository_locator;
 mod repository_status;
 mod resolve_global_paths;

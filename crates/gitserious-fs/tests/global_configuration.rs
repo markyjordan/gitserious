@@ -32,7 +32,7 @@ fn custom_configuration() -> Result<GlobalConfiguration, Box<dyn Error>> {
         1,
         team.clone(),
         available,
-        vec![fork],
+        vec![fork.into()],
     )?)
 }
 
@@ -243,5 +243,105 @@ fn new_configuration_directory_requests_private_unix_permissions() -> Result<(),
         .mode()
         & 0o777;
     assert_eq!(mode, 0o700);
+    Ok(())
+}
+
+fn empty_record(
+    name: &str,
+    locked: bool,
+) -> Result<gitserious_app::LibraryTaxonomy, Box<dyn Error>> {
+    Ok(gitserious_app::LibraryTaxonomy::new(
+        TaxonomyId::new(name)?,
+        TaxonomyVersion::V1,
+        gitserious_core::Description::new("A Library entry awaiting its first type.")?,
+        None,
+        Vec::new(),
+        locked,
+    )?)
+}
+
+#[test]
+fn zero_types_round_trip_without_entering_the_usable_catalog() -> Result<(), Box<dyn Error>> {
+    let temporary = TempDir::new()?;
+    let disk = store(temporary.path());
+    let initial = GlobalConfiguration::default();
+    let replacement = GlobalConfiguration::new(
+        1,
+        initial.default_taxonomy().clone(),
+        initial.available_taxonomies().to_vec(),
+        vec![empty_record("unfinished", false)?],
+    )?;
+    disk.compare_and_swap(&initial, &replacement)?;
+    let reopened = store(temporary.path()).load()?;
+    assert_eq!(reopened, replacement);
+    assert!(
+        reopened
+            .catalog()?
+            .find(&TaxonomyId::new("unfinished")?)
+            .is_none()
+    );
+    assert_eq!(reopened.catalog()?.taxonomies().len(), 3);
+    let contents = fs::read_to_string(disk.path())?;
+    assert!(contents.contains("name-locked = false"));
+    assert!(contents.contains("commit-types = []"));
+    assert!(!has_temporary_files(&temporary.path().join("config"))?);
+    assert_eq!(fs::read_dir(temporary.path().join("config"))?.count(), 1);
+    Ok(())
+}
+
+#[test]
+fn absent_name_metadata_defaults_to_locked_even_without_types() -> Result<(), Box<dyn Error>> {
+    let temporary = TempDir::new()?;
+    let disk = store(temporary.path());
+    write_config(
+        temporary.path(),
+        "config-version = 1\ndefault-taxonomy = \"conventional\"\navailable-taxonomies = [\"conventional\"]\n[[taxonomies]]\nid = \"unfinished\"\nversion = 1\ndescription = \"Existing entry\"\ncommit-types = []\n",
+    )?;
+    let global = disk.load()?;
+    assert!(global.custom_taxonomies()[0].name_locked());
+    assert!(global.custom_taxonomies()[0].commit_types().is_empty());
+    disk.compare_and_swap(&global, &global)?;
+    assert!(!fs::read_to_string(disk.path())?.contains("name-locked"));
+    Ok(())
+}
+
+#[test]
+fn eligibility_changes_keep_selection_and_durable_name_locking() -> Result<(), Box<dyn Error>> {
+    use gitserious_app::{DraftEdit, DraftField, LibraryDraft};
+    let temporary = TempDir::new()?;
+    let disk = store(temporary.path());
+    let initial = custom_configuration()?;
+    disk.compare_and_swap(&GlobalConfiguration::default(), &initial)?;
+    let original = &initial.custom_taxonomies()[0];
+    let empty = gitserious_app::LibraryTaxonomy::new(
+        original.id().clone(),
+        TaxonomyVersion::new(2)?,
+        original.description().clone(),
+        original.derived_from().cloned(),
+        Vec::new(),
+        original.name_locked(),
+    )?;
+    let replacement = GlobalConfiguration::new(
+        1,
+        initial.default_taxonomy().clone(),
+        initial.available_taxonomies().to_vec(),
+        vec![empty],
+    )?;
+    disk.compare_and_swap(&initial, &replacement)?;
+    let reopened = disk.load()?;
+    assert_eq!(reopened.default_taxonomy(), initial.default_taxonomy());
+    assert_eq!(
+        reopened.available_taxonomies(),
+        initial.available_taxonomies()
+    );
+    assert!(reopened.custom_taxonomies()[0].name_locked());
+    assert!(reopened.catalog()?.find(original.id()).is_none());
+    let mut draft = LibraryDraft::from_configuration(reopened);
+    let node = draft.find_path(&["team"]).ok_or("missing empty entry")?;
+    assert_eq!(
+        draft.edit(&node, DraftEdit::Text(DraftField::Name, "renamed")),
+        Err(gitserious_app::EditRefusal::NameLocked)
+    );
+    assert!(draft.build().is_ok());
     Ok(())
 }

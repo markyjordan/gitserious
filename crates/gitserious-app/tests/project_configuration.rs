@@ -37,7 +37,7 @@ fn with_team() -> GlobalConfiguration {
         source.commit_types().to_vec(),
     )
     .expect("valid test taxonomy");
-    GlobalConfiguration::new(1, id("conventional"), available, vec![team])
+    GlobalConfiguration::new(1, id("conventional"), available, vec![team.into()])
         .expect("valid global configuration")
 }
 
