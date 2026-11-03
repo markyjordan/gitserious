@@ -3,6 +3,7 @@
 //! Seeds cover blank creation, forks, existing fields, conditional policy, limits and copies.
 //! Every transition checks modal editing, direct persistence, deletion confirmation, saved
 //! eligibility badges, name locking, field limits, inline messages and copy independence.
+//! At most one taxonomy root is expanded, while type expansion can be remembered independently.
 //! The existing breadth-first runner deduplicates snapshots and reports shortest counterexamples.
 //! Mouse, resize, write failures and the embedded shell are covered by interaction tests.
 
@@ -134,6 +135,21 @@ struct Reach {
 const SUMMARY: &[&str] = &["team", "release", "summary"];
 
 const SEEDS: &[Seed] = &[
+    Seed {
+        name: "an earlier root selected while a later root is expanded",
+        workspace: built_ins,
+        start: Start::Keys {
+            keys: &["2", "down", "enter", "up"],
+            ready: |snapshot| {
+                at_outline(snapshot)
+                    && selects(snapshot, &["conventional"])
+                    && snapshot.taxonomies.expanded.len() == 1
+            },
+        },
+        depth: 2,
+        alphabet: Alphabet::Every,
+        reaches: &[],
+    },
     Seed {
         name: "built-ins at Taxonomies",
         workspace: built_ins,
@@ -574,6 +590,10 @@ type Check = fn(&Snapshot, &Event, Option<&Snapshot>) -> Result<(), String>;
 
 const PROPERTIES: &[(&str, Check)] = &[
     (
+        "P14, at most one taxonomy root is expanded",
+        at_most_one_taxonomy_root_is_expanded,
+    ),
+    (
         "P13, browsing arrows never edit a policy",
         browsing_arrows_keep_policies,
     ),
@@ -622,6 +642,31 @@ const PROPERTIES: &[(&str, Check)] = &[
         a_copy_and_its_source_change_apart,
     ),
 ];
+
+fn at_most_one_taxonomy_root_is_expanded(
+    _: &Snapshot,
+    _: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    let Some(after) = after else {
+        return Ok(());
+    };
+    let Some(library) = after.library() else {
+        return Ok(());
+    };
+    let expanded = library
+        .taxonomies()
+        .iter()
+        .filter(|taxonomy| after.taxonomies.expanded.contains(taxonomy.id()))
+        .map(TaxonomyNode::name)
+        .collect::<Vec<_>>();
+    if expanded.len() > 1 {
+        return Err(format!(
+            "Multiple taxonomy roots are expanded: {expanded:?}."
+        ));
+    }
+    Ok(())
+}
 
 fn answer(choices: &[confirmation::Choice], input: &Event) -> Option<Answer> {
     ConfirmDialog::default().handle_event(choices, input)
