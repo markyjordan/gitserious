@@ -524,26 +524,6 @@ pub fn fingerprint_taxonomy(taxonomy: &Taxonomy) -> Fingerprint {
     for definition in taxonomy.commit_types() {
         fingerprint_commit_type(&mut canonical, definition);
     }
-    let examples = taxonomy
-        .commit_types()
-        .iter()
-        .flat_map(|definition| {
-            definition.properties().iter().filter_map(move |property| {
-                property
-                    .example()
-                    .map(|example| (definition.id(), property.key(), example))
-            })
-        })
-        .collect::<Vec<_>>();
-    if !examples.is_empty() {
-        canonical.text("gitserious.taxonomy.examples.v1");
-        canonical.usize(examples.len());
-        for (commit_type, property, example) in examples {
-            canonical.text(commit_type.as_str());
-            canonical.text(property.as_str());
-            canonical.text(example.as_str());
-        }
-    }
     canonical.finish()
 }
 

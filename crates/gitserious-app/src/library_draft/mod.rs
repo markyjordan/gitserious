@@ -3,9 +3,7 @@
 //! A draft may hold text that does not build, such as a blank name; `problems` reports it and
 //! `build` refuses it. `edit`, `create_taxonomy`, and `fork` are the only writers. Versions,
 //! problems, changes, and whether the draft differs from what it was loaded from are derived on
-//! each call. History is not: after each edit and fork, every custom taxonomy that builds
-//! records that build as its last valid one, which a preview names while the taxonomy has
-//! problems.
+//! each call.
 //!
 //! A property copied in this session names the type it was copied from; the configuration does
 //! not store that, so it is gone once the Library is applied and loaded again.
@@ -14,8 +12,6 @@
 //! a node id across rebuilds. A node created in this session gets a local id that is never reused.
 
 mod changes;
-mod examples;
-mod preview;
 mod problems;
 
 use std::error::Error;
@@ -30,8 +26,6 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{ConfigurationError, GlobalConfiguration, TaxonomyOrigin};
 pub use changes::{ChangeSet, Mark};
-use examples::ExampleDraft;
-pub use preview::{Preview, Schema};
 pub use problems::{Problem, ProblemKind, ProblemSite};
 
 /// The identity of one taxonomy, type, or property draft. Never persisted.
@@ -120,7 +114,6 @@ pub enum DraftField {
     Policy,
     Condition,
     Rationale,
-    Example,
 }
 
 impl DraftField {
@@ -132,7 +125,6 @@ impl DraftField {
             Self::Policy => "Policy",
             Self::Condition => "Condition",
             Self::Rationale => "Rationale",
-            Self::Example => "Example",
         }
     }
 
@@ -143,7 +135,6 @@ impl DraftField {
             Self::Name | Self::Condition => Some(NAME_LIMIT),
             Self::Description | Self::Rationale => Some(100),
             Self::Policy => None,
-            Self::Example => Some(4096),
         }
     }
 }
@@ -158,7 +149,6 @@ const PROPERTY_FIELDS: &[DraftField] = &[
     DraftField::Name,
     DraftField::Description,
     DraftField::Policy,
-    DraftField::Example,
 ];
 const CONDITIONAL_PROPERTY_FIELDS: &[DraftField] = &[
     DraftField::Name,
@@ -166,7 +156,6 @@ const CONDITIONAL_PROPERTY_FIELDS: &[DraftField] = &[
     DraftField::Policy,
     DraftField::Condition,
     DraftField::Rationale,
-    DraftField::Example,
 ];
 
 /// One change to one node.
@@ -235,9 +224,6 @@ pub struct TaxonomyNode {
     version: TaxonomyVersion,
     derived_from: Option<TaxonomyLineage>,
     types: Vec<TypeNode>,
-    /// The last build of this custom taxonomy that had no problems: as loaded, or as the latest
-    /// write that left it building. None for a built-in, and until a new taxonomy first builds.
-    last_valid: Option<Taxonomy>,
 }
 
 impl TaxonomyNode {
@@ -257,7 +243,6 @@ impl TaxonomyNode {
                 .iter()
                 .map(|commit_type| TypeNode::new(name, commit_type))
                 .collect(),
-            last_valid: (origin == TaxonomyOrigin::Custom).then(|| taxonomy.clone()),
         }
     }
 
@@ -367,7 +352,6 @@ pub struct PropertyNode {
     condition: String,
     rationale: String,
     copied_from: Option<NodeId>,
-    example: ExampleDraft,
 }
 
 impl PropertyNode {
@@ -393,10 +377,6 @@ impl PropertyNode {
             condition,
             rationale,
             copied_from: None,
-            example: property.example().map_or_else(
-                || ExampleDraft::LegacyMissing(String::new()),
-                |example| ExampleDraft::Authored(example.as_str().to_owned()),
-            ),
         }
     }
 
@@ -517,15 +497,13 @@ impl LibraryDraft {
             .iter()
             .map(|taxonomy| TaxonomyNode::new(taxonomy, TaxonomyOrigin::Custom));
         let taxonomies = built_in.chain(custom).collect();
-        let mut draft = Self {
+        Self {
             default: configuration.default_taxonomy().clone(),
             available: configuration.available_taxonomies().to_vec(),
             persisted: configuration,
             taxonomies,
             next_local: 0,
-        };
-        draft.refresh_implicit_examples();
-        draft
+        }
     }
 
     /// The configuration this draft was loaded from.
@@ -667,9 +645,6 @@ impl LibraryDraft {
             (DraftField::Condition, NodeRef::Property { property, .. }) => {
                 Some(&property.condition)
             }
-            (DraftField::Example, NodeRef::Property { property, .. }) => {
-                Some(property.example.text())
-            }
             (DraftField::Rationale, NodeRef::Property { property, .. }) => {
                 Some(&property.rationale)
             }
@@ -744,21 +719,6 @@ impl LibraryDraft {
     /// Applies one edit and returns the node a cursor should land on: the edited node, the new
     /// child, or after `Remove` the next sibling, else the previous one, else the parent.
     pub fn edit(&mut self, id: &NodeId, edit: DraftEdit<'_>) -> Result<NodeId, EditRefusal> {
-        let landing = self.apply(id, edit)?;
-        self.refresh_implicit_examples();
-        self.record_valid_builds();
-        Ok(landing)
-    }
-
-    /// Records each custom taxonomy's build as its last valid one where it builds. An edit to
-    /// one taxonomy can fix another, such as a rename that frees the other's name.
-    fn record_valid_builds(&mut self) {
-        for (index, built) in problems::custom(self).0 {
-            self.taxonomies[index].last_valid = Some(built);
-        }
-    }
-
-    fn apply(&mut self, id: &NodeId, edit: DraftEdit<'_>) -> Result<NodeId, EditRefusal> {
         let node = self.node(id).ok_or(EditRefusal::Missing)?;
         if node.taxonomy().origin == TaxonomyOrigin::BuiltIn {
             return Err(EditRefusal::ReadOnly);
@@ -801,7 +761,6 @@ impl LibraryDraft {
                         condition: String::new(),
                         rationale: String::new(),
                         copied_from: None,
-                        example: ExampleDraft::Generated(String::new()),
                     });
                     Ok(id)
                 }
@@ -901,15 +860,7 @@ impl LibraryDraft {
         if current == text {
             return Ok(id.clone());
         }
-        if field == DraftField::Example {
-            let Address::Property(t, c, p) = address else {
-                return Err(EditRefusal::NotApplicable);
-            };
-            self.taxonomies[t].types[c].properties[p].example =
-                ExampleDraft::Authored(text.to_owned());
-        } else {
-            text.clone_into(self.text_mut(address, field));
-        }
+        text.clone_into(self.text_mut(address, field));
         Ok(id.clone())
     }
 
@@ -925,7 +876,6 @@ impl LibraryDraft {
                     DraftField::Name => &mut property.name,
                     DraftField::Condition => &mut property.condition,
                     DraftField::Rationale => &mut property.rationale,
-                    DraftField::Example => property.example.text_mut(),
                     DraftField::Description | DraftField::Policy => &mut property.description,
                 }
             }
@@ -952,7 +902,6 @@ impl LibraryDraft {
             version: TaxonomyVersion::V1,
             derived_from: None,
             types: Vec::new(),
-            last_valid: None,
         });
         id
     }
@@ -973,7 +922,6 @@ impl LibraryDraft {
         fork.name = source.name.graphemes(true).take(room).collect::<String>() + FORK_SUFFIX;
         fork.version = TaxonomyVersion::V1;
         fork.derived_from = Some(lineage);
-        fork.last_valid = None;
         fork.id = self.mint();
         for commit_type in &mut fork.types {
             commit_type.id = self.mint();
@@ -984,8 +932,6 @@ impl LibraryDraft {
         }
         let id = fork.id.clone();
         self.taxonomies.push(fork);
-        self.refresh_implicit_examples();
-        self.record_valid_builds();
         Ok(id)
     }
 }

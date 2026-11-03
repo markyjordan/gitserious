@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use gitserious_app::{DraftField, NodeRef, Policy, Preview, ProblemSite, TaxonomyOrigin};
+use gitserious_app::{DraftField, NodeRef, Policy, ProblemSite, TaxonomyOrigin};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -18,16 +18,12 @@ const CURSOR: Style = Style::new().add_modifier(Modifier::REVERSED);
 const PROBLEM: Style = Style::new().fg(Color::Red);
 const PLACEHOLDER: Style = DIM.add_modifier(Modifier::ITALIC);
 const PLACEHOLDER_TEXT: &str = "when does this apply?";
-const SAMPLE_BAND: Style = Style::new().bg(Color::Rgb(20, 44, 24));
-const SAMPLE_KEY: Style = Style::new().fg(Color::Green).add_modifier(Modifier::BOLD);
-const SUBJECT: Style = Style::new().fg(Color::White).add_modifier(Modifier::BOLD);
 
 /// The field a row is focused on and, while it is edited, the cursor's grapheme index.
 #[derive(Clone, Copy)]
 pub(super) struct Focus {
     pub(super) field: DraftField,
     pub(super) cursor: Option<usize>,
-    pub(super) trailing: bool,
 }
 
 /// The rows of the focused field: `band` is the field itself, and `view` adds the problems
@@ -40,7 +36,7 @@ struct Focused {
 
 /// Describes `node` in words under a header with its chip, scrolled down by `offset` rows. The
 /// focused field never sits below the view, and while it is edited it stays in view with its
-/// problems; in NAV the rows past it, such as a property's preview, scroll into view.
+/// problems; browsing can scroll through the remaining details.
 pub(super) fn render(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -188,7 +184,7 @@ fn describe(
                 field,
                 text,
                 limit,
-                focus.and_then(|focus| focus.cursor.map(|cursor| (cursor, focus.trailing))),
+                focus.and_then(|focus| focus.cursor),
                 !problems.is_empty(),
                 width,
             ));
@@ -252,9 +248,6 @@ fn describe(
                 show(&mut lines, DraftField::Condition);
                 show(&mut lines, DraftField::Rationale);
             }
-            if focus.is_some() && !editable.is_empty() {
-                show(&mut lines, DraftField::Example);
-            }
         }
     }
     for problem in chips.sentences(&ProblemSite::Node(id.clone())) {
@@ -268,11 +261,6 @@ fn describe(
             Span::styled("d", KEY_STYLE),
             Span::styled(" delete", DIM),
         ]));
-    }
-    if let NodeRef::Property { commit_type, .. } = node
-        && let Some(preview) = library.preview(id)
-    {
-        lines.extend(preview_lines(&preview, commit_type.name(), width));
     }
     if let NodeRef::Taxonomy(taxonomy) = node {
         lines.push(Line::default());
@@ -312,30 +300,25 @@ fn field_lines(
     field: DraftField,
     text: &str,
     limit: Option<usize>,
-    cursor: Option<(usize, bool)>,
+    cursor: Option<usize>,
     invalid: bool,
     width: usize,
 ) -> Vec<Line<'static>> {
     let style = if invalid { PROBLEM } else { DIM };
-    let graphemes = if field == DraftField::Example {
-        super::text_layout::symbols(text)
-    } else {
-        text.graphemes(true)
-            .map(|grapheme| {
-                if grapheme.contains(['\n', '\r']) {
-                    " "
-                } else {
-                    grapheme
-                }
-            })
-            .collect::<Vec<_>>()
-    };
+    let graphemes = text
+        .graphemes(true)
+        .map(|grapheme| {
+            if grapheme.contains(['\n', '\r']) {
+                " "
+            } else {
+                grapheme
+            }
+        })
+        .collect::<Vec<_>>();
     let counter = limit.map(|limit| format!("{}/{limit}", graphemes.len()));
     let column = value_width(width, limit);
     let rows = wrap(&graphemes, column);
-    let (cursor, trailing) =
-        cursor.map_or((None, false), |(cursor, trailing)| (Some(cursor), trailing));
-    let caret_row = cursor.map(|cursor| super::text_layout::cursor_row(&rows, cursor, trailing));
+    let caret_row = cursor.map(|cursor| super::text_layout::cursor_row(&rows, cursor));
     rows.iter()
         .enumerate()
         .map(|(index, &(start, end))| {
@@ -368,49 +351,6 @@ fn field_lines(
                 None => Line::from(spans),
             }
         })
-        .collect()
-}
-
-/// A sample subject and the selected property's block, separated by blank rows.
-fn preview_lines(preview: &Preview<'_>, commit_type: &str, width: usize) -> Vec<Line<'static>> {
-    let title = format!("Preview · {commit_type} message ");
-    let rule = "─".repeat(width.saturating_sub(Span::raw(title.as_str()).width()));
-    let mut lines = vec![Line::default(), Line::styled(format!("{title}{rule}"), DIM)];
-    lines.push(Line::default());
-    let mut in_property = false;
-    let message = preview.message.replace("\r\n", "\n").replace('\r', "\n");
-    for (index, text) in message.split('\n').enumerate() {
-        if index == 1 && text.ends_with(':') {
-            lines.push(Line::default());
-        }
-        let style = if index == 0 {
-            SUBJECT
-        } else if !in_property && text.ends_with(':') {
-            in_property = true;
-            SAMPLE_KEY
-        } else if text == "<value>" {
-            PLACEHOLDER
-        } else {
-            Style::new()
-        };
-        let rows = wrapped(text, style, width).into_iter().map(|line| {
-            if in_property {
-                line.style(SAMPLE_BAND)
-            } else {
-                line
-            }
-        });
-        lines.extend(rows);
-    }
-    lines
-}
-
-/// `text` in `style`, wrapped to `width` columns.
-fn wrapped(text: &str, style: Style, width: usize) -> Vec<Line<'static>> {
-    let graphemes = super::text_layout::symbols(text);
-    wrap(&graphemes, width.max(1))
-        .into_iter()
-        .map(|(start, end)| Line::from(Span::styled(graphemes[start..end].concat(), style)))
         .collect()
 }
 
@@ -485,165 +425,45 @@ fn hint(key: &'static str, label: &'static str) -> Line<'static> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
 
-    use gitserious_app::{GlobalConfiguration, LibraryDraft};
-    use ratatui::text::Line;
-
-    use super::{Chips, SAMPLE_BAND, describe, wrap};
-
-    fn text(line: &Line<'_>) -> String {
-        let text = line
-            .spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect::<String>();
-        text.trim_end().to_owned()
-    }
+    use super::wrap;
 
     #[test]
-    fn preview_has_the_same_concise_spacing_in_nav_and_edit()
+    fn property_details_have_no_example_or_preview_in_browsing_or_editing()
     -> Result<(), Box<dyn std::error::Error>> {
-        use gitserious_app::DraftField;
-        let mut library = LibraryDraft::from_configuration(GlobalConfiguration::default());
-        let source = library.find_path(&["infra-ops"]).ok_or("infra-ops")?;
-        library.fork(&source)?;
-        let property = library
-            .find_path(&["infra-ops-fork", "provision", "capacity-assumption"])
-            .ok_or("capacity-assumption")?;
-        let node = library.node(&property).ok_or("node")?;
-        let expanded = BTreeSet::new();
-        for width in [70, 28] {
-            let mut previews = Vec::new();
-            for focus in [
-                None,
-                Some(super::Focus {
-                    field: DraftField::Name,
-                    cursor: Some(0),
-                    trailing: false,
-                }),
-            ] {
-                let (lines, _) =
-                    describe(&Chips::new(&library, &expanded), node, focus, width, true);
-                let texts = lines.iter().map(text).collect::<Vec<_>>();
-                let heading = texts
-                    .iter()
-                    .position(|line| line.starts_with("Preview · provision message"))
-                    .ok_or("heading")?;
-                let key = texts
-                    .iter()
-                    .position(|line| line == "capacity-assumption:")
-                    .ok_or("key")?;
-                assert_eq!(texts[heading + 1], "");
-                assert_eq!(texts[key - 1], "");
-                let subject = texts[heading + 2..key - 1].join(" ");
-                assert_eq!(subject, "provision(db): add a read replica in eu-west");
-                assert_eq!(
-                    texts[key + 1..].join(" "),
-                    "European reads stay under 2000 qps."
-                );
-                assert!(lines[key..].iter().all(|line| line.style == SAMPLE_BAND));
-                for omitted in [
-                    "above",
-                    "Gitserious-Taxonomy",
-                    "Gitserious-Schema",
-                    "sha256:",
-                ] {
-                    assert!(!texts[heading..].iter().any(|line| line.contains(omitted)));
-                }
-                previews.push(texts[heading..].to_vec());
-            }
-            assert_eq!(previews[0], previews[1]);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn preview_without_a_sample_uses_the_template_in_both_modes()
-    -> Result<(), Box<dyn std::error::Error>> {
-        use gitserious_app::{DraftEdit, DraftField};
-        let mut library = LibraryDraft::from_configuration(GlobalConfiguration::default());
-        let taxonomy = library.create_taxonomy();
-        let commit_type = library.edit(&taxonomy, DraftEdit::AddType)?;
-        library.edit(&commit_type, DraftEdit::Text(DraftField::Name, "deploy"))?;
-        library.edit(
-            &commit_type,
-            DraftEdit::Text(DraftField::Description, "Ship the service safely"),
-        )?;
-        let property = library.edit(&commit_type, DraftEdit::AddProperty)?;
-        library.edit(&property, DraftEdit::Text(DraftField::Name, "verification"))?;
-        library.edit(
-            &property,
-            DraftEdit::Text(
-                DraftField::Description,
-                "Observe the service for five minutes.",
-            ),
-        )?;
-        let expanded = BTreeSet::new();
-        let node = library.node(&property).ok_or("node")?;
-        for focus in [
-            None,
-            Some(super::Focus {
-                field: DraftField::Description,
-                cursor: Some(0),
-                trailing: false,
-            }),
-        ] {
-            let (lines, _) = describe(&Chips::new(&library, &expanded), node, focus, 28, false);
-            let texts = lines.iter().map(text).collect::<Vec<_>>();
-            let heading = texts
-                .iter()
-                .position(|line| line.starts_with("Preview · deploy message"))
-                .ok_or("heading")?;
-            let key = texts
-                .iter()
-                .position(|line| line == "verification:")
-                .ok_or("key")?;
-            assert_eq!(texts[heading + 1], "");
-            assert_eq!(texts[key - 1], "");
-            assert_eq!(
-                texts[heading + 2..key - 1].join(" "),
-                "deploy([<scope>]): <subject>"
-            );
-            assert_eq!(texts[key + 1..].join(" "), "<value>");
-            assert!(
-                lines[key + 1..]
-                    .iter()
-                    .flat_map(|line| &line.spans)
-                    .all(|span| span.style == super::PLACEHOLDER)
-            );
-            assert!(
-                !texts[heading..]
-                    .iter()
-                    .any(|line| line.contains("Gitserious-") || line.contains("above"))
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn arbitrary_example_lines_and_crlf_keep_their_spacing_in_preview()
-    -> Result<(), Box<dyn std::error::Error>> {
-        use gitserious_app::{DraftEdit, DraftField};
+        use super::{Chips, Focus, describe};
+        use gitserious_app::{DraftField, GlobalConfiguration, LibraryDraft};
+        use std::collections::BTreeSet;
         let mut library = LibraryDraft::from_configuration(GlobalConfiguration::default());
         let source = library.find_path(&["conventional"]).ok_or("source")?;
         library.fork(&source)?;
-        let property = library
-            .find_path(&["conventional-fork", "feat", "intent"])
-            .ok_or("property")?;
-        for message in [
-            "feat(api): ship\nannotation\n\nintent:\nChecked.\n",
-            "feat(api): ship\r\nannotation\r\n\r\nintent:\r\nChecked.\r\n",
-        ] {
-            library.edit(&property, DraftEdit::Text(DraftField::Example, message))?;
-            let preview = library.preview(&property).ok_or("preview")?;
-            let lines = super::preview_lines(&preview, "feat", 80);
-            let expected = message.replace("\r\n", "\n");
-            assert_eq!(
-                lines[3..].iter().map(text).collect::<Vec<_>>(),
-                expected.split('\n').collect::<Vec<_>>()
-            );
-            assert_eq!(preview.message, message);
+        for owner in ["conventional", "conventional-fork"] {
+            let id = library
+                .find_path(&[owner, "feat", "intent"])
+                .ok_or("property")?;
+            let node = library.node(&id).ok_or("node")?;
+            for width in [28, 80] {
+                for focus in [
+                    None,
+                    Some(Focus {
+                        field: DraftField::Name,
+                        cursor: Some(0),
+                    }),
+                ] {
+                    let expanded = BTreeSet::new();
+                    let (lines, _) =
+                        describe(&Chips::new(&library, &expanded), node, focus, width, true);
+                    let text = lines
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    assert!(text.contains("Description"));
+                    assert!(text.contains("Policy"));
+                    assert!(!text.contains("Example"));
+                    assert!(!text.contains("Preview"));
+                }
+            }
         }
         Ok(())
     }
