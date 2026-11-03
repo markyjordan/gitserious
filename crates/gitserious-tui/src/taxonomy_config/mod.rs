@@ -1777,6 +1777,7 @@ fn reorder_available(available: &mut [TaxonomyId], selected: &Option<TaxonomyId>
 
 #[cfg(test)]
 mod tests {
+    use crate::library_lookup::LibraryLookup;
     use std::cell::{Cell, RefCell};
 
     use gitserious_app::{

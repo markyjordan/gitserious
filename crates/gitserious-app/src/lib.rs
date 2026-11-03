@@ -2,6 +2,9 @@
 
 #![allow(clippy::missing_errors_doc)]
 
+#[cfg(test)]
+extern crate self as gitserious_app;
+
 mod commit_draft_author;
 mod commit_writer;
 mod create_taxonomy_commit;

@@ -1,3 +1,4 @@
+use crate::library_lookup::LibraryLookup;
 use std::cell::Cell;
 
 use gitserious_app::{DraftField, GlobalConfiguration};

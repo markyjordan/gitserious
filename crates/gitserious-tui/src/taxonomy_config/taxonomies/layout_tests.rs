@@ -1,3 +1,4 @@
+use crate::library_lookup::LibraryLookup;
 use gitserious_app::{ConfigurationSession, GlobalConfiguration};
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 

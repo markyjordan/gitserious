@@ -6,6 +6,7 @@
 //! The existing breadth-first runner deduplicates snapshots and reports shortest counterexamples.
 //! Mouse, resize, write failures and the embedded shell are covered by interaction tests.
 
+use crate::library_lookup::LibraryLookup;
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::panic::{self, AssertUnwindSafe};

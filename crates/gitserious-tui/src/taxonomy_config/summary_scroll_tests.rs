@@ -1,3 +1,4 @@
+use crate::library_lookup::LibraryLookup;
 use gitserious_app::GlobalConfiguration;
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,

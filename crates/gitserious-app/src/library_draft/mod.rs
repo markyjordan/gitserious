@@ -564,32 +564,6 @@ impl LibraryDraft {
         }
     }
 
-    /// Finds a node by its current names, from the taxonomy down.
-    #[must_use]
-    pub fn find_path<S: AsRef<str>>(&self, names: &[S]) -> Option<NodeId> {
-        let (first, rest) = names.split_first()?;
-        let taxonomy = self
-            .taxonomies
-            .iter()
-            .find(|node| node.name == first.as_ref())?;
-        let Some((type_name, rest)) = rest.split_first() else {
-            return Some(taxonomy.id.clone());
-        };
-        let commit_type = taxonomy
-            .types
-            .iter()
-            .find(|node| node.name == type_name.as_ref())?;
-        match rest {
-            [] => Some(commit_type.id.clone()),
-            [property] => commit_type
-                .properties
-                .iter()
-                .find(|node| node.name == property.as_ref())
-                .map(|node| node.id.clone()),
-            _ => None,
-        }
-    }
-
     /// The types `CopyTo` may copy the property `id` into: the other types of its custom
     /// taxonomy, in order. Empty for anything else.
     #[must_use]

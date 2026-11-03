@@ -1,5 +1,9 @@
 #![allow(clippy::expect_used)]
 
+#[path = "support/library_lookup.rs"]
+mod library_lookup;
+use library_lookup::LibraryLookup;
+
 use std::error::Error;
 
 use gitserious_app::{

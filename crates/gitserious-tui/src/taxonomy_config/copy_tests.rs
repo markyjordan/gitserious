@@ -1,3 +1,4 @@
+use crate::library_lookup::LibraryLookup;
 use gitserious_app::{GlobalConfiguration, Policy};
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
