@@ -82,7 +82,7 @@ fn outline_heading_matches_without_a_library_and_fits_beside_scroll_counts() -> 
 }
 
 #[test]
-fn opening_collapses_only_earlier_roots_and_normal_scrolling_keeps_selection_visible() -> Result {
+fn opening_collapses_all_other_roots_and_normal_scrolling_keeps_selection_visible() -> Result {
     let (mut view, library) = fixture()?;
     let first = open(&mut view, &library, "conventional")?;
     let child = library.find_path(&["conventional", "feat"]).ok_or("feat")?;
@@ -96,13 +96,13 @@ fn opening_collapses_only_earlier_roots_and_normal_scrolling_keeps_selection_vis
         "opening does not force the root onto row two"
     );
     let research = open(&mut view, &library, "research")?;
-    assert!(!view.expanded.contains(&first));
-    assert!(view.expanded.contains(&infra));
-    assert!(view.expanded.contains(&research));
+    one_root(&view, &library, &research);
     assert!(view.expanded.contains(&child));
     open(&mut view, &library, "conventional")?;
-    assert!(view.expanded.contains(&infra));
-    assert!(view.expanded.contains(&research));
+    one_root(&view, &library, &first);
+    assert!(outline::rows(&library, &view.expanded).iter().any(|row| {
+        matches!(row, Row::Node(NodeRef::Property { commit_type, .. }) if commit_type.id() == &child)
+    }));
     for _ in 0..12 {
         press(&mut view, &library, KeyCode::Down);
         draw(&mut view, &library, 14)?;
@@ -117,6 +117,7 @@ fn opening_collapses_only_earlier_roots_and_normal_scrolling_keeps_selection_vis
         Some(&first_visible)
     );
     open(&mut view, &library, "infra-ops")?;
+    one_root(&view, &library, &infra);
     draw(&mut view, &library, 100)?;
     assert_eq!(view.outline_offset, 0, "short branches clamp to the top");
     assert!(!view.expanded.contains(&first));
@@ -126,7 +127,7 @@ fn opening_collapses_only_earlier_roots_and_normal_scrolling_keeps_selection_vis
 }
 
 #[test]
-fn new_fork_and_revealed_children_collapse_only_earlier_roots() -> Result {
+fn new_fork_and_revealed_children_collapse_all_other_roots() -> Result {
     let (mut view, mut library) = fixture()?;
     open(&mut view, &library, "conventional")?;
     view.act(LibraryAction::Fork, &mut library)?;
@@ -151,14 +152,72 @@ fn new_fork_and_revealed_children_collapse_only_earlier_roots() -> Result {
     };
     view.open(property.clone(), DraftField::Description, &library);
     draw(&mut view, &library, 36)?;
-    assert!(view.expanded.contains(&fork));
-    assert!(view.expanded.contains(&new));
+    one_root(&view, &library, &fork);
     assert_eq!(view.selected(&library).map(NodeRef::id), Some(&property));
     assert!(
         view.observe(Some(&library))
             .visible
             .contains(&Some(property))
     );
+    Ok(())
+}
+
+#[test]
+fn switching_between_built_in_and_custom_roots_remembers_multiple_open_types() -> Result {
+    let (mut view, mut library) = fixture()?;
+    let conventional = open(&mut view, &library, "conventional")?;
+    view.act(LibraryAction::Fork, &mut library)?;
+    let fork = view.selected(&library).ok_or("fork")?.id().clone();
+    press(&mut view, &library, KeyCode::Esc);
+    let mut remembered = Vec::new();
+    for root in [&conventional, &fork] {
+        view.select(root.clone());
+        if !view.expanded.contains(root) {
+            press(&mut view, &library, KeyCode::Enter);
+        }
+        let Some(NodeRef::Taxonomy(taxonomy)) = library.node(root) else {
+            return Err("taxonomy".into());
+        };
+        for commit_type in taxonomy.types().iter().take(2) {
+            view.select(commit_type.id().clone());
+            press(&mut view, &library, KeyCode::Enter);
+            remembered.push(commit_type.id().clone());
+        }
+    }
+    assert_eq!(remembered.len(), 4);
+    let roots = library
+        .taxonomies()
+        .iter()
+        .map(|taxonomy| taxonomy.id().clone())
+        .collect::<Vec<_>>();
+    for from in &roots {
+        for to in &roots {
+            for root in [from, to] {
+                view.select(root.clone());
+                if !view.expanded.contains(root) {
+                    press(&mut view, &library, KeyCode::Enter);
+                }
+                one_root(&view, &library, root);
+                assert!(remembered.iter().all(|id| view.expanded.contains(id)));
+                draw(&mut view, &library, 14)?;
+                assert!(
+                    view.observe(Some(&library))
+                        .visible
+                        .contains(&Some(root.clone()))
+                );
+                for id in &remembered {
+                    if library
+                        .node(id)
+                        .is_some_and(|node| node.taxonomy().id() == root)
+                    {
+                        assert!(outline::rows(&library, &view.expanded).iter().any(|row| {
+                            matches!(row, Row::Node(NodeRef::Property { commit_type, .. }) if commit_type.id() == id)
+                        }));
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
 

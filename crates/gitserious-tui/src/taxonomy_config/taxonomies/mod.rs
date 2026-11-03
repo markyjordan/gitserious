@@ -412,7 +412,7 @@ impl TaxonomiesView {
             for taxonomy in library
                 .taxonomies()
                 .iter()
-                .take_while(|taxonomy| taxonomy.id() != node)
+                .filter(|taxonomy| taxonomy.id() != node)
             {
                 self.expanded.remove(taxonomy.id());
             }
