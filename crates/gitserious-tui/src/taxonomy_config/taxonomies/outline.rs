@@ -168,7 +168,7 @@ pub(super) fn render(
     } else if height > 0 && selected >= *offset + height {
         *offset = selected + 1 - height;
     }
-    *offset = (*offset).min(rows.len().saturating_sub(1));
+    *offset = (*offset).min(rows.len().saturating_sub(height));
     let below = rows.len().saturating_sub(*offset + height);
     if *offset > 0 {
         block = block.title_top(Line::styled(format!(" ↑ {} more ", *offset), DIM).right_aligned());
