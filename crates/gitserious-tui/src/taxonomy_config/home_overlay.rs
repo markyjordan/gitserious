@@ -1,7 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::text::Line;
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph};
 
 use super::Category;
@@ -20,7 +19,6 @@ pub(super) enum HomeCommand {
     Delete,
     ReviewLibrary,
     SwitchTab,
-    Help,
     Quit,
 }
 
@@ -34,7 +32,6 @@ impl HomeCommand {
                 Self::Delete => "delete taxonomy",
                 Self::ReviewLibrary => "review changes",
                 Self::SwitchTab => "switch to project",
-                Self::Help => "help",
                 Self::Quit => "quit",
                 _ => unreachable!("Project commands are not shown in Taxonomies"),
             };
@@ -51,7 +48,6 @@ impl HomeCommand {
                 Category::Project => "Switch to Library",
                 Category::Taxonomies => "Switch to Project",
             },
-            Self::Help => "Help",
             Self::Quit => "Quit",
         }
     }
@@ -66,7 +62,6 @@ impl HomeCommand {
             Self::Fork => "f",
             Self::Delete => "d",
             Self::SwitchTab => "",
-            Self::Help => "?",
             Self::Quit => "q",
         }
     }
@@ -77,7 +72,6 @@ const PROJECT_COMMANDS: &[HomeCommand] = &[
     HomeCommand::Initialize,
     HomeCommand::ReviewProject,
     HomeCommand::SwitchTab,
-    HomeCommand::Help,
     HomeCommand::Quit,
 ];
 const LIBRARY_COMMANDS: &[HomeCommand] = &[
@@ -87,7 +81,6 @@ const LIBRARY_COMMANDS: &[HomeCommand] = &[
     HomeCommand::Delete,
     HomeCommand::ReviewLibrary,
     HomeCommand::SwitchTab,
-    HomeCommand::Help,
     HomeCommand::Quit,
 ];
 
@@ -142,25 +135,14 @@ impl CommandPaletteState {
     }
 }
 
-#[derive(Debug)]
-pub(super) enum HomeOverlay {
-    Palette(CommandPaletteState),
-    Help,
-}
-
-impl HomeOverlay {
+impl CommandPaletteState {
     pub(super) fn render(&mut self, frame: &mut Frame<'_>, area: Rect, category: Category) {
-        match self {
-            Self::Palette(state) => {
-                let entries = state
-                    .visible(category)
-                    .iter()
-                    .map(|command| (command.label(category), command.shortcut()))
-                    .collect();
-                render_palette(frame, area, state, entries);
-            }
-            Self::Help => render_help(frame, area, category),
-        }
+        let entries = self
+            .visible(category)
+            .iter()
+            .map(|command| (command.label(category), command.shortcut()))
+            .collect();
+        render_palette(frame, area, self, entries);
     }
 }
 
@@ -244,73 +226,4 @@ fn render_palette(
             1,
         ),
     );
-}
-
-fn render_help(frame: &mut Frame<'_>, area: Rect, category: Category) {
-    let rows: &[(&str, &str)] = match category {
-        Category::Project => &[
-            ("Switch Project / Library", "1/2/click"),
-            ("Focus menu or sections", "←/→"),
-            ("Move between sections", "↑/↓"),
-            ("Configure project", "enter"),
-            ("Initialize project", "i"),
-            ("Review changes", "ctrl+s"),
-            ("Scroll details", "pgup/pgdn"),
-            ("Open commands", "/"),
-            ("Quit", "esc/q"),
-        ],
-        Category::Taxonomies => &[
-            ("Switch Project / Library", "1/2/click"),
-            ("Expand, collapse, or go up", "←/→/enter"),
-            ("Move selection", "↑/↓"),
-            ("Reorder a type or property", "alt+↑/↓"),
-            ("Scroll Inspector", "pgup/pgdn"),
-            ("New / edit / fork / delete", "n/e/f/d"),
-            ("Copy a property to other types", "c"),
-            ("Next field", "enter"),
-            ("Change policy in EDIT", "←/→"),
-            ("Review changes", "ctrl+s"),
-            ("Open commands", "/"),
-            ("Quit", "esc/q"),
-        ],
-    };
-    let height = u16::try_from(rows.len() + 3).unwrap_or(u16::MAX);
-    let popup = centered_rect(58, height.min(area.height), area);
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        popup_block().title_bottom(Line::from(" [esc] close ").centered()),
-        popup,
-    );
-    let content_x = popup.x.saturating_add(2);
-    let content_width = popup.width.saturating_sub(4);
-    frame.render_widget(
-        Paragraph::new("Help")
-            .style(section_heading_style())
-            .centered(),
-        Rect::new(content_x, popup.y.saturating_add(1), content_width, 1),
-    );
-    let key_width = rows
-        .iter()
-        .map(|(_, key)| u16::try_from(key.len()).unwrap_or(u16::MAX))
-        .max()
-        .unwrap_or(0)
-        .min(content_width);
-    let key_x = content_x.saturating_add(content_width.saturating_sub(key_width));
-    for (index, (action, key)) in rows.iter().enumerate() {
-        let y = popup
-            .y
-            .saturating_add(2)
-            .saturating_add(u16::try_from(index).unwrap_or(u16::MAX));
-        if y >= popup.bottom().saturating_sub(1) {
-            break;
-        }
-        frame.render_widget(
-            Paragraph::new(*action),
-            Rect::new(content_x, y, key_x.saturating_sub(content_x + 2), 1),
-        );
-        frame.render_widget(
-            Paragraph::new(*key).right_aligned(),
-            Rect::new(key_x, y, key_width, 1),
-        );
-    }
 }

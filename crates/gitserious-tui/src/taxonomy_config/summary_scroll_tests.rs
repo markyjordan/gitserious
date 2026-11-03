@@ -264,11 +264,11 @@ fn selection_expansion_edit_and_picker_restart_or_stop_the_clock() -> Result {
 
 #[test]
 fn own_overlays_and_every_inactive_view_stop_and_restart_the_hold() -> Result {
-    for overlay_key in ['?', '/'] {
+    {
         let (workspace, mut state, mut terminal) = fixture()?;
         draw(&mut state, &mut terminal)?;
         state.advance(HOLD, true);
-        state.handle_event(key(KeyCode::Char(overlay_key)), &workspace);
+        state.handle_event(key(KeyCode::Char('/')), &workspace);
         let overlay = draw(&mut state, &mut terminal)?;
         assert_eq!(state.next_frame_in(), None);
         state.advance(Duration::from_secs(20), true);

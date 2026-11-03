@@ -705,7 +705,7 @@ impl TaxonomiesView {
         let mut trailing = if editing {
             vec![("ctrl+s", "review")]
         } else {
-            vec![("/", "cmds"), ("?", "help")]
+            vec![("/", "cmds")]
         };
         if embedded && !editing {
             trailing.insert(0, ("tab", "tabs"));

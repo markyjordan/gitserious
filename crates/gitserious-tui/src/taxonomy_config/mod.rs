@@ -37,7 +37,7 @@ mod review;
 #[cfg(test)]
 mod summary_scroll_tests;
 mod taxonomies;
-use home_overlay::{CommandPaletteState, HomeCommand, HomeOverlay};
+use home_overlay::{CommandPaletteState, HomeCommand};
 use naming::sentence;
 use taxonomies::{LibraryAction, Nav, TaxonomiesView};
 
@@ -276,7 +276,7 @@ struct State {
     taxonomies: TaxonomiesView,
     project_section: ProjectSection,
     screen: Screen,
-    home_overlay: Option<HomeOverlay>,
+    home_overlay: Option<CommandPaletteState>,
     scroll: u16,
     project_scroll: u16,
     status: Option<Notice>,
@@ -540,21 +540,7 @@ impl State {
         let Some(overlay) = self.home_overlay.take() else {
             return false;
         };
-        match overlay {
-            HomeOverlay::Palette(palette) => self.handle_palette_event(event, workspace, palette),
-            HomeOverlay::Help => {
-                if !matches!(
-                    event,
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Esc,
-                        ..
-                    })
-                ) {
-                    self.home_overlay = Some(HomeOverlay::Help);
-                }
-                false
-            }
-        }
+        self.handle_palette_event(event, workspace, overlay)
     }
 
     fn handle_palette_event(
@@ -608,7 +594,7 @@ impl State {
             }
             _ => {}
         }
-        self.home_overlay = Some(HomeOverlay::Palette(palette));
+        self.home_overlay = Some(palette);
         false
     }
 
@@ -637,7 +623,6 @@ impl State {
             HomeCommand::Delete => self.request_global_action(PendingAction::Delete),
             HomeCommand::ReviewLibrary => self.request_global_action(PendingAction::ReviewGlobal),
             HomeCommand::SwitchTab => self.category = self.category.next(),
-            HomeCommand::Help => self.home_overlay = Some(HomeOverlay::Help),
             HomeCommand::Quit => {
                 // The shell confirms every pending draft once, including a retained commit review.
                 if self.embedded {
@@ -685,12 +670,7 @@ impl State {
         }
         match key.code {
             KeyCode::Char('/') if key.modifiers.is_empty() => {
-                self.home_overlay = Some(HomeOverlay::Palette(CommandPaletteState::default()));
-            }
-            KeyCode::Char('?')
-                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
-            {
-                self.home_overlay = Some(HomeOverlay::Help);
+                self.home_overlay = Some(CommandPaletteState::default());
             }
             KeyCode::Char(digit @ ('1' | '2')) if key.modifiers.is_empty() => {
                 let category = if digit == '1' {
@@ -1254,12 +1234,7 @@ impl State {
                 }
                 Screen::Home => {
                     self.render_project(frame, body);
-                    let mut hints = vec![
-                        ("←/→", "focus"),
-                        ("↑/↓", "move"),
-                        ("/", "commands"),
-                        ("?", "help"),
-                    ];
+                    let mut hints = vec![("←/→", "focus"), ("↑/↓", "move"), ("/", "commands")];
                     if self.embedded {
                         hints.insert(0, ("tab/shift+tab", "switch"));
                     }
@@ -2475,7 +2450,7 @@ mod tests {
         terminal.draw(|frame| state.render(frame))?;
         let footer = row_text(&terminal, 0, 34, 87);
         assert!(footer.starts_with("  NAV  · taxonomy  enter/→ open"));
-        assert!(footer.trim_end().ends_with("│ tab tabs  / cmds  ? help"));
+        assert!(footer.trim_end().ends_with("│ tab tabs  / cmds"));
         Ok(())
     }
 
@@ -2516,7 +2491,7 @@ mod tests {
                         assert!(footer.contains(shortcut), "{footer}");
                         assert!(!footer.contains(absent), "{footer}");
                         assert!(!footer.contains('…'), "{footer}");
-                        assert!(footer.contains("? help"), "{footer}");
+                        assert!(!footer.contains("? help"), "{footer}");
                         state.handle_event(key(next), &workspace);
                     }
                 }
@@ -2674,7 +2649,7 @@ mod tests {
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Commands"));
         assert!(text(&terminal).contains("╔"));
-        let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
+        let Some(palette) = &state.home_overlay else {
             return Err("palette missing".into());
         };
         let palette_list = palette.list_area;
@@ -2697,7 +2672,7 @@ mod tests {
         );
         state.handle_event(Event::Paste("fork".into()), &workspace);
         terminal.draw(|frame| state.render(frame))?;
-        let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
+        let Some(palette) = &state.home_overlay else {
             return Err("palette missing".into());
         };
         assert_eq!(palette.visible(state.category), vec![HomeCommand::Fork]);
@@ -2726,7 +2701,7 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| state.render(frame))?;
             assert!(text(&terminal).contains("create taxonomy"));
-            let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
+            let Some(palette) = &state.home_overlay else {
                 return Err("missing palette".into());
             };
             assert_eq!(
@@ -2746,7 +2721,7 @@ mod tests {
                     }
                     terminal.draw(|frame| state.render(frame))?;
                 }
-                let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
+                let Some(palette) = &state.home_overlay else {
                     return Err("missing palette".into());
                 };
                 for y in palette.list_area.y..palette.list_area.bottom() {
@@ -2763,7 +2738,7 @@ mod tests {
             state.handle_event(key(KeyCode::Char('/')), &workspace);
             state.handle_event(Event::Paste("switch".into()), &workspace);
             terminal.draw(|frame| state.render(frame))?;
-            let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
+            let Some(palette) = &state.home_overlay else {
                 return Err("missing palette".into());
             };
             assert_eq!(
@@ -2791,7 +2766,7 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| state.render(frame))?;
             let footer = row_text(&terminal, 0, height - 2, width);
-            assert!(footer.starts_with(" ←/→: focus  ↑/↓: move  /: commands  ?: help"));
+            assert!(footer.starts_with(" ←/→: focus  ↑/↓: move  /: commands"));
             assert!(!footer.contains('|'));
             state.handle_event(key(KeyCode::Tab), &workspace);
             state.handle_event(key(KeyCode::BackTab), &workspace);
@@ -2803,9 +2778,9 @@ mod tests {
             terminal.draw(|frame| state.render(frame))?;
             let footer = row_text(&terminal, 0, height - 2, width);
             assert!(footer.starts_with("  NAV  · taxonomy  enter/→ open"));
-            assert!(footer.trim_end().ends_with("│ / cmds  ? help"));
+            assert!(footer.trim_end().ends_with("│ / cmds"));
             state.handle_event(key(KeyCode::Char('/')), &workspace);
-            assert!(matches!(state.home_overlay, Some(HomeOverlay::Palette(_))));
+            assert!(state.home_overlay.is_some());
             state.handle_event(key(KeyCode::Esc), &workspace);
             assert_eq!(state.category, Category::Taxonomies);
             let project_tab = state.tab_areas[Category::Project.index()];
@@ -2833,7 +2808,7 @@ mod tests {
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         state.handle_event(Event::Paste("edit".into()), &workspace);
         state.handle_event(key(KeyCode::Char('n')), &workspace);
-        let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
+        let Some(palette) = &state.home_overlay else {
             return Err("palette missing".into());
         };
         assert_eq!(palette.query, "editn");
@@ -2848,33 +2823,9 @@ mod tests {
     }
 
     #[test]
-    fn project_palette_and_help_keep_the_review_boundary() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn project_palette_keeps_the_review_boundary() {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
-        state.handle_event(key(KeyCode::Char('?')), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(text(&terminal).contains("Initialize project"));
-        let help = centered_rect(58, 12, Rect::new(0, 0, 100, 27));
-        let content_x = help.x + 2;
-        let content_width = help.width - 4;
-        let switch_row = row_text(&terminal, content_x, help.y + 2, content_width);
-        let review_row = row_text(&terminal, content_x, help.y + 7, content_width);
-        assert!(switch_row.starts_with("Switch Project / Library"));
-        assert!(switch_row.ends_with("1/2/click"));
-        assert!(review_row.starts_with("Review changes"));
-        assert!(review_row.ends_with("ctrl+s"));
-        assert!(text(&terminal).contains("[esc] close"));
-        assert!(row_text(&terminal, 0, 28, 100).contains("/: commands  ?: help"));
-        state.handle_event(key(KeyCode::Char('n')), &workspace);
-        assert!(matches!(state.home_overlay, Some(HomeOverlay::Help)));
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(matches!(state.home_overlay, Some(HomeOverlay::Help)));
-        state.handle_event(key(KeyCode::Char('?')), &workspace);
-        assert!(matches!(state.home_overlay, Some(HomeOverlay::Help)));
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        assert!(state.home_overlay.is_none());
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         state.handle_event(Event::Paste("initialize".into()), &workspace);
         state.handle_event(key(KeyCode::Enter), &workspace);
@@ -2883,50 +2834,40 @@ mod tests {
             Screen::Review(ConfigurationDestination::Project)
         ));
         assert_eq!(workspace.saves.get(), 0);
-        Ok(())
     }
 
     #[test]
-    fn library_help_aligns_shortcuts_and_closes_only_with_escape()
+    fn question_mark_has_no_navigation_action_or_footer_hint()
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.category = Category::Taxonomies;
-        state.home_focus = HomeFocus::Content;
-        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-        state.handle_event(key(KeyCode::Char('?')), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        let help = centered_rect(
-            58,
-            15,
-            Rect::new(0, 0, MINIMUM_WIDTH, MINIMUM_HEIGHT - FOOTER_HEIGHT),
-        );
-        let content_x = help.x + 2;
-        let content_width = help.width - 4;
-        let switch_row = row_text(&terminal, content_x, help.y + 2, content_width);
-        let reorder_row = row_text(&terminal, content_x, help.y + 5, content_width);
-        let edit_row = row_text(&terminal, content_x, help.y + 7, content_width);
-        let quit_row = row_text(&terminal, content_x, help.y + 13, content_width);
-        assert!(switch_row.starts_with("Switch Project / Library"));
-        assert!(switch_row.ends_with("1/2/click"));
-        assert!(reorder_row.starts_with("Reorder a type or property"));
-        assert!(reorder_row.ends_with("alt+↑/↓"));
-        assert!(edit_row.starts_with("New / edit / fork / delete"));
-        assert!(edit_row.ends_with("n/e/f/d"));
-        assert!(quit_row.starts_with("Quit"));
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        state.handle_event(
-            Event::Mouse(ratatui::crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: 0,
-                row: 0,
-                modifiers: KeyModifiers::NONE,
-            }),
-            &workspace,
-        );
-        assert!(matches!(state.home_overlay, Some(HomeOverlay::Help)));
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        assert!(state.home_overlay.is_none());
+        for category in Category::ALL {
+            for embedded in [false, true] {
+                let mut state = State::new(&workspace);
+                state.category = category;
+                state.embedded = embedded;
+                for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+                    state.handle_event(
+                        Event::Key(KeyEvent::new(KeyCode::Char('?'), modifiers)),
+                        &workspace,
+                    );
+                    assert!(state.home_overlay.is_none());
+                    assert_eq!(state.category, category);
+                }
+                let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+                terminal.draw(|frame| state.render(frame))?;
+                assert!(!row_text(&terminal, 0, 28, 100).contains("help"));
+                state.handle_event(key(KeyCode::Char('/')), &workspace);
+                state.handle_event(Event::Paste("help".into()), &workspace);
+                assert!(
+                    state
+                        .home_overlay
+                        .as_ref()
+                        .ok_or("palette")?
+                        .visible(category)
+                        .is_empty()
+                );
+            }
+        }
         Ok(())
     }
 
@@ -2962,7 +2903,7 @@ mod tests {
         state.home_focus = HomeFocus::Content;
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(row_text(&terminal, 0, MINIMUM_HEIGHT - 2, MINIMUM_WIDTH).contains("? help"));
+        assert!(!row_text(&terminal, 0, MINIMUM_HEIGHT - 2, MINIMUM_WIDTH).contains("? help"));
         let project_tab = state.tab_areas[Category::Project.index()];
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         terminal.draw(|frame| state.render(frame))?;
@@ -2970,10 +2911,10 @@ mod tests {
         assert!(text(&terminal).contains("╔"));
         assert!(text(&terminal).contains("┌ Search ─"));
         assert!(text(&terminal).contains("▌"));
-        let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
+        let Some(palette) = &state.home_overlay else {
             return Err("palette missing".into());
         };
-        assert_eq!(palette.list_area.height, 8);
+        assert_eq!(palette.list_area.height, 7);
         assert_eq!(
             terminal.backend().buffer()[(palette.list_area.x - 1, palette.list_area.y - 3)]
                 .symbol(),
@@ -2988,10 +2929,10 @@ mod tests {
             state.handle_event(key(KeyCode::Down), &workspace);
         }
         terminal.draw(|frame| state.render(frame))?;
-        let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
+        let Some(palette) = &state.home_overlay else {
             return Err("palette missing".into());
         };
-        assert_eq!(palette.selected, 7);
+        assert_eq!(palette.selected, 6);
         assert_eq!(palette.list_offset, 0);
         assert!(
             row_text(
@@ -3012,7 +2953,7 @@ mod tests {
             }),
             &workspace,
         );
-        let Some(HomeOverlay::Palette(palette)) = &state.home_overlay else {
+        let Some(palette) = &state.home_overlay else {
             return Err("palette missing".into());
         };
         assert_eq!(palette.selected, 0);
@@ -3220,7 +3161,7 @@ mod tests {
         let rendered = text(&terminal);
         assert!(rendered.contains("Taxonomies"));
         assert!(rendered.contains("Taxonomy library unavailable."));
-        assert!(rendered.contains("/ cmds  ? help"));
+        assert!(rendered.contains("/ cmds"));
         assert!(rendered.contains("Global load failed."));
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
@@ -3678,12 +3619,8 @@ mod tests {
                     );
                     assert!(footer.contains("d delete"), "{footer}");
                     assert!(!footer.contains('…'), "{footer}");
-                    assert_eq!(
-                        footer.contains("to other types"),
-                        width == 140 || (width == 87 && !embedded),
-                        "{footer}"
-                    );
-                    assert_eq!(footer.contains("? help"), width > MINIMUM_WIDTH, "{footer}");
+                    assert_eq!(footer.contains("to other types"), width >= 87, "{footer}");
+                    assert!(!footer.contains("? help"), "{footer}");
                     assert!(footer.starts_with(' ') && footer.ends_with(' '));
                     assert!(row_text(&terminal, 0, 39, width).trim().is_empty());
                     press(&mut state, &workspace, &[KeyCode::Char('e')]);
