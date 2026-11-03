@@ -3416,7 +3416,6 @@ mod tests {
             [
                 "Taxonomy name is required.",
                 "Taxonomy description is required.",
-                "Add a type before applying the taxonomy."
             ]
         );
         edit(
