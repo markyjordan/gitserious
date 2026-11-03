@@ -703,6 +703,11 @@ impl TaxonomiesView {
         }
         let row = library.and_then(|library| self.selected_row(library));
         let editing = self.editing();
+        let property_actions = !editing
+            && row.is_some_and(|row| {
+                matches!(row.node(), NodeRef::Property { .. })
+                    && row.node().taxonomy().origin() == TaxonomyOrigin::Custom
+            });
         let mut chip = vec![if editing {
             Span::styled(" EDIT ", EDIT_CHIP)
         } else {
@@ -729,7 +734,11 @@ impl TaxonomiesView {
             if editing {
                 hints.extend([("enter", "next field"), ("esc", "done")]);
             } else if !built_in && matches!(node, NodeRef::Property { .. }) {
-                hints.extend([("e", "edit"), ("c", "copy to…")]);
+                hints.extend([
+                    ("e", "edit"),
+                    ("c", "copy property to other types"),
+                    ("d", "delete"),
+                ]);
             } else if matches!(row, Row::Node(_)) {
                 if outline::has_children(row) {
                     hints.push(if self.expanded.contains(node.id()) {
@@ -768,15 +777,26 @@ impl TaxonomiesView {
             Line::from(left.clone()).width() + Line::from(right.clone()).width() < width
         };
         let mut candidate = line(&hints, &trailing);
+        if property_actions && !fits(&candidate) {
+            hints[1].1 = "copy property";
+            candidate = line(&hints, &trailing);
+        }
         for optional in ["newline", "alt+↑/↓", "↑/↓", "d", "n", "f"] {
             if fits(&candidate) {
+                break;
+            }
+            if property_actions {
                 break;
             }
             hints.retain(|(key, action)| *key != optional && *action != optional);
             candidate = line(&hints, &trailing);
         }
         while !fits(&candidate) && !trailing.is_empty() {
-            trailing.remove(0);
+            if property_actions {
+                trailing.pop();
+            } else {
+                trailing.remove(0);
+            }
             candidate = line(&hints, &trailing);
         }
         fit(candidate.0, candidate.1, width)
