@@ -72,9 +72,7 @@
 //! Config tab badge shows equals the Library's `ChangeSet::count()`; on Home the sidebar reads `●
 //! N unapplied` with that count, or no unapplied line at zero; every outline row shows `▲ invalid
 //! N` exactly when N problems sit on its node, or on its node or beneath it while it is collapsed,
-//! and otherwise `+ new` or `~ modified` exactly when its node carries that mark; and the footer
-//! shows `▲ invalid N` for the selected node the same way, except while the copy picker covers
-//! the rows and the footer. Without it, the tab, the sidebar, the
+//! and otherwise `+ new` or `~ modified` exactly when its node carries that mark; and node status stays in the panels rather than the footer. Without it, the tab, the sidebar, the
 //! rows, and the footer disagree about what apply would write, a problem hides under a collapsed
 //! row, or an expanded parent repeats the count its visible rows already show.
 //!
@@ -1067,16 +1065,11 @@ fn unapplied_changes_agree_everywhere(
         }
     }
     let footer = after.footer();
-    if let Some(count) = library
-        .find_path(&after.taxonomies.cursor_path)
-        .map(|id| invalid(&id))
-        && (footer.contains("▲ invalid") != (count > 0)
-            || (count > 0 && !footer.contains(&format!("▲ invalid {count}"))))
+    if ["▲ invalid", "+ new", "~ modified", "◇ read-only"]
+        .iter()
+        .any(|label| footer.contains(label))
     {
-        return Err(format!(
-            "The footer {:?} does not show the {count} problems the selected node counts.",
-            footer.trim_end()
-        ));
+        return Err(format!("The footer duplicates node status: {footer:?}"));
     }
     Ok(())
 }

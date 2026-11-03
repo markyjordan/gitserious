@@ -284,10 +284,10 @@ mod tests {
             screen.contains("▲ A conditional policy needs a condition."),
             "{screen}"
         );
-        assert_eq!(screen.matches("▲ invalid 1").count(), 3, "{screen}");
+        assert_eq!(screen.matches("▲ invalid 1").count(), 2, "{screen}");
         let footer = rows(&terminal).into_iter().rev().nth(1).unwrap_or_default();
         assert!(
-            footer.starts_with("  EDIT  · property ·  ▲ invalid 1 "),
+            footer.starts_with("  EDIT  · property ") && !footer.contains("▲ invalid"),
             "{footer}"
         );
         let buffer = terminal.backend().buffer();

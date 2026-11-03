@@ -50,7 +50,7 @@ const EDIT_CHIP: Style = Style::new()
     .add_modifier(Modifier::BOLD);
 const INSPECTOR_PAGE: u16 = 8;
 
-/// A node's state as its outline row, the Inspector header, and the footer show it.
+/// A node's state as its outline row, and the Inspector header show it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Chip {
     ReadOnly,
@@ -90,10 +90,18 @@ impl<'a> Chips<'a> {
         if invalid > 0 {
             return Some(Chip::Invalid(invalid));
         }
-        self.changes.mark(id).map(|mark| match mark {
-            Mark::New => Chip::New,
-            Mark::Modified => Chip::Modified,
-        })
+        self.changes
+            .mark(id)
+            .map(|mark| match mark {
+                Mark::New => Chip::New,
+                Mark::Modified => Chip::Modified,
+            })
+            .or_else(|| {
+                self.library
+                    .node(id)
+                    .filter(|node| node.taxonomy().origin() == TaxonomyOrigin::BuiltIn)
+                    .map(|_| Chip::ReadOnly)
+            })
     }
 
     /// Whether `node` is `ancestor` or sits beneath it.
@@ -783,14 +791,6 @@ impl TaxonomiesView {
             };
             chip.push(Span::raw(format!(" · {kind}")));
             let built_in = node.taxonomy().origin() == TaxonomyOrigin::BuiltIn;
-            let state = if built_in {
-                Some(Chip::ReadOnly)
-            } else {
-                library.and_then(|library| Chips::new(library, &self.expanded).of(node.id()))
-            };
-            if let Some(state) = state {
-                chip.extend([Span::raw(" · "), state.span()]);
-            }
             if matches!(
                 self.mode,
                 Mode::Edit {

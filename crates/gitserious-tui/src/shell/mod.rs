@@ -880,7 +880,7 @@ mod tests {
             terminal.resize(Rect::new(0, 0, width, height))?;
             terminal.draw(|frame| shell.render(frame, &[]))?;
             let buffer = terminal.backend().buffer();
-            let content = height - 6;
+            let content = height - 5;
             let outline = content.div_ceil(2);
             let inspector_y = 3 + outline;
             let x = (0..width)
@@ -888,11 +888,11 @@ mod tests {
                 .ok_or("outline border")?;
             assert_eq!(buffer[(x, inspector_y - 1)].symbol(), "└");
             assert_eq!(buffer[(x, inspector_y)].symbol(), "┌");
-            assert_eq!(buffer[(x, height - 4)].symbol(), "└");
-            assert_eq!(outline - (height - 3 - inspector_y), content % 2);
+            assert_eq!(buffer[(x, height - 3)].symbol(), "└");
+            assert_eq!(outline - (height - 2 - inspector_y), content % 2);
             if height == 40 {
-                assert_eq!(outline, 17);
-                assert_eq!(height - 3 - inspector_y, 17);
+                assert_eq!(outline, 18);
+                assert_eq!(height - 2 - inspector_y, 17);
             }
             assert_eq!(buffer[(1, height - 2)].symbol(), " ");
             assert_eq!(buffer[(2, height - 2)].symbol(), "N");
@@ -901,7 +901,7 @@ mod tests {
     }
 
     #[test]
-    fn every_root_footer_keeps_hints_between_blank_black_padding_rows()
+    fn every_root_footer_keeps_hints_above_a_blank_black_bottom_row()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
         for (width, height) in [(87, 40), (MINIMUM_WIDTH, MINIMUM_HEIGHT)] {
@@ -914,7 +914,7 @@ mod tests {
                 }
                 terminal.draw(|frame| shell.render(frame, &[]))?;
                 let buffer = terminal.backend().buffer();
-                for y in [height - FOOTER_HEIGHT, height - 1] {
+                for y in [height - 1] {
                     for x in 0..width {
                         assert_eq!(buffer[(x, y)].symbol(), " ", "{section:?}");
                         assert_eq!(buffer[(x, y)].bg, JET_BLACK, "{section:?}");
@@ -1251,8 +1251,8 @@ mod tests {
             // No blank gap: the Home frame starts directly under the nav box.
             assert_eq!(buffer[(0, 3)].symbol(), "┌");
             assert_eq!(buffer[(width - 1, 3)].symbol(), "┐");
-            assert_eq!(buffer[(0, height - 4)].symbol(), "└");
-            assert_eq!(buffer[(width - 1, height - 4)].symbol(), "┘");
+            assert_eq!(buffer[(0, height - 3)].symbol(), "└");
+            assert_eq!(buffer[(width - 1, height - 3)].symbol(), "┘");
             // Wordmark graphic is present (block/dither cells, not plain text).
             let body: String = (0..width)
                 .flat_map(|x| (4..height - 4).map(move |y| (x, y)))
