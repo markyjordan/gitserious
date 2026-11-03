@@ -26,6 +26,9 @@ fn press(view: &mut TaxonomiesView, library: &LibraryDraft, code: KeyCode) {
 fn open(view: &mut TaxonomiesView, library: &LibraryDraft, name: &str) -> Result<NodeId> {
     let id = library.find_path(&[name]).ok_or("taxonomy")?;
     view.select(id.clone());
+    if view.expanded.contains(&id) {
+        press(view, library, KeyCode::Enter);
+    }
     press(view, library, KeyCode::Right);
     Ok(id)
 }
@@ -41,84 +44,65 @@ fn one_root(view: &TaxonomiesView, library: &LibraryDraft, expected: &NodeId) {
 }
 
 #[test]
-fn switching_roots_anchors_once_and_preserves_child_expansion() -> Result {
+fn opening_collapses_only_earlier_roots_and_normal_scrolling_keeps_selection_visible() -> Result {
     let (mut view, library) = fixture()?;
     let first = open(&mut view, &library, "conventional")?;
     let child = library.find_path(&["conventional", "feat"]).ok_or("feat")?;
     press(&mut view, &library, KeyCode::Right);
     press(&mut view, &library, KeyCode::Right);
     assert!(view.expanded.contains(&child));
-    draw(&mut view, &library, 14)?;
-    assert_eq!(view.outline_offset, 0);
-    let research = open(&mut view, &library, "research")?;
-    draw(&mut view, &library, 14)?;
-    one_root(&view, &library, &research);
-    assert_eq!(view.outline_offset, 0);
-    assert_eq!(
-        view.observe(Some(&library)).visible[0..2],
-        [Some(first.clone()), Some(research.clone())]
-    );
-    assert!(view.expanded.contains(&child));
     let infra = open(&mut view, &library, "infra-ops")?;
     draw(&mut view, &library, 14)?;
-    one_root(&view, &library, &infra);
-    assert_eq!(view.outline_offset, 1);
     assert_eq!(
-        view.observe(Some(&library)).visible[0..2],
-        [Some(research), Some(infra)]
+        view.outline_offset, 0,
+        "opening does not force the root onto row two"
     );
-    // Type expansion and navigation retain the root's anchor until selection needs scrolling.
-    press(&mut view, &library, KeyCode::Right);
-    press(&mut view, &library, KeyCode::Right);
-    draw(&mut view, &library, 14)?;
-    assert_eq!(view.outline_offset, 1);
-    for _ in 0..10 {
+    let research = open(&mut view, &library, "research")?;
+    assert!(!view.expanded.contains(&first));
+    assert!(view.expanded.contains(&infra));
+    assert!(view.expanded.contains(&research));
+    assert!(view.expanded.contains(&child));
+    open(&mut view, &library, "conventional")?;
+    assert!(view.expanded.contains(&infra));
+    assert!(view.expanded.contains(&research));
+    for _ in 0..12 {
         press(&mut view, &library, KeyCode::Down);
         draw(&mut view, &library, 14)?;
     }
-    assert!(view.outline_offset > 1);
-    let offset = view.outline_offset;
-    draw(&mut view, &library, 14)?;
-    assert_eq!(view.outline_offset, offset);
+    assert!(view.outline_offset > 0);
     let first_visible = view.observe(Some(&library)).visible[0]
         .clone()
-        .ok_or("first row")?;
+        .ok_or("row")?;
     assert!(view.click(view.outline_area.x, view.outline_area.y, &library));
     assert_eq!(
         view.selected(&library).map(NodeRef::id),
         Some(&first_visible)
     );
-    open(&mut view, &library, "conventional")?;
-    draw(&mut view, &library, 14)?;
-    one_root(&view, &library, &first);
-    assert_eq!(view.outline_offset, 0);
+    open(&mut view, &library, "infra-ops")?;
+    draw(&mut view, &library, 100)?;
+    assert_eq!(view.outline_offset, 0, "short branches clamp to the top");
+    assert!(!view.expanded.contains(&first));
+    assert!(!view.expanded.contains(&research));
     assert!(view.expanded.contains(&child));
-    assert!(
-        view.observe(Some(&library))
-            .visible
-            .contains(&library.find_path(&["conventional", "feat", "intent"]))
-    );
     Ok(())
 }
 
 #[test]
-fn new_fork_and_revealed_children_open_only_their_root() -> Result {
+fn new_fork_and_revealed_children_collapse_only_earlier_roots() -> Result {
     let (mut view, mut library) = fixture()?;
     open(&mut view, &library, "conventional")?;
     view.act(LibraryAction::Fork, &mut library)?;
     let fork = view.selected(&library).ok_or("fork")?.id().clone();
     draw(&mut view, &library, 36)?;
     one_root(&view, &library, &fork);
-    assert_eq!(view.outline_offset, 2);
     view.leave_edit();
     view.act(LibraryAction::Create, &mut library)?;
     let new = view.selected(&library).ok_or("new")?.id().clone();
     for height in [36, 14, 37, 36] {
         draw(&mut view, &library, height)?;
         one_root(&view, &library, &new);
-        assert_eq!(view.outline_offset, 3);
         let visible = view.observe(Some(&library)).visible;
-        assert_eq!(visible, [Some(fork.clone()), Some(new.clone()), None]);
+        assert!(visible.contains(&Some(new.clone())));
     }
     let property = match library.node(&fork) {
         Some(NodeRef::Taxonomy(taxonomy)) => taxonomy.types()[0].properties()[0].id().clone(),
@@ -126,14 +110,14 @@ fn new_fork_and_revealed_children_open_only_their_root() -> Result {
     };
     view.open(property.clone(), DraftField::Description, &library);
     draw(&mut view, &library, 36)?;
-    one_root(&view, &library, &fork);
+    assert!(view.expanded.contains(&fork));
+    assert!(view.expanded.contains(&new));
     assert_eq!(view.selected(&library).map(NodeRef::id), Some(&property));
     assert!(
         view.observe(Some(&library))
             .visible
             .contains(&Some(property))
     );
-    assert_eq!(view.outline_offset, 2);
     Ok(())
 }
 

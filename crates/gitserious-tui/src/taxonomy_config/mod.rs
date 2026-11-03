@@ -3111,8 +3111,10 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Forked from  conventional@2"));
-        let team = row_text(&terminal, MENU_WIDTH, 2, 100 - MENU_WIDTH);
-        assert!(team.contains("▌▾ team"));
+        let team = rows(&terminal)
+            .into_iter()
+            .find(|row| row.contains("▌▾ team"))
+            .ok_or("team row")?;
         assert!(team.trim_end().ends_with("+ new  │"));
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(matches!(

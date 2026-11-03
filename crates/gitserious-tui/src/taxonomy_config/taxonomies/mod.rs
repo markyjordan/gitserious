@@ -146,7 +146,6 @@ pub(super) struct TaxonomiesView {
     expanded: BTreeSet<NodeId>,
     mode: Mode,
     outline_offset: usize,
-    anchor: Option<NodeId>,
     inspector_offset: u16,
     outline_area: Rect,
     summary_scroll: summary_scroll::SummaryScroll,
@@ -450,14 +449,12 @@ impl TaxonomiesView {
 
     fn expand(&mut self, node: &NodeId, library: &LibraryDraft) {
         if matches!(library.node(node), Some(NodeRef::Taxonomy(_))) {
-            let opening = !self.expanded.contains(node);
-            for taxonomy in library.taxonomies() {
-                if taxonomy.id() != node {
-                    self.expanded.remove(taxonomy.id());
-                }
-            }
-            if opening {
-                self.anchor = Some(node.clone());
+            for taxonomy in library
+                .taxonomies()
+                .iter()
+                .take_while(|taxonomy| taxonomy.id() != node)
+            {
+                self.expanded.remove(taxonomy.id());
             }
         }
         self.expanded.insert(node.clone());
@@ -646,12 +643,6 @@ impl TaxonomiesView {
         };
         let rows = outline::rows(library, &self.expanded);
         let selected = outline::resolve(&rows, self.cursor.as_ref(), library);
-        if let Some(anchor) = self.anchor.take()
-            && let Some(index) = rows.iter().position(|row| row.node().id() == &anchor)
-        {
-            self.outline_offset = index.saturating_sub(1);
-        }
-
         let outline_focused = focused;
         let animate = animate && self.navigating();
         let chips = Chips::new(library, &self.expanded);
