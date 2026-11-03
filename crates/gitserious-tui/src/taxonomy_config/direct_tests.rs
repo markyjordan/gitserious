@@ -279,6 +279,30 @@ fn zero_type_entry_reopens_unlocks_until_eligible_and_stays_locked_after_last_ty
     assert!(!record.name_locked());
     assert!(record.usable().is_none());
     assert!(frame(&mut state, 87, 40)?.contains("▲ invalid"));
+    for embedded in [false, true] {
+        state.embedded = embedded;
+        for width in [MINIMUM_WIDTH, 87, 140] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
+            terminal.draw(|frame| state.render(frame))?;
+            let mut count = 0;
+            for y in 0..40 {
+                let row = (0..width)
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .collect::<String>();
+                if let Some(start) = row.find(" ▲ invalid ") {
+                    assert!(!row.contains(" custom "), "{row}");
+                    let x = row[..start].chars().count();
+                    for dx in 0.." ▲ invalid ".chars().count() {
+                        let cell = &terminal.backend().buffer()[(u16::try_from(x + dx)?, y)];
+                        assert_eq!(cell.fg, Color::Red);
+                        assert_eq!(cell.bg, Color::Rgb(56, 18, 18));
+                    }
+                    count += 1;
+                }
+            }
+            assert_eq!(count, 2);
+        }
+    }
     let mut state = State::new(&store);
     press(&mut state, &store, KeyCode::Char('2'));
     let taxonomy = select(&mut state, &["work-in-progress"])?;

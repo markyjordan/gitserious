@@ -9,7 +9,7 @@ use ratatui::widgets::{Block, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::super::hanging_wrap;
-use super::{BADGE_STYLE, BAND, Chips, DIM, KEY_STYLE, READ_ONLY_STYLE, fit, policy_style};
+use super::{BAND, CUSTOM_STYLE, Chips, DIM, KEY_STYLE, READ_ONLY_STYLE, fit, policy_style};
 use crate::theme::{ACCENT, AMBER, block_title, focus_frame_style};
 
 /// Labels and the values beside them start in these columns.
@@ -139,7 +139,7 @@ fn describe(
         (Some(chip), _) => vec![chip.span()],
         (None, NodeRef::Taxonomy(taxonomy)) => vec![Span::styled(
             format!(" {} ", taxonomy.origin().as_str()),
-            BADGE_STYLE,
+            CUSTOM_STYLE,
         )],
         (None, _) => Vec::new(),
     };

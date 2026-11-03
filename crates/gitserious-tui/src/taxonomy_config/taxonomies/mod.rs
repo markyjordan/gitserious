@@ -23,8 +23,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use super::naming::{problem_sentence, refusal_sentence, single_line};
 use super::{ShellKeys, contains};
 use crate::theme::{
-    ACCENT, AMBER, JET_BLACK, ZEBRA_BACKGROUND, block_title, focus_frame_style, footer_hints,
-    navigation_key_style, navigation_style,
+    ACCENT, AMBER, JET_BLACK, block_title, focus_frame_style, footer_hints, navigation_key_style,
+    navigation_style,
 };
 use outline::Row;
 pub(super) use outline::RowKey;
@@ -40,8 +40,8 @@ mod text_layout;
 const OUTLINE_TITLE: &str = "Commit Message Taxonomies";
 const DIM: Style = Style::new().fg(Color::Gray);
 const KEY_STYLE: Style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
-const READ_ONLY_STYLE: Style = Style::new().fg(Color::Black).bg(Color::Rgb(230, 230, 230));
-const BADGE_STYLE: Style = Style::new().fg(Color::Gray).bg(ZEBRA_BACKGROUND);
+const READ_ONLY_STYLE: Style = Style::new().fg(Color::Black).bg(Color::Rgb(211, 211, 211));
+const CUSTOM_STYLE: Style = Style::new().fg(Color::Black).bg(Color::Rgb(144, 238, 144));
 const BAND: Style = Style::new().bg(Color::Rgb(40, 40, 40));
 const EDIT_CHIP: Style = Style::new()
     .fg(JET_BLACK)

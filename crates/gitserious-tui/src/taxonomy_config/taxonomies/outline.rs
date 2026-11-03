@@ -9,7 +9,7 @@ use ratatui::widgets::{Block, Paragraph};
 
 use super::summary_scroll::{SummaryScroll, Target};
 use super::{
-    BADGE_STYLE, BAND, Chip, Chips, DIM, OUTLINE_TITLE, READ_ONLY_STYLE, fit, policy_style,
+    BAND, CUSTOM_STYLE, Chip, Chips, DIM, OUTLINE_TITLE, READ_ONLY_STYLE, fit, policy_style,
 };
 use crate::theme::{ACCENT, block_title, focus_frame_style, frame_style};
 
@@ -349,7 +349,7 @@ fn row_line(
                         if taxonomy.origin() == gitserious_app::TaxonomyOrigin::BuiltIn {
                             READ_ONLY_STYLE
                         } else {
-                            BADGE_STYLE
+                            CUSTOM_STYLE
                         },
                     )
                 },
