@@ -2190,7 +2190,10 @@ mod tests {
             terminal.draw(|frame| state.render(frame))?;
             let screen = rows(&terminal);
             assert!(screen[0].starts_with("┌ Menu ─"));
-            assert!(row_text(&terminal, MENU_WIDTH, 0, 14).starts_with("┌ Taxonomies ─"));
+            assert!(
+                row_text(&terminal, MENU_WIDTH, 0, width - MENU_WIDTH)
+                    .starts_with("┌ Commit Message Taxonomies ─")
+            );
             let buffer = terminal.backend().buffer();
             assert_eq!(buffer[(MENU_WIDTH, 0)].fg, Color::Rgb(80, 160, 255));
             assert_eq!(buffer[(MENU_WIDTH + 1, 1)].fg, Color::Rgb(80, 160, 255));
