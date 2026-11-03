@@ -11,7 +11,7 @@ use super::*;
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 const HOLD: Duration = Duration::from_secs(3);
-const PREFIX_WIDTH: u16 = 14;
+const PREFIX_WIDTH: u16 = 15;
 
 fn key(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
@@ -196,7 +196,7 @@ fn built_in_summaries_use_the_full_unbadged_width() -> Result {
         let line = (inner.x..inner.right())
             .map(|x| initial[(x, y)].symbol())
             .collect::<String>();
-        let prefix = "▌  ▸ provision  ";
+        let prefix = "▌├─ ▸ provision  ";
         assert!(line.starts_with(prefix), "{line}");
         let area = Rect::new(
             inner.x + u16::try_from(prefix.chars().count())?,

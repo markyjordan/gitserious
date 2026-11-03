@@ -2334,16 +2334,16 @@ mod tests {
         press(&mut state, KeyCode::Char('2'))?;
         press(&mut state, KeyCode::Enter)?;
         let screen = press(&mut state, KeyCode::Down)?;
-        assert!(screen.contains("│▌  ▸ feat      intent · decision · constraints"));
+        assert!(screen.contains("│▌├─ ▸ feat      intent · decision · constraints"));
         assert_eq!(
             screen
                 .lines()
-                .find(|row| row.contains("│▌  ▸ feat "))
+                .find(|row| row.contains("│▌├─ ▸ feat "))
                 .and_then(|row| row.rsplit('│').nth(1))
                 .map(str::trim_end),
-            Some("▌  ▸ feat      intent · decision · constraints")
+            Some("▌├─ ▸ feat      intent · decision · constraints")
         );
-        assert!(screen.contains("│   ▸ fix       cause · decision · constraints"));
+        assert!(screen.contains("│ ├─ ▸ fix       cause · decision · constraints"));
         assert!(screen.contains("Type feat"));
         assert!(screen.contains("in conventional"));
         assert!(screen.contains("Properties   3"));
@@ -2353,17 +2353,18 @@ mod tests {
         assert_eq!(
             screen
                 .lines()
-                .find(|row| row.contains("│▌  ▾ feat "))
+                .find(|row| row.contains("│▌├─ ▾ feat "))
                 .and_then(|row| row.rsplit('│').nth(1))
                 .map(str::trim_end),
-            Some("▌  ▾ feat")
+            Some("▌├─ ▾ feat")
         );
         for _ in 0..3 {
             press(&mut state, KeyCode::Down)?;
         }
         let screen = press(&mut state, KeyCode::Enter)?;
-        assert!(screen.contains("│▌    └ constraints  conditional"));
-        assert!(screen.contains("│     ├ intent       required"));
+        assert!(screen.contains("│▌│  └─ constraints  conditional"));
+        assert!(screen.contains("│ │  ├─ intent       required"));
+        assert!(screen.contains("│ └─ ▸ revert"));
         assert!(screen.contains("Property constraints"));
         assert!(screen.contains("in conventional › feat"));
         assert!(screen.contains("Policy       required recommended conditional optional"));
@@ -2437,7 +2438,11 @@ mod tests {
         assert!(screen.join("\n").contains("Taxonomy infra-ops"));
 
         let first = row_text(&terminal, MENU_WIDTH + 1, 1, MINIMUM_WIDTH - MENU_WIDTH - 2);
-        let name = first.split_whitespace().nth(1).ok_or("missing first row")?;
+        let name = first
+            .split(['▸', '▾'])
+            .nth(1)
+            .and_then(|row| row.split_whitespace().next())
+            .ok_or("missing first row")?;
         state.handle_event(click(Rect::new(MENU_WIDTH + 1, 1, 1, 1)), &workspace);
         assert_eq!(
             state.taxonomies.observe(state.library()).cursor_path,
@@ -3659,8 +3664,8 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
         terminal.draw(|frame| state.render(frame))?;
         let screen = rows(&terminal).join("\n");
-        assert!(screen.contains("│▌    └ + add property"), "{screen}");
-        assert!(screen.contains("│   + add type"), "{screen}");
+        assert!(screen.contains("│▌│  └─ + add property"), "{screen}");
+        assert!(screen.contains("│ └─ + add type"), "{screen}");
         let footer = row_text(&terminal, 0, 38, 87);
         assert!(footer.contains("enter add"), "{footer}");
         assert!(!footer.contains("enter open"), "{footer}");

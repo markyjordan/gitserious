@@ -190,7 +190,7 @@ mod tests {
     fn target(summary: &str, width: u16) -> Target {
         Target {
             node: NodeId::Local(NonZeroU32::MIN),
-            prefix: "▌  ▸ type  ".into(),
+            prefix: "▌├─ ▸ type  ".into(),
             summary: summary.into(),
             chip: None,
             viewport: Rect::new(0, 0, 20, 4),

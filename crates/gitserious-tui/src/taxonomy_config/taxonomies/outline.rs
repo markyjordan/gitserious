@@ -227,6 +227,27 @@ fn summary(commit_type: &TypeNode) -> String {
         .join(" · ")
 }
 
+fn last_type(taxonomy: &TaxonomyNode, commit_type: &TypeNode) -> bool {
+    taxonomy.origin() == TaxonomyOrigin::BuiltIn
+        && taxonomy
+            .types()
+            .last()
+            .is_some_and(|last| last.id() == commit_type.id())
+}
+
+const fn branch(last: bool) -> &'static str {
+    if last { "└─ " } else { "├─ " }
+}
+
+fn property_branch(taxonomy: &TaxonomyNode, commit_type: &TypeNode, last: bool) -> String {
+    let ancestor = if last_type(taxonomy, commit_type) {
+        "   "
+    } else {
+        "│  "
+    };
+    format!("{ancestor}{}", branch(last))
+}
+
 fn summary_target(
     row: Row<'_>,
     open: bool,
@@ -248,7 +269,7 @@ fn summary_target(
         commit_type.name(),
         taxonomy.types().iter().map(TypeNode::name),
     );
-    let prefix = format!("▌  ▸ {name}");
+    let prefix = format!("▌{}▸ {name}", branch(last_type(taxonomy, commit_type)));
     let prefix_width = Span::raw(&prefix).width();
     let badge_width = chip.map_or(0, |chip| chip.span().width());
     let room = usize::from(row_area.width)
@@ -298,14 +319,17 @@ fn row_line(
     let marker = Span::styled(if open { "▾ " } else { "▸ " }, frame_style());
     let (left, right) = match row {
         Row::AddType(_) => (
-            vec![bar, Span::raw("  "), Span::styled(ADD_TYPE, ADD_STYLE)],
-            Vec::new(),
-        ),
-        Row::AddProperty(..) => (
             vec![
                 bar,
-                Span::raw("    "),
-                Span::styled("└ ", frame_style()),
+                Span::styled(branch(true), frame_style()),
+                Span::styled(ADD_TYPE, ADD_STYLE),
+            ],
+            Vec::new(),
+        ),
+        Row::AddProperty(taxonomy, commit_type) => (
+            vec![
+                bar,
+                Span::styled(property_branch(taxonomy, commit_type, true), frame_style()),
                 Span::styled(ADD_PROPERTY, ADD_STYLE),
             ],
             Vec::new(),
@@ -338,7 +362,12 @@ fn row_line(
                 commit_type.name(),
                 taxonomy.types().iter().map(TypeNode::name),
             );
-            let mut left = vec![bar, Span::raw("  "), marker, Span::styled(name, name_style)];
+            let mut left = vec![
+                bar,
+                Span::styled(branch(last_type(taxonomy, commit_type)), frame_style()),
+                marker,
+                Span::styled(name, name_style),
+            ];
             if !open {
                 left.push(Span::styled(summary(commit_type), DIM));
             }
@@ -361,8 +390,7 @@ fn row_line(
             (
                 vec![
                     bar,
-                    Span::raw("    "),
-                    Span::styled(if last { "└ " } else { "├ " }, frame_style()),
+                    Span::styled(property_branch(taxonomy, commit_type, last), frame_style()),
                     Span::styled(name, name_style),
                     Span::styled(property.policy().label(), policy_style(property.policy())),
                 ],
