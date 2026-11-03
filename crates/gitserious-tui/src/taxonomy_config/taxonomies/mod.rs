@@ -37,6 +37,7 @@ mod picker;
 mod summary_scroll;
 mod text_layout;
 
+const OUTLINE_TITLE: &str = "Commit Message Taxonomies";
 const DIM: Style = Style::new().fg(Color::Gray);
 const KEY_STYLE: Style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
 const READ_ONLY_STYLE: Style = Style::new().fg(Color::Black).bg(Color::Rgb(230, 230, 230));
@@ -610,7 +611,7 @@ impl TaxonomiesView {
             self.outline_area = Rect::default();
             let block = Block::bordered()
                 .border_style(focus_frame_style(focused))
-                .title(block_title("Taxonomies"));
+                .title(block_title(OUTLINE_TITLE));
             frame.render_widget(
                 Paragraph::new("Taxonomy library unavailable."),
                 block.inner(outline_area),

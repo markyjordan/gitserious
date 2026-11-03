@@ -45,6 +45,43 @@ fn one_root(view: &TaxonomiesView, library: &LibraryDraft, expected: &NodeId) {
 }
 
 #[test]
+fn outline_heading_matches_without_a_library_and_fits_beside_scroll_counts() -> Result {
+    for width in [50, 71, 124] {
+        let (mut view, library) = fixture()?;
+        let mut terminal = Terminal::new(TestBackend::new(width, 14))?;
+        for loaded in [false, true] {
+            if loaded {
+                open(&mut view, &library, "conventional")?;
+                for _ in 0..8 {
+                    press(&mut view, &library, KeyCode::Down);
+                }
+            }
+            terminal.draw(|frame| {
+                view.render(frame, frame.area(), loaded.then_some(&library), true, false);
+            })?;
+            let row = |y| {
+                (0..width)
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .collect::<String>()
+            };
+            assert!(row(0).starts_with("┌ Commit Message Taxonomies ─"));
+            if loaded {
+                assert!(view.outline_offset > 0);
+                assert!(row(0).contains(&format!(" ↑ {} more ", view.outline_offset)));
+                let below = outline::rows(&library, &view.expanded).len()
+                    - view.outline_offset
+                    - usize::from(view.outline_area.height);
+                assert!(below > 0);
+                assert!(row(6).contains(&format!(" ↓ {below} more ")));
+            } else {
+                assert!(row(1).contains("Taxonomy library unavailable."));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn opening_collapses_only_earlier_roots_and_normal_scrolling_keeps_selection_visible() -> Result {
     let (mut view, library) = fixture()?;
     let first = open(&mut view, &library, "conventional")?;

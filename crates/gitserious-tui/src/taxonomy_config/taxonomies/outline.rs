@@ -8,7 +8,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 use super::summary_scroll::{SummaryScroll, Target};
-use super::{BADGE_STYLE, BAND, Chip, Chips, DIM, READ_ONLY_STYLE, fit, policy_style};
+use super::{
+    BADGE_STYLE, BAND, Chip, Chips, DIM, OUTLINE_TITLE, READ_ONLY_STYLE, fit, policy_style,
+};
 use crate::theme::{ACCENT, block_title, focus_frame_style, frame_style};
 
 pub(super) const ADD_TYPE: &str = "+ add type";
@@ -160,7 +162,7 @@ pub(super) fn render(
     let mut block = Block::bordered()
         .border_style(focus_frame_style(focused))
         .title_style(focus_frame_style(focused))
-        .title(block_title("Taxonomies"));
+        .title(block_title(OUTLINE_TITLE));
     let inner = block.inner(area);
     let height = usize::from(inner.height);
     if selected < *offset {
