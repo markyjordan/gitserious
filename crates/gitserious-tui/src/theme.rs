@@ -86,12 +86,12 @@ pub(crate) fn footer_hints(hints: &[(&str, &str)]) -> Line<'static> {
     Line::from(spans)
 }
 
-pub(crate) const FOOTER_HEIGHT: u16 = 3;
+pub(crate) const FOOTER_HEIGHT: u16 = 2;
 
-/// The footer owns its padding; hints and mode chips occupy only its inner row.
+/// Render the footer background and return its content area.
 pub(crate) fn render_footer_block(frame: &mut Frame<'_>, area: Rect) -> Rect {
     let block = Block::default()
-        .padding(Padding::uniform(1))
+        .padding(Padding::new(1, 1, 0, 1))
         .style(Style::new().fg(Color::White).bg(JET_BLACK));
     let inner = block.inner(area);
     frame.render_widget(Clear, area);

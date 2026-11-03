@@ -2007,12 +2007,12 @@ mod tests {
         assert!(home.contains("┌ Commit ─"));
         assert_eq!(buffer[(0, 0)].symbol(), "┌");
         assert_eq!(buffer[(MENU_WIDTH - 1, 0)].symbol(), "┐");
-        assert_eq!(buffer[(MENU_WIDTH - 1, 26)].symbol(), "┘");
+        assert_eq!(buffer[(MENU_WIDTH - 1, 27)].symbol(), "┘");
         assert_eq!(buffer[(MENU_WIDTH, 0)].symbol(), "┌");
         assert_eq!(buffer[(99, 0)].symbol(), "┐");
         assert_ne!(buffer[(MENU_WIDTH + 1, 1)].symbol(), " ");
         assert_eq!(buffer[(MENU_WIDTH + 1, 1)].fg, ACCENT);
-        let project_columns = pane_columns(Rect::new(MENU_WIDTH, 0, 100 - MENU_WIDTH, 27));
+        let project_columns = pane_columns(Rect::new(MENU_WIDTH, 0, 100 - MENU_WIDTH, 28));
         assert!(
             row_text(
                 &terminal,
@@ -2026,7 +2026,7 @@ mod tests {
         assert_eq!(buffer[(2, 1)].bg, ACCENT);
         assert_eq!(buffer[(5, 1)].fg, ACCENT);
         assert!(buffer[(5, 1)].modifier.contains(Modifier::UNDERLINED));
-        assert_eq!(buffer[(0, 26)].symbol(), "└");
+        assert_eq!(buffer[(0, 27)].symbol(), "└");
         assert_eq!(buffer[(1, 28)].symbol(), "←");
         assert_eq!(buffer[(4, 28)].symbol(), ":");
         assert!((1..99).all(|x| buffer[(x, 28)].bg == ACCENT));
@@ -2225,7 +2225,7 @@ mod tests {
             assert_eq!(buffer[(MENU_WIDTH, 0)].fg, Color::Rgb(80, 160, 255));
             assert_eq!(buffer[(MENU_WIDTH + 1, 1)].fg, Color::Rgb(80, 160, 255));
             assert_eq!(buffer[(1, height - 2)].bg, Color::Rgb(80, 160, 255));
-            for label in [" built-in ", " ◇ read-only "] {
+            for label in [" ◇ read-only "] {
                 let mut count = 0;
                 for (y, line) in screen.iter().enumerate() {
                     for (start, _) in line.match_indices(label) {
@@ -2250,17 +2250,14 @@ mod tests {
                     .unwrap_or_default()
             };
             assert!(outline("conventional").contains("│▌▸ conventional"));
-            assert!(outline("conventional").trim_end().ends_with("built-in  │"));
-            assert!(outline("infra-ops").trim_end().ends_with("built-in  │"));
+            assert!(outline("conventional").trim_end().ends_with("read-only  │"));
+            assert!(outline("infra-ops").trim_end().ends_with("read-only  │"));
             assert!(outline("original").trim_end().ends_with("custom  │"));
             let text = screen.join("\n");
             assert!(text.contains("┌ Inspector ─"));
             assert!(text.contains("Taxonomy conventional"));
             assert!(text.contains("Version      2"));
-            assert!(
-                screen[usize::from(height) - 2]
-                    .starts_with("  NAV  · taxonomy ·  ◇ read-only   enter/→ open")
-            );
+            assert!(screen[usize::from(height) - 2].starts_with("  NAV  · taxonomy  enter/→ open"));
             if height == 40 {
                 assert!(text.contains("Types        11"));
                 assert!(text.contains("f fork to customize · built-ins are read-only"));
@@ -2298,13 +2295,13 @@ mod tests {
                 .find(|row| row.contains("│▌  ▸ feat "))
                 .and_then(|row| row.rsplit('│').nth(1))
                 .map(str::trim_end),
-            Some("▌  ▸ feat      intent · decision · constraints")
+            Some("▌  ▸ feat      intent · decision · constraints          ◇ read-only")
         );
         assert!(screen.contains("│   ▸ fix       cause · decision · constraints"));
         assert!(screen.contains("Type feat"));
         assert!(screen.contains("in conventional"));
         assert!(screen.contains("Properties   3"));
-        assert!(screen.contains(" NAV  · type ·  ◇ read-only"));
+        assert!(screen.contains(" NAV  · type"));
 
         let screen = press(&mut state, KeyCode::Enter)?;
         assert_eq!(
@@ -2313,7 +2310,7 @@ mod tests {
                 .find(|row| row.contains("│▌  ▾ feat "))
                 .and_then(|row| row.rsplit('│').nth(1))
                 .map(str::trim_end),
-            Some("▌  ▾ feat")
+            Some("▌  ▾ feat                                               ◇ read-only")
         );
         for _ in 0..3 {
             press(&mut state, KeyCode::Down)?;
@@ -2326,7 +2323,7 @@ mod tests {
         assert!(screen.contains("Policy       required recommended conditional optional"));
         assert!(screen.contains("Condition    non-obvious-requirements"));
         assert!(screen.contains("Rationale    Required when"));
-        assert!(screen.contains(" NAV  · property ·  ◇ read-only"));
+        assert!(screen.contains(" NAV  · property"));
         let buffer = terminal.backend().buffer();
         let (policy_x, policy_y) = (0..40)
             .find_map(|y| {
@@ -2409,7 +2406,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(87, 36))?;
         terminal.draw(|frame| state.render(frame))?;
         let footer = row_text(&terminal, 0, 34, 87);
-        assert!(footer.starts_with("  NAV  · taxonomy ·  ◇ read-only   enter/→ open"));
+        assert!(footer.starts_with("  NAV  · taxonomy  enter/→ open"));
         assert!(footer.trim_end().ends_with("│ tab tabs  / cmds  ? help"));
         Ok(())
     }
@@ -2496,7 +2493,7 @@ mod tests {
                     let footer = row_text(&terminal, 0, y, width);
                     let mode = if editing { " EDIT " } else { " NAV " };
                     assert!(
-                        footer.starts_with(&format!(" {mode} · taxonomy · ")),
+                        footer.starts_with(&format!(" {mode} · taxonomy ")),
                         "{footer}"
                     );
                     if !editing {
@@ -2512,7 +2509,7 @@ mod tests {
                         assert_eq!(cell.fg, JET_BLACK);
                         assert_eq!(cell.modifier, Modifier::BOLD);
                     }
-                    for padding_y in [y - 1, y + 1] {
+                    for padding_y in [y + 1] {
                         for x in 0..width {
                             assert_eq!(buffer[(x, padding_y)].symbol(), " ");
                             assert_eq!(buffer[(x, padding_y)].bg, JET_BLACK);
@@ -2521,12 +2518,16 @@ mod tests {
 
                     assert_eq!(buffer[(mode_width + 1, y)].bg, JET_BLACK);
                     let badge = format!(" {label} ");
-                    let start = footer.find(&badge).ok_or("missing state pill")?;
-                    let x = u16::try_from(footer[..start].chars().count())?;
-                    let badge_width = u16::try_from(badge.chars().count())?;
-                    assert!((x..x + badge_width).all(|x| buffer[(x, y)].bg == background));
-                    assert_eq!(buffer[(x - 1, y)].bg, JET_BLACK);
-                    assert_eq!(buffer[(x + badge_width, y)].bg, JET_BLACK);
+                    assert!(!footer.contains(&badge));
+                    let screen = rows(&terminal);
+                    let (badge_y, line) = screen
+                        .iter()
+                        .enumerate()
+                        .find(|(_, line)| line.contains(&badge))
+                        .ok_or("missing panel status")?;
+                    let start = line.find(&badge).ok_or("badge")?;
+                    let x = u16::try_from(line[..start].chars().count())?;
+                    assert_eq!(buffer[(x, u16::try_from(badge_y)?)].bg, background);
                     for x in [0, width - 1] {
                         assert_eq!(buffer[(x, y)].symbol(), " ");
                         assert_eq!(buffer[(x, y)].bg, JET_BLACK);
@@ -2733,7 +2734,7 @@ mod tests {
             assert!(state.home_overlay.is_none());
             terminal.draw(|frame| state.render(frame))?;
             let footer = row_text(&terminal, 0, height - 2, width);
-            assert!(footer.starts_with("  NAV  · taxonomy ·  ◇ read-only   enter/→ open"));
+            assert!(footer.starts_with("  NAV  · taxonomy  enter/→ open"));
             assert!(footer.trim_end().ends_with("│ / cmds  ? help"));
             state.handle_event(key(KeyCode::Char('/')), &workspace);
             assert!(matches!(state.home_overlay, Some(HomeOverlay::Palette(_))));
@@ -2998,12 +2999,12 @@ mod tests {
         state.status = Some(Notice::Error("Invalid selection".into()));
         terminal.draw(|frame| state.render(frame))?;
         assert_eq!(terminal.backend().buffer()[(0, 24)].symbol(), "│");
-        assert_eq!(terminal.backend().buffer()[(45, 25)].fg, Color::Red);
+        assert_eq!(terminal.backend().buffer()[(45, 26)].fg, Color::Red);
         assert!(text(&terminal).contains("Invalid selection"));
 
         state.status = Some(Notice::Info("Configuration applied.".into()));
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(45, 25)].fg, Color::White);
+        assert_eq!(terminal.backend().buffer()[(45, 26)].fg, Color::White);
         assert!(text(&terminal).contains("Configuration applied."));
         state.handle_event(key(KeyCode::Down), &workspace);
         terminal.draw(|frame| state.render(frame))?;
@@ -3020,11 +3021,11 @@ mod tests {
         state.project = None;
         state.project_error = "project load failed".into();
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(45, 25)].fg, Color::Red);
+        assert_eq!(terminal.backend().buffer()[(45, 26)].fg, Color::Red);
 
         state.status = Some(Notice::Info("Review pending".into()));
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(45, 25)].fg, Color::White);
+        assert_eq!(terminal.backend().buffer()[(45, 26)].fg, Color::White);
         assert!(text(&terminal).contains("Review pending"));
 
         state.status = None;
@@ -3033,7 +3034,7 @@ mod tests {
         state.global = None;
         state.global_error = "global load failed".into();
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(45, 25)].fg, Color::Red);
+        assert_eq!(terminal.backend().buffer()[(45, 26)].fg, Color::Red);
         assert!(text(&terminal).contains("Global load failed."));
         Ok(())
     }
@@ -3289,7 +3290,7 @@ mod tests {
         let buffer = minimum.backend().buffer();
         assert_eq!(buffer[(0, 0)].symbol(), "┌");
         assert_eq!(buffer[(MENU_WIDTH, 0)].symbol(), "┌");
-        assert_eq!(buffer[(0, 14)].symbol(), "└");
+        assert_eq!(buffer[(0, 15)].symbol(), "└");
         Ok(())
     }
 
