@@ -39,7 +39,7 @@ mod text_layout;
 
 const DIM: Style = Style::new().fg(Color::Gray);
 const KEY_STYLE: Style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
-const READ_ONLY_STYLE: Style = Style::new().fg(Color::Black).bg(Color::White);
+const READ_ONLY_STYLE: Style = Style::new().fg(Color::Black).bg(Color::Rgb(230, 230, 230));
 const BADGE_STYLE: Style = Style::new().fg(Color::Gray).bg(ZEBRA_BACKGROUND);
 const BAND: Style = Style::new().bg(Color::Rgb(40, 40, 40));
 const EDIT_CHIP: Style = Style::new()
@@ -48,10 +48,9 @@ const EDIT_CHIP: Style = Style::new()
     .add_modifier(Modifier::BOLD);
 const INSPECTOR_PAGE: u16 = 8;
 
-/// A node's state as its outline row, and the Inspector header show it.
+/// A node's change or problem status in the outline and Inspector.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Chip {
-    ReadOnly,
     New,
     Modified,
     Invalid(usize),
@@ -88,18 +87,10 @@ impl<'a> Chips<'a> {
         if invalid > 0 {
             return Some(Chip::Invalid(invalid));
         }
-        self.changes
-            .mark(id)
-            .map(|mark| match mark {
-                Mark::New => Chip::New,
-                Mark::Modified => Chip::Modified,
-            })
-            .or_else(|| {
-                self.library
-                    .node(id)
-                    .filter(|node| node.taxonomy().origin() == TaxonomyOrigin::BuiltIn)
-                    .map(|_| Chip::ReadOnly)
-            })
+        self.changes.mark(id).map(|mark| match mark {
+            Mark::New => Chip::New,
+            Mark::Modified => Chip::Modified,
+        })
     }
 
     /// Whether `node` is `ancestor` or sits beneath it.
@@ -121,7 +112,6 @@ impl<'a> Chips<'a> {
 impl Chip {
     fn label(self) -> String {
         match self {
-            Self::ReadOnly => "◇ read-only".into(),
             Self::New => "+ new".into(),
             Self::Modified => "~ modified".into(),
             Self::Invalid(count) => format!("▲ invalid {count}"),
@@ -130,7 +120,6 @@ impl Chip {
 
     fn span(self) -> Span<'static> {
         let style = match self {
-            Self::ReadOnly => READ_ONLY_STYLE,
             Self::New => Style::new().fg(Color::Green).bg(Color::Rgb(20, 44, 24)),
             Self::Modified => Style::new().fg(AMBER).bg(Color::Rgb(52, 38, 12)),
             Self::Invalid(_) => Style::new().fg(Color::Red).bg(Color::Rgb(56, 18, 18)),

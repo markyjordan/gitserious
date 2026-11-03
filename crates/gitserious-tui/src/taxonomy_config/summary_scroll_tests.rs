@@ -161,6 +161,67 @@ fn selected_overflow_animates_without_changing_its_prefix_badge_or_neighbors() -
 }
 
 #[test]
+fn built_in_summaries_use_the_full_unbadged_width() -> Result {
+    let workspace = Workspace::new();
+    let mut state = State::new(&workspace);
+    state.category = Category::Taxonomies;
+    state.home_focus = HomeFocus::Content;
+    let root = state
+        .library()
+        .and_then(|library| library.find_path(&["infra-ops"]))
+        .ok_or("infra-ops")?;
+    state.taxonomies.select(root);
+    for code in [KeyCode::Right, KeyCode::Right] {
+        state.handle_event(key(code), &workspace);
+    }
+    for width in [MINIMUM_WIDTH, 87, 140, MINIMUM_WIDTH] {
+        let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
+        let initial = draw(&mut state, &mut terminal)?;
+        let observation = state.taxonomies.observe(state.library());
+        let inner = observation.outline_area;
+        let selected = state
+            .taxonomies
+            .selected(state.library().ok_or("library")?)
+            .ok_or("selected")?
+            .id();
+        let y = inner.y
+            + u16::try_from(
+                observation
+                    .visible
+                    .iter()
+                    .position(|id| id.as_ref() == Some(selected))
+                    .ok_or("selected")?,
+            )?;
+        let line = (inner.x..inner.right())
+            .map(|x| initial[(x, y)].symbol())
+            .collect::<String>();
+        let prefix = "▌  ▸ provision  ";
+        assert!(line.starts_with(prefix), "{line}");
+        let area = Rect::new(
+            inner.x + u16::try_from(prefix.chars().count())?,
+            y,
+            inner.width - 1 - u16::try_from(prefix.chars().count())?,
+            1,
+        );
+        assert!(
+            !line.contains("read-only") && !line.contains("built-in"),
+            "{line}"
+        );
+        if width < 140 {
+            assert_eq!(state.next_frame_in(), Some(HOLD));
+            assert_ne!(initial[(area.right() - 1, y)].symbol(), " ");
+            state.advance(HOLD, true);
+            let moved = draw(&mut state, &mut terminal)?;
+            assert_ne!(initial, moved);
+            outside_unchanged(&initial, &moved, area);
+        } else {
+            assert_eq!(state.next_frame_in(), None);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn selection_expansion_edit_and_picker_restart_or_stop_the_clock() -> Result {
     let (workspace, mut state, mut terminal) = fixture()?;
     draw(&mut state, &mut terminal)?;

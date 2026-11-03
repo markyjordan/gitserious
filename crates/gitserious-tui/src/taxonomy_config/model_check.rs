@@ -1020,6 +1020,14 @@ fn unapplied_changes_agree_everywhere(
                     .collect::<String>()
             })
             .unwrap_or_default();
+        let built_in_root = id.as_ref().and_then(|id| library.node(id)).is_some_and(|node| {
+            matches!(node, NodeRef::Taxonomy(taxonomy) if taxonomy.origin() == gitserious_app::TaxonomyOrigin::BuiltIn)
+        });
+        if row.contains(" built-in ") != built_in_root || row.contains("read-only") {
+            return Err(format!(
+                "The outline origin badge disagrees with its node: {row:?}"
+            ));
+        }
         let count = id.as_ref().map_or(0, invalid);
         if row.contains("▲ invalid") != (count > 0)
             || (count > 0 && !row.contains(&format!("▲ invalid {count}")))
@@ -1043,9 +1051,15 @@ fn unapplied_changes_agree_everywhere(
         }
     }
     let footer = after.footer();
-    if ["▲ invalid", "+ new", "~ modified", "◇ read-only"]
-        .iter()
-        .any(|label| footer.contains(label))
+    if [
+        "▲ invalid",
+        "+ new",
+        "~ modified",
+        "◇ read-only",
+        "built-in",
+    ]
+    .iter()
+    .any(|label| footer.contains(label))
     {
         return Err(format!("The footer duplicates node status: {footer:?}"));
     }
@@ -1057,6 +1071,13 @@ fn unapplied_changes_agree_everywhere(
             .map(String::as_str)
             .collect::<Vec<_>>(),
     );
+    let built_in = selected
+        .as_ref()
+        .and_then(|id| library.node(id))
+        .is_some_and(|node| node.taxonomy().origin() == gitserious_app::TaxonomyOrigin::BuiltIn);
+    if after.frame.contains(" ◇ read-only ") != built_in {
+        return Err("The Inspector read-only badge disagrees with the selected node.".into());
+    }
     if let Some(NodeRef::Property { taxonomy, .. }) =
         selected.as_ref().and_then(|id| library.node(id))
     {
