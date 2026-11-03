@@ -4,7 +4,7 @@
 //! [`Alphabet`], up to the seed's depth bound, and checks every entry of [`PROPERTIES`] on every
 //! transition, the keys that reach the seed's [`Start`] included. An outline start names the row
 //! to start on by its names, and the check finds the keys: `2`, then `down` until the selected
-//! row matches each name and `right` to expand it before the next, then `e` and `enter` until
+//! row matches each name and `enter` to expand it before the next, then `e` and `enter` until
 //! EDIT sits on the seed's field. Other seeds start from literal keys and a readiness predicate.
 //! A seed explores every key in [`INPUTS`] but those in [`NAMED_ONLY`] unless it names a smaller
 //! alphabet, which lets it reach deeper for the same number of replays. After a seed's exploration, each of its
@@ -86,8 +86,8 @@
 //! the reverse. Apply and discard, which replace the whole Library, happen off Home. Without it,
 //! a copy shares its source's fields and an edit to one rewrites the other.
 //!
-//! P13, browsing arrows never edit a policy. Left returns to the property's parent and right
-//! leaves the property selected. Policy edits require EDIT.
+//! P13, browsing arrows only switch panel focus. Both arrows preserve the selection,
+//! expansion, and Library. Policy edits require EDIT.
 //!
 //! Scope limits:
 //! - Only the keyboard events in [`INPUTS`]. Mouse, paste, and resize events are out of scope.
@@ -349,7 +349,7 @@ const SEEDS: &[Seed] = &[
         workspace: team_library,
         start: Start::Keys {
             keys: &[
-                "2", "down", "down", "down", "right", "right", "right", "down", "down", "down",
+                "2", "down", "down", "down", "enter", "down", "enter", "down", "down", "down",
                 "enter",
             ],
             ready: |snapshot| editing(snapshot) == Some(DraftField::Name),
@@ -363,7 +363,7 @@ const SEEDS: &[Seed] = &[
         workspace: team_library,
         start: Start::Keys {
             keys: &[
-                "2", "down", "down", "down", "right", "right", "right", "down", "e", "enter",
+                "2", "down", "down", "down", "enter", "down", "enter", "down", "e", "enter",
                 "enter", "right", "right", "enter",
             ],
             ready: |snapshot| editing(snapshot) == Some(DraftField::Condition),
@@ -403,7 +403,7 @@ const SEEDS: &[Seed] = &[
         workspace: team_pair_library,
         start: Start::Keys {
             keys: &[
-                "2", "down", "down", "down", "right", "right", "right", "down", "c", "space",
+                "2", "down", "down", "down", "enter", "down", "enter", "down", "c", "space",
                 "enter", "down", "down", "down", "down", "down",
             ],
             ready: |snapshot| copied(snapshot) && selects(snapshot, &["team", "hotfix", "summary"]),
@@ -415,7 +415,7 @@ const SEEDS: &[Seed] = &[
 ];
 
 const COPY_SUMMARY: &[&str] = &[
-    "2", "down", "down", "down", "right", "right", "right", "down", "c", "space", "enter",
+    "2", "down", "down", "down", "enter", "down", "enter", "down", "c", "space", "enter",
 ];
 
 fn copied(snapshot: &Snapshot) -> bool {
@@ -788,18 +788,31 @@ fn browsing_arrows_keep_policies(
     input: &Event,
     after: Option<&Snapshot>,
 ) -> Result<(), String> {
-    if before.outline_takes_keys()
-        && matches!(before.taxonomies.mode, Mode::Nav)
-        && matches!(
-            input,
-            Event::Key(KeyEvent {
-                code: KeyCode::Left | KeyCode::Right,
-                ..
-            })
-        )
-        && format!("{:?}", before.library()) != format!("{:?}", after.and_then(Snapshot::library))
+    let Event::Key(key) = input else {
+        return Ok(());
+    };
+    if !before.outline_takes_keys()
+        || !matches!(before.taxonomies.mode, Mode::Nav)
+        || !matches!(key.code, KeyCode::Left | KeyCode::Right)
     {
+        return Ok(());
+    }
+    let after = after.ok_or("A browsing arrow quit the editor.")?;
+    if format!("{:?}", before.library()) != format!("{:?}", after.library()) {
         return Err("A browsing arrow changed the Library.".into());
+    }
+    if before.taxonomies.expanded != after.taxonomies.expanded
+        || before.taxonomies.cursor_path != after.taxonomies.cursor_path
+    {
+        return Err("A browsing arrow changed the tree.".into());
+    }
+    let focus = if key.code == KeyCode::Left {
+        HomeFocus::Menu
+    } else {
+        HomeFocus::Content
+    };
+    if after.home_focus != focus {
+        return Err("A browsing arrow moved focus in the wrong direction.".into());
     }
     Ok(())
 }
@@ -1474,7 +1487,7 @@ fn start(seed: &Seed) -> Result<(Vec<usize>, Snapshot), String> {
             advance(seed, &mut keys, &mut state, "2")?;
             for depth in 1..=path.len() {
                 if depth > 1 {
-                    advance(seed, &mut keys, &mut state, "right")?;
+                    advance(seed, &mut keys, &mut state, "enter")?;
                 }
                 for _ in 0..64 {
                     let names = state.taxonomies.cursor_path.iter().map(String::as_str);

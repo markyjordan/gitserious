@@ -29,7 +29,7 @@ fn open(view: &mut TaxonomiesView, library: &LibraryDraft, name: &str) -> Result
     if view.expanded.contains(&id) {
         press(view, library, KeyCode::Enter);
     }
-    press(view, library, KeyCode::Right);
+    press(view, library, KeyCode::Enter);
     Ok(id)
 }
 
@@ -48,8 +48,8 @@ fn opening_collapses_only_earlier_roots_and_normal_scrolling_keeps_selection_vis
     let (mut view, library) = fixture()?;
     let first = open(&mut view, &library, "conventional")?;
     let child = library.find_path(&["conventional", "feat"]).ok_or("feat")?;
-    press(&mut view, &library, KeyCode::Right);
-    press(&mut view, &library, KeyCode::Right);
+    press(&mut view, &library, KeyCode::Down);
+    press(&mut view, &library, KeyCode::Enter);
     assert!(view.expanded.contains(&child));
     let infra = open(&mut view, &library, "infra-ops")?;
     draw(&mut view, &library, 14)?;

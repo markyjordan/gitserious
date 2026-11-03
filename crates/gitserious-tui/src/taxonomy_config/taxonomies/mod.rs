@@ -300,24 +300,18 @@ impl TaxonomiesView {
             KeyCode::Enter if !matches!(row, Row::Node(_)) => return Nav::Act(LibraryAction::Add),
             KeyCode::Up => self.set_cursor(rows[index.saturating_sub(1)].key()),
             KeyCode::Down => self.set_cursor(rows[(index + 1).min(rows.len() - 1)].key()),
-            KeyCode::Right if open => self.set_cursor(rows[index + 1].key()),
-            KeyCode::Right | KeyCode::Enter if outline::has_children(row) && !open => {
+            KeyCode::Enter if outline::has_children(row) && !open => {
                 self.summary_scroll.reset();
                 self.expand(node.id(), library);
                 self.set_cursor(row.key());
             }
-            KeyCode::Left | KeyCode::Enter if open => {
+            KeyCode::Enter if open => {
                 self.summary_scroll.reset();
                 self.expanded.remove(node.id());
                 self.set_cursor(row.key());
             }
-            KeyCode::Left => match row {
-                Row::Node(node) => match library.parent(node.id()) {
-                    Some(parent) => self.select(parent),
-                    None => return Nav::Sidebar,
-                },
-                Row::AddType(_) | Row::AddProperty(..) => self.select(node.id().clone()),
-            },
+            KeyCode::Left => return Nav::Sidebar,
+            KeyCode::Right => return Nav::Handled,
             KeyCode::PageUp => {
                 self.inspector_offset = self.inspector_offset.saturating_sub(INSPECTOR_PAGE);
             }
@@ -722,32 +716,31 @@ impl TaxonomiesView {
             if editing {
                 hints.extend([("enter", "next field"), ("esc", "done")]);
             } else if !built_in && matches!(node, NodeRef::Property { .. }) {
+                hints.extend([("←/→", "focus"), ("↑/↓", "move")]);
                 hints.extend([
                     ("e", "edit"),
                     ("c", "copy property to other types"),
                     ("d", "delete"),
                 ]);
             } else if matches!(row, Row::Node(_)) {
+                hints.extend([("←/→", "focus"), ("↑/↓", "move")]);
                 if outline::has_children(row) {
                     hints.push(if self.expanded.contains(node.id()) {
-                        ("enter/←", "close")
+                        ("enter", "close")
                     } else {
-                        ("enter/→", "open")
+                        ("enter", "open")
                     });
                 }
+                hints.extend([("n", "new"), ("f", "fork")]);
                 if !built_in {
                     hints.push(("e", "edit"));
-                }
-                hints.extend([("f", "fork"), ("n", "new")]);
-                if !built_in {
                     hints.push(("d", "delete"));
                     if !matches!(node, NodeRef::Taxonomy(_)) {
                         hints.push(("alt+↑/↓", "reorder"));
                     }
                 }
-                hints.push(("↑/↓", "move"));
             } else {
-                hints.extend([("enter", "add"), ("↑/↓", "move")]);
+                hints.extend([("←/→", "focus"), ("↑/↓", "move"), ("enter", "add")]);
             }
         }
         let width = usize::from(width);
@@ -766,25 +759,29 @@ impl TaxonomiesView {
         };
         let mut candidate = line(&hints, &trailing);
         if property_actions && !fits(&candidate) {
-            hints[1].1 = "copy property";
+            if let Some((_, label)) = hints.iter_mut().find(|(key, _)| *key == "c") {
+                *label = "copy property";
+            }
             candidate = line(&hints, &trailing);
         }
-        for optional in ["newline", "alt+↑/↓", "↑/↓", "d", "n", "f"] {
-            if fits(&candidate) {
-                break;
-            }
-            if property_actions {
-                break;
-            }
-            hints.retain(|(key, action)| *key != optional && *action != optional);
+        if !fits(&candidate) {
+            hints.retain(|(key, _)| *key != "alt+↑/↓");
             candidate = line(&hints, &trailing);
         }
         while !fits(&candidate) && !trailing.is_empty() {
-            if property_actions {
-                trailing.pop();
-            } else {
-                trailing.remove(0);
+            trailing.pop();
+            candidate = line(&hints, &trailing);
+        }
+        let optional: &[&str] = if property_actions {
+            &["↑/↓"]
+        } else {
+            &["d", "e", "f", "n"]
+        };
+        for optional in optional {
+            if fits(&candidate) {
+                break;
             }
+            hints.retain(|(key, _)| key != optional);
             candidate = line(&hints, &trailing);
         }
         fit(candidate.0, candidate.1, width)

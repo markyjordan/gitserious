@@ -2230,7 +2230,10 @@ mod tests {
             assert!(text.contains("┌ Inspector ─"));
             assert!(text.contains("Taxonomy conventional"));
             assert!(text.contains("Version      2"));
-            assert!(screen[usize::from(height) - 2].starts_with("  NAV  · taxonomy  enter/→ open"));
+            assert!(
+                screen[usize::from(height) - 2]
+                    .starts_with("  NAV  · taxonomy  ←/→ focus  ↑/↓ move  enter open")
+            );
             if height == 40 {
                 assert!(text.contains("Types        11"));
                 assert!(text.contains("f fork to customize · built-ins are read-only"));
@@ -2241,7 +2244,10 @@ mod tests {
             terminal.draw(|frame| state.render(frame))?;
             let screen = rows(&terminal);
             assert!(screen.join("\n").contains("Taxonomy original"));
-            assert!(screen[usize::from(height) - 2].starts_with("  NAV  · taxonomy  enter/→ open"));
+            assert!(
+                screen[usize::from(height) - 2]
+                    .starts_with("  NAV  · taxonomy  ←/→ focus  ↑/↓ move  enter open")
+            );
         }
         Ok(())
     }
@@ -2258,8 +2264,8 @@ mod tests {
                 let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
                 for next in [
                     None,
-                    Some(KeyCode::Right),
-                    Some(KeyCode::Right),
+                    Some(KeyCode::Enter),
+                    Some(KeyCode::Down),
                     Some(KeyCode::Enter),
                     Some(KeyCode::Down),
                 ] {
@@ -2329,8 +2335,8 @@ mod tests {
                 Ok(rows(&terminal).join("\n"))
             };
         press(&mut state, KeyCode::Char('2'))?;
-        press(&mut state, KeyCode::Right)?;
-        let screen = press(&mut state, KeyCode::Right)?;
+        press(&mut state, KeyCode::Enter)?;
+        let screen = press(&mut state, KeyCode::Down)?;
         assert!(screen.contains("│▌  ▸ feat      intent · decision · constraints"));
         assert_eq!(
             screen
@@ -2358,7 +2364,7 @@ mod tests {
         for _ in 0..3 {
             press(&mut state, KeyCode::Down)?;
         }
-        let screen = press(&mut state, KeyCode::Right)?;
+        let screen = press(&mut state, KeyCode::Enter)?;
         assert!(screen.contains("│▌    └ constraints  conditional"));
         assert!(screen.contains("│     ├ intent       required"));
         assert!(screen.contains("Property constraints"));
@@ -2391,12 +2397,15 @@ mod tests {
             Some(Notice::Error(message)) if message.starts_with("Built-in taxonomies are read-only")
         ));
         assert_eq!(cursor(&state), ["conventional", "feat", "constraints"]);
-        state.handle_event(key(KeyCode::Left), &workspace);
+        for _ in 0..3 {
+            state.handle_event(key(KeyCode::Up), &workspace);
+        }
         assert_eq!(cursor(&state), ["conventional", "feat"]);
-        state.handle_event(key(KeyCode::Left), &workspace);
+        state.handle_event(key(KeyCode::Enter), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
         assert_eq!(cursor(&state), ["conventional", "fix"]);
-        state.handle_event(key(KeyCode::Left), &workspace);
+        state.handle_event(key(KeyCode::Up), &workspace);
+        state.handle_event(key(KeyCode::Up), &workspace);
         assert_eq!(cursor(&state), ["conventional"]);
         state.handle_event(key(KeyCode::Enter), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
@@ -2410,7 +2419,7 @@ mod tests {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.handle_event(key(KeyCode::Char('2')), &workspace);
-        state.handle_event(key(KeyCode::Right), &workspace);
+        state.handle_event(key(KeyCode::Enter), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
         let screen = rows(&terminal);
@@ -2449,7 +2458,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(87, 36))?;
         terminal.draw(|frame| state.render(frame))?;
         let footer = row_text(&terminal, 0, 34, 87);
-        assert!(footer.starts_with("  NAV  · taxonomy  enter/→ open"));
+        assert!(footer.starts_with("  NAV  · taxonomy  ←/→ focus  ↑/↓ move  enter open"));
         assert!(footer.trim_end().ends_with("│ tab tabs  / cmds"));
         Ok(())
     }
@@ -2474,7 +2483,7 @@ mod tests {
                         .ok_or("missing taxonomy")?;
                     state.taxonomies.select(parent);
                     if let Some(commit_type) = commit_type {
-                        state.handle_event(key(KeyCode::Right), &workspace);
+                        state.handle_event(key(KeyCode::Enter), &workspace);
                         let node = library(&state)?
                             .find_path(&[taxonomy, commit_type])
                             .ok_or("missing type")?;
@@ -2482,9 +2491,9 @@ mod tests {
                     }
                     let mut terminal = Terminal::new(TestBackend::new(width, height))?;
                     for (shortcut, absent, next) in [
-                        ("enter/→ open", "enter/← close", KeyCode::Enter),
-                        ("enter/← close", "enter/→ open", KeyCode::Left),
-                        ("enter/→ open", "enter/← close", KeyCode::Right),
+                        ("enter open", "enter close", KeyCode::Enter),
+                        ("enter close", "enter open", KeyCode::Enter),
+                        ("enter open", "enter close", KeyCode::Enter),
                     ] {
                         terminal.draw(|frame| state.render(frame))?;
                         let footer = row_text(&terminal, 0, height - 2, width);
@@ -2494,6 +2503,59 @@ mod tests {
                         assert!(!footer.contains("? help"), "{footer}");
                         state.handle_event(key(next), &workspace);
                     }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn taxonomy_footer_orders_focus_move_enter_and_actions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for embedded in [false, true] {
+            let (workspace, _) = custom_workspace()?;
+            let mut state = State::new(&workspace);
+            state.embedded = embedded;
+            state.handle_event(key(KeyCode::Char('2')), &workspace);
+            select_taxonomy(&mut state, 3);
+            for next in [None, Some(KeyCode::Enter), Some(KeyCode::Down)] {
+                if let Some(next) = next {
+                    state.handle_event(key(next), &workspace);
+                }
+                let footer = state
+                    .taxonomies
+                    .status_line(state.library(), embedded, 138)
+                    .to_string();
+                let enter = if next == Some(KeyCode::Enter) {
+                    "enter close"
+                } else {
+                    "enter open"
+                };
+                let mut end = 0;
+                for hint in [
+                    "←/→ focus",
+                    "↑/↓ move",
+                    enter,
+                    "n new",
+                    "f fork",
+                    "e edit",
+                    "d delete",
+                ] {
+                    let at = footer
+                        .find(hint)
+                        .ok_or(format!("missing {hint}: {footer}"))?;
+                    assert!(at >= end, "{footer}");
+                    end = at + hint.len();
+                }
+                for width in MINIMUM_WIDTH..=140 {
+                    let line = state
+                        .taxonomies
+                        .status_line(state.library(), embedded, width - 2);
+                    assert_eq!(line.width(), usize::from(width - 2));
+                    let compact = line.to_string();
+                    assert!(compact.contains("←/→ focus  ↑/↓ move"), "{compact}");
+                    assert!(compact.contains(enter), "{compact}");
+                    assert!(!compact.contains('…'), "{compact}");
                 }
             }
         }
@@ -2540,7 +2602,7 @@ mod tests {
                         "{footer}"
                     );
                     if !editing {
-                        assert!(footer.contains("enter/→ open"), "{footer}");
+                        assert!(footer.contains("enter open"), "{footer}");
                     }
                     let buffer = terminal.backend().buffer();
                     let mode_width = u16::try_from(mode.chars().count())?;
@@ -2582,57 +2644,45 @@ mod tests {
     }
 
     #[test]
-    fn arrows_move_focus_from_the_menu_through_each_view() {
-        let workspace = Workspace::new();
+    fn arrows_switch_rail_focus_without_changing_any_tree_row()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (workspace, _) = custom_workspace()?;
         let mut state = State::new(&workspace);
-        assert_eq!(state.home_focus, HomeFocus::Menu);
-        state.handle_event(key(KeyCode::Char('m')), &workspace);
-        assert_eq!(state.category, Category::Project);
-        state.handle_event(key(KeyCode::Left), &workspace);
-        assert_eq!(state.home_focus, HomeFocus::Menu);
-        state.handle_event(key(KeyCode::Up), &workspace);
-        assert_eq!(state.category, Category::Project);
-
-        state.handle_event(key(KeyCode::Right), &workspace);
-        assert_eq!(state.home_focus, HomeFocus::Content);
-        state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.project_section, ProjectSection::Resolution);
-        assert_eq!(state.category, Category::Project);
         state.handle_event(key(KeyCode::Right), &workspace);
         assert_eq!(state.home_focus, HomeFocus::Content);
         state.handle_event(key(KeyCode::Left), &workspace);
         assert_eq!(state.home_focus, HomeFocus::Menu);
-
-        state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.category, Category::Taxonomies);
-        assert_eq!(state.project_section, ProjectSection::Resolution);
         state.handle_event(key(KeyCode::Down), &workspace);
         assert_eq!(state.category, Category::Taxonomies);
         state.handle_event(key(KeyCode::Right), &workspace);
-        assert_eq!(state.home_focus, HomeFocus::Content);
-        state.handle_event(key(KeyCode::Right), &workspace);
-        assert_eq!(cursor(&state), ["conventional"]);
-        state.handle_event(key(KeyCode::Right), &workspace);
-        assert_eq!(cursor(&state), ["conventional", "feat"]);
-        state.handle_event(key(KeyCode::Left), &workspace);
-        assert_eq!(cursor(&state), ["conventional"]);
-        state.handle_event(key(KeyCode::Left), &workspace);
-        assert_eq!(state.home_focus, HomeFocus::Content);
+        let probe = |state: &mut State| {
+            let before = state.taxonomies.observe(state.library());
+            for (code, focus) in [
+                (KeyCode::Left, HomeFocus::Menu),
+                (KeyCode::Right, HomeFocus::Content),
+            ] {
+                for _ in 0..2 {
+                    state.handle_event(key(code), &workspace);
+                    assert_eq!(state.home_focus, focus);
+                    assert_eq!(cursor(state), before.cursor_path);
+                    assert_eq!(
+                        state.taxonomies.observe(state.library()).expanded,
+                        before.expanded
+                    );
+                }
+            }
+        };
+        probe(&mut state);
+        for code in [KeyCode::Enter, KeyCode::Down, KeyCode::Enter, KeyCode::Down] {
+            state.handle_event(key(code), &workspace);
+            probe(&mut state);
+        }
+        open_notes(&mut state, &workspace);
+        probe(&mut state);
         state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(cursor(&state), ["research"]);
-        state.handle_event(key(KeyCode::Up), &workspace);
-        state.handle_event(key(KeyCode::Left), &workspace);
-        assert_eq!(state.home_focus, HomeFocus::Menu);
-        state.handle_event(key(KeyCode::Up), &workspace);
-        assert_eq!(state.category, Category::Project);
-
-        state.handle_event(key(KeyCode::Char('2')), &workspace);
-        assert_eq!(state.category, Category::Taxonomies);
-        assert_eq!(state.home_focus, HomeFocus::Content);
-        state.handle_event(key(KeyCode::Left), &workspace);
-        state.handle_event(key(KeyCode::Char('1')), &workspace);
-        assert_eq!(state.category, Category::Project);
-        assert_eq!(state.home_focus, HomeFocus::Content);
+        assert_eq!(cursor(&state), ["original", "existing", "+ add property"]);
+        probe(&mut state);
+        Ok(())
     }
 
     #[test]
@@ -2644,7 +2694,7 @@ mod tests {
         state.home_focus = HomeFocus::Content;
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(row_text(&terminal, 0, 28, 100).contains("f fork  n new  ↑/↓ move"));
+        assert!(row_text(&terminal, 0, 28, 100).contains("↑/↓ move  enter open  n new  f fork"));
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Commands"));
@@ -2777,8 +2827,11 @@ mod tests {
             assert!(state.home_overlay.is_none());
             terminal.draw(|frame| state.render(frame))?;
             let footer = row_text(&terminal, 0, height - 2, width);
-            assert!(footer.starts_with("  NAV  · taxonomy  enter/→ open"));
-            assert!(footer.trim_end().ends_with("│ / cmds"));
+            assert!(footer.starts_with("  NAV  · taxonomy  ←/→ focus  ↑/↓ move  enter open"));
+            if width >= 100 {
+                assert!(footer.trim_end().ends_with("│ / cmds"));
+            }
+            assert!(!footer.contains('…'));
             state.handle_event(key(KeyCode::Char('/')), &workspace);
             assert!(state.home_overlay.is_some());
             state.handle_event(key(KeyCode::Esc), &workspace);
@@ -3458,12 +3511,7 @@ mod tests {
         press(
             state,
             workspace,
-            &[
-                KeyCode::Right,
-                KeyCode::Right,
-                KeyCode::Right,
-                KeyCode::Down,
-            ],
+            &[KeyCode::Enter, KeyCode::Down, KeyCode::Enter, KeyCode::Down],
         );
     }
 
@@ -3489,9 +3537,11 @@ mod tests {
                     }
                 };
                 let initial = policy(&state)?;
-                press(&mut state, &workspace, &[KeyCode::Right]);
+                press(&mut state, &workspace, &[KeyCode::Left]);
                 assert_eq!(cursor(&state), ["original", "existing", "notes"]);
                 assert_eq!(policy(&state)?, initial);
+                assert_eq!(state.home_focus, HomeFocus::Menu);
+                press(&mut state, &workspace, &[KeyCode::Right]);
                 terminal.draw(|frame| state.render(frame))?;
                 let footer = row_text(&terminal, 0, height - 2, width);
                 assert!(
@@ -3518,17 +3568,14 @@ mod tests {
                     0
                 );
                 press(&mut state, &workspace, &[KeyCode::Left]);
-                assert_eq!(cursor(&state), ["original", "existing"]);
+                assert_eq!(cursor(&state), ["original", "existing", "notes"]);
+                assert_eq!(state.home_focus, HomeFocus::Menu);
+                press(&mut state, &workspace, &[KeyCode::Right]);
                 assert_eq!(policy(&state)?, initial);
                 press(
                     &mut state,
                     &workspace,
-                    &[
-                        KeyCode::Right,
-                        KeyCode::Char('e'),
-                        KeyCode::Enter,
-                        KeyCode::Enter,
-                    ],
+                    &[KeyCode::Char('e'), KeyCode::Enter, KeyCode::Enter],
                 );
                 assert_eq!(field(&state), Some(DraftField::Policy));
                 let mut reached = std::collections::BTreeSet::new();
@@ -3592,9 +3639,6 @@ mod tests {
                     if embedded && footer.contains("/ cmds") {
                         assert!(footer.contains("tab tabs"), "{footer}");
                     }
-                    if footer.contains("? help") {
-                        assert!(footer.contains("/ cmds"), "{footer}");
-                    }
                 }
                 press(&mut state, &workspace, &[KeyCode::Char('e')]);
                 for width in [MINIMUM_WIDTH, 87, 140, MINIMUM_WIDTH, 140] {
@@ -3614,12 +3658,12 @@ mod tests {
                     terminal.draw(|frame| state.render(frame))?;
                     let footer = row_text(&terminal, 0, 38, width);
                     assert!(
-                        footer.starts_with("  NAV  · property  e edit  c copy property"),
+                        footer.starts_with("  NAV  · property  ←/→ focus"),
                         "{footer}"
                     );
                     assert!(footer.contains("d delete"), "{footer}");
                     assert!(!footer.contains('…'), "{footer}");
-                    assert_eq!(footer.contains("to other types"), width >= 87, "{footer}");
+                    assert_eq!(footer.contains("to other types"), width == 140, "{footer}");
                     assert!(!footer.contains("? help"), "{footer}");
                     assert!(footer.starts_with(' ') && footer.ends_with(' '));
                     assert!(row_text(&terminal, 0, 39, width).trim().is_empty());
@@ -3644,12 +3688,12 @@ mod tests {
             assert!(screen.contains("130/100"), "{screen}");
             let footer = row_text(&terminal, 0, height - 2, width);
             assert!(
-                footer.starts_with("  NAV  · property  e edit  c copy"),
+                footer.starts_with("  NAV  · property  ←/→ focus"),
                 "{footer}"
             );
             assert!(!footer.contains("←/→ policy"), "{footer}");
-            assert!(!footer.contains("enter/→ open"), "{footer}");
-            assert!(!footer.contains("enter/← close"), "{footer}");
+            assert!(!footer.contains("enter open"), "{footer}");
+            assert!(!footer.contains("enter close"), "{footer}");
 
             press(&mut state, &workspace, &[KeyCode::Char('e')]);
             assert_eq!(field(&state), Some(DraftField::Name));
@@ -3772,8 +3816,8 @@ mod tests {
         assert!(screen.contains("│   + add type"), "{screen}");
         let footer = row_text(&terminal, 0, 38, 87);
         assert!(footer.contains("enter add"), "{footer}");
-        assert!(!footer.contains("enter/→ open"), "{footer}");
-        assert!(!footer.contains("enter/← close"), "{footer}");
+        assert!(!footer.contains("enter open"), "{footer}");
+        assert!(!footer.contains("enter close"), "{footer}");
 
         press(&mut state, &workspace, &[KeyCode::Enter]);
         assert_eq!(field(&state), Some(DraftField::Name));
@@ -3882,7 +3926,7 @@ mod tests {
         assert_eq!(cursor(&state), ["original", "existing"]);
 
         select_taxonomy(&mut state, 0);
-        press(&mut state, &workspace, &[KeyCode::Right, KeyCode::Down]);
+        press(&mut state, &workspace, &[KeyCode::Enter, KeyCode::Down]);
         let before = cursor(&state);
         state.handle_event(alt(KeyCode::Down), &workspace);
         assert_ne!(
