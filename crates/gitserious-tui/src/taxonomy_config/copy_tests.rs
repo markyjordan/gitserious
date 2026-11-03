@@ -82,9 +82,9 @@ fn open_constraints(state: &mut State, workspace: &Workspace) -> TestResult {
         state,
         workspace,
         &[
-            KeyCode::Right,
-            KeyCode::Right,
-            KeyCode::Right,
+            KeyCode::Enter,
+            KeyCode::Down,
+            KeyCode::Enter,
             KeyCode::Down,
             KeyCode::Down,
         ],
@@ -245,12 +245,7 @@ fn c_refuses_a_built_in_a_lone_type_and_a_target_that_has_the_key_with_a_sentenc
     press(
         &mut state,
         &workspace,
-        &[
-            KeyCode::Right,
-            KeyCode::Right,
-            KeyCode::Right,
-            KeyCode::Down,
-        ],
+        &[KeyCode::Enter, KeyCode::Down, KeyCode::Enter, KeyCode::Down],
     );
     assert_eq!(cursor(&state), ["conventional", "feat", "intent"]);
     press(&mut state, &workspace, &[KeyCode::Char('c')]);
@@ -274,7 +269,7 @@ fn c_refuses_a_built_in_a_lone_type_and_a_target_that_has_the_key_with_a_sentenc
         .ok_or("feat has intent")?;
     let team = library.find_path(&["team"]).ok_or("team")?;
     state.taxonomies.select(team);
-    press(&mut state, &workspace, &[KeyCode::Right]);
+    press(&mut state, &workspace, &[KeyCode::Down]);
     state.taxonomies.select(intent);
     press(&mut state, &workspace, &[KeyCode::Char('c')]);
     assert_eq!(

@@ -933,8 +933,8 @@ mod tests {
         for code in [
             KeyCode::Char('2'),
             KeyCode::Down,
-            KeyCode::Right,
-            KeyCode::Right,
+            KeyCode::Enter,
+            KeyCode::Down,
         ] {
             shell.handle_event(key(code), &services, &[]);
         }

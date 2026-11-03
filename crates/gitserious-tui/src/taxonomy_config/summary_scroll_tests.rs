@@ -68,8 +68,8 @@ fn fixture() -> Result<(Workspace, State, Terminal<TestBackend>)> {
         .and_then(|library| library.find_path(&["motion"]))
         .ok_or("motion")?;
     state.taxonomies.select(id);
-    state.handle_event(key(KeyCode::Right), &workspace);
-    state.handle_event(key(KeyCode::Right), &workspace);
+    state.handle_event(key(KeyCode::Enter), &workspace);
+    state.handle_event(key(KeyCode::Down), &workspace);
     let terminal = Terminal::new(TestBackend::new(80, 30))?;
     Ok((workspace, state, terminal))
 }
@@ -171,7 +171,7 @@ fn built_in_summaries_use_the_full_unbadged_width() -> Result {
         .and_then(|library| library.find_path(&["infra-ops"]))
         .ok_or("infra-ops")?;
     state.taxonomies.select(root);
-    for code in [KeyCode::Right, KeyCode::Right] {
+    for code in [KeyCode::Enter, KeyCode::Down] {
         state.handle_event(key(code), &workspace);
     }
     for width in [MINIMUM_WIDTH, 87, 140, MINIMUM_WIDTH] {
@@ -246,7 +246,7 @@ fn selection_expansion_edit_and_picker_restart_or_stop_the_clock() -> Result {
     state.handle_event(key(KeyCode::Esc), &workspace);
     draw(&mut state, &mut terminal)?;
     assert_eq!(state.next_frame_in(), Some(HOLD));
-    for code in [KeyCode::Enter, KeyCode::Right, KeyCode::Char('c')] {
+    for code in [KeyCode::Enter, KeyCode::Down, KeyCode::Char('c')] {
         state.handle_event(key(code), &workspace);
     }
     assert!(state.taxonomies.picker_hints().is_some());
