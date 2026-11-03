@@ -335,9 +335,6 @@ impl Shell {
                         }));
                         return None;
                     }
-                    KeyCode::Char('?') => {
-                        return self.execute(Action::Select(Section::Help), workspace);
-                    }
                     _ => {}
                 }
                 match self.section {
@@ -592,7 +589,6 @@ impl Shell {
                     _ => &[
                         ("tab/shift+tab", "switch"),
                         ("/", "commands"),
-                        ("?", "help"),
                         ("q", "quit"),
                     ],
                 };
@@ -1050,6 +1046,17 @@ mod tests {
     }
 
     #[test]
+    fn question_mark_does_not_open_help_but_the_help_tab_still_works() {
+        let services = Services;
+        let mut shell = Shell::new(InteractiveEntry::Home, &services, None);
+        shell.handle_event(key(KeyCode::Char('?')), &services, &[]);
+        assert_eq!(shell.section, Section::Home);
+        assert!(shell.overlay.is_none());
+        shell.handle_event(key(KeyCode::BackTab), &services, &[]);
+        assert_eq!(shell.section, Section::Help);
+    }
+
+    #[test]
     fn root_wrap_palette_is_modal_and_help_scrolls_with_resize()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
@@ -1292,7 +1299,7 @@ mod tests {
             let footer: String = (0..width)
                 .map(|x| buffer[(x, height - 2)].symbol())
                 .collect();
-            assert!(footer.starts_with(" tab/shift+tab: switch  /: commands  ?: help  q: quit"));
+            assert!(footer.starts_with(" tab/shift+tab: switch  /: commands  q: quit"));
             assert!(
                 buffer[(1, height - 2)]
                     .modifier
