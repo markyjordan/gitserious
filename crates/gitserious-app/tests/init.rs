@@ -548,7 +548,7 @@ fn available_custom_taxonomies_are_recorded_in_the_lock() -> Result<(), Box<dyn 
         1,
         TaxonomyId::new("conventional")?,
         available,
-        vec![fork.clone()],
+        vec![fork.clone()].into_iter().map(Into::into).collect(),
     )?;
 
     let lock = lock_for(&global, &ProjectConfig::inherited())?;

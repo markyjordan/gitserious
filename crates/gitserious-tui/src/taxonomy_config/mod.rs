@@ -1872,7 +1872,7 @@ mod tests {
                 1,
                 TaxonomyId::new("conventional")?,
                 vec![TaxonomyId::new("conventional")?],
-                vec![source.clone()],
+                vec![source.clone()].into_iter().map(Into::into).collect(),
             )?);
         Ok((workspace, source))
     }
@@ -3292,9 +3292,13 @@ mod tests {
         )?;
         let conventional = TaxonomyId::new("conventional")?;
         let workspace = Workspace::new();
-        *workspace.global.borrow_mut() = ConfigurationSession::open_global(
-            GlobalConfiguration::new(1, conventional.clone(), vec![conventional], vec![team])?,
-        );
+        *workspace.global.borrow_mut() =
+            ConfigurationSession::open_global(GlobalConfiguration::new(
+                1,
+                conventional.clone(),
+                vec![conventional],
+                vec![team.into()],
+            )?);
         let mut state = State::new(&workspace);
         state.active_scope = ConfigurationDestination::Global;
         let library = state
@@ -3949,7 +3953,7 @@ mod tests {
                     TaxonomyId::new("conventional")?,
                     TaxonomyId::new("original")?,
                 ],
-                vec![source],
+                vec![source.into()],
             )?);
         let mut state = State::new(&workspace);
         state.handle_event(key(KeyCode::Char('2')), &workspace);

@@ -13,7 +13,8 @@ use tempfile::NamedTempFile;
 
 use crate::LocalDirectoryCreator;
 use crate::taxonomy_wire::{
-    TaxonomyWire, configuration_error, legacy_shape, taxonomy_from_wire, taxonomy_to_wire,
+    TaxonomyWire, configuration_error, legacy_shape, library_taxonomy_from_wire,
+    library_taxonomy_to_wire,
 };
 
 /// Strict TOML-backed global taxonomy environment.
@@ -128,7 +129,9 @@ fn read_configuration(path: &Path) -> Result<GlobalConfiguration, GlobalConfigur
                 .taxonomies
                 .into_iter()
                 .enumerate()
-                .map(|(index, value)| taxonomy_from_wire(value, &format!("taxonomies[{index}]")))
+                .map(|(index, value)| {
+                    library_taxonomy_from_wire(value, &format!("taxonomies[{index}]"))
+                })
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|message| GlobalConfigurationError::Format {
                     path: path.to_path_buf(),
@@ -166,7 +169,7 @@ fn render_configuration(
         taxonomies: configuration
             .custom_taxonomies()
             .iter()
-            .map(taxonomy_to_wire)
+            .map(library_taxonomy_to_wire)
             .collect(),
     })
     .map_err(|source| GlobalConfigurationError::Serialize(source.to_string()))

@@ -8,6 +8,8 @@ use gitserious_core::{
 };
 use sha2::{Digest, Sha256};
 
+use crate::LibraryTaxonomy;
+
 /// The canonical unreleased global-configuration format.
 pub(crate) const GLOBAL_CONFIG_VERSION: u16 = 1;
 /// The canonical unreleased project-configuration format.
@@ -94,7 +96,7 @@ pub struct GlobalConfiguration {
     version: u16,
     default_taxonomy: TaxonomyId,
     available_taxonomies: Vec<TaxonomyId>,
-    custom_taxonomies: Vec<Taxonomy>,
+    custom_taxonomies: Vec<LibraryTaxonomy>,
 }
 
 impl GlobalConfiguration {
@@ -103,7 +105,7 @@ impl GlobalConfiguration {
         version: u16,
         default_taxonomy: TaxonomyId,
         available_taxonomies: Vec<TaxonomyId>,
-        custom_taxonomies: Vec<Taxonomy>,
+        custom_taxonomies: Vec<LibraryTaxonomy>,
     ) -> Result<Self, ConfigurationError> {
         if version != GLOBAL_CONFIG_VERSION {
             return Err(ConfigurationError::UnsupportedGlobalVersion(version));
@@ -136,7 +138,13 @@ impl GlobalConfiguration {
     fn validate(&self) -> Result<(), ConfigurationError> {
         let catalog = self.catalog()?;
         validate_selection(
-            |id| catalog.find(id).is_some(),
+            |id| {
+                catalog.find(id).is_some()
+                    || self
+                        .custom_taxonomies
+                        .iter()
+                        .any(|record| record.id() == id)
+            },
             &self.default_taxonomy,
             &self.available_taxonomies,
         )
@@ -162,13 +170,30 @@ impl GlobalConfiguration {
 
     /// Returns editable user-library taxonomies.
     #[must_use]
-    pub fn custom_taxonomies(&self) -> &[Taxonomy] {
+    pub fn custom_taxonomies(&self) -> &[LibraryTaxonomy] {
         &self.custom_taxonomies
     }
 
     /// Returns the merged taxonomy catalog.
     pub fn catalog(&self) -> Result<TaxonomyCatalog, ConfigurationError> {
-        TaxonomyCatalog::new(&self.custom_taxonomies)
+        let mut ids = built_in_taxonomies()
+            .iter()
+            .map(Taxonomy::id)
+            .collect::<BTreeSet<_>>();
+        for record in &self.custom_taxonomies {
+            if !ids.insert(record.id()) {
+                return Err(ConfigurationError::DuplicateOrReservedTaxonomy(
+                    record.id().clone(),
+                ));
+            }
+        }
+        TaxonomyCatalog::new(
+            &self
+                .custom_taxonomies
+                .iter()
+                .filter_map(LibraryTaxonomy::usable)
+                .collect::<Vec<_>>(),
+        )
     }
 }
 

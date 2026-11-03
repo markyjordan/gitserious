@@ -527,7 +527,7 @@ fn team_configuration(
         1,
         conventional.clone(),
         vec![conventional],
-        vec![team],
+        vec![team.into()],
     )?)
 }
 
@@ -1286,7 +1286,10 @@ fn shows_in_order(frame: &str, text: &str) -> bool {
     })
 }
 
-fn find<'a>(library: &'a [Taxonomy], id: &TaxonomyId) -> Option<&'a Taxonomy> {
+fn find<'a>(
+    library: &'a [gitserious_app::LibraryTaxonomy],
+    id: &TaxonomyId,
+) -> Option<&'a gitserious_app::LibraryTaxonomy> {
     library.iter().find(|taxonomy| taxonomy.id() == id)
 }
 

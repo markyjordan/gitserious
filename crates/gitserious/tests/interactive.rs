@@ -148,7 +148,7 @@ fn shell_services_gate_staging_validate_review_and_retry_git_rejection()
         1,
         taxonomy.id().clone(),
         vec![taxonomy.id().clone()],
-        vec![taxonomy],
+        vec![taxonomy.into()],
     )?;
     initialize_project(
         &GitRepositoryLocator,

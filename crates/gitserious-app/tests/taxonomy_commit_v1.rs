@@ -133,7 +133,7 @@ fn commit_uses_only_the_portable_lock_snapshot() -> Result<(), Box<dyn Error>> {
         1,
         taxonomy.id().clone(),
         vec![taxonomy.id().clone()],
-        vec![taxonomy],
+        vec![taxonomy.into()],
     )?;
     let lock = ProjectLock::capture(
         &config,

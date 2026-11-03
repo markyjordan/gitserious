@@ -58,7 +58,7 @@ fn fixture() -> Result<(Workspace, State, Terminal<TestBackend>)> {
         1,
         TaxonomyId::new("conventional")?,
         vec![TaxonomyId::new("conventional")?],
-        vec![taxonomy],
+        vec![taxonomy.into()],
     )?);
     let mut state = State::new(&workspace);
     state.category = Category::Taxonomies;

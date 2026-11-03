@@ -48,7 +48,7 @@ fn team() -> Result<GlobalConfiguration, Box<dyn std::error::Error>> {
         1,
         conventional.clone(),
         vec![conventional],
-        vec![zeta, team],
+        vec![zeta.into(), team.into()],
     )?)
 }
 
@@ -321,7 +321,10 @@ fn a_fork_copies_its_source_under_a_new_name_with_lineage_and_source_baselines()
     );
     let built = draft.build().map_err(|problems| format!("{problems:?}"))?;
     assert_eq!(
-        built.custom_taxonomies().last().map(Taxonomy::commit_types),
+        built
+            .custom_taxonomies()
+            .last()
+            .map(LibraryTaxonomy::commit_types),
         Some(built_in_taxonomies()[0].commit_types())
     );
     Ok(())
@@ -353,10 +356,6 @@ fn problems_name_every_field_that_does_not_build() -> TestResult {
             Problem {
                 site: ProblemSite::Field(created.clone(), DraftField::Description),
                 kind: ProblemKind::Blank,
-            },
-            Problem {
-                site: ProblemSite::Node(created),
-                kind: ProblemKind::NoTypes,
             },
         ]
     );
@@ -518,8 +517,12 @@ fn edited_prose_builds_trimmed_and_loaded_prose_stays_byte_for_byte() -> TestRes
         built_in_taxonomies()[0].commit_types().to_vec(),
     )?;
     let conventional = TaxonomyId::new("conventional")?;
-    let configuration =
-        GlobalConfiguration::new(1, conventional.clone(), vec![conventional], vec![padded])?;
+    let configuration = GlobalConfiguration::new(
+        1,
+        conventional.clone(),
+        vec![conventional],
+        vec![padded.into()],
+    )?;
     let draft = LibraryDraft::from_configuration(configuration.clone());
     assert_eq!(draft.build(), Ok(configuration));
     Ok(())
@@ -951,5 +954,43 @@ fn a_copy_writes_nothing_when_any_target_has_the_key_or_is_not_another_type_of_i
     );
     assert!(draft.copy_targets(&built_in).is_empty());
     assert_eq!(format!("{draft:?}"), before);
+    Ok(())
+}
+
+#[test]
+fn zero_types_save_at_one_and_first_type_finalizes_the_name() -> TestResult {
+    let mut draft = LibraryDraft::from_configuration(GlobalConfiguration::default());
+    let node = draft.create_taxonomy();
+    draft.edit(&node, DraftEdit::Text(DraftField::Name, "Work in progress"))?;
+    draft.edit(&node, DraftEdit::Text(DraftField::Description, "Purpose"))?;
+    let saved = draft.build().map_err(|problems| format!("{problems:?}"))?;
+    let record = &saved.custom_taxonomies()[0];
+    assert_eq!(record.version(), TaxonomyVersion::V1);
+    assert!(!record.name_locked());
+    assert!(record.usable().is_none());
+    let mut draft = LibraryDraft::from_configuration(saved);
+    let node = find(&draft, &["work-in-progress"])?;
+    assert!(draft.fields(&node).contains(&DraftField::Name));
+    draft.edit(&node, DraftEdit::Text(DraftField::Name, "Final name"))?;
+    let child = draft.edit(&node, DraftEdit::AddType)?;
+    draft.edit(&child, DraftEdit::Text(DraftField::Name, "Change"))?;
+    draft.edit(&child, DraftEdit::Text(DraftField::Description, "A change"))?;
+    let saved = draft.build().map_err(|problems| format!("{problems:?}"))?;
+    assert!(saved.custom_taxonomies()[0].name_locked());
+    assert_eq!(saved.custom_taxonomies()[0].version().get(), 2);
+    assert!(
+        saved
+            .catalog()?
+            .find(&TaxonomyId::new("final-name")?)
+            .is_some()
+    );
+    let mut draft = LibraryDraft::from_configuration(saved);
+    let node = find(&draft, &["final-name"])?;
+    let child = find(&draft, &["final-name", "change"])?;
+    draft.edit(&child, DraftEdit::Remove)?;
+    let saved = draft.build().map_err(|problems| format!("{problems:?}"))?;
+    assert!(saved.custom_taxonomies()[0].name_locked());
+    assert_eq!(saved.custom_taxonomies()[0].version().get(), 3);
+    assert!(!draft.fields(&node).contains(&DraftField::Name));
     Ok(())
 }

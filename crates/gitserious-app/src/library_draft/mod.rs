@@ -20,11 +20,11 @@ use std::num::NonZeroU32;
 
 use gitserious_core::{
     CommitTypeDefinition, PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion,
-    Taxonomy, TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
+    TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{ConfigurationError, GlobalConfiguration, TaxonomyOrigin};
+use crate::{ConfigurationError, GlobalConfiguration, LibraryTaxonomy, TaxonomyOrigin};
 pub use changes::{ChangeSet, Mark};
 pub use problems::{Problem, ProblemKind, ProblemSite};
 
@@ -224,10 +224,12 @@ pub struct TaxonomyNode {
     version: TaxonomyVersion,
     derived_from: Option<TaxonomyLineage>,
     types: Vec<TypeNode>,
+    name_locked: bool,
+    saved_name: Option<TaxonomyId>,
 }
 
 impl TaxonomyNode {
-    fn new(taxonomy: &Taxonomy, origin: TaxonomyOrigin) -> Self {
+    fn new(taxonomy: &LibraryTaxonomy, origin: TaxonomyOrigin) -> Self {
         let name = taxonomy.id().as_str();
         let id = NodeId::loaded(&[name]);
         Self {
@@ -237,6 +239,8 @@ impl TaxonomyNode {
             name: name.to_owned(),
             description: taxonomy.description().to_string(),
             version: taxonomy.version(),
+            name_locked: taxonomy.name_locked(),
+            saved_name: Some(taxonomy.id().clone()),
             derived_from: taxonomy.derived_from().cloned(),
             types: taxonomy
                 .commit_types()
@@ -280,7 +284,7 @@ impl TaxonomyNode {
 
     /// Whether the configuration stores this custom taxonomy under its current name.
     fn persisted(&self) -> bool {
-        self.origin == TaxonomyOrigin::Custom && matches!(self.id, NodeId::Loaded(_))
+        self.origin == TaxonomyOrigin::Custom && self.saved_name.is_some()
     }
 }
 
@@ -491,7 +495,7 @@ impl LibraryDraft {
     pub fn from_configuration(configuration: GlobalConfiguration) -> Self {
         let built_in = built_in_taxonomies()
             .iter()
-            .map(|taxonomy| TaxonomyNode::new(taxonomy, TaxonomyOrigin::BuiltIn));
+            .map(|taxonomy| TaxonomyNode::new(&taxonomy.clone().into(), TaxonomyOrigin::BuiltIn));
         let custom = configuration
             .custom_taxonomies()
             .iter()
@@ -620,7 +624,7 @@ impl LibraryDraft {
         match self.node(id) {
             None => &[],
             Some(node) if node.taxonomy().origin == TaxonomyOrigin::BuiltIn => &[],
-            Some(NodeRef::Taxonomy(taxonomy)) if taxonomy.persisted() => PERSISTED_TAXONOMY_FIELDS,
+            Some(NodeRef::Taxonomy(taxonomy)) if taxonomy.name_locked => PERSISTED_TAXONOMY_FIELDS,
             Some(NodeRef::Taxonomy(_)) => TAXONOMY_FIELDS,
             Some(NodeRef::Type { .. }) => TYPE_FIELDS,
             Some(NodeRef::Property { property, .. }) if property.policy == Policy::Conditional => {
@@ -664,9 +668,11 @@ impl LibraryDraft {
             .persisted
             .custom_taxonomies()
             .iter()
-            .find(|stored| stored.id().as_str() == taxonomy.name)?;
+            .find(|stored| Some(stored.id()) == taxonomy.saved_name.as_ref())?;
         let unchanged = problems::content(self, taxonomy).is_ok_and(|(description, types)| {
-            &description == stored.description() && types == stored.commit_types()
+            &description == stored.description()
+                && types == stored.commit_types()
+                && TaxonomyId::from_label(&taxonomy.name).as_ref() == Ok(stored.id())
         });
         if unchanged {
             Some(stored.version())
@@ -846,7 +852,7 @@ impl LibraryDraft {
         text: &str,
     ) -> Result<NodeId, EditRefusal> {
         if field == DraftField::Name
-            && matches!(address, Address::Taxonomy(t) if self.taxonomies[t].persisted())
+            && matches!(address, Address::Taxonomy(t) if self.taxonomies[t].name_locked)
         {
             return Err(EditRefusal::NameLocked);
         }
@@ -900,6 +906,8 @@ impl LibraryDraft {
             name: String::new(),
             description: String::new(),
             version: TaxonomyVersion::V1,
+            name_locked: false,
+            saved_name: None,
             derived_from: None,
             types: Vec::new(),
         });
@@ -918,6 +926,8 @@ impl LibraryDraft {
             .ok_or(EditRefusal::NotApplicable)?;
         let mut fork = source.clone();
         fork.origin = TaxonomyOrigin::Custom;
+        fork.name_locked = false;
+        fork.saved_name = None;
         let room = NAME_LIMIT - FORK_SUFFIX.len();
         fork.name = source.name.graphemes(true).take(room).collect::<String>() + FORK_SUFFIX;
         fork.version = TaxonomyVersion::V1;
@@ -965,5 +975,7 @@ fn landing<T>(
         .unwrap_or_else(|| unreachable!("the built-in taxonomies always remain"))
 }
 
+#[cfg(test)]
+use gitserious_core::Taxonomy;
 #[cfg(test)]
 mod tests;

@@ -29,7 +29,7 @@ fn with_team() -> Result<GlobalConfiguration, Box<dyn Error>> {
         1,
         team.clone(),
         available,
-        vec![fork],
+        vec![fork.into()],
     )?)
 }
 
@@ -148,7 +148,7 @@ fn show_names_every_requirement_in_lock_words() -> Result<(), Box<dyn Error>> {
         1,
         platform,
         available,
-        vec![taxonomy],
+        vec![taxonomy.into()],
     )?);
 
     let (exit, stdout, stderr) = harness.run(&["gitserious", "config", "show", "platform"]);
