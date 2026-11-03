@@ -253,15 +253,6 @@ fn describe(
     for problem in chips.sentences(&ProblemSite::Node(id.clone())) {
         lines.extend(problem_lines(&problem, width));
     }
-    if matches!(node, NodeRef::Property { .. }) && !editable.is_empty() {
-        lines.push(Line::default());
-        lines.push(Line::from(vec![
-            Span::styled("c", KEY_STYLE),
-            Span::styled(" copy to other types…   ", DIM),
-            Span::styled("d", KEY_STYLE),
-            Span::styled(" delete", DIM),
-        ]));
-    }
     if let NodeRef::Taxonomy(taxonomy) = node {
         lines.push(Line::default());
         if taxonomy.origin() == TaxonomyOrigin::BuiltIn {
@@ -462,6 +453,9 @@ mod tests {
                     assert!(text.contains("Policy"));
                     assert!(!text.contains("Example"));
                     assert!(!text.contains("Preview"));
+                    for action in ["e edit", "c copy", "d delete"] {
+                        assert!(!text.contains(action), "{text}");
+                    }
                 }
             }
         }

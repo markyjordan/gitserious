@@ -3486,7 +3486,9 @@ mod tests {
                 terminal.draw(|frame| state.render(frame))?;
                 let footer = row_text(&terminal, 0, height - 2, width);
                 assert!(
-                    footer.contains("e edit") && footer.contains("c copy to…"),
+                    footer.contains("e edit")
+                        && footer.contains("c copy property")
+                        && footer.contains("d delete"),
                     "{footer}"
                 );
                 assert!(!footer.contains("policy"));
@@ -3537,6 +3539,87 @@ mod tests {
                     .fg
                     .ok_or("inactive color")?;
                 frames(&terminal, inactive, inactive);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn property_commands_fit_resize_and_stay_out_of_editing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for embedded in [false, true] {
+            for create in [false, true] {
+                let (workspace, _) = custom_workspace()?;
+                let mut state = State::new(&workspace);
+                state.embedded = embedded;
+                open_notes(&mut state, &workspace);
+                if create {
+                    press(&mut state, &workspace, &[KeyCode::Down, KeyCode::Enter]);
+                } else {
+                    press(&mut state, &workspace, &[KeyCode::Char('e')]);
+                }
+                for character in "ecd".chars() {
+                    press(&mut state, &workspace, &[KeyCode::Char(character)]);
+                }
+                let name = if create { "ecd" } else { "notesecd" };
+                assert_eq!(
+                    text_of(&state, &["original", "existing", name], DraftField::Name)?,
+                    name
+                );
+                assert!(matches!(state.screen, Screen::Home));
+                assert!(state.confirmation().is_none());
+                press(&mut state, &workspace, &[KeyCode::Esc]);
+                for width in MINIMUM_WIDTH..=140 {
+                    let line = state
+                        .taxonomies
+                        .status_line(state.library(), embedded, width - 2);
+                    assert_eq!(line.width(), usize::from(width - 2));
+                    let footer = line.to_string();
+                    assert!(
+                        footer.contains("e edit  c copy property") && footer.contains("d delete"),
+                        "{footer}"
+                    );
+                    assert!(!footer.contains('…'), "{footer}");
+                    if embedded && footer.contains("/ cmds") {
+                        assert!(footer.contains("tab tabs"), "{footer}");
+                    }
+                    if footer.contains("? help") {
+                        assert!(footer.contains("/ cmds"), "{footer}");
+                    }
+                }
+                press(&mut state, &workspace, &[KeyCode::Char('e')]);
+                for width in [MINIMUM_WIDTH, 87, 140, MINIMUM_WIDTH, 140] {
+                    let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
+                    terminal.draw(|frame| state.render(frame))?;
+                    let footer = row_text(&terminal, 0, 38, width);
+                    assert!(
+                        footer.contains("EDIT")
+                            && footer.contains("enter next field")
+                            && footer.contains("esc done"),
+                        "{footer}"
+                    );
+                    for label in ["e edit", "c copy", "d delete"] {
+                        assert!(!footer.contains(label), "{footer}");
+                    }
+                    press(&mut state, &workspace, &[KeyCode::Esc]);
+                    terminal.draw(|frame| state.render(frame))?;
+                    let footer = row_text(&terminal, 0, 38, width);
+                    assert!(
+                        footer.starts_with("  NAV  · property  e edit  c copy property"),
+                        "{footer}"
+                    );
+                    assert!(footer.contains("d delete"), "{footer}");
+                    assert!(!footer.contains('…'), "{footer}");
+                    assert_eq!(
+                        footer.contains("to other types"),
+                        width == 140 || (width == 87 && !embedded),
+                        "{footer}"
+                    );
+                    assert_eq!(footer.contains("? help"), width > MINIMUM_WIDTH, "{footer}");
+                    assert!(footer.starts_with(' ') && footer.ends_with(' '));
+                    assert!(row_text(&terminal, 0, 39, width).trim().is_empty());
+                    press(&mut state, &workspace, &[KeyCode::Char('e')]);
+                }
             }
         }
         Ok(())

@@ -1049,6 +1049,40 @@ fn unapplied_changes_agree_everywhere(
     {
         return Err(format!("The footer duplicates node status: {footer:?}"));
     }
+    let selected = library.find_path(
+        &after
+            .taxonomies
+            .cursor_path
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+    );
+    if let Some(NodeRef::Property { taxonomy, .. }) =
+        selected.as_ref().and_then(|id| library.node(id))
+    {
+        let actions = matches!(after.taxonomies.mode, taxonomies::Mode::Nav)
+            && taxonomy.origin() == gitserious_app::TaxonomyOrigin::Custom;
+        for label in ["e edit", "c copy property", "d delete"] {
+            if footer.contains(label) != actions {
+                return Err(format!(
+                    "Property NAV commands disagree with its mode: {footer:?}"
+                ));
+            }
+        }
+        let inspector = after
+            .frame
+            .split("Inspector")
+            .nth(1)
+            .unwrap_or_default()
+            .lines()
+            .rev()
+            .skip(2)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if inspector.contains("copy to other types") || inspector.contains("d delete") {
+            return Err("Property actions remain in the Inspector.".into());
+        }
+    }
     Ok(())
 }
 
