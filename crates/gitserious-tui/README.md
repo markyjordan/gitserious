@@ -58,7 +58,13 @@ project, each marked new, already in the project, or different from the
 project's copy. A new one is copied in; an identical one is left alone; a
 different one asks whether to replace the project's copy or add the Library's
 as `<name>-copy`. A copy is independent: later Library edits never reach the
-project. Only this action reads the Library. It never reads the Library, so it works when the
+project. Only this action reads the Library.
+
+`l` copies the selected project taxonomy, as Apply would write it, to the
+Library, which saves it at once like any Library edit; the project is
+unchanged. A built-in name such as `conventional` is never shadowed: the
+Library gets `<name>-copy` instead. A different custom taxonomy of the same
+name asks whether to replace it or add the copy under a new name. It never reads the Library, so it works when the
 Library is missing or corrupt. An uninitialized repository offers `i` to review
 initialization, which copies the Library's default taxonomies. Ctrl+S opens
 Project review, and Enter applies `gitserious.toml`; Apply refuses if the file

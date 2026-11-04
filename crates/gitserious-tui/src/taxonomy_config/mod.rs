@@ -292,6 +292,8 @@ enum Screen {
     },
     /// Asks whether a Library taxonomy replaces the project's different copy or joins as new.
     ImportConflict(TaxonomyId),
+    /// Asks whether a project taxonomy replaces the Library's different one or joins as new.
+    ExportConflict(TaxonomyId),
 }
 
 fn menu_width() -> u16 {
@@ -419,6 +421,13 @@ impl State {
                 ),
                 REPLACE_OR_COPY,
             ),
+            Screen::ExportConflict(id) => (
+                "Different Taxonomy",
+                format!(
+                    "The Library's \"{id}\" differs from this project's. Replace the Library's, or add the project's as a new taxonomy?"
+                ),
+                REPLACE_OR_COPY,
+            ),
             Screen::ScopeChange(_) => (
                 "Unapplied Changes",
                 "This project has unapplied changes. Apply or discard them first?".into(),
@@ -451,6 +460,8 @@ impl State {
             (Screen::ImportConflict(id), Answer::Alternate) => {
                 self.copy_into_project(&id, CopyIn::Renamed);
             }
+            (Screen::ExportConflict(_), Answer::Confirm) => self.resolve_export(CopyIn::Replace),
+            (Screen::ExportConflict(_), Answer::Alternate) => self.resolve_export(CopyIn::Renamed),
             (Screen::Leave, Answer::Confirm) => return true,
             (Screen::ScopeChange(action), Answer::Confirm) => {
                 self.apply_scope_then(action, workspace)
@@ -677,7 +688,10 @@ impl State {
                 self.import_key(key, selected);
                 false
             }
-            Screen::Leave | Screen::ScopeChange(_) | Screen::ImportConflict(_) => false,
+            Screen::Leave
+            | Screen::ScopeChange(_)
+            | Screen::ImportConflict(_)
+            | Screen::ExportConflict(_) => false,
         }
     }
 
@@ -873,6 +887,9 @@ impl State {
             },
             KeyCode::Char('i') if editor == Some(Editor::Project) && key.modifiers.is_empty() => {
                 self.open_import();
+            }
+            KeyCode::Char('l') if editor == Some(Editor::Project) && key.modifiers.is_empty() => {
+                self.copy_to_library();
             }
             KeyCode::Char('i') if self.category == Category::Project => {
                 self.request_project_action(PendingAction::InitializeProject);
@@ -1409,7 +1426,8 @@ impl State {
                 Screen::Leave
                 | Screen::ScopeChange(_)
                 | Screen::ConfirmRemove(_)
-                | Screen::ImportConflict(_) => Vec::new(),
+                | Screen::ImportConflict(_)
+                | Screen::ExportConflict(_) => Vec::new(),
             }
         };
         // The Taxonomies outline draws its own footer and leaves no hints.
