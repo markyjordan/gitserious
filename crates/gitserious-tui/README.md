@@ -14,8 +14,10 @@ repository.
 Under the tagline, Home names the directory or repository and offers the one
 step its state allows:
 
-- Outside a Git repository, it shows the directory and `no git repository
-  found`.
+- Outside a Git repository, it shows the directory, `no git repository
+  found`, and `initialize git and gitserious`. Enter opens the same editor as
+  below; Initialize runs `git init`, which honors `init.defaultBranch`, and
+  then writes the project. If `git init` fails, nothing is written.
 - In a repository without `gitserious.toml`, Enter on `initialize gitserious`
   opens `Initialize <name>`, described below.
 - In an initialized repository, it shows `✓ <name> is initialized with

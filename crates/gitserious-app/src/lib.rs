@@ -39,7 +39,9 @@ pub use initialize_taxonomy_project::{
     InitOutcome, InitStatus, InitializeProjectError, initial_project_configuration,
     initialize_project,
 };
-pub use repository_locator::{RepositoryLocator, RepositoryRoot, RepositoryRootError};
+pub use repository_locator::{
+    RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryRootError,
+};
 pub use resolve_global_paths::resolve_global_paths;
 pub use storage_directory::StorageDirectory;
 pub use taxonomy_authoring_context::{

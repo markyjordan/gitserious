@@ -14,7 +14,7 @@ mod taxonomy_project;
 mod taxonomy_wire;
 
 pub use directory::LocalDirectoryCreator;
-pub use git::{GitRepositoryError, GitRepositoryLocator};
+pub use git::{GitRepositoryError, GitRepositoryInitializer, GitRepositoryLocator};
 pub use git_commit::{GitCommitError, GitCommitWriter};
 pub use global::{GlobalPathError, SystemGlobalPathResolver};
 pub use taxonomy_global::{GlobalConfigurationError, TomlGlobalConfigurationStore};

@@ -73,3 +73,8 @@ pub trait RepositoryLocator {
     /// as opposed to Git itself failing.
     fn is_not_repository(error: &Self::Error) -> bool;
 }
+
+/// Creates a Git repository in a directory that has none.
+pub trait RepositoryInitializer {
+    fn initialize(&self, directory: &Path) -> Result<(), String>;
+}

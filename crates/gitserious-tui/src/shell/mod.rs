@@ -213,7 +213,7 @@ impl Shell {
                     Section::Home => {
                         self.home = workspace.home();
                         self.home_error = None;
-                        if HomeAction::of(&self.home) != Some(HomeAction::InitializeGitserious) {
+                        if !HomeAction::of(&self.home).is_some_and(HomeAction::initializes) {
                             self.init_editor = None;
                         }
                     }
@@ -373,12 +373,10 @@ impl Shell {
                 match self.section {
                     Section::Home if key.code == KeyCode::Enter => {
                         match HomeAction::of(&self.home) {
-                            Some(HomeAction::InitializeGitserious) => {
-                                return self.execute(Action::Initialize, workspace);
-                            }
                             Some(HomeAction::GoToCommit) => {
                                 return self.execute(Action::Select(Section::Commit), workspace);
                             }
+                            Some(_) => return self.execute(Action::Initialize, workspace),
                             None => {}
                         }
                     }
@@ -468,7 +466,7 @@ impl Shell {
             .map(|section| (format!("Open {}", section.label()), Action::Select(section)))
             .collect();
         if self.section == Section::Home
-            && HomeAction::of(&self.home) == Some(HomeAction::InitializeGitserious)
+            && HomeAction::of(&self.home).is_some_and(HomeAction::initializes)
         {
             commands.push(("Initialize gitserious".into(), Action::Initialize));
         }
@@ -650,6 +648,9 @@ impl Shell {
                             root.as_path(),
                             self.home_error.as_deref(),
                         ),
+                        (Some(editor), HomeState::NoRepository { directory }) => {
+                            editor.render(frame, content, directory, self.home_error.as_deref())
+                        }
                         _ => home::render(frame, content, &self.home, self.home_error.as_deref()),
                     },
                     Section::Commit => {
@@ -1001,11 +1002,22 @@ mod tests {
                 theme().pending
             );
             assert!(row_of(&text, &path).is_some(), "{text}");
+            let action =
+                row_of(&text, " initialize git and gitserious ").ok_or("missing action")?;
+            assert_eq!(action, hint + 2, "{text}");
             assert!(
-                !text.contains("initialize"),
-                "no step without a repository yet"
+                text.lines()
+                    .nth(action)
+                    .unwrap_or_default()
+                    .trim_end()
+                    .ends_with("enter")
             );
-            assert!(!text.contains("enter "), "{text}");
+            assert!(
+                text.lines()
+                    .last()
+                    .unwrap_or_default()
+                    .starts_with(" enter initialize")
+            );
 
             let workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
             let (_, terminal) = home_screen(&workspace, width, height)?;
@@ -1248,24 +1260,25 @@ mod tests {
             "a revisit starts clean"
         );
 
-        for state in [
-            HomeState::NoRepository {
-                directory: fresh_root().as_path().to_path_buf(),
-            },
-            HomeState::Unavailable {
-                directory: fresh_root().as_path().to_path_buf(),
-                error: "git is not installed".into(),
-            },
-        ] {
-            let workspace = HomeWorkspace::new(state);
-            let (mut shell, _) = home_screen(&workspace, 87, 40)?;
-            shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
-            assert_eq!(shell.section, Section::Home);
-            assert!(
-                workspace.created.borrow().is_none(),
-                "enter has no step to take"
-            );
-        }
+        let workspace = HomeWorkspace::new(HomeState::Unavailable {
+            directory: fresh_root().as_path().to_path_buf(),
+            error: "git is not installed".into(),
+        });
+        let (mut shell, _) = home_screen(&workspace, 87, 40)?;
+        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        assert_eq!(shell.section, Section::Home);
+        assert!(shell.init_editor.is_none(), "enter has no step to take");
+
+        let workspace = HomeWorkspace::new(HomeState::NoRepository {
+            directory: fresh_root().as_path().to_path_buf(),
+        });
+        let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;
+        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        assert!(
+            rendered(&terminal).contains(" Initialize fresh"),
+            "a plain directory opens the editor too"
+        );
         Ok(())
     }
 

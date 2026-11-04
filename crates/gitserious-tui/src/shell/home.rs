@@ -25,6 +25,7 @@ pub(super) const TAGLINE: &str = "Why did this commit message explain nothing?";
 /// The one step Home offers for its state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum HomeAction {
+    InitializeGitAndGitserious,
     InitializeGitserious,
     GoToCommit,
 }
@@ -32,14 +33,21 @@ pub(super) enum HomeAction {
 impl HomeAction {
     pub(super) fn of(state: &HomeState) -> Option<Self> {
         match state {
+            HomeState::NoRepository { .. } => Some(Self::InitializeGitAndGitserious),
             HomeState::Uninitialized { .. } => Some(Self::InitializeGitserious),
             HomeState::Initialized { .. } => Some(Self::GoToCommit),
-            HomeState::NoRepository { .. } | HomeState::Unavailable { .. } => None,
+            HomeState::Unavailable { .. } => None,
         }
+    }
+
+    /// Whether the action opens the initialization editor.
+    pub(super) fn initializes(self) -> bool {
+        self != Self::GoToCommit
     }
 
     fn label(self) -> &'static str {
         match self {
+            Self::InitializeGitAndGitserious => "initialize git and gitserious",
             Self::InitializeGitserious => "initialize gitserious",
             Self::GoToCommit => "Go to Commit",
         }
@@ -48,7 +56,9 @@ impl HomeAction {
     /// The footer's `enter` hint.
     pub(super) fn hint(self) -> (&'static str, &'static str) {
         match self {
-            Self::InitializeGitserious => ("enter", "initialize"),
+            Self::InitializeGitAndGitserious | Self::InitializeGitserious => {
+                ("enter", "initialize")
+            }
             Self::GoToCommit => ("enter", "commit"),
         }
     }

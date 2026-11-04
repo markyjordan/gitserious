@@ -7,9 +7,9 @@ use gitserious_core::{Taxonomy, TaxonomyId, TaxonomyVersion};
 use crate::taxonomy_configuration_editor::Workspace;
 use crate::{
     AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitWriter, ConfigurationWorkspace,
-    GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore, RepositoryLocator,
-    RepositoryRoot, RepositoryStatus, RepositoryStatusReader, prepare_commit_with_taxonomy,
-    validate_reviewed_commit,
+    GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore,
+    RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryStatus,
+    RepositoryStatusReader, prepare_commit_with_taxonomy, validate_reviewed_commit,
 };
 
 /// The project file every gitserious repository commits.
@@ -51,7 +51,8 @@ pub enum HomeState {
 /// Application services available to an interactive session.
 pub trait InteractiveWorkspace {
     fn home(&self) -> HomeState;
-    /// Creates the project from `configuration`; an existing project is never rewritten.
+    /// Creates the project from `configuration`, and the Git repository first when there is
+    /// none; an existing project is never rewritten.
     fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String>;
     /// The Library's custom taxonomies a project can include, those with at least one type.
     fn library_taxonomies(&self) -> Result<Vec<Taxonomy>, String>;
@@ -78,6 +79,7 @@ pub fn run_interactive<L, S, G, W>(
     store: &S,
     global: &G,
     status: &dyn RepositoryStatusReader,
+    initializer: &dyn RepositoryInitializer,
     writer: &W,
     start: &Path,
     ui: &dyn InteractiveUi,
@@ -102,6 +104,7 @@ where
             start,
         },
         status,
+        initializer,
         writer,
     };
     ui.run(entry, &workspace, help)
@@ -110,6 +113,7 @@ where
 struct InteractiveServices<'a, L: ?Sized, S: ?Sized, G: ?Sized, W: ?Sized> {
     config: Workspace<'a, L, S, G>,
     status: &'a dyn RepositoryStatusReader,
+    initializer: &'a dyn RepositoryInitializer,
     writer: &'a W,
 }
 
@@ -174,11 +178,15 @@ where
     }
 
     fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
-        let root = self
-            .config
-            .locator
-            .locate(self.config.start)
-            .map_err(|error| error.to_string())?;
+        let locate = || self.config.locator.locate(self.config.start);
+        let root = match locate() {
+            Ok(root) => root,
+            Err(error) if L::is_not_repository(&error) => {
+                self.initializer.initialize(self.config.start)?;
+                locate().map_err(|error| error.to_string())?
+            }
+            Err(error) => return Err(error.to_string()),
+        };
         self.config
             .project
             .ensure_local_state(&root)

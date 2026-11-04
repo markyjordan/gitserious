@@ -6,11 +6,33 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use gitserious_app::{RepositoryLocator, RepositoryRoot, RepositoryRootError};
+use gitserious_app::{
+    RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryRootError,
+};
 
 /// Git-process adapter for locating the enclosing worktree.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GitRepositoryLocator;
+
+/// Runs `git init`, which honors the user's `init.defaultBranch`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GitRepositoryInitializer;
+
+impl RepositoryInitializer for GitRepositoryInitializer {
+    fn initialize(&self, directory: &Path) -> Result<(), String> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(directory)
+            .args(["init", "--quiet"])
+            .output()
+            .map_err(|error| format!("could not execute git init: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+        }
+    }
+}
 
 impl RepositoryLocator for GitRepositoryLocator {
     type Error = GitRepositoryError;
