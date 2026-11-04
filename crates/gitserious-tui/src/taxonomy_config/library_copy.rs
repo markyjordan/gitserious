@@ -150,3 +150,90 @@ impl State {
         );
     }
 }
+
+impl State {
+    /// The selected project taxonomy as Apply would write it, for copying out.
+    fn selected_project_taxonomy(&self) -> Result<Taxonomy, String> {
+        let draft = self
+            .project
+            .as_ref()
+            .and_then(ConfigurationSession::project_draft)
+            .ok_or("the project has no taxonomies yet")?;
+        let node = self
+            .project_taxonomies
+            .selected(draft)
+            .ok_or("select a taxonomy to copy")?;
+        let built = draft
+            .build_project()
+            .map_err(|_| "Fix the project's problems before copying to the Library.".to_owned())?;
+        TaxonomyId::from_label(node.taxonomy().name())
+            .ok()
+            .and_then(|id| built.find(&id).cloned())
+            .ok_or_else(|| "select a taxonomy to copy".to_owned())
+    }
+
+    /// Copies the selected project taxonomy into the Library, which saves it directly.
+    pub(super) fn copy_to_library(&mut self) {
+        let taxonomy = match self.selected_project_taxonomy() {
+            Ok(taxonomy) => taxonomy,
+            Err(error) => {
+                self.status = Some(Notice::error(error));
+                return;
+            }
+        };
+        let Some(library) = self.library() else {
+            self.status = Some(Notice::error(format!(
+                "Copying to the Library writes the Library. {}",
+                self.library_error()
+            )));
+            return;
+        };
+        match library.collision(&taxonomy) {
+            Collision::Absent => self.copy_into_library(&taxonomy, CopyIn::New),
+            Collision::Identical => {
+                self.status = Some(Notice::info(format!(
+                    "The Library already has this \"{}\".",
+                    taxonomy.id()
+                )));
+            }
+            Collision::Reserved => self.copy_into_library(&taxonomy, CopyIn::Renamed),
+            Collision::Differs => self.screen = Screen::ExportConflict(taxonomy.id().clone()),
+        }
+    }
+
+    /// Resolves an export conflict for the selected project taxonomy.
+    pub(super) fn resolve_export(&mut self, how: CopyIn) {
+        self.screen = Screen::Home;
+        match self.selected_project_taxonomy() {
+            Ok(taxonomy) => self.copy_into_library(&taxonomy, how),
+            Err(error) => self.status = Some(Notice::error(error)),
+        }
+    }
+
+    fn copy_into_library(&mut self, taxonomy: &Taxonomy, how: CopyIn) {
+        let Some(library) = self
+            .global
+            .as_mut()
+            .and_then(ConfigurationSession::library_mut)
+        else {
+            return;
+        };
+        match library.copy_in(taxonomy, how) {
+            Ok(node) => {
+                let name = library
+                    .node(&node)
+                    .map_or_else(String::new, |node| node.taxonomy().name().to_owned());
+                self.taxonomies.select(node);
+                self.status = Some(Notice::info(if how == CopyIn::Renamed {
+                    format!(
+                        "\"{}\" is taken in the Library, so the copy is \"{name}\".",
+                        taxonomy.id()
+                    )
+                } else {
+                    format!("Copied \"{name}\" to the Library.")
+                }));
+            }
+            Err(error) => self.status = Some(Notice::error(error)),
+        }
+    }
+}

@@ -310,3 +310,84 @@ fn importing_needs_the_library_but_editing_does_not() -> Result {
     assert_eq!(state.editor(), Some(Editor::Project));
     Ok(())
 }
+
+fn library_has(workspace: &Workspace, path: &[&str]) -> bool {
+    workspace
+        .global
+        .borrow()
+        .library()
+        .and_then(|library| library.find_path(path))
+        .is_some()
+}
+
+#[test]
+fn copying_to_the_library_saves_it_and_never_shadows_a_built_in() -> Result {
+    let (workspace, mut state) = with_library()?;
+    open_outline(&mut state, &workspace);
+
+    select(&mut state, &workspace, &["conventional"])?;
+    press(&mut state, &workspace, KeyCode::Char('l'));
+    assert!(
+        matches!(&state.status, Some(Notice::Info(message)) if message.contains("already has"))
+    );
+    assert_eq!(workspace.saves(), 0);
+
+    select(&mut state, &workspace, &["conventional", "fix"])?;
+    press(&mut state, &workspace, KeyCode::Char('e'));
+    replace(&mut state, &workspace, "repair")?;
+    press(&mut state, &workspace, KeyCode::Esc);
+    select(&mut state, &workspace, &["conventional"])?;
+    press(&mut state, &workspace, KeyCode::Char('l'));
+
+    assert!(library_has(&workspace, &["conventional-copy", "repair"]));
+    assert!(!library_has(&workspace, &["conventional", "repair"]));
+    assert_eq!(workspace.saves(), 1, "only the Library was written");
+    assert!(state.scope_dirty(ConfigurationDestination::Project));
+    Ok(())
+}
+
+#[test]
+fn a_different_library_taxonomy_is_replaced_only_on_request() -> Result {
+    let (workspace, mut state) = with_library()?;
+    open_outline(&mut state, &workspace);
+    import_row(&mut state, &workspace, "team")?;
+    let team = draft(&state)?.find_path(&["team"]).ok_or("team")?;
+    state.project_taxonomies.select(team);
+    let first_type = draft(&state)?
+        .node(&draft(&state)?.find_path(&["team"]).ok_or("team")?)
+        .and_then(|node| node.taxonomy().types().first().map(|t| t.name().to_owned()))
+        .ok_or("team has a type")?;
+    select(&mut state, &workspace, &["team", &first_type])?;
+    press(&mut state, &workspace, KeyCode::Char('e'));
+    replace(&mut state, &workspace, "shipped")?;
+    press(&mut state, &workspace, KeyCode::Esc);
+    select(&mut state, &workspace, &["team"])?;
+
+    press(&mut state, &workspace, KeyCode::Char('l'));
+    let question = state.confirmation().ok_or("no conflict dialog")?;
+    assert!(question.message.contains("The Library's \"team\" differs"));
+    press(&mut state, &workspace, KeyCode::Esc);
+    assert!(!library_has(&workspace, &["team", "shipped"]));
+    assert_eq!(workspace.saves(), 0);
+
+    press(&mut state, &workspace, KeyCode::Char('l'));
+    press(&mut state, &workspace, KeyCode::Char('r'));
+    assert!(library_has(&workspace, &["team", "shipped"]));
+    assert_eq!(workspace.saves(), 1);
+    Ok(())
+}
+
+#[test]
+fn copying_to_the_library_needs_the_library() -> Result {
+    let (workspace, mut state) = fixture()?;
+    open_outline(&mut state, &workspace);
+    select(&mut state, &workspace, &["research"])?;
+
+    press(&mut state, &workspace, KeyCode::Char('l'));
+
+    assert!(
+        matches!(&state.status, Some(Notice::Error(message)) if message.contains("the Library is corrupt"))
+    );
+    assert_eq!(workspace.saves(), 0);
+    Ok(())
+}
