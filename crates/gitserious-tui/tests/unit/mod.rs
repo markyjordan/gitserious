@@ -145,7 +145,7 @@ fn context_review_includes_provenance_and_returns_the_latest_approved_bytes()
         review
             .message
             .as_str()
-            .contains("Gitserious-Taxonomy: conventional@2\n")
+            .contains("Gitserious-Taxonomy: conventional-v2\n")
     );
     let frame = rendered(&mut session, 100, 32)?;
     assert!(frame.contains("Gitserious-Schema:"));

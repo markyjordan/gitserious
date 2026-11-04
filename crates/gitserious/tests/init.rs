@@ -20,7 +20,7 @@ fn nested_first_run_creates_exact_version_control_artifacts() -> Result<(), Box<
     assert_eq!(
         stdout(&output),
         format!(
-            "Initialized gitserious in {} (conventional@2).\n",
+            "Initialized gitserious in {} (conventional-v2).\n",
             git_root.trim()
         )
     );
@@ -92,7 +92,7 @@ fn repeat_init_never_rewrites_and_invalid_projects_are_not_regenerated()
     let repeated = home.run(repository.path(), &["init", "--taxonomy", "research"])?;
     assert!(repeated.status.success());
     assert!(stdout(&repeated).starts_with("gitserious is already initialized in "));
-    assert!(stdout(&repeated).ends_with(" (conventional@2).\n"));
+    assert!(stdout(&repeated).ends_with(" (conventional-v2).\n"));
     assert_eq!(fs::read_to_string(&config)?, authored);
 
     let broken = authored.replace("[[taxonomies]]", "[[taxonomy]]");

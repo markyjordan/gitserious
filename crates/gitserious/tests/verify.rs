@@ -49,7 +49,7 @@ fn valid_project_verifies_read_only_without_a_usable_library() -> Result<(), Box
     assert_eq!(
         stdout(&output),
         "gitserious.toml is valid.\ndefault: conventional\n\
-         taxonomies: conventional@2, research@2, infra-ops@2\n"
+         taxonomies: conventional-v2, research-v2, infra-ops-v2\n"
     );
     assert!(stderr(&output).is_empty());
     assert_eq!(snapshot(repository.path())?, before);

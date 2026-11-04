@@ -118,7 +118,7 @@ fn git_stores_the_exact_reviewed_taxonomy_message() -> Result<(), Box<dyn Error>
     let (_, message) = object.split_once("\n\n").ok_or("missing commit body")?;
     assert_eq!(message, *author.0.borrow());
     assert!(message.contains("\nsymptom:\nreviewed symptom\n"));
-    assert!(message.contains("Gitserious-Taxonomy: research@2\n"));
+    assert!(message.contains("Gitserious-Taxonomy: research-v2\n"));
     assert_eq!(fs::read(repository.path().join("gitserious.toml"))?, config);
     assert!(!repository.path().join("gitserious.lock").exists());
     assert_eq!(

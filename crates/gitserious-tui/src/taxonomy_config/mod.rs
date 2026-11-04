@@ -3349,7 +3349,7 @@ mod tests {
         assert!(!state.taxonomies.editing());
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(text(&terminal).contains("Forked from  conventional@2"));
+        assert!(text(&terminal).contains("Forked from  conventional-v2"));
         let team = rows(&terminal)
             .into_iter()
             .find(|row| row.contains("▌▾ team"))

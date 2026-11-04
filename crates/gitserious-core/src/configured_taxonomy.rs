@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 
 use crate::{
     CommitTypeDefinition, CommitTypeId, Description, TaxonomyId, TaxonomyVersion,
-    built_in_commit_types,
+    VersionedTaxonomy, built_in_commit_types,
 };
 
 /// Informational source recorded when one taxonomy is forked from another.
@@ -32,6 +32,12 @@ impl TaxonomyLineage {
     #[must_use]
     pub const fn version(&self) -> TaxonomyVersion {
         self.version
+    }
+
+    /// Returns the source as `<id>-v<N>`.
+    #[must_use]
+    pub const fn versioned(&self) -> VersionedTaxonomy<'_> {
+        VersionedTaxonomy::new(&self.id, self.version)
     }
 }
 
@@ -85,6 +91,12 @@ impl Taxonomy {
     #[must_use]
     pub const fn version(&self) -> TaxonomyVersion {
         self.version
+    }
+
+    /// Returns this taxonomy as `<id>-v<N>`.
+    #[must_use]
+    pub const fn versioned(&self) -> VersionedTaxonomy<'_> {
+        VersionedTaxonomy::new(&self.id, self.version)
     }
 
     /// Returns the taxonomy purpose.

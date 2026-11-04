@@ -16,6 +16,7 @@ use gitserious_app::{
 };
 use gitserious_core::{
     CommitMessage, CommitTypeDefinition, CommitTypeId, PropertyRequirement, Taxonomy, TaxonomyId,
+    VersionedTaxonomy,
 };
 
 #[derive(Debug, Parser)]
@@ -428,11 +429,7 @@ fn render_taxonomy(taxonomy: &Taxonomy) -> String {
         taxonomy.description()
     );
     if let Some(source) = taxonomy.derived_from() {
-        output.push_str(&format!(
-            "forked from {}@{}\n",
-            source.id(),
-            source.version()
-        ));
+        output.push_str(&format!("forked from {}\n", source.versioned()));
     }
     for definition in taxonomy.commit_types() {
         output.push_str(&format!(
@@ -474,10 +471,9 @@ fn write_init_outcome(output: &mut (impl Write + ?Sized), outcome: &InitOutcome)
     };
     if writeln!(
         output,
-        "{action} {} ({}@{}).",
+        "{action} {} ({}).",
         outcome.root().as_path().display(),
-        outcome.taxonomy(),
-        outcome.version()
+        VersionedTaxonomy::new(outcome.taxonomy(), outcome.version())
     )
     .is_ok()
     {
@@ -500,7 +496,7 @@ fn write_verification<L: Display, S: Display>(
             let taxonomies = configuration
                 .taxonomies()
                 .iter()
-                .map(|taxonomy| format!("{}@{}", taxonomy.id(), taxonomy.version()))
+                .map(|taxonomy| taxonomy.versioned().to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
             if writeln!(

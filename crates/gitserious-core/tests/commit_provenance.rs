@@ -75,7 +75,7 @@ fn trailers_preserve_qualified_identities_versions_and_exact_order() -> TestResu
         concat!(
             "fix(data-source): preserve the evidence\n\ncause:\n",
             "The sample split leaked speaker identity.\n\n",
-            "Gitserious-Taxonomy: research@2\n",
+            "Gitserious-Taxonomy: research-v2\n",
             "Gitserious-Schema: sha256:abababababababababababababababababababababababababababababababab\n"
         )
     );
@@ -181,7 +181,7 @@ fn empty_schemas_render_header_and_provenance_without_empty_properties() -> Test
 
     assert!(
         message.as_str().starts_with(
-            "fix(data-source): preserve the evidence\n\nGitserious-Taxonomy: empty@2\n"
+            "fix(data-source): preserve the evidence\n\nGitserious-Taxonomy: empty-v2\n"
         )
     );
     assert_eq!(message.as_str().lines().count(), 4);
@@ -231,7 +231,7 @@ fn provenance_rendering_keeps_explicit_applicability_validation() -> TestResult 
     assert!(
         message
             .as_str()
-            .contains("Gitserious-Taxonomy: conventional@2\n")
+            .contains("Gitserious-Taxonomy: conventional-v2\n")
     );
     assert!(!message.as_str().contains("constraints:"));
 

@@ -35,6 +35,9 @@ pub(super) fn name_error(field: NameField, raw: &str, error: &LabelError) -> Str
         LabelError::Unsupported { character } => {
             format!("{noun} can't use \"{character}\". Use letters a-z and digits.")
         }
+        LabelError::VersionSuffix { formatted } => {
+            format!("{noun} can't end in a version like -v1: \"{formatted}\".")
+        }
     }
 }
 

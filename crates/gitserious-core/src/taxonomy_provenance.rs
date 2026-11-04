@@ -70,7 +70,7 @@ mod tests {
         )
         .into_message()
         .unwrap_or_else(|_| unreachable!());
-        assert!(message.as_str().contains("Gitserious-Taxonomy: plain@1"));
+        assert!(message.as_str().contains("Gitserious-Taxonomy: plain-v1"));
         assert!(message.as_str().contains("Gitserious-Schema: sha256:"));
         assert!(!message.as_str().contains("Gitserious-Template"));
         assert!(!message.as_str().contains("Gitserious-Typeset"));

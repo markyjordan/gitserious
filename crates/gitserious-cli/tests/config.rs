@@ -105,7 +105,7 @@ fn list_and_show_include_user_forks() -> Result<(), Box<dyn Error>> {
     let (exit, shown, stderr) = harness.run(&["gitserious", "config", "show", "team"]);
     assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
     assert!(shown.starts_with("team\nv1\n"));
-    assert!(shown.contains("\nforked from conventional@2\n"), "{shown}");
+    assert!(shown.contains("\nforked from conventional-v2\n"), "{shown}");
     Ok(())
 }
 
