@@ -113,7 +113,7 @@ ordinary staged-index Git commit behavior.
 Append these two application-generated trailers in the listed order:
 
 ```text
-Gitserious-Taxonomy: <id>@<version>
+Gitserious-Taxonomy: <id>-v<version>
 Gitserious-Schema: sha256:<resolved-schema-fingerprint>
 ```
 

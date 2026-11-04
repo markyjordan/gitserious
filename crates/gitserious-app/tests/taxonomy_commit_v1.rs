@@ -131,7 +131,11 @@ fn commit_uses_only_the_embedded_project_taxonomy() -> Result<(), Box<dyn Error>
     )?;
     let message = writer.0.borrow();
     let message = message.as_ref().ok_or("writer was not called")?;
-    assert!(message.as_str().contains("Gitserious-Taxonomy: portable@1"));
+    assert!(
+        message
+            .as_str()
+            .contains("Gitserious-Taxonomy: portable-v1")
+    );
     assert!(!message.as_str().contains("Gitserious-Template"));
     Ok(())
 }

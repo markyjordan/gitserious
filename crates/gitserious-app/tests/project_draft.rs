@@ -37,7 +37,7 @@ fn a_project_owned_built_in_is_editable_and_advances_its_version() -> Result<(),
     let conventional = built
         .find(&TaxonomyId::new("conventional")?)
         .ok_or("conventional stays")?;
-    assert_eq!(conventional.version().get(), 3);
+    assert_eq!(conventional.version().get(), 2);
     assert!(
         conventional
             .commit_types()
@@ -111,7 +111,7 @@ fn review_names_added_changed_and_removed_taxonomies() -> Result<(), Box<dyn Err
 
     let review = session.review()?.changes;
 
-    assert!(review.contains("  ~ conventional  v2 -> v3"), "{review}");
+    assert!(review.contains("  ~ conventional  v1 -> v2"), "{review}");
     assert!(review.contains("  + conventional-fork  v1"), "{review}");
     assert!(review.contains("  - infra-ops"), "{review}");
     assert!(session.is_dirty());

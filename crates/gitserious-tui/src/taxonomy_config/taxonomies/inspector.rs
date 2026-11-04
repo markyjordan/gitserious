@@ -232,11 +232,7 @@ fn describe(
                 ));
             }
             if let Some(source) = taxonomy.derived_from() {
-                fact(
-                    &mut lines,
-                    "Forked from",
-                    &format!("{}@{}", source.id(), source.version()),
-                );
+                fact(&mut lines, "Forked from", &source.versioned().to_string());
             }
         }
         NodeRef::Type { commit_type, .. } => {

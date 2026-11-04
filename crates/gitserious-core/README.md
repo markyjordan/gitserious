@@ -32,7 +32,7 @@ Taxonomy-aware rendering validates against the exact selected snapshot and
 appends two structural trailers:
 
 ```text
-Gitserious-Taxonomy: <id>@<version>
+Gitserious-Taxonomy: <id>-v<version>
 Gitserious-Schema: sha256:<taxonomy-fingerprint>
 ```
 

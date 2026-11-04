@@ -22,6 +22,8 @@ pub enum IdentifierErrorKind {
     },
     /// The identifier ends with a hyphen.
     TrailingHyphen,
+    /// A taxonomy identifier ends in `-v<digits>`, the suffix reserved for its version.
+    VersionSuffix,
 }
 
 /// An invalid commit-type, template, property, or condition identifier.
@@ -57,6 +59,11 @@ impl Display for IdentifierError {
                     self.value
                 )
             }
+            IdentifierErrorKind::VersionSuffix => write!(
+                formatter,
+                "taxonomy identifier {:?} must not end with a version suffix such as -v1",
+                self.value
+            ),
         }
     }
 }
@@ -94,8 +101,26 @@ fn validate_identifier(value: &str) -> Result<(), IdentifierErrorKind> {
     Ok(())
 }
 
-fn validate_and_box(value: String) -> Result<Box<str>, IdentifierError> {
-    validate_identifier(&value).map_err(|kind| IdentifierError {
+/// `<id>-v<N>` names a taxonomy version, so the suffix must split off one way.
+fn validate_taxonomy_identifier(value: &str) -> Result<(), IdentifierErrorKind> {
+    validate_identifier(value)?;
+    if has_version_suffix(value) {
+        return Err(IdentifierErrorKind::VersionSuffix);
+    }
+    Ok(())
+}
+
+fn has_version_suffix(value: &str) -> bool {
+    value.rsplit_once("-v").is_some_and(|(_, digits)| {
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    })
+}
+
+fn validate_and_box(
+    value: String,
+    validate: fn(&str) -> Result<(), IdentifierErrorKind>,
+) -> Result<Box<str>, IdentifierError> {
+    validate(&value).map_err(|kind| IdentifierError {
         value: value.clone().into_boxed_str(),
         kind,
     })?;
@@ -118,6 +143,11 @@ pub enum LabelError {
         /// The first unsupported character in the typed text.
         character: char,
     },
+    /// The formatted taxonomy name ends in `-v<digits>`, such as "team-v2".
+    VersionSuffix {
+        /// The formatted text that would otherwise be the identifier.
+        formatted: Box<str>,
+    },
 }
 
 impl Display for LabelError {
@@ -129,6 +159,12 @@ impl Display for LabelError {
             }
             Self::Unsupported { character } => {
                 write!(formatter, "label uses unsupported character {character:?}")
+            }
+            Self::VersionSuffix { formatted } => {
+                write!(
+                    formatter,
+                    "label {formatted:?} must not end with a version suffix such as -v1"
+                )
             }
         }
     }
@@ -203,6 +239,9 @@ fn is_label_separator(character: char) -> bool {
 
 macro_rules! define_identifier {
     ($name:ident, $description:literal) => {
+        define_identifier!($name, $description, validate_identifier);
+    };
+    ($name:ident, $description:literal, $validate:path) => {
         #[doc = $description]
         #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
         pub struct $name(Box<str>);
@@ -215,7 +254,7 @@ macro_rules! define_identifier {
             /// Returns [`IdentifierError`] when the value does not use lowercase
             /// ASCII kebab syntax.
             pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
-                validate_and_box(value.into()).map(Self)
+                validate_and_box(value.into(), $validate).map(Self)
             }
 
             /// Returns the identifier text.
@@ -236,11 +275,13 @@ macro_rules! define_identifier {
             )]
             pub fn from_label(label: &str) -> Result<Self, LabelError> {
                 let value = normalize_identifier(label)?;
-                debug_assert!(
-                    validate_identifier(&value).is_ok(),
-                    "formatted label {value:?} is not a valid identifier"
-                );
-                Ok(Self(value.into_boxed_str()))
+                match $validate(&value) {
+                    Ok(()) => Ok(Self(value.into_boxed_str())),
+                    Err(IdentifierErrorKind::VersionSuffix) => Err(LabelError::VersionSuffix {
+                        formatted: value.into_boxed_str(),
+                    }),
+                    Err(kind) => unreachable!("formatted label {value:?} is invalid: {kind:?}"),
+                }
             }
 
             pub(crate) fn from_trusted(value: &'static str) -> Self {
@@ -300,7 +341,8 @@ define_identifier!(
 pub type CommitTypeId = ChangeTypeId;
 define_identifier!(
     TaxonomyId,
-    "An open, validated identifier for a software change taxonomy."
+    "An open, validated identifier for a software change taxonomy.",
+    validate_taxonomy_identifier
 );
 define_identifier!(
     PropertyKey,
@@ -390,6 +432,28 @@ mod tests {
                 Some(value)
             );
         }
+    }
+
+    #[test]
+    fn taxonomy_identifiers_reserve_the_version_suffix() -> Result<(), Box<dyn Error>> {
+        for value in ["team-v2", "team-v10", "a-v0"] {
+            assert_eq!(
+                TaxonomyId::new(value).err().map(|error| error.kind),
+                Some(IdentifierErrorKind::VersionSuffix)
+            );
+            assert_eq!(CommitTypeId::new(value)?.as_str(), value);
+        }
+        for value in ["team-v", "team-va", "team-v2a", "v2", "team2", "team-2"] {
+            assert_eq!(TaxonomyId::new(value)?.as_str(), value);
+        }
+        assert_eq!(
+            TaxonomyId::from_label("Team V2"),
+            Err(LabelError::VersionSuffix {
+                formatted: "team-v2".into()
+            })
+        );
+        assert_eq!(CommitTypeId::from_label("Team V2")?.as_str(), "team-v2");
+        Ok(())
     }
 
     #[test]

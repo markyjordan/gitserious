@@ -15,7 +15,7 @@ fn init_dispatches_and_reports_the_exact_resolution() -> Result<(), Box<dyn std:
     assert_eq!(
         stdout,
         format!(
-            "Initialized gitserious in {} (conventional@2).\n",
+            "Initialized gitserious in {} (conventional-v1).\n",
             repository_path().display()
         )
     );
@@ -60,7 +60,7 @@ fn init_selects_an_explicit_installed_taxonomy() -> Result<(), Box<dyn std::erro
     let (exit, stdout, stderr) = harness.run(&["gitserious", "init", "--taxonomy", "research"]);
 
     assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
-    assert!(stdout.ends_with(" (research@2).\n"), "{stdout}");
+    assert!(stdout.ends_with(" (research-v1).\n"), "{stdout}");
     let initialized = harness.project.initialized.borrow();
     let config = initialized.as_ref().ok_or("init did not write")?;
     assert_eq!(config.default_taxonomy(), &TaxonomyId::new("research")?);

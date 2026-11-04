@@ -2,6 +2,8 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::num::NonZeroU16;
 
+use crate::TaxonomyId;
+
 /// A positive semantic version for one taxonomy definition.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TaxonomyVersion(NonZeroU16);
@@ -9,10 +11,6 @@ pub struct TaxonomyVersion(NonZeroU16);
 impl TaxonomyVersion {
     /// The first taxonomy version.
     pub const V1: Self = Self(NonZeroU16::MIN);
-
-    /// The second taxonomy version, which the built-ins reached when their descriptions were
-    /// shortened to fit the configuration editor.
-    pub(crate) const V2: Self = Self(NonZeroU16::MIN.saturating_add(1));
 
     /// Creates a positive taxonomy version.
     ///
@@ -36,6 +34,28 @@ impl TaxonomyVersion {
 impl Display for TaxonomyVersion {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         Display::fmt(&self.get(), formatter)
+    }
+}
+
+/// One taxonomy version written as `<id>-v<N>`, such as `conventional-v1`.
+///
+/// Taxonomy identifiers cannot end in `-v<digits>`, so the text splits back one way.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VersionedTaxonomy<'a> {
+    id: &'a TaxonomyId,
+    version: TaxonomyVersion,
+}
+
+impl<'a> VersionedTaxonomy<'a> {
+    #[must_use]
+    pub const fn new(id: &'a TaxonomyId, version: TaxonomyVersion) -> Self {
+        Self { id, version }
+    }
+}
+
+impl Display for VersionedTaxonomy<'_> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}-v{}", self.id, self.version)
     }
 }
 

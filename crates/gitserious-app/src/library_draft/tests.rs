@@ -81,12 +81,10 @@ fn built_ins_come_first_then_custom_taxonomies_in_storage_order() -> TestResult 
         ]
     );
     assert_eq!(
-        draft.taxonomies()[3].derived_from().map(|source| format!(
-            "{}@{}",
-            source.id(),
-            source.version()
-        )),
-        Some("conventional@2".into())
+        draft.taxonomies()[3]
+            .derived_from()
+            .map(|source| source.versioned().to_string()),
+        Some("conventional-v1".into())
     );
     Ok(())
 }
@@ -305,8 +303,8 @@ fn a_fork_copies_its_source_under_a_new_name_with_lineage_and_source_baselines()
     assert_eq!(copy.origin(), TaxonomyOrigin::Custom);
     assert_eq!(
         copy.derived_from()
-            .map(|source| format!("{}@{}", source.id(), source.version())),
-        Some("conventional@2".into())
+            .map(|source| source.versioned().to_string()),
+        Some("conventional-v1".into())
     );
     let source = &draft.taxonomies()[0];
     assert_eq!(copy.types().len(), source.types().len());

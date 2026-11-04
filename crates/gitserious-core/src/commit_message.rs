@@ -108,12 +108,7 @@ pub fn validate_commit_draft_with_provenance(
     if let Ok(rendered) = &mut report.message {
         let mut message = rendered.as_str().to_owned();
         message.push('\n');
-        let _ = writeln!(
-            message,
-            "Gitserious-Taxonomy: {}@{}",
-            taxonomy.id(),
-            taxonomy.version()
-        );
+        let _ = writeln!(message, "Gitserious-Taxonomy: {}", taxonomy.versioned());
         let _ = writeln!(message, "Gitserious-Schema: {}", provenance.fingerprint());
         *rendered = CommitMessage(message.into_boxed_str());
     }
