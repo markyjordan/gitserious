@@ -16,7 +16,9 @@ use gitserious_core::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{ConfigurationError, GlobalConfiguration, LibraryTaxonomy, TaxonomyOrigin};
+use crate::{
+    ConfigurationError, GlobalConfiguration, LibraryTaxonomy, ProjectConfiguration, TaxonomyOrigin,
+};
 pub use problems::{Problem, ProblemKind, ProblemSite};
 
 /// The identity of one taxonomy, type, or property draft. Never persisted.
@@ -470,11 +472,24 @@ enum Address {
     Property(usize, usize, usize),
 }
 
-/// Every taxonomy of one Library: built-ins, then custom taxonomies in storage order, with the
-/// selection of default and available taxonomies.
+/// What a draft was loaded from and saves back to.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Owner {
+    /// The user's Library, with the built-ins listed first and read-only.
+    Library(GlobalConfiguration),
+    /// A project's own taxonomies. None is read-only and any identity, built-in or not, is
+    /// free; every taxonomy is available, so `available` follows the outline.
+    Project {
+        configuration: ProjectConfiguration,
+        records: Vec<LibraryTaxonomy>,
+    },
+}
+
+/// Every taxonomy of one Library or one project, with the selection of default and available
+/// taxonomies. A Library lists built-ins, then custom taxonomies in storage order.
 #[derive(Clone, Debug)]
 pub struct LibraryDraft {
-    persisted: GlobalConfiguration,
+    owner: Owner,
     taxonomies: Vec<TaxonomyNode>,
     default: TaxonomyId,
     available: Vec<TaxonomyId>,
@@ -495,16 +510,66 @@ impl LibraryDraft {
         Self {
             default: configuration.default_taxonomy().clone(),
             available: configuration.available_taxonomies().to_vec(),
-            persisted: configuration,
+            owner: Owner::Library(configuration),
             taxonomies,
             next_local: 0,
         }
     }
 
-    /// The configuration this draft was loaded from.
+    /// Drafts a project's own taxonomies, every one editable.
     #[must_use]
-    pub const fn persisted(&self) -> &GlobalConfiguration {
-        &self.persisted
+    pub fn from_project(configuration: ProjectConfiguration) -> Self {
+        let records = configuration
+            .taxonomies()
+            .iter()
+            .cloned()
+            .map(LibraryTaxonomy::from)
+            .collect::<Vec<_>>();
+        Self {
+            default: configuration.default_taxonomy().clone(),
+            available: records.iter().map(|record| record.id().clone()).collect(),
+            taxonomies: records
+                .iter()
+                .map(|record| TaxonomyNode::new(record, TaxonomyOrigin::Custom))
+                .collect(),
+            owner: Owner::Project {
+                configuration,
+                records,
+            },
+            next_local: 0,
+        }
+    }
+
+    /// The Library this draft was loaded from; none for a project draft.
+    #[must_use]
+    pub const fn persisted(&self) -> Option<&GlobalConfiguration> {
+        match &self.owner {
+            Owner::Library(configuration) => Some(configuration),
+            Owner::Project { .. } => None,
+        }
+    }
+
+    /// The project configuration this draft was loaded from; none for a Library draft.
+    #[must_use]
+    pub const fn persisted_project(&self) -> Option<&ProjectConfiguration> {
+        match &self.owner {
+            Owner::Library(_) => None,
+            Owner::Project { configuration, .. } => Some(configuration),
+        }
+    }
+
+    /// Whether this draft holds a project's taxonomies rather than the Library.
+    #[must_use]
+    pub const fn is_project(&self) -> bool {
+        matches!(self.owner, Owner::Project { .. })
+    }
+
+    /// The taxonomies as stored when the draft was loaded or last saved.
+    fn records(&self) -> &[LibraryTaxonomy] {
+        match &self.owner {
+            Owner::Library(configuration) => configuration.custom_taxonomies(),
+            Owner::Project { records, .. } => records,
+        }
     }
 
     #[must_use]
@@ -630,8 +695,7 @@ impl LibraryDraft {
             return Some(taxonomy.version);
         }
         let stored = self
-            .persisted
-            .custom_taxonomies()
+            .records()
             .iter()
             .find(|stored| Some(stored.id()) == taxonomy.saved_name.as_ref())?;
         let unchanged = problems::content(self, taxonomy).is_ok_and(|(description, types)| {
@@ -653,7 +717,7 @@ impl LibraryDraft {
     /// Whether saving would write anything: the draft does not build to what it was loaded from.
     #[must_use]
     pub fn is_changed(&self) -> bool {
-        !self.build().is_ok_and(|built| built == self.persisted)
+        !problems::build_owner(self).is_ok_and(|built| built == self.owner)
     }
 
     /// Every reason the draft does not build, in outline order.
@@ -662,20 +726,35 @@ impl LibraryDraft {
         self.build().err().unwrap_or_default()
     }
 
-    /// The validated Library to persist. The error lists every problem and is never empty.
+    /// The validated Library to persist. The error lists every problem and is never empty; a
+    /// project draft builds through [`Self::build_project`] instead.
     pub fn build(&self) -> Result<GlobalConfiguration, Vec<Problem>> {
-        problems::build(self)
+        match problems::build_owner(self)? {
+            Owner::Library(configuration) => Ok(configuration),
+            Owner::Project { .. } => Err(vec![problems::wrong_owner()]),
+        }
+    }
+
+    /// The validated project configuration to apply. The error lists every problem and is never
+    /// empty; a Library draft builds through [`Self::build`] instead.
+    pub fn build_project(&self) -> Result<ProjectConfiguration, Vec<Problem>> {
+        match problems::build_owner(self)? {
+            Owner::Project { configuration, .. } => Ok(configuration),
+            Owner::Library(_) => Err(vec![problems::wrong_owner()]),
+        }
     }
 
     /// A validated snapshot acknowledged in place after persistence, retaining every node id.
     pub fn saved(&self) -> Result<Self, Vec<Problem>> {
-        let configuration = self.build()?;
+        let owner = problems::build_owner(self)?;
         let mut saved = self.clone();
+        saved.owner = owner;
+        let records = saved.records().to_vec();
         for (node, record) in saved
             .taxonomies
             .iter_mut()
             .filter(|node| node.origin == TaxonomyOrigin::Custom)
-            .zip(configuration.custom_taxonomies())
+            .zip(&records)
         {
             let mut canonical = TaxonomyNode::new(record, TaxonomyOrigin::Custom);
             canonical.id.clone_from(&node.id);
@@ -692,7 +771,6 @@ impl LibraryDraft {
             }
             *node = canonical;
         }
-        saved.persisted = configuration;
         Ok(saved)
     }
 
@@ -700,10 +778,7 @@ impl LibraryDraft {
     #[must_use]
     pub fn saved_taxonomy(&self, id: &NodeId) -> Option<&LibraryTaxonomy> {
         let name = self.node(id)?.taxonomy().saved_name.as_ref()?;
-        self.persisted
-            .custom_taxonomies()
-            .iter()
-            .find(|record| record.id() == name)
+        self.records().iter().find(|record| record.id() == name)
     }
 
     /// Whether a new node still contains exactly the blank values it was created with.
@@ -777,8 +852,13 @@ impl LibraryDraft {
         let NodeRef::Taxonomy(taxonomy) = self.node(id)? else {
             return None;
         };
+        let available = if self.is_project() {
+            &[][..]
+        } else {
+            &self.available[..]
+        };
         let selected = std::iter::once(&self.default)
-            .chain(&self.available)
+            .chain(available)
             .find(|selected| selected.as_str() == taxonomy.name)?;
         let replaced = self
             .taxonomies
@@ -791,6 +871,38 @@ impl LibraryDraft {
     pub fn select(&mut self, default: TaxonomyId, available: Vec<TaxonomyId>) {
         self.default = default;
         self.available = available;
+    }
+
+    /// Keeps only the project taxonomies named in `order`, in that order, and makes `default`
+    /// the project default. A name missing from the draft is restored from the applied file.
+    pub fn select_project(
+        &mut self,
+        default: TaxonomyId,
+        order: &[TaxonomyId],
+    ) -> Result<(), String> {
+        if !self.is_project() {
+            return Err("only a project draft selects its own taxonomies".into());
+        }
+        let mut kept = Vec::with_capacity(order.len());
+        for id in order {
+            let node = self
+                .taxonomies
+                .iter()
+                .find(|node| TaxonomyId::from_label(&node.name).as_ref() == Ok(id))
+                .cloned()
+                .or_else(|| {
+                    self.records()
+                        .iter()
+                        .find(|record| record.id() == id)
+                        .map(|record| TaxonomyNode::new(record, TaxonomyOrigin::Custom))
+                })
+                .ok_or_else(|| format!("taxonomy \"{id}\" is not part of this project"))?;
+            kept.push(node);
+        }
+        self.taxonomies = kept;
+        self.available = order.to_vec();
+        self.default = default;
+        Ok(())
     }
 
     /// Applies one edit and returns the node a cursor should land on: the edited node, the new

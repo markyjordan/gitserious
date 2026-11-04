@@ -148,5 +148,7 @@ pub(super) fn problem_sentence(library: &LibraryDraft, problem: &Problem) -> Str
             "Taxonomy version limit reached; fork this taxonomy to continue.".into()
         }
         ProblemKind::Selection(error) => sentence(&error.to_string()),
+        ProblemKind::NoTypes => "A project taxonomy needs at least one type.".into(),
+        ProblemKind::WrongOwner => "This draft belongs to a different configuration.".into(),
     }
 }

@@ -6,7 +6,7 @@ use gitserious_core::TaxonomyId;
 use crate::{
     GlobalConfiguration, GlobalConfigurationStore, LibraryDraft, Problem, ProjectConfiguration,
     ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject,
-    TaxonomyCatalog, initial_project_configuration,
+    TaxonomyCatalog, fingerprint_taxonomy, initial_project_configuration,
 };
 
 /// Persistence destination edited by one reviewed session.
@@ -28,8 +28,8 @@ struct ProjectScope {
     root: RepositoryRoot,
     /// The revision Apply must still find on disk; none before initialization.
     baseline: Option<ProjectRevision>,
-    original: Option<ProjectConfiguration>,
-    working: Option<ProjectConfiguration>,
+    /// The project's own taxonomies; none until the project is initialized or staged to be.
+    draft: Option<LibraryDraft>,
 }
 
 /// One in-memory configuration draft and its guarded baseline.
@@ -50,16 +50,18 @@ impl ConfigurationSession {
     /// Opens a project snapshot without performing I/O or reading the Library.
     #[must_use]
     pub fn open_project(root: RepositoryRoot, stored: Option<StoredProject>) -> Self {
-        let (baseline, original) = match stored {
-            Some(stored) => (Some(stored.revision), Some(stored.configuration)),
+        let (baseline, draft) = match stored {
+            Some(stored) => (
+                Some(stored.revision),
+                Some(LibraryDraft::from_project(stored.configuration)),
+            ),
             None => (None, None),
         };
         Self {
             scope: Scope::Project(Box::new(ProjectScope {
                 root,
                 baseline,
-                working: original.clone(),
-                original,
+                draft,
             })),
         }
     }
@@ -90,21 +92,38 @@ impl ConfigurationSession {
         }
     }
 
-    /// Returns the working project configuration, or none before initialization.
+    /// Returns the working draft of the project's own taxonomies, or none before initialization.
     #[must_use]
-    pub const fn project_config(&self) -> Option<&ProjectConfiguration> {
+    pub fn project_draft(&self) -> Option<&LibraryDraft> {
         match &self.scope {
             Scope::Global(_) => None,
-            Scope::Project(project) => project.working.as_ref(),
+            Scope::Project(project) => project.draft.as_ref(),
         }
     }
 
-    /// Returns the persisted project configuration captured before staged edits.
-    #[must_use]
-    pub const fn persisted_project_config(&self) -> Option<&ProjectConfiguration> {
-        match &self.scope {
+    /// Returns the project draft for editing.
+    pub fn project_draft_mut(&mut self) -> Option<&mut LibraryDraft> {
+        match &mut self.scope {
             Scope::Global(_) => None,
-            Scope::Project(project) => project.original.as_ref(),
+            Scope::Project(project) => project.draft.as_mut(),
+        }
+    }
+
+    /// Returns the configuration Apply would write, or none before initialization or while the
+    /// draft has problems.
+    #[must_use]
+    pub fn project_config(&self) -> Option<ProjectConfiguration> {
+        self.project_draft()?.build_project().ok()
+    }
+
+    /// Returns the applied project configuration, or none before the first Apply.
+    #[must_use]
+    pub fn persisted_project_config(&self) -> Option<&ProjectConfiguration> {
+        match &self.scope {
+            Scope::Project(project) if project.baseline.is_some() => {
+                project.draft.as_ref()?.persisted_project()
+            }
+            _ => None,
         }
     }
 
@@ -113,6 +132,7 @@ impl ConfigurationSession {
         match &self.scope {
             Scope::Global(library) => library
                 .persisted()
+                .ok_or("a Library session holds the Library")?
                 .catalog()
                 .map_err(|error| error.to_string()),
             Scope::Project(_) => Err("a Project session does not read the Library".into()),
@@ -124,7 +144,11 @@ impl ConfigurationSession {
     pub fn is_dirty(&self) -> bool {
         match &self.scope {
             Scope::Global(library) => library.is_changed(),
-            Scope::Project(project) => project.working != project.original,
+            Scope::Project(project) => match (&project.baseline, &project.draft) {
+                (None, Some(_)) => true,
+                (_, Some(draft)) => draft.is_changed(),
+                (_, None) => false,
+            },
         }
     }
 
@@ -151,35 +175,23 @@ impl ConfigurationSession {
         Ok(())
     }
 
-    /// Selects the project default and the order of the taxonomies it keeps.
+    /// Selects the project default and keeps only the `available` taxonomies, in that order.
     ///
-    /// `available` may name any taxonomy the project held when the session opened.
+    /// Refuses, leaving the draft unchanged, when the result would not apply.
     pub fn configure_project(
         &mut self,
         default: TaxonomyId,
         available: &[TaxonomyId],
     ) -> Result<(), String> {
-        let Scope::Project(project) = &mut self.scope else {
-            return Err("project changes require the Project destination".into());
-        };
-        let pool = project
-            .original
-            .iter()
-            .chain(&project.working)
-            .flat_map(ProjectConfiguration::taxonomies)
-            .collect::<Vec<_>>();
-        let taxonomies = available
-            .iter()
-            .map(|id| {
-                pool.iter()
-                    .find(|taxonomy| taxonomy.id() == id)
-                    .map(|taxonomy| (*taxonomy).clone())
-                    .ok_or_else(|| format!("taxonomy \"{id}\" is not part of this project"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        project.working = Some(
-            ProjectConfiguration::new(1, default, taxonomies).map_err(|error| error.to_string())?,
-        );
+        let draft = self
+            .project_draft_mut()
+            .ok_or("project changes require an initialized Project")?;
+        let mut candidate = draft.clone();
+        candidate.select_project(default, available)?;
+        candidate
+            .build_project()
+            .map_err(|problems| first_problem(&problems))?;
+        *draft = candidate;
         Ok(())
     }
 
@@ -188,41 +200,81 @@ impl ConfigurationSession {
         let Scope::Project(project) = &mut self.scope else {
             return Err("project changes require the Project destination".into());
         };
-        if project.working.is_some() {
+        if project.draft.is_some() {
             return Err("project is already initialized".into());
         }
-        project.working =
-            Some(initial_project_configuration(library, None).map_err(|error| error.to_string())?);
+        project.draft = Some(LibraryDraft::from_project(
+            initial_project_configuration(library, None).map_err(|error| error.to_string())?,
+        ));
         Ok(())
     }
 
     /// The Project changes apply would write.
     pub fn review(&self) -> Result<Review, String> {
-        match &self.scope {
-            Scope::Global(_) => {
-                Err("Library edits save directly; only Project changes need review".into())
+        let Scope::Project(project) = &self.scope else {
+            return Err("Library edits save directly; only Project changes need review".into());
+        };
+        let draft = project
+            .draft
+            .as_ref()
+            .ok_or("project initialization has not been staged")?;
+        let config = draft
+            .build_project()
+            .map_err(|problems| first_problem(&problems))?;
+        let before = self.persisted_project_config();
+        let changes = taxonomy_changes(before, &config);
+        let was = before
+            .filter(|before| before.default_taxonomy() != config.default_taxonomy())
+            .map_or_else(String::new, |before| {
+                format!(" (was {})", before.default_taxonomy())
+            });
+        Ok(Review {
+            changes: format!(
+                "PROJECT CONFIGURATION\n\nDefault\n  {}{was}\n\nTaxonomies\n  {}\n\nChanges\n{}\n\nFile\n  gitserious.toml holds {} complete taxonomy definitions",
+                config.default_taxonomy(),
+                config
+                    .taxonomies()
+                    .iter()
+                    .map(|taxonomy| taxonomy.id().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                if changes.is_empty() {
+                    "  Selection only".to_owned()
+                } else {
+                    changes.join("\n")
+                },
+                config.taxonomies().len(),
+            ),
+        })
+    }
+}
+
+/// One line per taxonomy that Apply adds, changes, or removes.
+fn taxonomy_changes(
+    before: Option<&ProjectConfiguration>,
+    after: &ProjectConfiguration,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    for taxonomy in after.taxonomies() {
+        match before.and_then(|before| before.find(taxonomy.id())) {
+            None => lines.push(format!("  + {}  v{}", taxonomy.id(), taxonomy.version())),
+            Some(old) if fingerprint_taxonomy(old) != fingerprint_taxonomy(taxonomy) => {
+                lines.push(format!(
+                    "  ~ {}  v{} -> v{}",
+                    taxonomy.id(),
+                    old.version(),
+                    taxonomy.version()
+                ));
             }
-            Scope::Project(project) => {
-                let config = project
-                    .working
-                    .as_ref()
-                    .ok_or("project initialization has not been staged")?;
-                Ok(Review {
-                    changes: format!(
-                        "PROJECT CONFIGURATION\n\nDefault\n  {}\n\nTaxonomies\n  {}\n\nFile\n  gitserious.toml holds {} complete taxonomy definitions",
-                        config.default_taxonomy(),
-                        config
-                            .taxonomies()
-                            .iter()
-                            .map(|taxonomy| taxonomy.id().to_string())
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                        config.taxonomies().len(),
-                    ),
-                })
-            }
+            Some(_) => {}
         }
     }
+    for old in before.map_or(&[][..], ProjectConfiguration::taxonomies) {
+        if after.find(old.id()).is_none() {
+            lines.push(format!("  - {}", old.id()));
+        }
+    }
+    lines
 }
 
 /// The reviewed Project configuration.
@@ -231,11 +283,11 @@ pub struct Review {
     pub changes: String,
 }
 
-/// The first problem's text, for the callers that need a Library that builds.
+/// The first problem's text, for the callers that need a draft that builds.
 fn first_problem(problems: &[Problem]) -> String {
     problems
         .first()
-        .map_or_else(|| "the Library does not build".into(), ToString::to_string)
+        .map_or_else(|| "the draft does not build".into(), ToString::to_string)
 }
 
 /// Application operations exposed to the configuration TUI.
@@ -314,10 +366,12 @@ where
                 let saved = library
                     .saved()
                     .map_err(|problems| first_problem(&problems))?;
-                let working = saved.persisted();
-                if working != library.persisted() {
+                let (Some(before), Some(working)) = (library.persisted(), saved.persisted()) else {
+                    return Err("a Library session holds the Library".into());
+                };
+                if working != before {
                     self.global
-                        .compare_and_swap(library.persisted(), working)
+                        .compare_and_swap(before, working)
                         .map_err(|error| error.to_string())?;
                 }
                 Ok(ConfigurationSession {
@@ -328,21 +382,22 @@ where
                 let ProjectScope {
                     root,
                     baseline,
-                    working,
-                    ..
+                    draft,
                 } = project.as_ref();
-                let configuration = working
+                let configuration = draft
                     .as_ref()
-                    .ok_or("project initialization has not been staged")?;
+                    .ok_or("project initialization has not been staged")?
+                    .build_project()
+                    .map_err(|problems| first_problem(&problems))?;
                 let revision = match baseline {
-                    None => self.project.create(root, configuration),
-                    Some(expected) => self.project.replace(root, *expected, configuration),
+                    None => self.project.create(root, &configuration),
+                    Some(expected) => self.project.replace(root, *expected, &configuration),
                 }
                 .map_err(|error| error.to_string())?;
                 Ok(ConfigurationSession::open_project(
                     root.clone(),
                     Some(StoredProject {
-                        configuration: configuration.clone(),
+                        configuration,
                         revision,
                     }),
                 ))
