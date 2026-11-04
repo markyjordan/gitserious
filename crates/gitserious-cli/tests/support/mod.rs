@@ -40,6 +40,10 @@ pub struct Locator {
 impl RepositoryLocator for Locator {
     type Error = FakeError;
 
+    fn is_not_repository(_: &Self::Error) -> bool {
+        false
+    }
+
     fn locate(&self, _start: &Path) -> Result<RepositoryRoot, Self::Error> {
         if self.fail {
             return Err(FakeError("repository unavailable"));

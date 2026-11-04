@@ -5,8 +5,9 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use gitserious_app::{
-    AuthoredCommit, GlobalConfiguration, GlobalConfigurationStore, HelpPage, InteractiveEntry,
-    InteractiveUi, InteractiveWorkspace, initialize_project, run_interactive,
+    AuthoredCommit, GlobalConfiguration, GlobalConfigurationStore, HelpPage, HomeState,
+    InteractiveEntry, InteractiveUi, InteractiveWorkspace, built_in_project_configuration,
+    initialize_project, run_interactive,
 };
 use gitserious_core::{
     CommitDraft, CommitSubject, CommitTypeDefinition, CommitTypeId, Description, SchemaVersion,
@@ -235,5 +236,94 @@ fn shell_services_reject_absent_and_invalid_policy() -> Result<(), Box<dyn Error
     )?;
     check("missing field `taxonomies`")?;
     assert!(!temp.path().join(".git/refs/heads/main").exists());
+    Ok(())
+}
+
+struct HomeUi<'a>(&'a Path);
+impl InteractiveUi for HomeUi<'_> {
+    fn run(
+        &self,
+        _: InteractiveEntry,
+        workspace: &dyn InteractiveWorkspace,
+        _: &[HelpPage],
+    ) -> Result<(), String> {
+        let fail = |error: Box<dyn Error>| error.to_string();
+        assert_eq!(
+            workspace.home(),
+            HomeState::NoRepository {
+                directory: self.0.to_path_buf()
+            }
+        );
+        git(self.0, &["init", "-b", "main"]).map_err(fail)?;
+        let HomeState::Uninitialized { root } = workspace.home() else {
+            return Err(format!(
+                "expected an uninitialized repository: {:?}",
+                workspace.home()
+            ));
+        };
+        let canonical = |path: &Path| fs::canonicalize(path).map_err(|error| error.to_string());
+        assert_eq!(canonical(root.as_path())?, canonical(self.0)?);
+
+        workspace.initialize(&built_in_project_configuration())?;
+        let written = fs::read_to_string(self.0.join("gitserious.toml"))
+            .map_err(|error| error.to_string())?;
+        assert!(self.0.join(".gitserious").is_dir());
+        assert_eq!(
+            workspace.home(),
+            HomeState::Initialized {
+                root: root.clone(),
+                default: TaxonomyId::new("conventional").map_err(|error| error.to_string())?,
+                version: TaxonomyVersion::V1,
+                policy_untracked: true,
+            }
+        );
+        assert!(
+            workspace
+                .initialize(&built_in_project_configuration())
+                .is_err(),
+            "an existing project is never rewritten"
+        );
+        assert_eq!(
+            fs::read_to_string(self.0.join("gitserious.toml")).map_err(|error| error.to_string())?,
+            written
+        );
+
+        git(self.0, &["add", "gitserious.toml"]).map_err(fail)?;
+        assert!(matches!(
+            workspace.home(),
+            HomeState::Initialized {
+                policy_untracked: false,
+                ..
+            }
+        ));
+
+        fs::write(self.0.join("gitserious.toml"), "not = [toml")
+            .map_err(|error| error.to_string())?;
+        let HomeState::Unavailable { error, .. } = workspace.home() else {
+            return Err(format!(
+                "expected an unreadable project: {:?}",
+                workspace.home()
+            ));
+        };
+        assert!(error.contains("gitserious.toml"), "{error}");
+        Ok(())
+    }
+}
+
+#[test]
+fn home_follows_a_directory_from_no_repository_to_a_tracked_project() -> Result<(), Box<dyn Error>>
+{
+    let temp = tempfile::TempDir::new()?;
+    run_interactive(
+        &GitRepositoryLocator,
+        &TomlProjectStore,
+        &Library(GlobalConfiguration::default()),
+        &GitRepositoryStatusReader,
+        &GitCommitWriter,
+        temp.path(),
+        &HomeUi(temp.path()),
+        InteractiveEntry::Home,
+        &[],
+    )?;
     Ok(())
 }

@@ -36,8 +36,8 @@ pub use directory_creator::DirectoryCreator;
 pub use global_path_resolver::GlobalPathResolver;
 pub use global_paths::GlobalPaths;
 pub use initialize_taxonomy_project::{
-    InitOutcome, InitStatus, InitializeProjectError, initial_project_configuration,
-    initialize_project,
+    InitOutcome, InitStatus, InitializeProjectError, built_in_project_configuration,
+    initial_project_configuration, initialize_project,
 };
 pub use repository_locator::{RepositoryLocator, RepositoryRoot, RepositoryRootError};
 pub use resolve_global_paths::resolve_global_paths;
@@ -59,7 +59,7 @@ pub use verify_project_configuration::{
 };
 
 pub use interactive::{
-    HelpPage, InteractiveEntry, InteractiveUi, InteractiveWorkspace, run_interactive,
+    HelpPage, HomeState, InteractiveEntry, InteractiveUi, InteractiveWorkspace, run_interactive,
 };
 pub use library_draft::{
     Collision, CopyIn, DraftEdit, DraftField, EditRefusal, LibraryDraft, NodeId, NodeRef, Policy,

@@ -21,6 +21,8 @@ impl RepositoryLocator for GitRepositoryLocator {
             .arg(start)
             .args(["rev-parse", "--show-toplevel"])
             .env("GIT_OPTIONAL_LOCKS", "0")
+            // Untranslated diagnostics let `is_not_repository` read them.
+            .env("LC_ALL", "C")
             .output()
             .map_err(GitRepositoryError::GitUnavailable)?;
 
@@ -33,6 +35,15 @@ impl RepositoryLocator for GitRepositoryLocator {
 
         let path = path_from_stdout(output.stdout)?;
         RepositoryRoot::new(path).map_err(GitRepositoryError::InvalidRoot)
+    }
+
+    /// Only Git's own "not a git repository" counts; a bare repository, a `.git` file that names
+    /// nothing, or unsafe ownership is a repository Git cannot use, not a missing one.
+    fn is_not_repository(error: &Self::Error) -> bool {
+        matches!(
+            error,
+            GitRepositoryError::NotWorkTree { detail, .. } if detail.contains("not a git repository")
+        )
     }
 }
 

@@ -108,6 +108,30 @@ fn rejects_non_repositories_and_bare_repositories() -> Result<(), Box<dyn Error>
 }
 
 #[test]
+fn only_a_missing_repository_counts_as_not_a_repository() -> Result<(), Box<dyn Error>> {
+    let is_not_repository = |path: &Path| {
+        GitRepositoryLocator
+            .locate(path)
+            .err()
+            .is_some_and(|error| GitRepositoryLocator::is_not_repository(&error))
+    };
+    let plain = tempfile::tempdir()?;
+    assert!(is_not_repository(plain.path()));
+
+    let bare = tempfile::tempdir()?;
+    git(&["init", "-q", "--bare"], bare.path())?;
+    assert!(!is_not_repository(bare.path()), "a bare repository exists");
+
+    let broken = tempfile::tempdir()?;
+    fs::write(broken.path().join(".git"), "not a gitdir pointer\n")?;
+    assert!(
+        !is_not_repository(broken.path()),
+        "a broken .git file is not absence"
+    );
+    Ok(())
+}
+
+#[test]
 fn preserves_worktree_paths_with_spaces() -> Result<(), Box<dyn Error>> {
     let parent = tempfile::tempdir()?;
     let repository = parent.path().join("repository with spaces");

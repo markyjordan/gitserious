@@ -1,13 +1,19 @@
 use std::convert::Infallible;
 use std::fmt::Display;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use gitserious_core::{TaxonomyId, TaxonomyVersion};
 
 use crate::taxonomy_configuration_editor::Workspace;
 use crate::{
     AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitWriter, ConfigurationWorkspace,
-    GlobalConfigurationStore, ProjectConfigurationStore, RepositoryLocator, RepositoryStatus,
-    RepositoryStatusReader, prepare_commit_with_taxonomy, validate_reviewed_commit,
+    GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore, RepositoryLocator,
+    RepositoryRoot, RepositoryStatus, RepositoryStatusReader, prepare_commit_with_taxonomy,
+    validate_reviewed_commit,
 };
+
+/// The project file every gitserious repository commits.
+const POLICY_FILE: &str = "gitserious.toml";
 
 /// Starting view for the unified terminal interface.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -23,8 +29,30 @@ pub struct HelpPage {
     pub text: String,
 }
 
+/// What Home shows about the directory gitserious started in.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum HomeState {
+    /// No Git worktree contains the directory.
+    NoRepository { directory: PathBuf },
+    /// A Git worktree without a gitserious project.
+    Uninitialized { root: RepositoryRoot },
+    /// A gitserious project and the taxonomy commits start from.
+    Initialized {
+        root: RepositoryRoot,
+        default: TaxonomyId,
+        version: TaxonomyVersion,
+        /// Git does not track `gitserious.toml` yet, so the policy stays local.
+        policy_untracked: bool,
+    },
+    /// Git or the project file could not be read.
+    Unavailable { directory: PathBuf, error: String },
+}
+
 /// Application services available to an interactive session.
 pub trait InteractiveWorkspace {
+    fn home(&self) -> HomeState;
+    /// Creates the project from `configuration`; an existing project is never rewritten.
+    fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String>;
     fn configuration(&self) -> &dyn ConfigurationWorkspace;
     fn repository_status(&self) -> Result<RepositoryStatus, String>;
     fn prepare_commit(&self) -> Result<CommitAuthoringContext, String>;
@@ -94,6 +122,72 @@ where
     W: CommitWriter + ?Sized,
     W::Error: Display,
 {
+    fn home(&self) -> HomeState {
+        let directory = self.config.start.to_path_buf();
+        let root = match self.config.locator.locate(self.config.start) {
+            Ok(root) => root,
+            Err(error) if L::is_not_repository(&error) => {
+                return HomeState::NoRepository { directory };
+            }
+            Err(error) => {
+                return HomeState::Unavailable {
+                    directory,
+                    error: error.to_string(),
+                };
+            }
+        };
+        let stored = match self.config.project.load(&root) {
+            Ok(Some(stored)) => stored,
+            Ok(None) => return HomeState::Uninitialized { root },
+            Err(error) => {
+                return HomeState::Unavailable {
+                    directory,
+                    error: error.to_string(),
+                };
+            }
+        };
+        let default = stored.configuration.default_taxonomy().clone();
+        let Some(version) = stored
+            .configuration
+            .find(&default)
+            .map(gitserious_core::Taxonomy::version)
+        else {
+            return HomeState::Unavailable {
+                directory,
+                error: format!("{POLICY_FILE} names a missing default taxonomy {default}."),
+            };
+        };
+        let policy_untracked = self.status.read(&root).is_ok_and(|status| {
+            status
+                .entries
+                .iter()
+                .any(|entry| entry.untracked && entry.path == Path::new(POLICY_FILE))
+        });
+        HomeState::Initialized {
+            root,
+            default,
+            version,
+            policy_untracked,
+        }
+    }
+
+    fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
+        let root = self
+            .config
+            .locator
+            .locate(self.config.start)
+            .map_err(|error| error.to_string())?;
+        self.config
+            .project
+            .ensure_local_state(&root)
+            .map_err(|error| error.to_string())?;
+        self.config
+            .project
+            .create(&root, configuration)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
     fn configuration(&self) -> &dyn ConfigurationWorkspace {
         &self.config
     }

@@ -559,6 +559,10 @@ struct NoRepository;
 impl RepositoryLocator for NoRepository {
     type Error = FakeError;
 
+    fn is_not_repository(_: &Self::Error) -> bool {
+        true
+    }
+
     fn locate(&self, _start: &Path) -> Result<RepositoryRoot, Self::Error> {
         Err(FakeError("no repository"))
     }
