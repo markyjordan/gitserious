@@ -17,14 +17,25 @@ step its state allows:
 - Outside a Git repository, it shows the directory and `no git repository
   found`.
 - In a repository without `gitserious.toml`, Enter on `initialize gitserious`
-  creates the project with the built-in taxonomies, `conventional-v1` first
-  and default.
+  opens `Initialize <name>`, described below.
 - In an initialized repository, it shows `✓ <name> is initialized with
   <default>`, warns while `gitserious.toml` is untracked, and Enter on
   `Go to Commit` opens Commit.
 - When Git or `gitserious.toml` cannot be read, it shows the error.
 
 Home rereads the repository each time you return to it.
+
+`Initialize <name>` lists the taxonomies the new `gitserious.toml` will hold.
+The built-ins start included, `conventional-v1` first. The first included
+taxonomy is the default, the one a commit considers first. Space includes or
+excludes the selected taxonomy, though the last included one stays. Enter
+makes it the default by moving it to the top. Alt+Up and Alt+Down reorder. A long list scrolls with the selection and keeps
+`Initialize repository` in view.
+The preview shows the selected taxonomy's types and their properties, beside
+the list when the terminal is at least two and a half times as wide as it is
+tall and each pane gets 44 columns, and under the list otherwise. Enter on
+`Initialize repository` writes the project; Esc returns to Home and writes
+nothing. The editor stays open across visits to other sections.
 
 Screens draw with the active appearance theme, a set of semantic colors
 (ground, band, text, dim, cursor, pending, done, blocks). Bone is the first

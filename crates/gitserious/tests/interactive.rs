@@ -6,12 +6,12 @@ use std::process::{Command, Output};
 
 use gitserious_app::{
     AuthoredCommit, GlobalConfiguration, GlobalConfigurationStore, HelpPage, HomeState,
-    InteractiveEntry, InteractiveUi, InteractiveWorkspace, built_in_project_configuration,
+    InteractiveEntry, InteractiveUi, InteractiveWorkspace, ProjectConfiguration,
     initialize_project, run_interactive,
 };
 use gitserious_core::{
     CommitDraft, CommitSubject, CommitTypeDefinition, CommitTypeId, Description, SchemaVersion,
-    Taxonomy, TaxonomyId, TaxonomyVersion,
+    Taxonomy, TaxonomyId, TaxonomyVersion, built_in_taxonomies,
 };
 use gitserious_fs::{
     GitCommitWriter, GitRepositoryLocator, GitRepositoryStatusReader, TomlProjectStore,
@@ -239,6 +239,11 @@ fn shell_services_reject_absent_and_invalid_policy() -> Result<(), Box<dyn Error
     Ok(())
 }
 
+fn built_ins() -> Result<ProjectConfiguration, String> {
+    ProjectConfiguration::with_first_as_default(built_in_taxonomies().to_vec())
+        .map_err(|error| error.to_string())
+}
+
 struct HomeUi<'a>(&'a Path);
 impl InteractiveUi for HomeUi<'_> {
     fn run(
@@ -264,7 +269,7 @@ impl InteractiveUi for HomeUi<'_> {
         let canonical = |path: &Path| fs::canonicalize(path).map_err(|error| error.to_string());
         assert_eq!(canonical(root.as_path())?, canonical(self.0)?);
 
-        workspace.initialize(&built_in_project_configuration())?;
+        workspace.initialize(&built_ins()?)?;
         let written = fs::read_to_string(self.0.join("gitserious.toml"))
             .map_err(|error| error.to_string())?;
         assert!(self.0.join(".gitserious").is_dir());
@@ -278,9 +283,7 @@ impl InteractiveUi for HomeUi<'_> {
             }
         );
         assert!(
-            workspace
-                .initialize(&built_in_project_configuration())
-                .is_err(),
+            workspace.initialize(&built_ins()?).is_err(),
             "an existing project is never rewritten"
         );
         assert_eq!(

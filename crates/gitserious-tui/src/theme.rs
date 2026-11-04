@@ -171,6 +171,9 @@ pub(crate) fn render_footer(
         }
         visible.retain(|(hint, _)| *hint != key);
     }
+    while footer_hints(&visible).width() > usize::from(left_width) {
+        visible.pop();
+    }
     frame.render_widget(
         Paragraph::new(footer_hints(&visible)).style(footer_label_style()),
         area,

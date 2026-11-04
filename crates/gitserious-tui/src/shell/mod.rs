@@ -1,13 +1,15 @@
 mod commit_view;
 mod home;
+mod init_editor;
 
 use std::io::{self, IsTerminal};
 use std::time::{Duration, Instant};
 
 use gitserious_app::{
     CommitAuthoringContext, HelpPage, HomeState, InteractiveEntry, InteractiveUi,
-    InteractiveWorkspace, built_in_project_configuration,
+    InteractiveWorkspace, ProjectConfiguration,
 };
+use gitserious_core::built_in_taxonomies;
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
@@ -26,6 +28,7 @@ use crate::theme::{
 };
 use commit_view::CommitView;
 use home::HomeAction;
+use init_editor::{EditorOutcome, InitEditor};
 
 /// Footer hints while the nav bar has focus.
 const NAV_BAR_HINTS: [(&str, &str); 2] = [("←/→", "switch"), ("tab", "back")];
@@ -146,6 +149,8 @@ struct Shell {
     config: ConfigView,
     commit: CommitView,
     home: HomeState,
+    /// Open while the user chooses the new project's taxonomies.
+    init_editor: Option<InitEditor>,
     /// Why the last initialization from Home failed.
     home_error: Option<String>,
     /// Tab moves focus to the nav bar, where Left and Right switch sections.
@@ -170,6 +175,7 @@ impl Shell {
             config: ConfigView::new(workspace.configuration()),
             commit: CommitView::default(),
             home: workspace.home(),
+            init_editor: None,
             home_error: None,
             nav_focused: false,
             pending_author: None,
@@ -207,11 +213,17 @@ impl Shell {
                     Section::Home => {
                         self.home = workspace.home();
                         self.home_error = None;
+                        if HomeAction::of(&self.home) != Some(HomeAction::InitializeGitserious) {
+                            self.init_editor = None;
+                        }
                     }
                     Section::Config | Section::Help => {}
                 }
             }
-            Action::Initialize => self.initialize(workspace),
+            Action::Initialize => {
+                self.section = Section::Home;
+                self.init_editor = Some(InitEditor::new(built_in_taxonomies(), &[]));
+            }
             Action::Refresh => {
                 self.commit.notice.clear();
                 self.commit.refresh(workspace);
@@ -318,6 +330,25 @@ impl Shell {
                     _ => {}
                 }
             } else {
+                if self.section == Section::Home
+                    && let Some(editor) = &mut self.init_editor
+                    && !matches!(
+                        key.code,
+                        KeyCode::Tab | KeyCode::BackTab | KeyCode::Char('q' | '/')
+                    )
+                {
+                    match editor.key(*key) {
+                        EditorOutcome::Stay => {}
+                        EditorOutcome::Back => {
+                            self.init_editor = None;
+                            self.home_error = None;
+                        }
+                        EditorOutcome::Initialize(configuration) => {
+                            self.initialize(workspace, &configuration);
+                        }
+                    }
+                    return None;
+                }
                 match key.code {
                     KeyCode::Tab | KeyCode::BackTab => {
                         self.nav_focused = true;
@@ -400,9 +431,14 @@ impl Shell {
         None
     }
 
-    fn initialize(&mut self, workspace: &dyn InteractiveWorkspace) {
-        match workspace.initialize(&built_in_project_configuration()) {
+    fn initialize(
+        &mut self,
+        workspace: &dyn InteractiveWorkspace,
+        configuration: &ProjectConfiguration,
+    ) {
+        match workspace.initialize(configuration) {
             Ok(()) => {
+                self.init_editor = None;
                 self.home_error = None;
                 // Config loaded the project before it existed; reload it unless it holds drafts.
                 if !self.config.dirty() {
@@ -603,9 +639,15 @@ impl Shell {
                         .areas(body);
                 let footer = render_footer_block(frame, footer);
                 match self.section {
-                    Section::Home => {
-                        home::render(frame, content, &self.home, self.home_error.as_deref());
-                    }
+                    Section::Home => match (&self.init_editor, &self.home) {
+                        (Some(editor), HomeState::Uninitialized { root }) => editor.render(
+                            frame,
+                            content,
+                            root.as_path(),
+                            self.home_error.as_deref(),
+                        ),
+                        _ => home::render(frame, content, &self.home, self.home_error.as_deref()),
+                    },
                     Section::Commit => {
                         self.commit
                             .render(frame, content, self.pending_author.is_some())
@@ -616,11 +658,19 @@ impl Shell {
                 if self.nav_focused {
                     render_footer(frame, footer, &NAV_BAR_HINTS, &NAV_BAR_SHELL_HINTS);
                 } else {
-                    let home_hint = HomeAction::of(&self.home).map(HomeAction::hint);
+                    let home_hints = self.init_editor.as_ref().map_or_else(
+                        || {
+                            HomeAction::of(&self.home)
+                                .map(HomeAction::hint)
+                                .into_iter()
+                                .collect()
+                        },
+                        InitEditor::hints,
+                    );
                     let hints: &[(&str, &str)] = match self.section {
                         Section::Commit => &[("↑/↓", "move"), ("←/→", "tree"), ("r", "refresh")],
                         Section::Help => &[("←/→", "page"), ("↑/↓", "scroll")],
-                        Section::Home => home_hint.as_slice(),
+                        Section::Home => &home_hints,
                         Section::Config => &[],
                     };
                     render_footer(frame, footer, hints, &SHELL_HINTS);
@@ -1029,10 +1079,40 @@ mod tests {
     }
 
     #[test]
-    fn enter_initializes_the_built_ins_and_then_offers_commit()
+    fn enter_opens_the_editor_whose_initialize_row_writes_the_chosen_taxonomies()
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
-        let (mut shell, _) = home_screen(&workspace, 87, 40)?;
+        let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;
+        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        let text = rendered(&terminal);
+        assert!(text.contains(" Initialize fresh"), "{text}");
+        assert!(text.contains("esc back  space include  enter default"));
+        shell.handle_event(key(KeyCode::Esc), &workspace, &[]);
+        assert!(workspace.created.borrow().is_none(), "esc writes nothing");
+        assert_eq!(
+            shell.section,
+            Section::Home,
+            "esc closes the editor, not the shell"
+        );
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        assert!(rendered(&terminal).contains(" initialize gitserious "));
+
+        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Tab), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Right), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Left), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Tab), &workspace, &[]);
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        assert!(
+            rendered(&terminal).contains(" Initialize fresh"),
+            "the editor survives a visit to another section"
+        );
+        for _ in 0..3 {
+            shell.handle_event(key(KeyCode::Down), &workspace, &[]);
+        }
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        assert!(rendered(&terminal).contains("enter initialize"));
         shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
         let created = workspace
             .created
@@ -1062,10 +1142,20 @@ mod tests {
         workspace.failure = Some("gitserious.toml already exists");
         let (mut shell, mut terminal) = home_screen(&workspace, 100, 30)?;
         shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        for _ in 0..3 {
+            shell.handle_event(key(KeyCode::Down), &workspace, &[]);
+        }
+        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let text = rendered(&terminal);
         assert!(text.contains("✗ gitserious.toml already exists"), "{text}");
-        assert!(text.contains(" initialize gitserious "));
+        assert!(
+            text.contains("Initialize repository"),
+            "the editor stays open"
+        );
+        shell.handle_event(key(KeyCode::Esc), &workspace, &[]);
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        assert!(rendered(&terminal).contains(" initialize gitserious "));
         assert!(workspace.created.borrow().is_none());
         shell.execute(Action::Select(Section::Help), &workspace);
         shell.execute(Action::Select(Section::Home), &workspace);
