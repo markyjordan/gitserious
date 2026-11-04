@@ -1,5 +1,4 @@
 use std::io::{self, IsTerminal};
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::confirmation::{
@@ -43,20 +42,8 @@ use naming::sentence;
 use taxonomies::{LibraryAction, Nav, TaxonomiesView};
 
 /// Taxonomy-first terminal configuration adapter.
-#[derive(Clone, Debug, Default)]
-pub struct RatatuiTaxonomyConfigurationEditor {
-    library_path: Option<PathBuf>,
-}
-
-impl RatatuiTaxonomyConfigurationEditor {
-    /// Supplies the resolved user-library source for Project resolution details.
-    #[must_use]
-    pub fn with_library_path(path: PathBuf) -> Self {
-        Self {
-            library_path: Some(path),
-        }
-    }
-}
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RatatuiTaxonomyConfigurationEditor;
 
 impl ConfigurationEditor for RatatuiTaxonomyConfigurationEditor {
     fn edit(&self, workspace: &dyn ConfigurationWorkspace) -> Result<(), String> {
@@ -65,7 +52,6 @@ impl ConfigurationEditor for RatatuiTaxonomyConfigurationEditor {
         }
         crate::runtime::run(|terminal| {
             let mut state = State::new(workspace);
-            state.library_path.clone_from(&self.library_path);
             let mut previous = Instant::now();
             loop {
                 let now = Instant::now();
@@ -91,13 +77,9 @@ pub(crate) struct ConfigView {
 }
 
 impl ConfigView {
-    pub(crate) fn new(
-        workspace: &dyn ConfigurationWorkspace,
-        library_path: Option<PathBuf>,
-    ) -> Self {
+    pub(crate) fn new(workspace: &dyn ConfigurationWorkspace) -> Self {
         let mut state = State::new(workspace);
         state.embedded = true;
-        state.library_path = library_path;
         Self { state }
     }
 
@@ -306,7 +288,6 @@ struct SettingsDraft {
 
 struct State {
     embedded: bool,
-    library_path: Option<PathBuf>,
     global: Option<ConfigurationSession>,
     global_error: String,
     project: Option<ConfigurationSession>,
@@ -337,7 +318,6 @@ impl State {
         let (project, project_error) = split_result(project_result);
         Self {
             embedded: false,
-            library_path: None,
             global,
             global_error,
             project,
@@ -1908,7 +1888,6 @@ mod tests {
     fn project_shows_sections_files_and_initialize() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        state.library_path = Some(PathBuf::from("/library/config.toml"));
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
         let home = text(&terminal);

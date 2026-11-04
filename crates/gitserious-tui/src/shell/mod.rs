@@ -2,7 +2,6 @@ mod commit_view;
 mod home_logo;
 
 use std::io::{self, IsTerminal};
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use gitserious_app::{
@@ -42,19 +41,8 @@ fn quit_question() -> Confirmation<'static> {
 }
 
 /// Unified Home, Commit, Config, and Help terminal adapter.
-#[derive(Clone, Debug, Default)]
-pub struct RatatuiInteractiveUi {
-    library_path: Option<PathBuf>,
-}
-
-impl RatatuiInteractiveUi {
-    #[must_use]
-    pub fn with_library_path(path: PathBuf) -> Self {
-        Self {
-            library_path: Some(path),
-        }
-    }
-}
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RatatuiInteractiveUi;
 
 impl InteractiveUi for RatatuiInteractiveUi {
     fn run(
@@ -72,7 +60,7 @@ impl InteractiveUi for RatatuiInteractiveUi {
             .into());
         }
         crate::runtime::run(|terminal| {
-            let mut shell = Shell::new(entry, workspace, self.library_path.clone());
+            let mut shell = Shell::new(entry, workspace);
             let mut previous = Instant::now();
             loop {
                 let now = Instant::now();
@@ -168,18 +156,14 @@ struct Shell {
 }
 
 impl Shell {
-    fn new(
-        entry: InteractiveEntry,
-        workspace: &dyn InteractiveWorkspace,
-        library_path: Option<PathBuf>,
-    ) -> Self {
+    fn new(entry: InteractiveEntry, workspace: &dyn InteractiveWorkspace) -> Self {
         Self {
             section: if entry == InteractiveEntry::Config {
                 Section::Config
             } else {
                 Section::Home
             },
-            config: ConfigView::new(workspace.configuration(), library_path),
+            config: ConfigView::new(workspace.configuration()),
             commit: CommitView::default(),
             home_logo: HomeLogo::with_theme(resolve_dev_theme()),
             pending_author: None,
@@ -816,7 +800,7 @@ mod tests {
     fn config_overview_tab_switches_sections_and_keeps_menu_selection()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, None);
+        let mut shell = Shell::new(InteractiveEntry::Home, &services);
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
         assert_eq!(shell.section, Section::Commit);
         assert!(shell.commit.blocker.is_some());
@@ -849,7 +833,7 @@ mod tests {
     fn embedded_config_splits_the_bordered_panels_equally_after_its_header_and_footer()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
+        let mut shell = Shell::new(InteractiveEntry::Config, &services);
         shell.handle_event(key(KeyCode::Char('2')), &services, &[]);
         let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
         for (width, height) in [
@@ -888,7 +872,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
         for (width, height) in [(87, 40), (MINIMUM_WIDTH, MINIMUM_HEIGHT)] {
-            let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
+            let mut shell = Shell::new(InteractiveEntry::Config, &services);
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             for section in Section::ALL {
                 shell.execute(Action::Select(section), &services);
@@ -917,7 +901,7 @@ mod tests {
     fn config_summary_deadline_advances_without_keys_and_resets_when_hidden()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
+        let mut shell = Shell::new(InteractiveEntry::Config, &services);
         let mut terminal = Terminal::new(TestBackend::new(80, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         for code in [
@@ -979,7 +963,7 @@ mod tests {
     #[test]
     fn the_config_tab_has_no_library_change_badge() -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
+        let mut shell = Shell::new(InteractiveEntry::Config, &services);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(!rendered(&terminal).contains('●'));
@@ -1010,7 +994,7 @@ mod tests {
     #[test]
     fn config_edit_locks_tabs_and_gives_esc_and_q_to_the_field() {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
+        let mut shell = Shell::new(InteractiveEntry::Config, &services);
         shell.handle_event(key(KeyCode::Char('2')), &services, &[]);
         shell.handle_event(key(KeyCode::Char('n')), &services, &[]);
         assert_eq!(shell.config.shell_keys(), ShellKeys::None);
@@ -1043,7 +1027,7 @@ mod tests {
     #[test]
     fn question_mark_does_not_open_help_but_the_help_tab_still_works() {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, None);
+        let mut shell = Shell::new(InteractiveEntry::Home, &services);
         shell.handle_event(key(KeyCode::Char('?')), &services, &[]);
         assert_eq!(shell.section, Section::Home);
         assert!(shell.overlay.is_none());
@@ -1055,7 +1039,7 @@ mod tests {
     fn root_wrap_palette_is_modal_and_help_scrolls_with_resize()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, None);
+        let mut shell = Shell::new(InteractiveEntry::Home, &services);
         let help = vec![
             HelpPage {
                 title: "Overview".into(),
@@ -1099,7 +1083,7 @@ mod tests {
     #[test]
     fn config_drafts_survive_section_visits_and_quit_requires_confirmation() {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
+        let mut shell = Shell::new(InteractiveEntry::Config, &services);
         shell.handle_event(key(KeyCode::Char('i')), &services, &[]);
         assert!(shell.config.dirty());
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
@@ -1129,7 +1113,7 @@ mod tests {
         use std::fmt::Write as _;
 
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, None);
+        let mut shell = Shell::new(InteractiveEntry::Home, &services);
         shell.execute(Action::Select(Section::Commit), &services);
         for index in 0..100 {
             writeln!(&mut shell.commit.notice, "Git diagnostic {index}")?;
@@ -1148,7 +1132,7 @@ mod tests {
     #[test]
     fn config_palette_quit_uses_one_shell_discard_confirmation() {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
+        let mut shell = Shell::new(InteractiveEntry::Config, &services);
         shell.handle_event(key(KeyCode::Char('i')), &services, &[]);
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         shell.handle_event(key(KeyCode::Char('/')), &services, &[]);
@@ -1166,7 +1150,7 @@ mod tests {
     fn quit_confirmation_footer_shows_only_the_dialogs_choices()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
+        let mut shell = Shell::new(InteractiveEntry::Config, &services);
         shell.handle_event(key(KeyCode::Char('i')), &services, &[]);
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         shell.handle_event(key(KeyCode::Char('q')), &services, &[]);
@@ -1194,7 +1178,7 @@ mod tests {
     fn centered_root_header_keeps_positions_and_mouse_targets_after_resize()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, None);
+        let mut shell = Shell::new(InteractiveEntry::Home, &services);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let original = shell.root_areas;
@@ -1242,7 +1226,7 @@ mod tests {
     fn home_frame_abuts_nav_and_shimmers_wordmark() -> Result<(), Box<dyn std::error::Error>> {
         use super::home_logo::{DEFAULT_THEME, HomeLogo};
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, None);
+        let mut shell = Shell::new(InteractiveEntry::Home, &services);
         // Pin to the default theme so `GITSERIOUS_LOGO_THEME` dev overrides
         // cannot make this timing-sensitive test flaky.
         shell.home_logo = HomeLogo::with_theme(DEFAULT_THEME);
@@ -1338,7 +1322,7 @@ mod tests {
     #[test]
     fn config_review_survives_root_clicks() -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, None);
+        let mut shell = Shell::new(InteractiveEntry::Config, &services);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let original_header = shell.root_areas;

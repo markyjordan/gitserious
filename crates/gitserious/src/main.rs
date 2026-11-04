@@ -23,8 +23,8 @@ fn main() -> ExitCode {
     let store = TomlProjectStore;
     let author = RatatuiCommitDraftAuthor;
     let writer = GitCommitWriter;
-    let editor = RatatuiTaxonomyConfigurationEditor::with_library_path(configuration.path());
-    let interactive = RatatuiInteractiveUi::with_library_path(configuration.path());
+    let editor = RatatuiTaxonomyConfigurationEditor;
+    let interactive = RatatuiInteractiveUi;
     let status = GitRepositoryStatusReader;
     let commit = CommitAdapters::new(&author, &writer)
         .with_configuration_editor(&editor)
