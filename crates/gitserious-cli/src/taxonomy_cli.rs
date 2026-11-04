@@ -5,14 +5,14 @@ use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
     ConfigurationEditor, GlobalConfigurationStore, HelpPage, InitOutcome, InitStatus,
     InteractiveEntry, InteractiveUi, ProjectConfigurationStore, ProjectVerification,
     RepositoryLocator, RepositoryRoot, RepositoryStatusReader, TaxonomyOrigin, VerifyProjectError,
-    create_commit_with_taxonomy, edit_configuration, initialize_project, run_interactive,
-    verify_project_configuration,
+    create_commit_with_taxonomy, edit_configuration, fingerprint_project_configuration,
+    fingerprint_taxonomy, initialize_project, run_interactive, verify_project_configuration,
 };
 use gitserious_core::{
     CommitMessage, CommitTypeDefinition, CommitTypeId, PropertyRequirement, Taxonomy, TaxonomyId,
@@ -69,7 +69,16 @@ enum ConfigAction {
         /// Verify the repository's gitserious.toml.
         #[arg(long, required = true)]
         project: bool,
+        /// Print a sentence for people or a JSON report for automation.
+        #[arg(long, value_enum, default_value_t = ReportFormat::Human)]
+        format: ReportFormat,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum ReportFormat {
+    Human,
+    Json,
 }
 
 /// Concrete interaction adapters required by the binary.
@@ -348,11 +357,13 @@ where
                 Ok::<_, String>((global, catalog))
             };
             match action {
-                ConfigAction::Verify { .. } => write_verification(
-                    stdout,
-                    stderr,
-                    verify_project_configuration(locator, store, start),
-                ),
+                ConfigAction::Verify { format, .. } => {
+                    let result = verify_project_configuration(locator, store, start);
+                    match format {
+                        ReportFormat::Human => write_verification(stdout, stderr, result),
+                        ReportFormat::Json => write_verification_report(stdout, &result),
+                    }
+                }
                 ConfigAction::List => {
                     let (global, catalog) = match library() {
                         Ok(value) => value,
@@ -514,6 +525,104 @@ fn write_verification<L: Display, S: Display>(
             ExitCode::from(VERIFY_ENVIRONMENT_ERROR)
         }
     }
+}
+
+/// The version of the JSON shape `config verify --format json` prints.
+const VERIFY_REPORT_VERSION: u16 = 1;
+
+/// Prints the machine-readable report; the exit codes match the human format.
+fn write_verification_report<L: Display, S: Display>(
+    stdout: &mut (impl Write + ?Sized),
+    result: &Result<ProjectVerification, VerifyProjectError<L, S>>,
+) -> ExitCode {
+    let (exit, valid, project, diagnostic) = match result {
+        Ok(ProjectVerification::Valid(configuration)) => {
+            (ExitCode::SUCCESS, true, Some(configuration), None)
+        }
+        Ok(ProjectVerification::NotInitialized) => (
+            ExitCode::FAILURE,
+            false,
+            None,
+            Some((
+                "not-initialized",
+                "gitserious is not initialized; gitserious.toml is missing".to_owned(),
+            )),
+        ),
+        Ok(ProjectVerification::Invalid(message)) => (
+            ExitCode::FAILURE,
+            false,
+            None,
+            Some(("invalid-configuration", message.clone())),
+        ),
+        Err(error) => (
+            ExitCode::from(VERIFY_ENVIRONMENT_ERROR),
+            false,
+            None,
+            Some(("unreadable", error.to_string())),
+        ),
+    };
+    let mut report =
+        format!("{{\n  \"report_version\": {VERIFY_REPORT_VERSION},\n  \"valid\": {valid},\n");
+    match project {
+        Some(configuration) => {
+            let taxonomies = configuration
+                .taxonomies()
+                .iter()
+                .map(|taxonomy| {
+                    format!(
+                        "    {{ \"id\": {}, \"version\": {}, \"fingerprint\": {} }}",
+                        json_string(taxonomy.id().as_str()),
+                        taxonomy.version(),
+                        json_string(&fingerprint_taxonomy(taxonomy).to_string()),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",\n");
+            report.push_str(&format!(
+                "  \"project_config_version\": {},\n  \"default_taxonomy\": {},\n  \"configuration_fingerprint\": {},\n  \"taxonomies\": [\n{taxonomies}\n  ],\n",
+                configuration.version(),
+                json_string(configuration.default_taxonomy().as_str()),
+                json_string(&fingerprint_project_configuration(configuration).to_string()),
+            ));
+        }
+        None => report.push_str(
+            "  \"project_config_version\": null,\n  \"default_taxonomy\": null,\n  \"configuration_fingerprint\": null,\n  \"taxonomies\": [],\n",
+        ),
+    }
+    match diagnostic {
+        Some((code, message)) => report.push_str(&format!(
+            "  \"diagnostics\": [\n    {{ \"code\": {}, \"message\": {} }}\n  ]\n}}\n",
+            json_string(code),
+            json_string(&message),
+        )),
+        None => report.push_str("  \"diagnostics\": []\n}\n"),
+    }
+    if write!(stdout, "{report}").is_ok() {
+        exit
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// Quotes `value` as a JSON string.
+fn json_string(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            control if u32::from(control) < 0x20 => {
+                quoted.push_str(&format!("\\u{:04x}", u32::from(control)));
+            }
+            other => quoted.push(other),
+        }
+    }
+    quoted.push('"');
+    quoted
 }
 
 fn operational_error(output: &mut (impl Write + ?Sized), error: impl Display) -> ExitCode {
