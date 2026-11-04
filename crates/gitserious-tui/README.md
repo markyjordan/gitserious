@@ -26,7 +26,10 @@ step its state allows:
 Home rereads the repository each time you return to it.
 
 `Initialize <name>` lists the taxonomies the new `gitserious.toml` will hold.
-The built-ins start included, `conventional-v1` first. The first included
+The built-ins start included, `conventional-v1` first; every Library
+taxonomy with at least one type follows, excluded and tagged `custom`. If
+the Library cannot be read, the editor names the error and still offers the
+built-ins. The first included
 taxonomy is the default, the one a commit considers first. Space includes or
 excludes the selected taxonomy, though the last included one stays. Enter
 makes it the default by moving it to the top. Alt+Up and Alt+Down reorder. A long list scrolls with the selection and keeps

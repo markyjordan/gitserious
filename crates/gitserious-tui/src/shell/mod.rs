@@ -222,7 +222,11 @@ impl Shell {
             }
             Action::Initialize => {
                 self.section = Section::Home;
-                self.init_editor = Some(InitEditor::new(built_in_taxonomies(), &[]));
+                let library = workspace.library_taxonomies().unwrap_or_else(|error| {
+                    self.home_error = Some(format!("Library taxonomies are unavailable: {error}"));
+                    Vec::new()
+                });
+                self.init_editor = Some(InitEditor::new(built_in_taxonomies(), &library));
             }
             Action::Refresh => {
                 self.commit.notice.clear();
@@ -861,6 +865,9 @@ mod tests {
         fn initialize(&self, _: &ProjectConfiguration) -> Result<(), String> {
             Err("test initialize unavailable".into())
         }
+        fn library_taxonomies(&self) -> Result<Vec<gitserious_core::Taxonomy>, String> {
+            Ok(Vec::new())
+        }
         fn configuration(&self) -> &dyn ConfigurationWorkspace {
             self
         }
@@ -898,6 +905,7 @@ mod tests {
         state: RefCell<HomeState>,
         created: RefCell<Option<ProjectConfiguration>>,
         failure: Option<&'static str>,
+        library: Result<Vec<gitserious_core::Taxonomy>, String>,
     }
 
     impl HomeWorkspace {
@@ -906,6 +914,7 @@ mod tests {
                 state: RefCell::new(state),
                 created: RefCell::new(None),
                 failure: None,
+                library: Ok(Vec::new()),
             }
         }
     }
@@ -926,6 +935,9 @@ mod tests {
             };
             *self.created.borrow_mut() = Some(configuration.clone());
             Ok(())
+        }
+        fn library_taxonomies(&self) -> Result<Vec<gitserious_core::Taxonomy>, String> {
+            self.library.clone()
         }
         fn configuration(&self) -> &dyn ConfigurationWorkspace {
             &Services
@@ -1132,6 +1144,77 @@ mod tests {
         assert!(matches!(shell.home, HomeState::Initialized { .. }));
         shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
         assert_eq!(shell.section, Section::Commit);
+        Ok(())
+    }
+
+    #[test]
+    fn library_taxonomies_start_excluded_and_an_unreadable_library_is_named()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let built_in = &gitserious_core::built_in_taxonomies()[0];
+        let team = gitserious_core::Taxonomy::new(
+            gitserious_core::TaxonomyId::new("team-changes")?,
+            TaxonomyVersion::new(3)?,
+            built_in.description().clone(),
+            None,
+            built_in.commit_types()[..3].to_vec(),
+        )?;
+        let mut workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
+        workspace.library = Ok(vec![team]);
+        let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;
+        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        let text = rendered(&terminal);
+        let row = text
+            .lines()
+            .find(|row| row.contains("team-changes-v3"))
+            .ok_or("missing Library taxonomy")?;
+        assert!(row.starts_with(" ○ –  team-changes-v3  custom"), "{row}");
+        assert!(row.trim_end().ends_with("3 types"));
+        for code in [
+            KeyCode::Down,
+            KeyCode::Down,
+            KeyCode::Down,
+            KeyCode::Char(' '),
+        ] {
+            shell.handle_event(key(code), &workspace, &[]);
+        }
+        for _ in 0..4 {
+            shell.handle_event(key(KeyCode::Down), &workspace, &[]);
+        }
+        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        let created = workspace
+            .created
+            .borrow()
+            .clone()
+            .ok_or("nothing initialized")?;
+        assert_eq!(
+            created
+                .taxonomies()
+                .iter()
+                .map(|taxonomy| taxonomy.versioned().to_string())
+                .collect::<Vec<_>>(),
+            [
+                "conventional-v1",
+                "research-v1",
+                "infra-ops-v1",
+                "team-changes-v3"
+            ]
+        );
+
+        let mut workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
+        workspace.library = Err("config.toml is not valid TOML".into());
+        let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;
+        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        let text = rendered(&terminal);
+        assert!(
+            text.contains("✗ Library taxonomies are unavailable: config.toml is not valid"),
+            "{text}"
+        );
+        assert!(
+            text.contains("✓ 3  infra-ops-v1"),
+            "the built-ins stay available"
+        );
         Ok(())
     }
 
