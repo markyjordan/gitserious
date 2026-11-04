@@ -51,7 +51,14 @@ and Inspector the Library uses, over the project's own definitions: create,
 fork, edit, and delete taxonomies, types, and properties, including the
 project's copy of a built-in such as `conventional`. These edits stay staged
 until Project review applies them, and the project default cannot be deleted.
-Left at the outline's root returns to the sections. It never reads the Library, so it works when the
+Left at the outline's root returns to the sections.
+
+In the project outline, `i` lists the Library's taxonomies to copy into the
+project, each marked new, already in the project, or different from the
+project's copy. A new one is copied in; an identical one is left alone; a
+different one asks whether to replace the project's copy or add the Library's
+as `<name>-copy`. A copy is independent: later Library edits never reach the
+project. Only this action reads the Library. It never reads the Library, so it works when the
 Library is missing or corrupt. An uninitialized repository offers `i` to review
 initialization, which copies the Library's default taxonomies. Ctrl+S opens
 Project review, and Enter applies `gitserious.toml`; Apply refuses if the file

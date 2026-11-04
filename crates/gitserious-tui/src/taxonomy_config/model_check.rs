@@ -728,7 +728,7 @@ fn no_silent_draft_loss(
                     })
                 ) && matches!(before.taxonomies.mode, Mode::Edit { .. })
         }
-        Screen::Settings(_) => false,
+        Screen::Settings(_) | Screen::Import { .. } | Screen::ImportConflict(_) => false,
     };
     if legitimate {
         return Ok(());

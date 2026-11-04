@@ -3,11 +3,12 @@ use std::time::{Duration, Instant};
 
 use crate::confirmation::{
     self, APPLY_OR_DISCARD, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT, REMOVE,
+    REPLACE_OR_COPY,
 };
 use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
-    DraftEdit, EditRefusal, LibraryDraft, NodeId, NodeRef, ProjectConfiguration, RepositoryRoot,
-    TaxonomyOrigin,
+    CopyIn, DraftEdit, EditRefusal, LibraryDraft, NodeId, NodeRef, ProjectConfiguration,
+    RepositoryRoot, TaxonomyOrigin,
 };
 use gitserious_core::{Taxonomy, TaxonomyId};
 use ratatui::Frame;
@@ -30,6 +31,7 @@ mod copy_tests;
 #[cfg(test)]
 mod direct_tests;
 mod home_overlay;
+mod library_copy;
 #[cfg(test)]
 mod model_check;
 mod naming;
@@ -284,6 +286,12 @@ enum Screen {
     ScopeChange(PendingAction),
     /// Asks before a taxonomy, type, or property leaves the Library.
     ConfirmRemove(NodeId),
+    /// Lists the Library's taxonomies to copy into the project.
+    Import {
+        selected: usize,
+    },
+    /// Asks whether a Library taxonomy replaces the project's different copy or joins as new.
+    ImportConflict(TaxonomyId),
 }
 
 fn menu_width() -> u16 {
@@ -404,6 +412,13 @@ impl State {
                 "Discard unapplied changes and quit?".to_owned(),
                 DISCARD_AND_QUIT,
             ),
+            Screen::ImportConflict(id) => (
+                "Different Taxonomy",
+                format!(
+                    "This project's \"{id}\" differs from the Library's. Replace the project copy, or add the Library's as a new taxonomy?"
+                ),
+                REPLACE_OR_COPY,
+            ),
             Screen::ScopeChange(_) => (
                 "Unapplied Changes",
                 "This project has unapplied changes. Apply or discard them first?".into(),
@@ -430,6 +445,12 @@ impl State {
         self.dialog.invalidate();
         match (self.screen.clone(), answer) {
             (Screen::ConfirmRemove(node), Answer::Confirm) => self.remove(&node),
+            (Screen::ImportConflict(id), Answer::Confirm) => {
+                self.copy_into_project(&id, CopyIn::Replace);
+            }
+            (Screen::ImportConflict(id), Answer::Alternate) => {
+                self.copy_into_project(&id, CopyIn::Renamed);
+            }
             (Screen::Leave, Answer::Confirm) => return true,
             (Screen::ScopeChange(action), Answer::Confirm) => {
                 self.apply_scope_then(action, workspace)
@@ -652,7 +673,11 @@ impl State {
                 self.screen = Screen::Home;
                 false
             }
-            Screen::Leave | Screen::ScopeChange(_) => false,
+            Screen::Import { selected } => {
+                self.import_key(key, selected);
+                false
+            }
+            Screen::Leave | Screen::ScopeChange(_) | Screen::ImportConflict(_) => false,
         }
     }
 
@@ -846,6 +871,9 @@ impl State {
                 ProjectSection::Taxonomies => self.open_project_taxonomies(),
                 ProjectSection::Files => {}
             },
+            KeyCode::Char('i') if editor == Some(Editor::Project) && key.modifiers.is_empty() => {
+                self.open_import();
+            }
             KeyCode::Char('i') if self.category == Category::Project => {
                 self.request_project_action(PendingAction::InitializeProject);
             }
@@ -1370,7 +1398,18 @@ impl State {
                     ]
                 }
                 Screen::Review(destination) => self.render_review(frame, body, destination),
-                Screen::Leave | Screen::ScopeChange(_) | Screen::ConfirmRemove(_) => Vec::new(),
+                Screen::Import { selected } => {
+                    self.render_import(frame, body, selected);
+                    vec![
+                        ("↑/↓", "move"),
+                        ("enter", "copy into project"),
+                        ("esc", "back"),
+                    ]
+                }
+                Screen::Leave
+                | Screen::ScopeChange(_)
+                | Screen::ConfirmRemove(_)
+                | Screen::ImportConflict(_) => Vec::new(),
             }
         };
         // The Taxonomies outline draws its own footer and leaves no hints.
