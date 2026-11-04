@@ -14,8 +14,6 @@ use crate::LibraryTaxonomy;
 pub(crate) const GLOBAL_CONFIG_VERSION: u16 = 1;
 /// The canonical unreleased project-configuration format.
 pub(crate) const PROJECT_CONFIG_VERSION: u16 = 1;
-/// The canonical unreleased portable-lock format.
-pub(crate) const PROJECT_LOCK_VERSION: u16 = 1;
 
 /// Whether a taxonomy is compiled in or belongs to the user library.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -203,202 +201,6 @@ impl Default for GlobalConfiguration {
     }
 }
 
-/// Optional repository-local overrides of the global commit environment.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProjectConfig {
-    version: u16,
-    default_taxonomy: Option<TaxonomyId>,
-    available_taxonomies: Option<Vec<TaxonomyId>>,
-}
-
-impl ProjectConfig {
-    /// Creates a project configuration. References are resolved with global state later.
-    pub fn new(
-        version: u16,
-        default_taxonomy: Option<TaxonomyId>,
-        available_taxonomies: Option<Vec<TaxonomyId>>,
-    ) -> Result<Self, ConfigurationError> {
-        if version != PROJECT_CONFIG_VERSION {
-            return Err(ConfigurationError::UnsupportedProjectVersion(version));
-        }
-        if let Some(available) = &available_taxonomies {
-            validate_ids(available)?;
-        }
-        Ok(Self {
-            version,
-            default_taxonomy,
-            available_taxonomies,
-        })
-    }
-
-    /// Creates a project that inherits both global fields.
-    #[must_use]
-    pub const fn inherited() -> Self {
-        Self {
-            version: PROJECT_CONFIG_VERSION,
-            default_taxonomy: None,
-            available_taxonomies: None,
-        }
-    }
-
-    /// Returns the format version.
-    #[must_use]
-    pub const fn version(&self) -> u16 {
-        self.version
-    }
-
-    /// Returns the optional project default override.
-    #[must_use]
-    pub const fn default_taxonomy(&self) -> Option<&TaxonomyId> {
-        self.default_taxonomy.as_ref()
-    }
-
-    /// Returns the optional project available-list override.
-    #[must_use]
-    pub fn available_taxonomies(&self) -> Option<&[TaxonomyId]> {
-        self.available_taxonomies.as_deref()
-    }
-}
-
-/// Resolved selection and complete taxonomy definitions ready to lock.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EffectiveConfiguration {
-    default_taxonomy: TaxonomyId,
-    taxonomies: Vec<Taxonomy>,
-}
-
-impl EffectiveConfiguration {
-    /// Returns the effective default taxonomy.
-    #[must_use]
-    pub const fn default_taxonomy(&self) -> &TaxonomyId {
-        &self.default_taxonomy
-    }
-
-    /// Returns available taxonomies in picker order.
-    #[must_use]
-    pub fn taxonomies(&self) -> &[Taxonomy] {
-        &self.taxonomies
-    }
-}
-
-/// Resolves project overrides field-by-field against global configuration.
-pub fn resolve_effective_configuration(
-    global: &GlobalConfiguration,
-    project: &ProjectConfig,
-) -> Result<EffectiveConfiguration, ConfigurationError> {
-    let catalog = global.catalog()?;
-    let default = project
-        .default_taxonomy()
-        .unwrap_or_else(|| global.default_taxonomy())
-        .clone();
-    let available = project
-        .available_taxonomies()
-        .unwrap_or_else(|| global.available_taxonomies());
-    validate_selection(|id| catalog.find(id).is_some(), &default, available)?;
-    let taxonomies = available
-        .iter()
-        .map(|id| {
-            catalog
-                .find(id)
-                .cloned()
-                .ok_or_else(|| ConfigurationError::UnknownTaxonomy(id.clone()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(EffectiveConfiguration {
-        default_taxonomy: default,
-        taxonomies,
-    })
-}
-
-/// Portable repository policy used directly by commit authoring.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProjectLock {
-    version: u16,
-    config_fingerprint: Fingerprint,
-    default_taxonomy: TaxonomyId,
-    taxonomies: Vec<Taxonomy>,
-}
-
-impl ProjectLock {
-    /// Creates a validated portable policy snapshot.
-    pub fn new(
-        version: u16,
-        config_fingerprint: Fingerprint,
-        default_taxonomy: TaxonomyId,
-        taxonomies: Vec<Taxonomy>,
-    ) -> Result<Self, ConfigurationError> {
-        if version != PROJECT_LOCK_VERSION {
-            return Err(ConfigurationError::UnsupportedLockVersion(version));
-        }
-        let mut ids = BTreeSet::new();
-        for taxonomy in &taxonomies {
-            if !ids.insert(taxonomy.id()) {
-                return Err(ConfigurationError::DuplicateAvailableTaxonomy(
-                    taxonomy.id().clone(),
-                ));
-            }
-        }
-        if taxonomies.is_empty() {
-            return Err(ConfigurationError::EmptyAvailableTaxonomies);
-        }
-        if !taxonomies
-            .iter()
-            .any(|taxonomy| taxonomy.id() == &default_taxonomy)
-        {
-            return Err(ConfigurationError::DefaultNotAvailable(default_taxonomy));
-        }
-        Ok(Self {
-            version,
-            config_fingerprint,
-            default_taxonomy,
-            taxonomies,
-        })
-    }
-
-    /// Captures effective configuration for one project.
-    pub fn capture(
-        project: &ProjectConfig,
-        effective: &EffectiveConfiguration,
-    ) -> Result<Self, ConfigurationError> {
-        Self::new(
-            PROJECT_LOCK_VERSION,
-            fingerprint_project_config(project),
-            effective.default_taxonomy.clone(),
-            effective.taxonomies.clone(),
-        )
-    }
-
-    /// Returns the lock format version.
-    #[must_use]
-    pub const fn version(&self) -> u16 {
-        self.version
-    }
-
-    /// Returns the authored-project fingerprint.
-    #[must_use]
-    pub const fn config_fingerprint(&self) -> Fingerprint {
-        self.config_fingerprint
-    }
-
-    /// Returns the pinned default taxonomy.
-    #[must_use]
-    pub const fn default_taxonomy(&self) -> &TaxonomyId {
-        &self.default_taxonomy
-    }
-
-    /// Returns complete pinned taxonomies in picker order.
-    #[must_use]
-    pub fn taxonomies(&self) -> &[Taxonomy] {
-        &self.taxonomies
-    }
-
-    /// Returns whether this lock belongs to the supplied authored configuration.
-    #[must_use]
-    pub fn matches(&self, config: &ProjectConfig) -> bool {
-        self.config_fingerprint == fingerprint_project_config(config)
-    }
-}
-
 /// Self-contained project policy: a default plus complete taxonomies in picker order.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectConfiguration {
@@ -452,6 +254,12 @@ impl ProjectConfiguration {
     pub fn taxonomies(&self) -> &[Taxonomy] {
         &self.taxonomies
     }
+
+    /// Finds one project-owned taxonomy.
+    #[must_use]
+    pub fn find(&self, id: &TaxonomyId) -> Option<&Taxonomy> {
+        self.taxonomies.iter().find(|taxonomy| taxonomy.id() == id)
+    }
 }
 
 /// Identity of the exact persisted project file, used to refuse stale writes.
@@ -477,24 +285,6 @@ pub struct StoredProject {
     pub configuration: ProjectConfiguration,
     /// The file revision `configuration` was read from.
     pub revision: ProjectRevision,
-}
-
-/// Repository-local state observed before initialization.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ProjectState {
-    /// Neither project artifact exists.
-    Absent,
-    /// Authored configuration exists without its lock.
-    ConfigOnly(ProjectConfig),
-    /// Both project artifacts exist.
-    Initialized {
-        /// Authored configuration.
-        config: ProjectConfig,
-        /// Portable resolved policy.
-        lock: ProjectLock,
-    },
-    /// A lock exists without authored configuration.
-    LockOnly,
 }
 
 fn validate_ids(ids: &[TaxonomyId]) -> Result<(), ConfigurationError> {
@@ -528,15 +318,13 @@ pub(crate) fn validate_selection(
     Ok(())
 }
 
-/// A taxonomy configuration or portable-lock failure.
+/// A taxonomy configuration failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConfigurationError {
     /// A global format version is unsupported.
     UnsupportedGlobalVersion(u16),
     /// A project format version is unsupported.
     UnsupportedProjectVersion(u16),
-    /// A lock format version is unsupported.
-    UnsupportedLockVersion(u16),
     /// A custom taxonomy repeats or shadows an identity.
     DuplicateOrReservedTaxonomy(TaxonomyId),
     /// No taxonomies are available.
@@ -557,9 +345,6 @@ impl Display for ConfigurationError {
             }
             Self::UnsupportedProjectVersion(version) => {
                 write!(formatter, "unsupported project config version {version}")
-            }
-            Self::UnsupportedLockVersion(version) => {
-                write!(formatter, "unsupported project lock version {version}")
             }
             Self::DuplicateOrReservedTaxonomy(id) => {
                 write!(
@@ -585,31 +370,6 @@ impl Display for ConfigurationError {
 }
 
 impl Error for ConfigurationError {}
-
-/// Fingerprints authored project overrides independently of TOML layout.
-#[must_use]
-pub(crate) fn fingerprint_project_config(config: &ProjectConfig) -> Fingerprint {
-    let mut canonical = CanonicalHasher::new(b"gitserious.project-config.taxonomy.v1");
-    canonical.u16(config.version());
-    match config.default_taxonomy() {
-        Some(id) => {
-            canonical.text("override");
-            canonical.text(id.as_str());
-        }
-        None => canonical.text("inherit"),
-    }
-    match config.available_taxonomies() {
-        Some(ids) => {
-            canonical.text("override");
-            canonical.usize(ids.len());
-            for id in ids {
-                canonical.text(id.as_str());
-            }
-        }
-        None => canonical.text("inherit"),
-    }
-    canonical.finish()
-}
 
 /// Fingerprints every semantic field in a complete taxonomy.
 #[must_use]
@@ -703,33 +463,6 @@ mod tests {
     }
 
     #[test]
-    fn config_fingerprints_are_stable_and_order_sensitive() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let conventional = TaxonomyId::new("conventional")?;
-        let research = TaxonomyId::new("research")?;
-        let forward =
-            ProjectConfig::new(1, None, Some(vec![conventional.clone(), research.clone()]))?;
-        let backward = ProjectConfig::new(1, None, Some(vec![research.clone(), conventional]))?;
-        let selected = ProjectConfig::new(1, Some(research), None)?;
-
-        assert_eq!(
-            fingerprint_project_config(&ProjectConfig::inherited()).to_string(),
-            "sha256:ae803a06a548de790893fbcd733e0033ea7c04167b3a70c2ab2a7d219893fa37",
-            "an existing gitserious.lock would read as stale"
-        );
-        let fingerprints = [&ProjectConfig::inherited(), &forward, &backward, &selected]
-            .map(fingerprint_project_config)
-            .into_iter()
-            .collect::<BTreeSet<_>>();
-        assert_eq!(fingerprints.len(), 4);
-        assert_eq!(
-            fingerprint_project_config(&forward),
-            fingerprint_project_config(&forward.clone())
-        );
-        Ok(())
-    }
-
-    #[test]
     fn defaults_expose_all_built_ins_in_order() {
         let global = GlobalConfiguration::default();
         assert_eq!(global.default_taxonomy().as_str(), "conventional");
@@ -741,20 +474,5 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["conventional", "research", "infra-ops"]
         );
-    }
-
-    #[test]
-    fn project_fields_inherit_independently() {
-        let global = GlobalConfiguration::default();
-        let project = ProjectConfig::new(
-            1,
-            Some(TaxonomyId::new("research").unwrap_or_else(|_| unreachable!())),
-            None,
-        )
-        .unwrap_or_else(|_| unreachable!());
-        let effective =
-            resolve_effective_configuration(&global, &project).unwrap_or_else(|_| unreachable!());
-        assert_eq!(effective.default_taxonomy().as_str(), "research");
-        assert_eq!(effective.taxonomies().len(), 3);
     }
 }

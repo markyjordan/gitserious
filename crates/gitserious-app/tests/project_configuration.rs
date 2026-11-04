@@ -7,9 +7,9 @@ use std::path::Path;
 
 use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
-    GlobalConfiguration, GlobalConfigurationStore, ProjectConfig, ProjectLock, ProjectState,
-    ProjectStateStore, RepositoryLocator, RepositoryRoot, edit_configuration,
-    resolve_effective_configuration,
+    GlobalConfiguration, GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore,
+    ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject, edit_configuration,
+    initial_project_configuration,
 };
 use gitserious_core::{
     Taxonomy, TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
@@ -41,10 +41,17 @@ fn with_team() -> GlobalConfiguration {
         .expect("valid global configuration")
 }
 
-fn initialized(global: &GlobalConfiguration, config: ProjectConfig) -> ProjectState {
-    let effective = resolve_effective_configuration(global, &config).expect("resolvable config");
-    let lock = ProjectLock::capture(&config, &effective).expect("capturable lock");
-    ProjectState::Initialized { config, lock }
+fn built_in_project() -> ProjectConfiguration {
+    initial_project_configuration(&GlobalConfiguration::default(), None)
+        .expect("built-ins form a project")
+}
+
+fn ids(configuration: &ProjectConfiguration) -> Vec<&str> {
+    configuration
+        .taxonomies()
+        .iter()
+        .map(|taxonomy| taxonomy.id().as_str())
+        .collect()
 }
 
 #[derive(Debug)]
@@ -68,13 +75,13 @@ impl RepositoryLocator for Locator {
     }
 }
 
-struct Global(GlobalConfiguration);
+struct BrokenLibrary;
 
-impl GlobalConfigurationStore for Global {
+impl GlobalConfigurationStore for BrokenLibrary {
     type Error = FakeError;
 
     fn load(&self) -> Result<GlobalConfiguration, Self::Error> {
-        Ok(self.0.clone())
+        Err(FakeError("the Library is corrupt"))
     }
 
     fn compare_and_swap(
@@ -88,93 +95,99 @@ impl GlobalConfigurationStore for Global {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Write {
-    Initialize(ProjectConfig, ProjectLock),
-    Swap {
-        from: (ProjectConfig, ProjectLock),
-        to: (ProjectConfig, ProjectLock),
+    Create(ProjectConfiguration),
+    Replace {
+        expected: ProjectRevision,
+        to: ProjectConfiguration,
     },
 }
 
+/// One in-memory project file whose revision advances on every write.
 struct Project {
-    state: RefCell<ProjectState>,
+    stored: RefCell<Option<StoredProject>>,
     failure: Option<&'static str>,
     writes: RefCell<Vec<Write>>,
 }
 
 impl Project {
-    fn new(state: ProjectState) -> Self {
+    fn new(configuration: Option<ProjectConfiguration>) -> Self {
         Self {
-            state: RefCell::new(state),
+            stored: RefCell::new(configuration.map(|configuration| StoredProject {
+                configuration,
+                revision: ProjectRevision::of_bytes(b"0"),
+            })),
             failure: None,
             writes: RefCell::default(),
         }
     }
+
+    fn write(&self, configuration: &ProjectConfiguration) -> ProjectRevision {
+        let revision = ProjectRevision::of_bytes(self.writes.borrow().len().to_string().as_bytes());
+        *self.stored.borrow_mut() = Some(StoredProject {
+            configuration: configuration.clone(),
+            revision,
+        });
+        revision
+    }
+
+    fn external_edit(&self) {
+        if let Some(stored) = self.stored.borrow_mut().as_mut() {
+            stored.revision = ProjectRevision::of_bytes(b"edited elsewhere");
+        }
+    }
+
+    fn configuration(&self) -> Option<ProjectConfiguration> {
+        self.stored
+            .borrow()
+            .as_ref()
+            .map(|stored| stored.configuration.clone())
+    }
 }
 
-impl ProjectStateStore for Project {
+impl ProjectConfigurationStore for Project {
     type Error = FakeError;
 
-    fn inspect(&self, _: &RepositoryRoot) -> Result<ProjectState, Self::Error> {
-        Ok(self.state.borrow().clone())
+    fn load(&self, _: &RepositoryRoot) -> Result<Option<StoredProject>, Self::Error> {
+        Ok(self.stored.borrow().clone())
     }
-    fn ensure_local_state(&self, _: &RepositoryRoot) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    fn initialize(
+
+    fn create(
         &self,
         _: &RepositoryRoot,
-        config: &ProjectConfig,
-        lock: &ProjectLock,
-    ) -> Result<(), Self::Error> {
+        configuration: &ProjectConfiguration,
+    ) -> Result<ProjectRevision, Self::Error> {
         if let Some(failure) = self.failure {
             return Err(FakeError(failure));
+        }
+        if self.stored.borrow().is_some() {
+            return Err(FakeError("refusing to overwrite existing gitserious.toml"));
         }
         self.writes
             .borrow_mut()
-            .push(Write::Initialize(config.clone(), lock.clone()));
-        *self.state.borrow_mut() = ProjectState::Initialized {
-            config: config.clone(),
-            lock: lock.clone(),
-        };
-        Ok(())
+            .push(Write::Create(configuration.clone()));
+        Ok(self.write(configuration))
     }
-    fn create_lock(&self, _: &RepositoryRoot, _: &ProjectLock) -> Result<(), Self::Error> {
-        Err(FakeError("unexpected create lock"))
-    }
-    fn replace_lock(
+
+    fn replace(
         &self,
         _: &RepositoryRoot,
-        _: &ProjectLock,
-        _: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Err(FakeError("unexpected replace lock"))
-    }
-    fn compare_and_swap(
-        &self,
-        _: &RepositoryRoot,
-        current_config: &ProjectConfig,
-        current_lock: &ProjectLock,
-        replacement_config: &ProjectConfig,
-        replacement_lock: &ProjectLock,
-    ) -> Result<(), Self::Error> {
+        expected: ProjectRevision,
+        configuration: &ProjectConfiguration,
+    ) -> Result<ProjectRevision, Self::Error> {
         if let Some(failure) = self.failure {
             return Err(FakeError(failure));
         }
-        let observed = ProjectState::Initialized {
-            config: current_config.clone(),
-            lock: current_lock.clone(),
-        };
-        if *self.state.borrow() != observed {
-            return Err(FakeError("project policy changed while editing"));
+        if self.stored.borrow().as_ref().map(|stored| stored.revision) != Some(expected) {
+            return Err(FakeError("gitserious.toml changed since it was opened"));
         }
-        self.writes.borrow_mut().push(Write::Swap {
-            from: (current_config.clone(), current_lock.clone()),
-            to: (replacement_config.clone(), replacement_lock.clone()),
+        self.writes.borrow_mut().push(Write::Replace {
+            expected,
+            to: configuration.clone(),
         });
-        *self.state.borrow_mut() = ProjectState::Initialized {
-            config: replacement_config.clone(),
-            lock: replacement_lock.clone(),
-        };
+        Ok(self.write(configuration))
+    }
+
+    fn ensure_local_state(&self, _: &RepositoryRoot) -> Result<(), Self::Error> {
         Ok(())
     }
 }
@@ -190,190 +203,150 @@ where
     }
 }
 
-fn edit_project<F>(global: GlobalConfiguration, project: &Project, script: F) -> Result<(), String>
+/// Edits the project while the Library store is unreadable, so any Library read fails the edit.
+fn edit_project<F>(project: &Project, script: F) -> Result<(), String>
 where
     F: Fn(&dyn ConfigurationWorkspace) -> Result<(), String>,
 {
     edit_configuration(
         &Locator,
         project,
-        &Global(global),
+        &BrokenLibrary,
         Path::new("."),
         &Script(script),
     )
 }
 
 #[test]
+fn project_sessions_open_review_and_apply_without_the_library() -> Result<(), Box<dyn Error>> {
+    let project = Project::new(Some(built_in_project()));
+
+    edit_project(&project, |workspace| {
+        assert!(
+            workspace.load(ConfigurationDestination::Global).is_err(),
+            "the Library fixture must be unreadable"
+        );
+        let mut session = workspace.load(ConfigurationDestination::Project)?;
+        session.configure_project(id("research"), &[id("research"), id("conventional")])?;
+        session.review()?;
+        workspace.save(&session)?;
+        Ok(())
+    })?;
+
+    let saved = project.configuration().ok_or("project vanished")?;
+    assert_eq!(saved.default_taxonomy().as_str(), "research");
+    assert_eq!(ids(&saved), ["research", "conventional"]);
+    Ok(())
+}
+
+#[test]
 fn project_mutations_require_the_project_destination_and_initialized_state()
 -> Result<(), Box<dyn Error>> {
     let mut global = ConfigurationSession::open_global(GlobalConfiguration::default());
-    assert!(global.configure_project(None, None).is_err());
-    assert!(global.initialize_project().is_err());
-
     assert!(
-        ConfigurationSession::open_project(
-            root(),
-            GlobalConfiguration::default(),
-            ProjectState::LockOnly
-        )
-        .expect_err("an orphan lock opened")
-        .contains("orphan lock")
+        global
+            .configure_project(id("conventional"), &[id("conventional")])
+            .is_err()
     );
 
-    let mut absent = ConfigurationSession::open_project(
-        root(),
-        GlobalConfiguration::default(),
-        ProjectState::Absent,
-    )?;
-    assert!(absent.review().is_err());
-    absent.initialize_project()?;
-    assert!(absent.initialize_project().is_err());
-    assert!(absent.review()?.changes.contains("PROJECT CONFIGURATION"));
+    let mut uninitialized = ConfigurationSession::open_project(root(), None);
+    assert!(
+        uninitialized
+            .configure_project(id("conventional"), &[id("conventional")])
+            .is_err()
+    );
+    assert!(uninitialized.review().is_err());
+
+    uninitialized.initialize_project(&with_team())?;
+    let staged = uninitialized.project_config().ok_or("nothing staged")?;
+    assert_eq!(
+        ids(staged),
+        ["conventional", "research", "infra-ops", "team"]
+    );
+    assert!(uninitialized.initialize_project(&with_team()).is_err());
     Ok(())
 }
 
 #[test]
-fn project_selection_rejects_unknown_taxonomies_without_changing_the_draft()
+fn project_selection_rejects_invalid_choices_without_changing_the_draft()
 -> Result<(), Box<dyn Error>> {
-    let global = GlobalConfiguration::default();
     let mut session = ConfigurationSession::open_project(
         root(),
-        global.clone(),
-        initialized(&global, ProjectConfig::inherited()),
-    )?;
-
-    assert!(session.configure_project(Some(id("team")), None).is_err());
-    assert!(
-        session
-            .configure_project(None, Some(vec![id("research"), id("missing")]))
-            .is_err()
-    );
-    assert!(
-        session
-            .configure_project(Some(id("conventional")), Some(vec![id("research")]))
-            .is_err()
+        Some(StoredProject {
+            configuration: built_in_project(),
+            revision: ProjectRevision::of_bytes(b"0"),
+        }),
     );
 
-    assert_eq!(session.project_config(), Some(&ProjectConfig::inherited()));
-    assert!(!session.is_dirty());
-    session.configure_project(Some(id("research")), Some(vec![id("research")]))?;
-    assert!(session.is_dirty());
-    Ok(())
-}
+    for (default, available) in [
+        (id("team"), vec![id("conventional"), id("team")]),
+        (id("research"), vec![id("conventional")]),
+        (id("conventional"), Vec::new()),
+        (
+            id("conventional"),
+            vec![id("conventional"), id("conventional")],
+        ),
+    ] {
+        assert!(session.configure_project(default, &available).is_err());
+        assert_eq!(session.project_config(), Some(&built_in_project()));
+        assert!(!session.is_dirty());
+    }
 
-#[test]
-fn first_save_initializes_and_later_saves_compare_and_swap() -> Result<(), Box<dyn Error>> {
-    let project = Project::new(ProjectState::Absent);
-    edit_project(GlobalConfiguration::default(), &project, |workspace| {
-        let mut session = workspace.load(ConfigurationDestination::Project)?;
-        session.initialize_project()?;
-        let mut saved = workspace.save(&session)?;
-        assert!(!saved.is_dirty());
-        saved.configure_project(Some(id("infra-ops")), None)?;
-        workspace.save(&saved).map(|_| ())
-    })?;
-
-    let writes = project.writes.borrow();
-    assert!(matches!(
-        writes.as_slice(),
-        [Write::Initialize(..), Write::Swap { .. }]
-    ));
-    let Write::Swap {
-        to: (config, lock), ..
-    } = &writes[1]
-    else {
-        return Err("second save did not swap".into());
-    };
-    assert_eq!(config.default_taxonomy(), Some(&id("infra-ops")));
-    assert_eq!(lock.default_taxonomy(), &id("infra-ops"));
-    assert!(lock.matches(config));
-    Ok(())
-}
-
-#[test]
-fn saved_project_lock_captures_the_session_global_snapshot() -> Result<(), Box<dyn Error>> {
-    let project = Project::new(ProjectState::Absent);
-    edit_project(with_team(), &project, |workspace| {
-        let mut session = workspace.load(ConfigurationDestination::Project)?;
-        session.initialize_project()?;
-        workspace.save(&session).map(|_| ())
-    })?;
-
-    let ProjectState::Initialized { lock, .. } = &*project.state.borrow() else {
-        return Err("project was not initialized".into());
-    };
+    session.configure_project(id("conventional"), &[id("conventional")])?;
+    session.configure_project(id("conventional"), &[id("conventional"), id("research")])?;
     assert_eq!(
-        lock.taxonomies().last().map(gitserious_core::Taxonomy::id),
-        Some(&id("team"))
+        ids(session.project_config().ok_or("no draft")?),
+        ["conventional", "research"]
     );
-    let reopened =
-        ConfigurationSession::open_project(root(), with_team(), project.state.borrow().clone())?;
-    assert!(!reopened.update_available());
-    assert!(!reopened.is_dirty());
     Ok(())
 }
 
 #[test]
-fn update_available_reports_global_changes_that_would_change_the_lock() -> Result<(), Box<dyn Error>>
-{
-    let pinned = initialized(&GlobalConfiguration::default(), ProjectConfig::inherited());
+fn first_save_creates_and_later_saves_replace_the_opened_revision() -> Result<(), Box<dyn Error>> {
+    let project = Project::new(None);
+    let library = with_team();
 
-    let unchanged =
-        ConfigurationSession::open_project(root(), GlobalConfiguration::default(), pinned.clone())?;
-    let changed = ConfigurationSession::open_project(root(), with_team(), pinned)?;
+    edit_project(&project, |workspace| {
+        let mut session = workspace.load(ConfigurationDestination::Project)?;
+        session.initialize_project(&library)?;
+        let mut session = workspace.save(&session)?;
+        session.configure_project(id("team"), &[id("team")])?;
+        workspace.save(&session)?;
+        Ok(())
+    })?;
 
-    assert!(!unchanged.update_available());
-    assert!(changed.update_available());
-    assert_eq!(changed.source_error(), None);
+    let initial = initial_project_configuration(&library, None)?;
+    let writes = project.writes.borrow();
+    assert_eq!(writes.len(), 2);
+    assert_eq!(writes[0], Write::Create(initial));
+    assert!(matches!(
+        &writes[1],
+        Write::Replace { to, .. } if to.default_taxonomy().as_str() == "team" && ids(to) == ["team"]
+    ));
     Ok(())
 }
 
 #[test]
-fn project_store_conflicts_and_failures_leave_the_project_unchanged() -> Result<(), Box<dyn Error>>
-{
-    let global = GlobalConfiguration::default();
-    let original = initialized(&global, ProjectConfig::inherited());
-    let concurrent = initialized(&global, ProjectConfig::new(1, Some(id("research")), None)?);
-
-    let project = Project::new(original.clone());
-    let error = edit_project(global.clone(), &project, |workspace| {
+fn stale_or_failed_applies_leave_the_project_file_unchanged() {
+    let project = Project::new(Some(built_in_project()));
+    let error = edit_project(&project, |workspace| {
         let mut session = workspace.load(ConfigurationDestination::Project)?;
-        *project.state.borrow_mut() = concurrent.clone();
-        session.configure_project(Some(id("infra-ops")), None)?;
+        session.configure_project(id("research"), &[id("research")])?;
+        project.external_edit();
         workspace.save(&session).map(|_| ())
     })
-    .expect_err("a stale project session overwrote newer policy");
-    assert!(error.contains("changed while editing"), "{error}");
-    assert_eq!(*project.state.borrow(), concurrent);
+    .expect_err("a stale session overwrote an external edit");
+    assert!(error.contains("changed since it was opened"), "{error}");
+    assert_eq!(project.configuration(), Some(built_in_project()));
 
-    let mut failing = Project::new(original.clone());
-    failing.failure = Some("project store failed");
-    let error = edit_project(global, &failing, |workspace| {
+    let mut failing = Project::new(Some(built_in_project()));
+    failing.failure = Some("disk full");
+    let error = edit_project(&failing, |workspace| {
         let mut session = workspace.load(ConfigurationDestination::Project)?;
-        session.configure_project(Some(id("infra-ops")), None)?;
+        session.configure_project(id("research"), &[id("research")])?;
         workspace.save(&session).map(|_| ())
     })
-    .expect_err("a failed save was reported as success");
-    assert_eq!(error, "project store failed");
-    assert_eq!(*failing.state.borrow(), original);
+    .expect_err("a failed write reported success");
+    assert_eq!(error, "disk full");
     assert!(failing.writes.borrow().is_empty());
-    Ok(())
-}
-
-#[test]
-fn unresolvable_project_policy_never_reaches_the_project_store() -> Result<(), Box<dyn Error>> {
-    let pinned = initialized(&with_team(), ProjectConfig::new(1, Some(id("team")), None)?);
-    let project = Project::new(pinned.clone());
-
-    let error = edit_project(GlobalConfiguration::default(), &project, |workspace| {
-        let session = workspace.load(ConfigurationDestination::Project)?;
-        assert!(session.source_error().is_some());
-        workspace.save(&session).map(|_| ())
-    })
-    .expect_err("policy naming an uninstalled taxonomy was saved");
-
-    assert!(error.contains("team"), "{error}");
-    assert!(project.writes.borrow().is_empty());
-    assert_eq!(*project.state.borrow(), pinned);
-    Ok(())
 }

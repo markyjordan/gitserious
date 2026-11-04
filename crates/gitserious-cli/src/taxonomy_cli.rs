@@ -9,7 +9,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
     ConfigurationEditor, GlobalConfigurationStore, HelpPage, InitOutcome, InitStatus,
-    InteractiveEntry, InteractiveUi, ProjectStateStore, RepositoryLocator, RepositoryRoot,
+    InteractiveEntry, InteractiveUi, ProjectConfigurationStore, RepositoryLocator, RepositoryRoot,
     RepositoryStatusReader, TaxonomyOrigin, create_commit_with_taxonomy, edit_configuration,
     initialize_project, run_interactive,
 };
@@ -118,7 +118,7 @@ where
     T: Into<OsString> + Clone,
     L: RepositoryLocator + ?Sized,
     L::Error: Display,
-    S: ProjectStateStore + ?Sized,
+    S: ProjectConfigurationStore + ?Sized,
     S::Error: Display,
     G: GlobalConfigurationStore + ?Sized,
     G::Error: Display,
@@ -154,7 +154,7 @@ where
     T: Into<OsString> + Clone,
     L: RepositoryLocator + ?Sized,
     L::Error: Display,
-    S: ProjectStateStore + ?Sized,
+    S: ProjectConfigurationStore + ?Sized,
     S::Error: Display,
     G: GlobalConfigurationStore + ?Sized,
     G::Error: Display,
@@ -190,7 +190,7 @@ where
     T: Into<OsString> + Clone,
     L: RepositoryLocator + ?Sized,
     L::Error: Display,
-    S: ProjectStateStore + ?Sized,
+    S: ProjectConfigurationStore + ?Sized,
     S::Error: Display,
     G: GlobalConfigurationStore + ?Sized,
     G::Error: Display,
@@ -228,7 +228,7 @@ where
     T: Into<OsString> + Clone,
     L: RepositoryLocator + ?Sized,
     L::Error: Display,
-    S: ProjectStateStore + ?Sized,
+    S: ProjectConfigurationStore + ?Sized,
     S::Error: Display,
     G: GlobalConfigurationStore + ?Sized,
     G::Error: Display,
@@ -443,8 +443,6 @@ fn write_commit_output(
 fn write_init_outcome(output: &mut (impl Write + ?Sized), outcome: &InitOutcome) -> ExitCode {
     let action = match outcome.status() {
         InitStatus::Initialized => "Initialized gitserious in",
-        InitStatus::LockCreated => "Created missing lock in",
-        InitStatus::LockRefreshed => "Refreshed project policy in",
         InitStatus::AlreadyInitialized => "gitserious is already initialized in",
     };
     if writeln!(
@@ -536,9 +534,9 @@ pub fn interactive_help() -> Vec<HelpPage> {
     ];
     let descriptions = [
         "Bare gitserious opens Home. Commit previews Git changes before authoring a durable message. Config configures repository policy and your taxonomy library.",
-        "Bare gitserious config opens Config. Project controls repository overrides and its portable lock. Library owns taxonomies. Esc validates and saves Library edits. Copies, reorders, and confirmed deletions save immediately. Project changes use review and Apply.",
+        "Bare gitserious config opens Config. Project owns the complete taxonomies in gitserious.toml. Library owns taxonomies. Esc validates and saves Library edits. Copies, reorders, and confirmed deletions save immediately. Project changes use review and Apply.",
         "gitserious commit authors directly from persisted project policy. --taxonomy chooses an available taxonomy for this commit; --type preselects a type. Only Git's staged index is committed. Stage changes with Git before using Start commit in the shell.",
-        "gitserious init initializes repository-local gitserious.toml and gitserious.lock. --taxonomy selects an installed taxonomy for fresh policy.",
+        "gitserious init writes gitserious.toml with complete copies of your Library's default taxonomies. --taxonomy sets the project default. An existing gitserious.toml is never rewritten.",
     ];
     let examples = [
         "gitserious\ngitserious --help",

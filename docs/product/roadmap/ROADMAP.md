@@ -23,7 +23,7 @@ later evaluation, rather than making measured improvement a publication gate.
 A user can initialize repository-local policy, choose a taxonomy for one commit,
 author its structured properties, review the exact message, and create the staged
 Git commit. A configuration TUI lets the user define complete taxonomies and
-manage global defaults plus project-local selection overrides.
+manage global defaults plus self-contained project configuration.
 
 Ship:
 
@@ -54,15 +54,12 @@ semantic edits advance versions, and forks record informational source lineage
 without inheriting later updates.
 
 Global configuration stores the custom taxonomy library, one default taxonomy,
-and the ordered set available to projects. Project configuration stores optional
-default and available-set overrides; each field inherits global independently.
-The effective default must be available.
-
-Generated locks contain the complete effective taxonomy snapshots. Commit
-authoring uses this portable pinned policy without consulting mutable global
-configuration. Global changes appear as updates in `gitserious config` and take
-effect only after reviewed refresh. A project-config/lock mismatch blocks commit
-creation with an actionable path through the Project configuration screen.
+and the ordered set new projects start from. The root `gitserious.toml` is the
+only project policy: a default plus the complete ordered taxonomy definitions.
+Commit authoring reads that file alone and never consults the Library, the
+built-ins, or `.gitserious/`. Library edits reach a project only through an
+explicit copy. An invalid `gitserious.toml` blocks commit creation with a
+diagnostic that names the defect.
 
 ### Configuration user experience
 
@@ -94,7 +91,7 @@ review, and commit creation. Overlapping types such as Conventional `fix` and Re
 
 The picker displays available taxonomies and the selected taxonomy's change types.
 Temporary selection does not
-rewrite project configuration or the lock. Switching after editing requires the
+rewrite project configuration. Switching after editing requires the
 existing discard confirmation before resetting the draft.
 
 Use one requirement model throughout composition, review, and commit creation:
@@ -190,8 +187,8 @@ must not imply that supplying prose proves an experiment or operation succeeded.
   default/availability selection, and safe deletion.
 - [ ] Invalid references, cancellation, concurrent edits,
   and persistence failures preserve stored state.
-- [ ] Project locks contain portable schemas; stale policy blocks commits with
-  actionable repair output, including in linked worktrees.
+- [ ] `gitserious.toml` contains complete schemas; invalid policy blocks commits
+  with actionable output, and each linked worktree resolves its own file.
 - [ ] Commits using all three built-ins and a custom taxonomy use the selected
   schema, including overlapping type identifiers.
 - [ ] Temporary selection leaves project files unchanged and does not depend on

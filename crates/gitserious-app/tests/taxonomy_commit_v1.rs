@@ -5,9 +5,9 @@ use std::path::Path;
 
 use gitserious_app::{
     AuthoredCommit, CommitAuthoringContext, CommitAuthoringOutcome, CommitDraftAuthor,
-    CommitDraftAuthorOutcome, CommitOutput, CommitWriter, GlobalConfiguration, ProjectConfig,
-    ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
-    create_commit_with_taxonomy, resolve_effective_configuration,
+    CommitDraftAuthorOutcome, CommitOutput, CommitWriter, ProjectConfiguration,
+    ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject,
+    create_commit_with_taxonomy,
 };
 use gitserious_core::{
     CommitDraft, CommitMessage, CommitSubject, CommitTypeDefinition, CommitTypeId, Description,
@@ -22,43 +22,32 @@ impl RepositoryLocator for Locator {
     }
 }
 
-struct Store(ProjectState);
-impl ProjectStateStore for Store {
+struct Store(ProjectConfiguration);
+impl ProjectConfigurationStore for Store {
     type Error = Infallible;
-    fn inspect(&self, _: &RepositoryRoot) -> Result<ProjectState, Self::Error> {
-        Ok(self.0.clone())
+    fn load(&self, _: &RepositoryRoot) -> Result<Option<StoredProject>, Self::Error> {
+        Ok(Some(StoredProject {
+            configuration: self.0.clone(),
+            revision: ProjectRevision::of_bytes(b"project"),
+        }))
+    }
+    fn create(
+        &self,
+        _: &RepositoryRoot,
+        _: &ProjectConfiguration,
+    ) -> Result<ProjectRevision, Self::Error> {
+        unreachable!("commit never writes project configuration")
+    }
+    fn replace(
+        &self,
+        _: &RepositoryRoot,
+        _: ProjectRevision,
+        _: &ProjectConfiguration,
+    ) -> Result<ProjectRevision, Self::Error> {
+        unreachable!("commit never writes project configuration")
     }
     fn ensure_local_state(&self, _: &RepositoryRoot) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    fn initialize(
-        &self,
-        _: &RepositoryRoot,
-        _: &ProjectConfig,
-        _: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    fn create_lock(&self, _: &RepositoryRoot, _: &ProjectLock) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    fn replace_lock(
-        &self,
-        _: &RepositoryRoot,
-        _: &ProjectLock,
-        _: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    fn compare_and_swap(
-        &self,
-        _: &RepositoryRoot,
-        _: &ProjectConfig,
-        _: &ProjectLock,
-        _: &ProjectConfig,
-        _: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Ok(())
+        unreachable!("commit never writes local state")
     }
 }
 
@@ -111,7 +100,7 @@ impl CommitWriter for Writer {
 }
 
 #[test]
-fn commit_uses_only_the_portable_lock_snapshot() -> Result<(), Box<dyn Error>> {
+fn commit_uses_only_the_embedded_project_taxonomy() -> Result<(), Box<dyn Error>> {
     let taxonomy = Taxonomy::new(
         TaxonomyId::new("portable")?,
         TaxonomyVersion::V1,
@@ -124,26 +113,12 @@ fn commit_uses_only_the_portable_lock_snapshot() -> Result<(), Box<dyn Error>> {
             Vec::new(),
         )?],
     )?;
-    let config = ProjectConfig::new(
-        1,
-        Some(taxonomy.id().clone()),
-        Some(vec![taxonomy.id().clone()]),
-    )?;
-    let library = GlobalConfiguration::new(
-        1,
-        taxonomy.id().clone(),
-        vec![taxonomy.id().clone()],
-        vec![taxonomy.into()],
-    )?;
-    let lock = ProjectLock::capture(
-        &config,
-        &resolve_effective_configuration(&library, &config)?,
-    )?;
+    let project = ProjectConfiguration::new(1, taxonomy.id().clone(), vec![taxonomy])?;
     let root = RepositoryRoot::new(std::env::temp_dir())?;
     let writer = Writer::default();
     create_commit_with_taxonomy(
         &Locator(root),
-        &Store(ProjectState::Initialized { config, lock }),
+        &Store(project),
         &Author,
         &writer,
         Path::new("."),

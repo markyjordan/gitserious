@@ -1,6 +1,6 @@
 //! Project review and apply. Library edits use direct persistence.
 
-use gitserious_app::{ConfigurationDestination, ConfigurationWorkspace};
+use gitserious_app::{ConfigurationDestination, ConfigurationSession, ConfigurationWorkspace};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
@@ -14,7 +14,7 @@ impl State {
         let destination = self.active_scope;
         let should_review = self
             .session(destination)
-            .is_some_and(|session| session.is_dirty() || session.update_available());
+            .is_some_and(ConfigurationSession::is_dirty);
         if should_review {
             if let Some(error) = self
                 .session(destination)
@@ -26,9 +26,7 @@ impl State {
                 self.screen = Screen::Review(destination);
             }
         } else {
-            self.status = Some(Notice::info(
-                "No changes or taxonomy updates to apply.".into(),
-            ));
+            self.status = Some(Notice::info("No changes to apply.".into()));
         }
     }
 

@@ -45,13 +45,14 @@ Navigation pages; Left/Right changes pages and Up/Down/Page Up/Page Down scrolls
 a Menu entry. Left and Right move focus between Menu and content. Clicking a
 Menu entry switches to it while browsing.
 
-Project shows the persisted commit policy, authored overrides, resolution
-sources, and `gitserious.toml` and `gitserious.lock` status. An uninitialized
-repository offers `i` to review initialization. Ctrl+S opens Project review,
-and Enter applies the configuration and portable lock atomically. Browsing
-Library preserves pending Project edits. A Library action asks you to apply or
-discard those Project edits before proceeding. Commit authoring uses the
-persisted lock until Project changes are applied.
+Project shows the commit default, the project's own taxonomies, and
+`gitserious.toml` status. It never reads the Library, so it works when the
+Library is missing or corrupt. An uninitialized repository offers `i` to review
+initialization, which copies the Library's default taxonomies. Ctrl+S opens
+Project review, and Enter applies `gitserious.toml`; Apply refuses if the file
+changed on disk after Project opened. Browsing Library preserves pending Project
+edits. A Library action asks you to apply or discard those Project edits before
+proceeding. Commit authoring uses `gitserious.toml` as last applied.
 
 Library has a taxonomy outline and an Inspector. Enter opens or closes a node,
 Up and Down select rows, and Page Up and Page Down scroll Inspector details.
@@ -98,9 +99,9 @@ compact and wide terminals.
 
 ## Commit authoring
 
-`gitserious commit --taxonomy <TAXONOMY>` selects one taxonomy from the portable
-project lock for that commit. `--type` preselects a type within it. With no
-taxonomy option, authoring starts from the pinned project default. Picker tabs support Tab/Shift+Tab to switch forward/backward and
+`gitserious commit --taxonomy <TAXONOMY>` selects one taxonomy from
+`gitserious.toml` for that commit. `--type` preselects a type within it. With no
+taxonomy option, authoring starts from the project default. Picker tabs support Tab/Shift+Tab to switch forward/backward and
 show taxonomy identities and never mutate project policy.
 
 The composer retains the established schema-document interaction: immutable

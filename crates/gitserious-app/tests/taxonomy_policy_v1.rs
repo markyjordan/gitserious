@@ -6,40 +6,11 @@ use library_lookup::LibraryLookup;
 
 use std::error::Error;
 
+use gitserious_core::TaxonomyId;
+
 use gitserious_app::{
     ConfigurationSession, DraftEdit, DraftField, GlobalConfiguration, NodeId, Problem, ProblemSite,
-    ProjectConfig, ProjectLock, resolve_effective_configuration,
 };
-use gitserious_core::{TaxonomyId, built_in_taxonomies};
-
-#[test]
-fn project_fields_fall_back_independently() -> Result<(), Box<dyn Error>> {
-    let global = GlobalConfiguration::default();
-    let project = ProjectConfig::new(1, Some(TaxonomyId::new("research")?), None)?;
-    let effective = resolve_effective_configuration(&global, &project)?;
-    assert_eq!(effective.default_taxonomy().as_str(), "research");
-    assert_eq!(
-        effective
-            .taxonomies()
-            .iter()
-            .map(|item| item.id().as_str())
-            .collect::<Vec<_>>(),
-        ["conventional", "research", "infra-ops"]
-    );
-    Ok(())
-}
-
-#[test]
-fn portable_lock_keeps_complete_taxonomies() -> Result<(), Box<dyn Error>> {
-    let global = GlobalConfiguration::default();
-    let project = ProjectConfig::inherited();
-    let effective = resolve_effective_configuration(&global, &project)?;
-    let lock = ProjectLock::capture(&project, &effective)?;
-    assert!(lock.matches(&project));
-    assert_eq!(lock.taxonomies(), built_in_taxonomies());
-    assert_eq!(lock.default_taxonomy().as_str(), "conventional");
-    Ok(())
-}
 
 /// Forks conventional under the name `team`, as forking and typing a name does.
 fn fork_team(session: &mut ConfigurationSession) -> Result<NodeId, Box<dyn Error>> {

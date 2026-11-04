@@ -66,7 +66,7 @@ fn show_prints_built_in_properties_in_lock_words() -> Result<(), Box<dyn Error>>
 }
 
 #[test]
-fn library_taxonomy_initializes_and_commits_from_the_portable_lock() -> Result<(), Box<dyn Error>> {
+fn library_taxonomy_initializes_and_commits_from_the_project_copy() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     let home = Home::new()?;
     write_library(&home, PLATFORM_LIBRARY)?;
@@ -82,13 +82,10 @@ fn library_taxonomy_initializes_and_commits_from_the_portable_lock() -> Result<(
         "{}",
         stdout(&init)
     );
-    assert_eq!(
-        fs::read_to_string(repository.path().join("gitserious.toml"))?,
-        "config-version = 1\n"
-    );
-    let lock = fs::read_to_string(repository.path().join("gitserious.lock"))?;
-    assert!(lock.contains("default-taxonomy = \"platform\""));
-    assert!(lock.contains("id = \"deploy\""));
+    let config = fs::read_to_string(repository.path().join("gitserious.toml"))?;
+    assert!(config.contains("default-taxonomy = \"platform\""));
+    assert!(config.contains("id = \"deploy\""));
+    assert!(!repository.path().join("gitserious.lock").exists());
 
     let unknown = home.run(repository.path(), &["commit", "--type", "feat"])?;
     assert!(!unknown.status.success());
@@ -117,15 +114,12 @@ fn assert_domain_initialization(domain: &str, representative: &str) -> Result<()
     assert!(stdout(&initialized).ends_with(&format!(" ({domain}@2).\n")));
     assert!(!home.library_path().exists());
     let config_path = repository.path().join("gitserious.toml");
-    let lock_path = repository.path().join("gitserious.lock");
     let config = fs::read_to_string(&config_path)?;
-    let lock = fs::read_to_string(&lock_path)?;
-    assert_eq!(
-        config,
-        format!("config-version = 1\ndefault-taxonomy = \"{domain}\"\n")
-    );
-    assert!(lock.contains(&format!("default-taxonomy = \"{domain}\"")));
-    assert!(lock.contains(&format!("id = \"{representative}\"")));
+    assert!(config.starts_with(&format!(
+        "config-version = 1\ndefault-taxonomy = \"{domain}\"\n"
+    )));
+    assert!(config.contains(&format!("id = \"{representative}\"")));
+    assert!(!repository.path().join("gitserious.lock").exists());
 
     let unavailable = home.run(repository.path(), &["commit", "--type", "feat"])?;
     assert!(!unavailable.status.success());
@@ -145,7 +139,6 @@ fn assert_domain_initialization(domain: &str, representative: &str) -> Result<()
     let repeated = home.run(repository.path(), &["init"])?;
     assert!(repeated.status.success(), "{}", stderr(&repeated));
     assert_eq!(fs::read_to_string(config_path)?, config);
-    assert_eq!(fs::read_to_string(lock_path)?, lock);
     Ok(())
 }
 

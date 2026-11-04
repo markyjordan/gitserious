@@ -4,10 +4,10 @@ use std::error::Error;
 use std::fs;
 
 use gitserious_app::{
-    GlobalConfiguration, GlobalConfigurationStore, GlobalPaths, ProjectConfig, ProjectLock,
-    ProjectState, ProjectStateStore, RepositoryRoot, resolve_effective_configuration,
+    GlobalConfiguration, GlobalConfigurationStore, GlobalPaths, ProjectConfiguration,
+    ProjectConfigurationStore, RepositoryRoot,
 };
-use gitserious_fs::{TomlGlobalConfigurationStore, TomlProjectStateStore};
+use gitserious_fs::{TomlGlobalConfigurationStore, TomlProjectStore};
 
 #[test]
 fn absent_global_config_uses_all_built_ins_and_round_trips() -> Result<(), Box<dyn Error>> {
@@ -41,28 +41,6 @@ fn legacy_global_shape_fails_with_actionable_message() -> Result<(), Box<dyn Err
 }
 
 #[test]
-fn project_lock_contains_portable_taxonomy_definitions() -> Result<(), Box<dyn Error>> {
-    let directory = tempfile::tempdir()?;
-    let root = RepositoryRoot::new(directory.path().to_path_buf())?;
-    let global = GlobalConfiguration::default();
-    let config = ProjectConfig::inherited();
-    let effective = resolve_effective_configuration(&global, &config)?;
-    let lock = ProjectLock::capture(&config, &effective)?;
-    let store = TomlProjectStateStore;
-    store.ensure_local_state(&root)?;
-    store.initialize(&root, &config, &lock)?;
-    assert_eq!(
-        store.inspect(&root)?,
-        ProjectState::Initialized { config, lock }
-    );
-    let contents = fs::read_to_string(directory.path().join("gitserious.lock"))?;
-    assert!(contents.contains("[[taxonomies]]"));
-    assert!(contents.contains("id = \"research\""));
-    assert!(!contents.contains("resolved-template"));
-    Ok(())
-}
-
-#[test]
 fn retired_examples_load_without_writing_and_disappear_on_save() -> Result<(), Box<dyn Error>> {
     use gitserious_core::{
         CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
@@ -89,7 +67,12 @@ fn retired_examples_load_without_writing_and_disappear_on_save() -> Result<(), B
             )?],
         )?],
     )?;
-    let global = GlobalConfiguration::new(1, id.clone(), vec![id], vec![taxonomy.into()])?;
+    let global = GlobalConfiguration::new(
+        1,
+        id.clone(),
+        vec![id.clone()],
+        vec![taxonomy.clone().into()],
+    )?;
     store.compare_and_swap(&before, &global)?;
     let path = directory.path().join("library/config.toml");
     let clean = fs::read_to_string(&path)?;
@@ -105,27 +88,20 @@ fn retired_examples_load_without_writing_and_disappear_on_save() -> Result<(), B
 
     let root = RepositoryRoot::new(directory.path().join("project"))?;
     fs::create_dir(root.as_path())?;
-    let config = ProjectConfig::inherited();
-    let effective = resolve_effective_configuration(&global, &config)?;
-    let lock = ProjectLock::capture(&config, &effective)?;
-    let project_store = TomlProjectStateStore;
-    project_store.ensure_local_state(&root)?;
-    project_store.initialize(&root, &config, &lock)?;
-    let path = root.as_path().join("gitserious.lock");
+    let project = ProjectConfiguration::new(1, id, vec![taxonomy])?;
+    let project_store = TomlProjectStore;
+    project_store.create(&root, &project)?;
+    let path = root.as_path().join("gitserious.toml");
     let clean = fs::read_to_string(&path)?;
     let legacy = clean.replace("key =", "example = 'old example'\nkey =");
+    assert_ne!(legacy, clean);
     fs::write(&path, &legacy)?;
-    assert_eq!(
-        project_store.inspect(&root)?,
-        ProjectState::Initialized {
-            config: config.clone(),
-            lock: lock.clone()
-        }
-    );
+    let stored = project_store.load(&root)?.ok_or("project did not load")?;
+    assert_eq!(stored.configuration, project);
     assert_eq!(fs::read_to_string(&path)?, legacy);
-    project_store.replace_lock(&root, &lock, &lock)?;
+    project_store.replace(&root, stored.revision, &project)?;
     assert!(!fs::read_to_string(&path)?.contains("example ="));
     fs::write(&path, clean.replace("key =", "unexpected = 'bad'\nkey ="))?;
-    assert!(project_store.inspect(&root).is_err());
+    assert!(project_store.load(&root).is_err());
     Ok(())
 }

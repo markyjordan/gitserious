@@ -9,8 +9,8 @@ use std::process::ExitCode;
 use gitserious_app::{
     AuthoredCommit, CommitAuthoringContext, CommitAuthoringOutcome, CommitDraftAuthor,
     CommitDraftAuthorOutcome, CommitOutput, CommitWriter, GlobalConfiguration,
-    GlobalConfigurationStore, ProjectConfig, ProjectLock, ProjectState, ProjectStateStore,
-    RepositoryLocator, RepositoryRoot, resolve_effective_configuration,
+    GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore, ProjectRevision,
+    RepositoryLocator, RepositoryRoot, StoredProject, initial_project_configuration,
 };
 use gitserious_cli::{CommitAdapters, run_from_with_commit};
 use gitserious_core::{
@@ -83,12 +83,12 @@ impl GlobalConfigurationStore for Global {
 
 #[derive(Default)]
 pub struct Project {
-    pub state: RefCell<Option<ProjectState>>,
-    pub initialized: RefCell<Option<(ProjectConfig, ProjectLock)>>,
+    pub state: RefCell<Option<ProjectConfiguration>>,
+    pub initialized: RefCell<Option<ProjectConfiguration>>,
 }
 
 impl Project {
-    pub fn with(state: ProjectState) -> Self {
+    pub fn with(state: ProjectConfiguration) -> Self {
         Self {
             state: RefCell::new(Some(state)),
             initialized: RefCell::default(),
@@ -96,52 +96,45 @@ impl Project {
     }
 }
 
-impl ProjectStateStore for Project {
+impl ProjectConfigurationStore for Project {
     type Error = FakeError;
 
-    fn inspect(&self, _: &RepositoryRoot) -> Result<ProjectState, Self::Error> {
-        Ok(self.state.borrow().clone().unwrap_or(ProjectState::Absent))
+    fn load(&self, _: &RepositoryRoot) -> Result<Option<StoredProject>, Self::Error> {
+        Ok(self
+            .state
+            .borrow()
+            .clone()
+            .map(|configuration| StoredProject {
+                configuration,
+                revision: ProjectRevision::of_bytes(b"project"),
+            }))
+    }
+    fn create(
+        &self,
+        _: &RepositoryRoot,
+        configuration: &ProjectConfiguration,
+    ) -> Result<ProjectRevision, Self::Error> {
+        *self.initialized.borrow_mut() = Some(configuration.clone());
+        Ok(ProjectRevision::of_bytes(b"created"))
+    }
+    fn replace(
+        &self,
+        _: &RepositoryRoot,
+        _: ProjectRevision,
+        _: &ProjectConfiguration,
+    ) -> Result<ProjectRevision, Self::Error> {
+        Err(FakeError("unexpected project write"))
     }
     fn ensure_local_state(&self, _: &RepositoryRoot) -> Result<(), Self::Error> {
         Ok(())
     }
-    fn initialize(
-        &self,
-        _: &RepositoryRoot,
-        config: &ProjectConfig,
-        lock: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        *self.initialized.borrow_mut() = Some((config.clone(), lock.clone()));
-        Ok(())
-    }
-    fn create_lock(&self, _: &RepositoryRoot, _: &ProjectLock) -> Result<(), Self::Error> {
-        Err(FakeError("unexpected create lock"))
-    }
-    fn replace_lock(
-        &self,
-        _: &RepositoryRoot,
-        _: &ProjectLock,
-        _: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Err(FakeError("unexpected replace lock"))
-    }
-    fn compare_and_swap(
-        &self,
-        _: &RepositoryRoot,
-        _: &ProjectConfig,
-        _: &ProjectLock,
-        _: &ProjectConfig,
-        _: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Err(FakeError("unexpected project write"))
-    }
 }
 
-pub fn initialized_state() -> Result<ProjectState, Box<dyn Error>> {
-    let config = ProjectConfig::inherited();
-    let effective = resolve_effective_configuration(&GlobalConfiguration::default(), &config)?;
-    let lock = ProjectLock::capture(&config, &effective)?;
-    Ok(ProjectState::Initialized { config, lock })
+pub fn initialized_state() -> Result<ProjectConfiguration, Box<dyn Error>> {
+    Ok(initial_project_configuration(
+        &GlobalConfiguration::default(),
+        None,
+    )?)
 }
 
 pub enum AuthorOutcome {

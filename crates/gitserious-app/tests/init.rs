@@ -5,9 +5,10 @@ use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
 use gitserious_app::{
-    Fingerprint, GlobalConfiguration, InitOutcome, InitStatus, InitializeProjectError,
-    ProjectConfig, ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
-    fingerprint_taxonomy, initialize_project, resolve_effective_configuration,
+    ConfigurationError, GlobalConfiguration, InitOutcome, InitStatus, InitializeProjectError,
+    ProjectConfiguration, ProjectConfigurationStore, ProjectRevision, RepositoryLocator,
+    RepositoryRoot, StoredProject, fingerprint_taxonomy, initial_project_configuration,
+    initialize_project,
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
@@ -18,16 +19,15 @@ use gitserious_core::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FakeError {
     Locate,
-    Inspect,
+    Load,
     EnsureLocalState,
-    Initialize,
-    CreateLock,
-    ReplaceLock,
+    Create,
+    Replace,
 }
 
 impl Display for FakeError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        write!(formatter, "fake {self:?} failure")
+        write!(formatter, "{self:?}")
     }
 }
 
@@ -65,31 +65,29 @@ impl RepositoryLocator for FakeLocator {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum StoreCall {
-    Inspect,
+    Load,
     EnsureLocalState,
-    Initialize(ProjectConfig, ProjectLock),
-    CreateLock(ProjectLock),
-    ReplaceLock(ProjectLock, ProjectLock),
+    Create(ProjectConfiguration),
 }
 
 struct FakeStore {
-    state: ProjectState,
+    project: Option<ProjectConfiguration>,
     failure: Option<FakeError>,
     calls: RefCell<Vec<StoreCall>>,
 }
 
 impl FakeStore {
-    fn new(state: ProjectState) -> Self {
+    fn new(project: Option<ProjectConfiguration>) -> Self {
         Self {
-            state,
+            project,
             failure: None,
             calls: RefCell::new(Vec::new()),
         }
     }
 
-    fn failing(state: ProjectState, failure: FakeError) -> Self {
+    fn failing(failure: FakeError) -> Self {
         Self {
-            state,
+            project: None,
             failure: Some(failure),
             calls: RefCell::new(Vec::new()),
         }
@@ -104,101 +102,63 @@ impl FakeStore {
     }
 }
 
-impl ProjectStateStore for FakeStore {
+impl ProjectConfigurationStore for FakeStore {
     type Error = FakeError;
 
-    fn inspect(&self, _root: &RepositoryRoot) -> Result<ProjectState, Self::Error> {
-        self.calls.borrow_mut().push(StoreCall::Inspect);
-        self.maybe_fail(FakeError::Inspect)?;
-        Ok(self.state.clone())
+    fn load(&self, _root: &RepositoryRoot) -> Result<Option<StoredProject>, Self::Error> {
+        self.calls.borrow_mut().push(StoreCall::Load);
+        self.maybe_fail(FakeError::Load)?;
+        Ok(self.project.clone().map(|configuration| StoredProject {
+            configuration,
+            revision: ProjectRevision::of_bytes(b"existing"),
+        }))
+    }
+
+    fn create(
+        &self,
+        _root: &RepositoryRoot,
+        configuration: &ProjectConfiguration,
+    ) -> Result<ProjectRevision, Self::Error> {
+        self.calls
+            .borrow_mut()
+            .push(StoreCall::Create(configuration.clone()));
+        self.maybe_fail(FakeError::Create)?;
+        Ok(ProjectRevision::of_bytes(b"created"))
+    }
+
+    fn replace(
+        &self,
+        _root: &RepositoryRoot,
+        _expected: ProjectRevision,
+        _configuration: &ProjectConfiguration,
+    ) -> Result<ProjectRevision, Self::Error> {
+        Err(FakeError::Replace)
     }
 
     fn ensure_local_state(&self, _root: &RepositoryRoot) -> Result<(), Self::Error> {
         self.calls.borrow_mut().push(StoreCall::EnsureLocalState);
         self.maybe_fail(FakeError::EnsureLocalState)
     }
-
-    fn initialize(
-        &self,
-        _root: &RepositoryRoot,
-        config: &ProjectConfig,
-        lock: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        self.calls
-            .borrow_mut()
-            .push(StoreCall::Initialize(config.clone(), lock.clone()));
-        self.maybe_fail(FakeError::Initialize)
-    }
-
-    fn create_lock(&self, _root: &RepositoryRoot, lock: &ProjectLock) -> Result<(), Self::Error> {
-        self.calls
-            .borrow_mut()
-            .push(StoreCall::CreateLock(lock.clone()));
-        self.maybe_fail(FakeError::CreateLock)
-    }
-
-    fn replace_lock(
-        &self,
-        _root: &RepositoryRoot,
-        current: &ProjectLock,
-        replacement: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        self.calls
-            .borrow_mut()
-            .push(StoreCall::ReplaceLock(current.clone(), replacement.clone()));
-        self.maybe_fail(FakeError::ReplaceLock)
-    }
-
-    fn compare_and_swap(
-        &self,
-        _root: &RepositoryRoot,
-        _current_config: &ProjectConfig,
-        _current_lock: &ProjectLock,
-        _replacement_config: &ProjectConfig,
-        _replacement_lock: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Err(FakeError::ReplaceLock)
-    }
 }
 
-fn lock_for(
-    global: &GlobalConfiguration,
-    config: &ProjectConfig,
-) -> Result<ProjectLock, Box<dyn Error>> {
-    let effective = resolve_effective_configuration(global, config)?;
-    Ok(ProjectLock::capture(config, &effective)?)
+fn default_project() -> Result<ProjectConfiguration, Box<dyn Error>> {
+    Ok(initial_project_configuration(
+        &GlobalConfiguration::default(),
+        None,
+    )?)
 }
 
-fn default_config_and_lock() -> Result<(ProjectConfig, ProjectLock), Box<dyn Error>> {
-    let config = ProjectConfig::inherited();
-    let lock = lock_for(&GlobalConfiguration::default(), &config)?;
-    Ok((config, lock))
-}
-
-fn init<S>(
+fn init(
     locator: &FakeLocator,
-    store: &S,
-    start: &Path,
-) -> Result<InitOutcome, InitializeProjectError<FakeError, FakeError>>
-where
-    S: ProjectStateStore<Error = FakeError>,
-{
-    initialize_project(locator, store, &GlobalConfiguration::default(), None, start)
+    store: &FakeStore,
+    global: &GlobalConfiguration,
+    taxonomy: Option<&TaxonomyId>,
+) -> Result<InitOutcome, InitializeProjectError<FakeError, FakeError>> {
+    initialize_project(locator, store, global, taxonomy, &repository_path())
 }
 
 fn repository_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fake-repository")
-}
-
-fn stale_lock(current: &ProjectLock) -> Result<ProjectLock, Box<dyn Error>> {
-    let fingerprint = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-        .parse::<Fingerprint>()?;
-    Ok(ProjectLock::new(
-        current.version(),
-        fingerprint,
-        current.default_taxonomy().clone(),
-        current.taxonomies().to_vec(),
-    )?)
 }
 
 fn assert_resolution(status: InitStatus, outcome: &InitOutcome) {
@@ -209,118 +169,84 @@ fn assert_resolution(status: InitStatus, outcome: &InitOutcome) {
 }
 
 #[test]
-fn absent_state_creates_config_and_lock_once() -> Result<(), Box<dyn Error>> {
+fn absent_project_is_created_once_with_complete_definitions() -> Result<(), Box<dyn Error>> {
     let locator = FakeLocator::available()?;
-    let store = FakeStore::new(ProjectState::Absent);
-    let (expected_config, expected_lock) = default_config_and_lock()?;
+    let store = FakeStore::new(None);
 
-    let outcome = init(&locator, &store, &repository_path().join("subdir"))?;
+    let outcome = init(&locator, &store, &GlobalConfiguration::default(), None)?;
 
     assert_resolution(InitStatus::Initialized, &outcome);
     assert_eq!(locator.calls.get(), 1);
     assert_eq!(
         store.calls.borrow().as_slice(),
         [
-            StoreCall::Inspect,
+            StoreCall::Load,
             StoreCall::EnsureLocalState,
-            StoreCall::Initialize(expected_config, expected_lock),
+            StoreCall::Create(default_project()?),
         ]
     );
     Ok(())
 }
 
 #[test]
-fn config_only_state_creates_only_the_missing_lock() -> Result<(), Box<dyn Error>> {
+fn existing_project_is_never_rewritten_even_when_the_library_changed() -> Result<(), Box<dyn Error>>
+{
     let locator = FakeLocator::available()?;
-    let (config, expected_lock) = default_config_and_lock()?;
-    let store = FakeStore::new(ProjectState::ConfigOnly(config));
+    let store = FakeStore::new(Some(default_project()?));
+    let research_only = GlobalConfiguration::new(
+        1,
+        TaxonomyId::new("research")?,
+        vec![TaxonomyId::new("research")?],
+        Vec::new(),
+    )?;
 
-    let outcome = init(&locator, &store, &repository_path())?;
-
-    assert_resolution(InitStatus::LockCreated, &outcome);
-    assert_eq!(
-        store.calls.borrow().as_slice(),
-        [
-            StoreCall::Inspect,
-            StoreCall::EnsureLocalState,
-            StoreCall::CreateLock(expected_lock)
-        ]
-    );
-    Ok(())
-}
-
-#[test]
-fn matching_initialized_state_ensures_only_local_state() -> Result<(), Box<dyn Error>> {
-    let locator = FakeLocator::available()?;
-    let (config, lock) = default_config_and_lock()?;
-    let store = FakeStore::new(ProjectState::Initialized { config, lock });
-
-    let outcome = init(&locator, &store, &repository_path())?;
+    let outcome = init(
+        &locator,
+        &store,
+        &research_only,
+        Some(&TaxonomyId::new("research")?),
+    )?;
 
     assert_resolution(InitStatus::AlreadyInitialized, &outcome);
     assert_eq!(
         store.calls.borrow().as_slice(),
-        [StoreCall::Inspect, StoreCall::EnsureLocalState]
+        [StoreCall::Load, StoreCall::EnsureLocalState]
     );
     Ok(())
 }
 
 #[test]
-fn stale_initialized_state_replaces_only_the_observed_lock() -> Result<(), Box<dyn Error>> {
+fn unknown_requested_taxonomy_is_refused_without_a_write() -> Result<(), Box<dyn Error>> {
     let locator = FakeLocator::available()?;
-    let (config, expected) = default_config_and_lock()?;
-    let stale = stale_lock(&expected)?;
-    let store = FakeStore::new(ProjectState::Initialized {
-        config,
-        lock: stale.clone(),
-    });
+    let store = FakeStore::new(None);
 
-    let outcome = init(&locator, &store, &repository_path())?;
-
-    assert_resolution(InitStatus::LockRefreshed, &outcome);
-    assert_eq!(
-        store.calls.borrow().as_slice(),
-        [
-            StoreCall::Inspect,
-            StoreCall::EnsureLocalState,
-            StoreCall::ReplaceLock(stale, expected),
-        ]
-    );
-    Ok(())
-}
-
-#[test]
-fn orphan_lock_is_refused_without_a_write() -> Result<(), Box<dyn Error>> {
-    let locator = FakeLocator::available()?;
-    let store = FakeStore::new(ProjectState::LockOnly);
-
-    let error = init(&locator, &store, &repository_path()).err();
-
-    assert!(matches!(error, Some(InitializeProjectError::OrphanLock)));
-    assert_eq!(store.calls.borrow().as_slice(), [StoreCall::Inspect]);
-    Ok(())
-}
-
-#[test]
-fn unknown_authored_taxonomy_is_refused_without_a_write() -> Result<(), Box<dyn Error>> {
-    let locator = FakeLocator::available()?;
-    let config = ProjectConfig::new(1, Some(TaxonomyId::new("custom")?), None)?;
-    let store = FakeStore::new(ProjectState::ConfigOnly(config));
-
-    let error = init(&locator, &store, &repository_path()).err();
+    let error = init(
+        &locator,
+        &store,
+        &GlobalConfiguration::default(),
+        Some(&TaxonomyId::new("custom")?),
+    )
+    .err();
 
     assert!(matches!(
         error,
-        Some(InitializeProjectError::Configuration(_))
+        Some(InitializeProjectError::Configuration(
+            ConfigurationError::UnknownTaxonomy(id)
+        )) if id.as_str() == "custom"
     ));
-    assert_eq!(store.calls.borrow().as_slice(), [StoreCall::Inspect]);
+    assert_eq!(store.calls.borrow().as_slice(), [StoreCall::Load]);
     Ok(())
 }
 
 #[test]
 fn locator_and_each_store_failure_remain_distinguishable() -> Result<(), Box<dyn Error>> {
-    let store = FakeStore::new(ProjectState::Absent);
-    let locator_error = init(&FakeLocator::failing(), &store, &repository_path());
+    let store = FakeStore::new(None);
+    let locator_error = init(
+        &FakeLocator::failing(),
+        &store,
+        &GlobalConfiguration::default(),
+        None,
+    );
     assert!(matches!(
         locator_error,
         Err(InitializeProjectError::Repository(FakeError::Locate))
@@ -328,25 +254,13 @@ fn locator_and_each_store_failure_remain_distinguishable() -> Result<(), Box<dyn
     assert!(store.calls.borrow().is_empty());
 
     let locator = FakeLocator::available()?;
-    let (config, lock) = default_config_and_lock()?;
-    for (state, failure) in [
-        (ProjectState::Absent, FakeError::Inspect),
-        (ProjectState::Absent, FakeError::EnsureLocalState),
-        (ProjectState::Absent, FakeError::Initialize),
-        (
-            ProjectState::ConfigOnly(config.clone()),
-            FakeError::CreateLock,
-        ),
-        (
-            ProjectState::Initialized {
-                config: config.clone(),
-                lock: stale_lock(&lock)?,
-            },
-            FakeError::ReplaceLock,
-        ),
+    for failure in [
+        FakeError::Load,
+        FakeError::EnsureLocalState,
+        FakeError::Create,
     ] {
-        let store = FakeStore::failing(state, failure);
-        let error = init(&locator, &store, &repository_path());
+        let store = FakeStore::failing(failure);
+        let error = init(&locator, &store, &GlobalConfiguration::default(), None);
         assert!(matches!(
             error,
             Err(InitializeProjectError::Store(actual)) if actual == failure
@@ -506,13 +420,10 @@ fn taxonomy_fingerprint_changes_for_every_semantic_dimension() -> Result<(), Box
 }
 
 #[test]
-fn captured_default_lock_is_exact_and_deterministic() -> Result<(), Box<dyn Error>> {
-    let (config, first) = default_config_and_lock()?;
-    let second = lock_for(&GlobalConfiguration::default(), &config)?;
+fn initial_project_copies_the_default_environment_in_order() -> Result<(), Box<dyn Error>> {
+    let first = default_project()?;
 
-    assert_eq!(first, second);
-    assert_eq!(first.version(), 1);
-    assert!(first.matches(&config));
+    assert_eq!(first, default_project()?);
     assert_eq!(first.default_taxonomy().as_str(), "conventional");
     assert_eq!(first.taxonomies(), built_in_taxonomies());
     assert_eq!(
@@ -530,7 +441,7 @@ fn captured_default_lock_is_exact_and_deterministic() -> Result<(), Box<dyn Erro
 }
 
 #[test]
-fn available_custom_taxonomies_are_recorded_in_the_lock() -> Result<(), Box<dyn Error>> {
+fn initial_project_copies_available_custom_taxonomies() -> Result<(), Box<dyn Error>> {
     let team = TaxonomyId::new("team")?;
     let mut available = GlobalConfiguration::default()
         .available_taxonomies()
@@ -551,9 +462,32 @@ fn available_custom_taxonomies_are_recorded_in_the_lock() -> Result<(), Box<dyn 
         vec![fork.clone()].into_iter().map(Into::into).collect(),
     )?;
 
-    let lock = lock_for(&global, &ProjectConfig::inherited())?;
+    let project = initial_project_configuration(&global, None)?;
 
-    assert_eq!(lock.taxonomies().len(), built_in_taxonomies().len() + 1);
-    assert_eq!(lock.taxonomies().last(), Some(&fork));
+    assert_eq!(project.taxonomies().len(), built_in_taxonomies().len() + 1);
+    assert_eq!(project.taxonomies().last(), Some(&fork));
+    Ok(())
+}
+
+#[test]
+fn requested_default_outside_the_available_list_is_appended() -> Result<(), Box<dyn Error>> {
+    let global = GlobalConfiguration::new(
+        1,
+        TaxonomyId::new("conventional")?,
+        vec![TaxonomyId::new("conventional")?],
+        Vec::new(),
+    )?;
+
+    let project = initial_project_configuration(&global, Some(&TaxonomyId::new("research")?))?;
+
+    assert_eq!(project.default_taxonomy().as_str(), "research");
+    assert_eq!(
+        project
+            .taxonomies()
+            .iter()
+            .map(|taxonomy| taxonomy.id().as_str())
+            .collect::<Vec<_>>(),
+        ["conventional", "research"]
+    );
     Ok(())
 }

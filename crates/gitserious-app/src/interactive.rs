@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::taxonomy_configuration_editor::Workspace;
 use crate::{
     AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitWriter, ConfigurationWorkspace,
-    GlobalConfigurationStore, ProjectStateStore, RepositoryLocator, RepositoryStatus,
+    GlobalConfigurationStore, ProjectConfigurationStore, RepositoryLocator, RepositoryStatus,
     RepositoryStatusReader, prepare_commit_with_taxonomy, validate_reviewed_commit,
 };
 
@@ -57,7 +57,7 @@ pub fn run_interactive<L, S, G, W>(
 where
     L: RepositoryLocator + ?Sized,
     L::Error: Display,
-    S: ProjectStateStore + ?Sized,
+    S: ProjectConfigurationStore + ?Sized,
     S::Error: Display,
     G: GlobalConfigurationStore + ?Sized,
     G::Error: Display,
@@ -87,7 +87,7 @@ impl<L, S, G, W> InteractiveWorkspace for InteractiveServices<'_, L, S, G, W>
 where
     L: RepositoryLocator + ?Sized,
     L::Error: Display,
-    S: ProjectStateStore + ?Sized,
+    S: ProjectConfigurationStore + ?Sized,
     S::Error: Display,
     G: GlobalConfigurationStore + ?Sized,
     G::Error: Display,

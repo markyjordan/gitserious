@@ -7,16 +7,16 @@ use std::rc::Rc;
 use gitserious_app::{
     AuthoredCommit, CommitAuthoringContext, CommitAuthoringOutcome, CommitDraftAuthor,
     CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitTaxonomy, CommitWriter,
-    CreateCommitError, Fingerprint, GlobalConfiguration, ProjectConfig, ProjectLock, ProjectState,
-    ProjectStateStore, RepositoryLocator, RepositoryRoot, create_commit_with_taxonomy,
-    fingerprint_taxonomy, resolve_effective_configuration,
+    CreateCommitError, GlobalConfiguration, ProjectConfiguration, ProjectConfigurationStore,
+    ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject, create_commit_with_taxonomy,
+    fingerprint_taxonomy, initial_project_configuration,
 };
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitProvenance, CommitSubject,
-    CommitTypeDefinition, CommitTypeId, ConditionalApplicability, Description, PropertyDefinition,
-    PropertyKey, PropertyRequirement, PropertyResponse, PropertyValue, SchemaVersion, Taxonomy,
-    TaxonomyId, TaxonomyVersion, built_in_commit_types, built_in_taxonomies, validate_commit_draft,
-    validate_commit_draft_with_provenance,
+    CommitTypeDefinition, CommitTypeId, ConditionalApplicability, Description, Fingerprint,
+    PropertyDefinition, PropertyKey, PropertyRequirement, PropertyResponse, PropertyValue,
+    SchemaVersion, Taxonomy, TaxonomyId, TaxonomyVersion, built_in_commit_types,
+    built_in_taxonomies, validate_commit_draft, validate_commit_draft_with_provenance,
 };
 
 type Trace = Rc<RefCell<Vec<&'static str>>>;
@@ -51,53 +51,42 @@ impl RepositoryLocator for FakeLocator {
 }
 
 struct FakeStore {
-    state: RefCell<Result<ProjectState, FakeError>>,
+    state: RefCell<Result<Option<ProjectConfiguration>, FakeError>>,
     trace: Trace,
 }
 
-impl ProjectStateStore for FakeStore {
+impl ProjectConfigurationStore for FakeStore {
     type Error = FakeError;
 
-    fn inspect(&self, _root: &RepositoryRoot) -> Result<ProjectState, Self::Error> {
-        self.trace.borrow_mut().push("inspect");
-        self.state.borrow().clone()
+    fn load(&self, _root: &RepositoryRoot) -> Result<Option<StoredProject>, Self::Error> {
+        self.trace.borrow_mut().push("load");
+        self.state.borrow().clone().map(|state| {
+            state.map(|configuration| StoredProject {
+                configuration,
+                revision: ProjectRevision::of_bytes(b"fake"),
+            })
+        })
+    }
+
+    fn create(
+        &self,
+        _root: &RepositoryRoot,
+        _configuration: &ProjectConfiguration,
+    ) -> Result<ProjectRevision, Self::Error> {
+        Err(FakeError("unexpected create"))
+    }
+
+    fn replace(
+        &self,
+        _root: &RepositoryRoot,
+        _expected: ProjectRevision,
+        _configuration: &ProjectConfiguration,
+    ) -> Result<ProjectRevision, Self::Error> {
+        Err(FakeError("unexpected replace"))
     }
 
     fn ensure_local_state(&self, _root: &RepositoryRoot) -> Result<(), Self::Error> {
         Err(FakeError("unexpected ensure local state"))
-    }
-
-    fn initialize(
-        &self,
-        _root: &RepositoryRoot,
-        _config: &ProjectConfig,
-        _lock: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Err(FakeError("unexpected initialize"))
-    }
-
-    fn create_lock(&self, _root: &RepositoryRoot, _lock: &ProjectLock) -> Result<(), Self::Error> {
-        Err(FakeError("unexpected create lock"))
-    }
-
-    fn replace_lock(
-        &self,
-        _root: &RepositoryRoot,
-        _current: &ProjectLock,
-        _replacement: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Err(FakeError("unexpected replace lock"))
-    }
-
-    fn compare_and_swap(
-        &self,
-        _root: &RepositoryRoot,
-        _current_config: &ProjectConfig,
-        _current_lock: &ProjectLock,
-        _replacement_config: &ProjectConfig,
-        _replacement_lock: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Err(FakeError("unexpected project compare and swap"))
     }
 }
 
@@ -189,14 +178,17 @@ fn repository_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fake-repository")
 }
 
-fn state_for(config: ProjectConfig) -> Result<ProjectState, Box<dyn Error>> {
-    let effective = resolve_effective_configuration(&GlobalConfiguration::default(), &config)?;
-    let lock = ProjectLock::capture(&config, &effective)?;
-    Ok(ProjectState::Initialized { config, lock })
+fn project_with_default(
+    default: Option<&TaxonomyId>,
+) -> Result<Option<ProjectConfiguration>, Box<dyn Error>> {
+    Ok(Some(initial_project_configuration(
+        &GlobalConfiguration::default(),
+        default,
+    )?))
 }
 
-fn initialized_state() -> Result<ProjectState, Box<dyn Error>> {
-    state_for(ProjectConfig::inherited())
+fn initialized_state() -> Result<Option<ProjectConfiguration>, Box<dyn Error>> {
+    project_with_default(None)
 }
 
 fn valid_draft(definition: &CommitTypeDefinition) -> Result<CommitDraft, Box<dyn Error>> {
@@ -228,7 +220,7 @@ struct Harness {
 }
 
 impl Harness {
-    fn new(state: ProjectState) -> Self {
+    fn new(state: Option<ProjectConfiguration>) -> Self {
         let trace = Trace::default();
         Self {
             locator: FakeLocator {
@@ -306,7 +298,7 @@ fn requested_type_is_resolved_before_authoring_and_commits_once_in_port_order()
     );
     assert_eq!(
         harness.trace.borrow().as_slice(),
-        ["locate", "inspect", "author", "write"]
+        ["locate", "load", "author", "write"]
     );
     let seen = harness.author.seen.borrow();
     assert_eq!(seen.len(), 1);
@@ -349,47 +341,50 @@ fn author_cancellation_never_invokes_the_writer() -> Result<(), Box<dyn Error>> 
     assert!(harness.writer.messages.borrow().is_empty());
     assert_eq!(
         harness.trace.borrow().as_slice(),
-        ["locate", "inspect", "author"]
+        ["locate", "load", "author"]
     );
     Ok(())
 }
 
 #[test]
-fn every_incomplete_project_state_is_rejected_before_authoring() -> Result<(), Box<dyn Error>> {
-    let ProjectState::Initialized { config, lock } = initialized_state()? else {
-        return Err("initialized_state is not initialized".into());
-    };
-    let stale = ProjectLock::new(
-        lock.version(),
-        "sha256:0000000000000000000000000000000000000000000000000000000000000000".parse()?,
-        lock.default_taxonomy().clone(),
-        lock.taxonomies().to_vec(),
+fn uninitialized_project_is_rejected_before_authoring() {
+    let harness = Harness::new(None);
+    assert!(matches!(
+        harness.run(None),
+        Err(error @ CreateCommitError::Policy(_))
+            if error.to_string().contains("run `gitserious init` before committing")
+    ));
+    assert!(harness.author.seen.borrow().is_empty());
+}
+
+#[test]
+fn project_owned_built_in_identity_replaces_the_compiled_schema() -> Result<(), Box<dyn Error>> {
+    let conventional = Taxonomy::new(
+        TaxonomyId::new("conventional")?,
+        TaxonomyVersion::new(7)?,
+        Description::new("A project-owned conventional taxonomy.")?,
+        None,
+        vec![CommitTypeDefinition::new(
+            SchemaVersion::V1,
+            CommitTypeId::new("ship")?,
+            "Ships a change.",
+            vec![PropertyDefinition::new(
+                PropertyKey::new("intent")?,
+                "Why the change ships.",
+                PropertyRequirement::Required,
+            )?],
+        )?],
     )?;
-    for (state, expected) in [
-        (
-            ProjectState::Absent,
-            "run `gitserious init` before committing",
-        ),
-        (
-            ProjectState::ConfigOnly(config.clone()),
-            "gitserious.lock is missing",
-        ),
-        (ProjectState::LockOnly, "exists without gitserious.toml"),
-        (
-            ProjectState::Initialized {
-                config,
-                lock: stale,
-            },
-            "gitserious.toml and gitserious.lock disagree",
-        ),
-    ] {
-        let harness = Harness::new(state);
-        assert!(matches!(
-            harness.run(None),
-            Err(error @ CreateCommitError::Policy(_)) if error.to_string().contains(expected)
-        ));
-        assert!(harness.author.seen.borrow().is_empty());
-    }
+    let project = ProjectConfiguration::new(1, conventional.id().clone(), vec![conventional])?;
+    let harness = Harness::new(Some(project));
+
+    assert!(matches!(
+        harness.run(Some(&CommitTypeId::new("fix")?)),
+        Err(CreateCommitError::UnknownCommitType { available, .. })
+            if available == [CommitTypeId::new("ship")?]
+    ));
+    assert!(matches!(harness.run(None)?, CommitOutcome::Created(_)));
+    assert!(harness.writer.messages.borrow()[0].contains("Gitserious-Taxonomy: conventional@7\n"));
     Ok(())
 }
 
@@ -478,7 +473,7 @@ fn every_port_failure_is_preserved_and_stops_downstream_calls() -> Result<(), Bo
         store.run(None),
         Err(CreateCommitError::Store(FakeError("store failed")))
     ));
-    assert_eq!(store.trace.borrow().as_slice(), ["locate", "inspect"]);
+    assert_eq!(store.trace.borrow().as_slice(), ["locate", "load"]);
 
     let author = Harness::new(initialized_state()?);
     author
@@ -519,18 +514,11 @@ fn custom_taxonomy_commits_with_its_own_schema() -> Result<(), Box<dyn Error>> {
             )?],
         )?],
     )?;
-    let config = ProjectConfig::new(1, Some(ops.id().clone()), Some(vec![ops.id().clone()]))?;
-    let library = GlobalConfiguration::new(
+    let harness = Harness::new(Some(ProjectConfiguration::new(
         1,
         ops.id().clone(),
-        vec![ops.id().clone()],
-        vec![ops.into()],
-    )?;
-    let lock = ProjectLock::capture(
-        &config,
-        &resolve_effective_configuration(&library, &config)?,
-    )?;
-    let harness = Harness::new(ProjectState::Initialized { config, lock });
+        vec![ops],
+    )?));
 
     assert!(matches!(harness.run(None)?, CommitOutcome::Created(_)));
 
@@ -629,10 +617,9 @@ impl CommitDraftAuthor for ContextAuthor<'_> {
         };
         if let Some(store) = self.change_policy {
             let research = TaxonomyId::new("research").map_err(|_| FakeError("invalid id"))?;
-            let config = ProjectConfig::new(1, Some(research), None)
-                .map_err(|_| FakeError("invalid policy"))?;
             *store.state.borrow_mut() =
-                Ok(state_for(config).map_err(|_| FakeError("invalid lock"))?);
+                Ok(project_with_default(Some(&research))
+                    .map_err(|_| FakeError("invalid policy"))?);
         }
         Ok(CommitAuthoringOutcome::Authored(authored))
     }
@@ -681,15 +668,14 @@ fn approved_message_uses_the_captured_policy_even_if_the_project_changes()
     assert!(harness.writer.messages.borrow()[0].contains("Gitserious-Taxonomy: conventional@2\n"));
     assert!(matches!(
         &*harness.store.state.borrow(),
-        Ok(ProjectState::Initialized { config, .. })
-            if config.default_taxonomy().map(TaxonomyId::as_str) == Some("research")
+        Ok(Some(config)) if config.default_taxonomy().as_str() == "research"
     ));
     assert_eq!(
         harness
             .trace
             .borrow()
             .iter()
-            .filter(|call| **call == "inspect")
+            .filter(|call| **call == "load")
             .count(),
         1
     );

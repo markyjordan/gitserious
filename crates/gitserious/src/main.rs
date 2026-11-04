@@ -6,7 +6,7 @@ use gitserious_app::resolve_global_paths;
 use gitserious_cli::CommitAdapters;
 use gitserious_fs::{
     GitCommitWriter, GitRepositoryLocator, GitRepositoryStatusReader, SystemGlobalPathResolver,
-    TomlGlobalConfigurationStore, TomlProjectStateStore,
+    TomlGlobalConfigurationStore, TomlProjectStore,
 };
 use gitserious_tui::{
     RatatuiCommitDraftAuthor, RatatuiInteractiveUi, RatatuiTaxonomyConfigurationEditor,
@@ -20,11 +20,11 @@ fn main() -> ExitCode {
     };
     let configuration = TomlGlobalConfigurationStore::new(paths.config().clone());
     let locator = GitRepositoryLocator;
-    let store = TomlProjectStateStore;
+    let store = TomlProjectStore;
     let author = RatatuiCommitDraftAuthor;
     let writer = GitCommitWriter;
-    let editor = RatatuiTaxonomyConfigurationEditor::with_library_path(configuration.path());
-    let interactive = RatatuiInteractiveUi::with_library_path(configuration.path());
+    let editor = RatatuiTaxonomyConfigurationEditor;
+    let interactive = RatatuiInteractiveUi;
     let status = GitRepositoryStatusReader;
     let commit = CommitAdapters::new(&author, &writer)
         .with_configuration_editor(&editor)
