@@ -10,9 +10,10 @@ use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
     ConfigurationEditor, GlobalConfigurationStore, HelpPage, InitOutcome, InitStatus,
     InteractiveEntry, InteractiveUi, ProjectConfigurationStore, ProjectVerification,
-    RepositoryLocator, RepositoryRoot, RepositoryStatusReader, TaxonomyOrigin, VerifyProjectError,
-    create_commit_with_taxonomy, edit_configuration, fingerprint_project_configuration,
-    fingerprint_taxonomy, initialize_project, run_interactive, verify_project_configuration,
+    RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryStatusReader,
+    TaxonomyOrigin, VerifyProjectError, create_commit_with_taxonomy, edit_configuration,
+    fingerprint_project_configuration, fingerprint_taxonomy, initialize_project, run_interactive,
+    verify_project_configuration,
 };
 use gitserious_core::{
     CommitMessage, CommitTypeDefinition, CommitTypeId, PropertyRequirement, Taxonomy, TaxonomyId,
@@ -82,13 +83,19 @@ enum ReportFormat {
     Json,
 }
 
+type InteractiveAdapters<'a> = (
+    &'a dyn InteractiveUi,
+    &'a dyn RepositoryStatusReader,
+    &'a dyn RepositoryInitializer,
+);
+
 /// Concrete interaction adapters required by the binary.
 #[derive(Clone, Copy)]
 pub struct CommitAdapters<'a, A: ?Sized, W: ?Sized> {
     author: &'a A,
     writer: &'a W,
     configuration_editor: Option<&'a dyn ConfigurationEditor>,
-    interactive: Option<(&'a dyn InteractiveUi, &'a dyn RepositoryStatusReader)>,
+    interactive: Option<InteractiveAdapters<'a>>,
 }
 
 impl<'a, A: ?Sized, W: ?Sized> CommitAdapters<'a, A, W> {
@@ -102,14 +109,15 @@ impl<'a, A: ?Sized, W: ?Sized> CommitAdapters<'a, A, W> {
         }
     }
 
-    /// Supplies the unified shell and its read-only Git adapter.
+    /// Supplies the unified shell, its read-only Git status, and `git init` for Home.
     #[must_use]
     pub fn with_interactive(
         mut self,
         ui: &'a dyn InteractiveUi,
         status: &'a dyn RepositoryStatusReader,
+        initializer: &'a dyn RepositoryInitializer,
     ) -> Self {
-        self.interactive = Some((ui, status));
+        self.interactive = Some((ui, status, initializer));
         self
     }
 
@@ -289,7 +297,7 @@ where
                 ExitCode::FAILURE
             };
         }
-        let Some((ui, status)) = adapters.interactive else {
+        let Some((ui, status, initializer)) = adapters.interactive else {
             return operational_error(stderr, "interactive shell is not configured");
         };
         return match run_interactive(
@@ -297,6 +305,7 @@ where
             store,
             global,
             status,
+            initializer,
             adapters.writer,
             start,
             ui,

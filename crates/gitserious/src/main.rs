@@ -5,8 +5,8 @@ use std::process::ExitCode;
 use gitserious_app::resolve_global_paths;
 use gitserious_cli::CommitAdapters;
 use gitserious_fs::{
-    GitCommitWriter, GitRepositoryLocator, GitRepositoryStatusReader, SystemGlobalPathResolver,
-    TomlGlobalConfigurationStore, TomlProjectStore,
+    GitCommitWriter, GitRepositoryInitializer, GitRepositoryLocator, GitRepositoryStatusReader,
+    SystemGlobalPathResolver, TomlGlobalConfigurationStore, TomlProjectStore,
 };
 use gitserious_tui::{
     RatatuiCommitDraftAuthor, RatatuiInteractiveUi, RatatuiTaxonomyConfigurationEditor,
@@ -26,9 +26,10 @@ fn main() -> ExitCode {
     let editor = RatatuiTaxonomyConfigurationEditor;
     let interactive = RatatuiInteractiveUi;
     let status = GitRepositoryStatusReader;
+    let initializer = GitRepositoryInitializer;
     let commit = CommitAdapters::new(&author, &writer)
         .with_configuration_editor(&editor)
-        .with_interactive(&interactive, &status);
+        .with_interactive(&interactive, &status, &initializer);
     let mut stdout = io::stdout();
 
     gitserious_cli::run_with_commit(

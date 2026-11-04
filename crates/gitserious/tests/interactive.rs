@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::convert::Infallible;
 use std::error::Error;
 use std::fs;
@@ -7,14 +8,15 @@ use std::process::{Command, Output};
 use gitserious_app::{
     AuthoredCommit, GlobalConfiguration, GlobalConfigurationStore, HelpPage, HomeState,
     InteractiveEntry, InteractiveUi, InteractiveWorkspace, LibraryTaxonomy, ProjectConfiguration,
-    initialize_project, run_interactive,
+    RepositoryInitializer, initialize_project, run_interactive,
 };
 use gitserious_core::{
     CommitDraft, CommitSubject, CommitTypeDefinition, CommitTypeId, Description, SchemaVersion,
     Taxonomy, TaxonomyId, TaxonomyVersion, built_in_taxonomies,
 };
 use gitserious_fs::{
-    GitCommitWriter, GitRepositoryLocator, GitRepositoryStatusReader, TomlProjectStore,
+    GitCommitWriter, GitRepositoryInitializer, GitRepositoryLocator, GitRepositoryStatusReader,
+    TomlProjectStore,
 };
 
 struct Library(GlobalConfiguration);
@@ -165,6 +167,7 @@ fn shell_services_gate_staging_validate_review_and_retry_git_rejection()
         &TomlProjectStore,
         &Library(global),
         &GitRepositoryStatusReader,
+        &GitRepositoryInitializer,
         &GitCommitWriter,
         temp.path(),
         &ExerciseUi(temp.path()),
@@ -205,6 +208,7 @@ fn shell_services_reject_absent_and_invalid_policy() -> Result<(), Box<dyn Error
             &TomlProjectStore,
             &library,
             &GitRepositoryStatusReader,
+            &GitRepositoryInitializer,
             &GitCommitWriter,
             temp.path(),
             &BlockedUi(expected),
@@ -269,7 +273,13 @@ impl InteractiveUi for HomeUi<'_> {
         let canonical = |path: &Path| fs::canonicalize(path).map_err(|error| error.to_string());
         assert_eq!(canonical(root.as_path())?, canonical(self.0)?);
 
+        let head = fs::read(self.0.join(".git/HEAD")).map_err(|error| error.to_string())?;
         workspace.initialize(&built_ins()?)?;
+        assert_eq!(
+            fs::read(self.0.join(".git/HEAD")).map_err(|error| error.to_string())?,
+            head,
+            "an existing repository keeps its HEAD"
+        );
         let written = fs::read_to_string(self.0.join("gitserious.toml"))
             .map_err(|error| error.to_string())?;
         assert!(self.0.join(".gitserious").is_dir());
@@ -322,6 +332,7 @@ fn home_follows_a_directory_from_no_repository_to_a_tracked_project() -> Result<
         &TomlProjectStore,
         &Library(GlobalConfiguration::default()),
         &GitRepositoryStatusReader,
+        &GitRepositoryInitializer,
         &GitCommitWriter,
         temp.path(),
         &HomeUi(temp.path()),
@@ -382,6 +393,7 @@ fn initialization_offers_only_library_taxonomies_that_have_types() -> Result<(),
         &TomlProjectStore,
         &Library(library),
         &GitRepositoryStatusReader,
+        &GitRepositoryInitializer,
         &GitCommitWriter,
         temp.path(),
         &LibraryUi,
@@ -389,4 +401,132 @@ fn initialization_offers_only_library_taxonomies_that_have_types() -> Result<(),
         &[],
     )?;
     Ok(())
+}
+
+struct PlainDirectoryUi<'a>(&'a Path);
+impl InteractiveUi for PlainDirectoryUi<'_> {
+    fn run(
+        &self,
+        _: InteractiveEntry,
+        workspace: &dyn InteractiveWorkspace,
+        _: &[HelpPage],
+    ) -> Result<(), String> {
+        assert!(matches!(workspace.home(), HomeState::NoRepository { .. }));
+        workspace.initialize(&built_ins()?)?;
+        assert!(
+            self.0.join(".git").is_dir(),
+            "git init ran in the directory"
+        );
+        assert!(self.0.join("gitserious.toml").is_file());
+        assert!(matches!(
+            workspace.home(),
+            HomeState::Initialized {
+                policy_untracked: true,
+                ..
+            }
+        ));
+        Ok(())
+    }
+}
+
+/// A `.git` file that names no repository is a broken repository, not a missing one, so
+/// neither `git init` nor the project write runs.
+struct BlockedGitUi<'a>(&'a Path);
+impl InteractiveUi for BlockedGitUi<'_> {
+    fn run(
+        &self,
+        _: InteractiveEntry,
+        workspace: &dyn InteractiveWorkspace,
+        _: &[HelpPage],
+    ) -> Result<(), String> {
+        assert!(workspace.initialize(&built_ins()?).is_err());
+        assert!(
+            !self.0.join("gitserious.toml").exists(),
+            "nothing is written after git fails"
+        );
+        Ok(())
+    }
+}
+
+fn run_home(directory: &Path, ui: &dyn InteractiveUi) -> Result<(), Box<dyn Error>> {
+    run_home_with(directory, ui, &GitRepositoryInitializer)
+}
+
+fn run_home_with(
+    directory: &Path,
+    ui: &dyn InteractiveUi,
+    initializer: &dyn RepositoryInitializer,
+) -> Result<(), Box<dyn Error>> {
+    run_interactive(
+        &GitRepositoryLocator,
+        &TomlProjectStore,
+        &Library(GlobalConfiguration::default()),
+        &GitRepositoryStatusReader,
+        initializer,
+        &GitCommitWriter,
+        directory,
+        ui,
+        InteractiveEntry::Home,
+        &[],
+    )?;
+    Ok(())
+}
+
+#[test]
+fn home_initializes_git_and_gitserious_in_a_plain_directory() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::TempDir::new()?;
+    run_home(temp.path(), &PlainDirectoryUi(temp.path()))
+}
+
+#[test]
+fn a_failed_git_init_writes_no_project() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::TempDir::new()?;
+    fs::write(temp.path().join(".git"), "not a gitdir pointer\n")?;
+    run_home(temp.path(), &BlockedGitUi(temp.path()))
+}
+
+/// Counts `git init` runs so a retry can prove it initializes Git only once.
+struct CountingInitializer(Cell<usize>);
+impl RepositoryInitializer for CountingInitializer {
+    fn initialize(&self, directory: &Path) -> Result<(), String> {
+        self.0.set(self.0.get() + 1);
+        GitRepositoryInitializer.initialize(directory)
+    }
+}
+
+struct RecoveryUi<'a>(&'a Path, &'a CountingInitializer);
+impl InteractiveUi for RecoveryUi<'_> {
+    fn run(
+        &self,
+        _: InteractiveEntry,
+        workspace: &dyn InteractiveWorkspace,
+        _: &[HelpPage],
+    ) -> Result<(), String> {
+        let blocker = self.0.join(".gitserious");
+        assert!(
+            workspace.initialize(&built_ins()?).is_err(),
+            "a file named .gitserious blocks the project write"
+        );
+        assert!(self.0.join(".git").is_dir(), "git init already ran");
+        assert!(!self.0.join("gitserious.toml").exists());
+        assert!(matches!(workspace.home(), HomeState::Uninitialized { .. }));
+
+        fs::remove_file(&blocker).map_err(|error| error.to_string())?;
+        workspace.initialize(&built_ins()?)?;
+        assert_eq!(self.1.0.get(), 1, "the retry writes only the project");
+        assert!(matches!(workspace.home(), HomeState::Initialized { .. }));
+        Ok(())
+    }
+}
+
+#[test]
+fn a_retry_after_a_partial_initialization_writes_only_the_project() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::TempDir::new()?;
+    fs::write(temp.path().join(".gitserious"), "")?;
+    let initializer = CountingInitializer(Cell::new(0));
+    run_home_with(
+        temp.path(),
+        &RecoveryUi(temp.path(), &initializer),
+        &initializer,
+    )
 }
