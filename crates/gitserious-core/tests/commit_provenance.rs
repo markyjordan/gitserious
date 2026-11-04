@@ -231,7 +231,7 @@ fn provenance_rendering_keeps_explicit_applicability_validation() -> TestResult 
     assert!(
         message
             .as_str()
-            .contains("Gitserious-Taxonomy: conventional-v2\n")
+            .contains("Gitserious-Taxonomy: conventional-v1\n")
     );
     assert!(!message.as_str().contains("constraints:"));
 

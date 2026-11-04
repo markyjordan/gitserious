@@ -84,7 +84,7 @@ fn built_ins_come_first_then_custom_taxonomies_in_storage_order() -> TestResult 
         draft.taxonomies()[3]
             .derived_from()
             .map(|source| source.versioned().to_string()),
-        Some("conventional-v2".into())
+        Some("conventional-v1".into())
     );
     Ok(())
 }
@@ -304,7 +304,7 @@ fn a_fork_copies_its_source_under_a_new_name_with_lineage_and_source_baselines()
     assert_eq!(
         copy.derived_from()
             .map(|source| source.versioned().to_string()),
-        Some("conventional-v2".into())
+        Some("conventional-v1".into())
     );
     let source = &draft.taxonomies()[0];
     assert_eq!(copy.types().len(), source.types().len());

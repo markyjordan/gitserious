@@ -49,7 +49,7 @@ fn valid_project_verifies_read_only_without_a_usable_library() -> Result<(), Box
     assert_eq!(
         stdout(&output),
         "gitserious.toml is valid.\ndefault: conventional\n\
-         taxonomies: conventional-v2, research-v2, infra-ops-v2\n"
+         taxonomies: conventional-v1, research-v1, infra-ops-v1\n"
     );
     assert!(stderr(&output).is_empty());
     assert_eq!(snapshot(repository.path())?, before);
@@ -182,7 +182,7 @@ fn json_report_is_deterministic_and_ignores_toml_layout() -> Result<(), Box<dyn 
     assert_eq!(field(&first, "valid"), Some("true"));
     assert_eq!(field(&first, "default_taxonomy"), Some("\"conventional\""));
     assert!(first.starts_with("{\n  \"report_version\": 1,\n"));
-    assert!(first.contains("{ \"id\": \"research\", \"version\": 2, \"fingerprint\": \"sha256:"));
+    assert!(first.contains("{ \"id\": \"research\", \"version\": 1, \"fingerprint\": \"sha256:"));
     assert!(first.ends_with("  \"diagnostics\": []\n}\n"));
     let fingerprint = field(&first, "configuration_fingerprint").ok_or("no fingerprint")?;
 

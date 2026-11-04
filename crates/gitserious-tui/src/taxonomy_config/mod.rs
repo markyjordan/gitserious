@@ -2302,7 +2302,7 @@ mod tests {
             let text = screen.join("\n");
             assert!(text.contains("┌ Inspector ─"));
             assert!(text.contains("Taxonomy conventional"));
-            assert!(text.contains("Version      2"));
+            assert!(text.contains("Version      1"));
             assert!(
                 screen[usize::from(height) - 2]
                     .starts_with("  NAV   ←/→ focus  ↑/↓ move  enter open")
@@ -3349,7 +3349,7 @@ mod tests {
         assert!(!state.taxonomies.editing());
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(text(&terminal).contains("Forked from  conventional-v2"));
+        assert!(text(&terminal).contains("Forked from  conventional-v1"));
         let team = rows(&terminal)
             .into_iter()
             .find(|row| row.contains("▌▾ team"))

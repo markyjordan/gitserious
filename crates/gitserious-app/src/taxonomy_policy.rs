@@ -467,9 +467,9 @@ mod tests {
     #[test]
     fn taxonomies_without_examples_keep_their_historical_fingerprints() {
         let expected = [
-            "sha256:84bdeb8f84a8f0dc978c273ea22f464aead2554f985fa892cff96e174d57394d",
-            "sha256:70a48028e9e8618fe910cda767c3e4d3f5409a49a0f074e4e5604435f4f29f56",
-            "sha256:793a2aeaced5fbc17b54f03c3442f0d173cef7ddf3e5d11e09e47432c5ae0c21",
+            "sha256:b38521e5cdcf8217aeb7e7d715c6bc43b96ad166f92aae63cbc65ac702ebb277",
+            "sha256:752a600d06daeff2728c6677c12410705628b0b642f4c994f9d8a71b23dcbf15",
+            "sha256:b1f70a0e78ad40cf80aa653c0b7810349ecf9a989e876d411b64ed81234fc826",
         ];
         for (taxonomy, expected) in built_in_taxonomies().iter().zip(expected) {
             assert_eq!(fingerprint_taxonomy(taxonomy).to_string(), expected);
@@ -488,7 +488,7 @@ mod tests {
 
         assert_eq!(
             fingerprint_project_configuration(&forward).to_string(),
-            "sha256:186844579e3d0964b3d613cc34f3377b16de9159d807d641914dac48343c15a5",
+            "sha256:5667cf608d966b85668185b258051bebae84ea3bda96443d52975131ea00b9ff",
             "the canonical project fingerprint changed; bump its domain version"
         );
         assert_ne!(

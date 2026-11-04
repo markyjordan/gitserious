@@ -169,7 +169,7 @@ fn built_in(
 ) -> Taxonomy {
     Taxonomy::new(
         TaxonomyId::from_trusted(id),
-        TaxonomyVersion::V2,
+        TaxonomyVersion::V1,
         Description::from_trusted(description),
         None,
         commit_types.to_vec(),

@@ -111,7 +111,7 @@ fn assert_domain_initialization(domain: &str, representative: &str) -> Result<()
 
     let initialized = home.run(repository.path(), &["init", "--taxonomy", domain])?;
     assert!(initialized.status.success(), "{}", stderr(&initialized));
-    assert!(stdout(&initialized).ends_with(&format!(" ({domain}-v2).\n")));
+    assert!(stdout(&initialized).ends_with(&format!(" ({domain}-v1).\n")));
     assert!(!home.library_path().exists());
     let config_path = repository.path().join("gitserious.toml");
     let config = fs::read_to_string(&config_path)?;
