@@ -30,10 +30,6 @@ use commit_view::CommitView;
 use home::HomeAction;
 use init_editor::{EditorOutcome, InitEditor};
 
-/// Footer hints while the nav bar has focus.
-const NAV_BAR_HINTS: [(&str, &str); 2] = [("←/→", "switch"), ("tab", "back")];
-const NAV_BAR_SHELL_HINTS: [(&str, &str); 2] = [("/", "commands"), ("q", "quit")];
-
 fn quit_question() -> Confirmation<'static> {
     Confirmation {
         title: "Quit",
@@ -153,8 +149,6 @@ struct Shell {
     init_editor: Option<InitEditor>,
     /// Why the last initialization from Home failed.
     home_error: Option<String>,
-    /// Tab moves focus to the nav bar, where Left and Right switch sections.
-    nav_focused: bool,
     pending_author: Option<PendingAuthor>,
     overlay: Option<Overlay>,
     quit_dialog: ConfirmDialog,
@@ -177,7 +171,6 @@ impl Shell {
             home: workspace.home(),
             init_editor: None,
             home_error: None,
-            nav_focused: false,
             pending_author: None,
             overlay: None,
             quit_dialog: ConfirmDialog::default(),
@@ -281,7 +274,6 @@ impl Shell {
             if let Some(section) = Section::ALL.into_iter().find(|section| {
                 self.root_areas[section.index()].contains((mouse.column, mouse.row).into())
             }) {
-                self.nav_focused = false;
                 return self.execute(Action::Select(section), workspace);
             }
             if self.section == Section::Commit {
@@ -300,30 +292,13 @@ impl Shell {
                     None
                 };
             }
-            if self.nav_focused {
-                match key.code {
-                    KeyCode::Left | KeyCode::Right => {
-                        return self.execute(
-                            Action::Select(self.section.next(key.code == KeyCode::Left)),
-                            workspace,
-                        );
-                    }
-                    KeyCode::Tab
-                    | KeyCode::BackTab
-                    | KeyCode::Esc
-                    | KeyCode::Enter
-                    | KeyCode::Down => self.nav_focused = false,
-                    KeyCode::Char('q') => return self.execute(Action::Quit, workspace),
-                    KeyCode::Char('/') => self.open_palette(),
-                    _ => {}
-                }
-                return None;
-            }
             if self.section == Section::Config {
                 match (self.config.shell_keys(), key.code) {
                     (ShellKeys::Navigation, KeyCode::Tab | KeyCode::BackTab) => {
-                        self.nav_focused = true;
-                        return None;
+                        return self.execute(
+                            Action::Select(self.section.next(key.code == KeyCode::BackTab)),
+                            workspace,
+                        );
                     }
                     (ShellKeys::Navigation, KeyCode::Esc) => {
                         return self.execute(Action::Select(Section::Home), workspace);
@@ -355,8 +330,10 @@ impl Shell {
                 }
                 match key.code {
                     KeyCode::Tab | KeyCode::BackTab => {
-                        self.nav_focused = true;
-                        return None;
+                        return self.execute(
+                            Action::Select(self.section.next(key.code == KeyCode::BackTab)),
+                            workspace,
+                        );
                     }
                     KeyCode::Esc if self.section != Section::Home => {
                         return self.execute(Action::Select(Section::Home), workspace);
@@ -625,16 +602,6 @@ impl Shell {
             self.render_header(frame, header);
             if self.section == Section::Config {
                 self.config.render(frame, body);
-                if self.nav_focused {
-                    let footer = Rect::new(
-                        body.x,
-                        body.bottom().saturating_sub(FOOTER_HEIGHT),
-                        body.width,
-                        FOOTER_HEIGHT,
-                    );
-                    let footer = render_footer_block(frame, footer);
-                    render_footer(frame, footer, &NAV_BAR_HINTS, &NAV_BAR_SHELL_HINTS);
-                }
             } else {
                 let [content, footer] =
                     Layout::vertical([Constraint::Min(1), Constraint::Length(FOOTER_HEIGHT)])
@@ -660,26 +627,22 @@ impl Shell {
                     Section::Help => self.render_help(frame, content, help),
                     Section::Config => {}
                 }
-                if self.nav_focused {
-                    render_footer(frame, footer, &NAV_BAR_HINTS, &NAV_BAR_SHELL_HINTS);
-                } else {
-                    let home_hints = self.init_editor.as_ref().map_or_else(
-                        || {
-                            HomeAction::of(&self.home)
-                                .map(HomeAction::hint)
-                                .into_iter()
-                                .collect()
-                        },
-                        InitEditor::hints,
-                    );
-                    let hints: &[(&str, &str)] = match self.section {
-                        Section::Commit => &[("↑/↓", "move"), ("←/→", "tree"), ("r", "refresh")],
-                        Section::Help => &[("←/→", "page"), ("↑/↓", "scroll")],
-                        Section::Home => &home_hints,
-                        Section::Config => &[],
-                    };
-                    render_footer(frame, footer, hints, &SHELL_HINTS);
-                }
+                let home_hints = self.init_editor.as_ref().map_or_else(
+                    || {
+                        HomeAction::of(&self.home)
+                            .map(HomeAction::hint)
+                            .into_iter()
+                            .collect()
+                    },
+                    InitEditor::hints,
+                );
+                let hints: &[(&str, &str)] = match self.section {
+                    Section::Commit => &[("↑/↓", "move"), ("←/→", "tree"), ("r", "refresh")],
+                    Section::Help => &[("←/→", "page"), ("↑/↓", "scroll")],
+                    Section::Home => &home_hints,
+                    Section::Config => &[],
+                };
+                render_footer(frame, footer, hints, &SHELL_HINTS);
             }
         }
         self.render_overlay(frame, area);
@@ -706,15 +669,12 @@ impl Shell {
             let label = section.label();
             let width = u16::try_from(label.len()).unwrap_or(0);
             let rect = Rect::new(x, area.y, width.min(area.right().saturating_sub(x)), 1);
-            let style = match (section == self.section, self.nav_focused) {
-                (true, true) => Style::new()
-                    .fg(theme().ground)
-                    .bg(theme().cursor)
-                    .add_modifier(Modifier::BOLD),
-                (true, false) => Style::new()
+            let style = if section == self.section {
+                Style::new()
                     .fg(theme().text)
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-                (false, _) => Style::new().fg(theme().dim),
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            } else {
+                Style::new().fg(theme().dim)
             };
             frame.render_widget(Paragraph::new(label).style(style), rect);
             self.root_areas[section.index()] = rect;
@@ -1124,9 +1084,8 @@ mod tests {
 
         shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
         shell.handle_event(key(KeyCode::Tab), &workspace, &[]);
-        shell.handle_event(key(KeyCode::Right), &workspace, &[]);
-        shell.handle_event(key(KeyCode::Left), &workspace, &[]);
-        shell.handle_event(key(KeyCode::Tab), &workspace, &[]);
+        assert_eq!(shell.section, Section::Commit, "tab leaves the open editor");
+        shell.handle_event(key(KeyCode::BackTab), &workspace, &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(
             rendered(&terminal).contains(" Initialize fresh"),
@@ -1315,10 +1274,8 @@ mod tests {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Home, &services);
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
-        shell.handle_event(key(KeyCode::Right), &services, &[]);
         assert_eq!(shell.section, Section::Commit);
         assert!(shell.commit.blocker.is_some());
-        shell.handle_event(key(KeyCode::Right), &services, &[]);
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
         assert_eq!(shell.section, Section::Config);
         assert!(shell.next_frame_in().is_none());
@@ -1331,13 +1288,11 @@ mod tests {
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(rendered(&terminal).contains("Taxonomies"));
         shell.handle_event(key(KeyCode::BackTab), &services, &[]);
-        shell.handle_event(key(KeyCode::Left), &services, &[]);
         assert_eq!(shell.section, Section::Commit);
-        shell.handle_event(key(KeyCode::Right), &services, &[]);
-        shell.handle_event(key(KeyCode::Right), &services, &[]);
-        assert_eq!(shell.section, Section::Help);
-        shell.handle_event(key(KeyCode::Left), &services, &[]);
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
+        shell.handle_event(key(KeyCode::Tab), &services, &[]);
+        assert_eq!(shell.section, Section::Help);
+        shell.handle_event(key(KeyCode::BackTab), &services, &[]);
         assert_eq!(shell.section, Section::Config);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(rendered(&terminal).contains("Taxonomies"));
@@ -1526,9 +1481,7 @@ mod tests {
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.config.shell_keys(), ShellKeys::Navigation);
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
-        shell.handle_event(key(KeyCode::Right), &services, &[]);
         assert_eq!(shell.section, Section::Help);
-        shell.handle_event(key(KeyCode::Left), &services, &[]);
         shell.handle_event(key(KeyCode::BackTab), &services, &[]);
         assert_eq!(shell.section, Section::Config);
         assert!(!shell.config.dirty());
@@ -1546,7 +1499,6 @@ mod tests {
         assert_eq!(shell.section, Section::Home);
         assert!(shell.overlay.is_none());
         shell.handle_event(key(KeyCode::BackTab), &services, &[]);
-        shell.handle_event(key(KeyCode::Left), &services, &[]);
         assert_eq!(shell.section, Section::Help);
     }
 
@@ -1566,8 +1518,6 @@ mod tests {
             },
         ];
         shell.handle_event(key(KeyCode::BackTab), &services, &help);
-        shell.handle_event(key(KeyCode::Left), &services, &help);
-        shell.handle_event(key(KeyCode::Tab), &services, &help);
         assert_eq!(shell.section, Section::Help);
         shell.handle_event(key(KeyCode::PageDown), &services, &help);
         assert_eq!(shell.help_scroll, 10);
@@ -1578,9 +1528,7 @@ mod tests {
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert!(rendered(&terminal).contains("┌ Help — Config (2/2) ─"));
         shell.handle_event(key(KeyCode::Tab), &services, &help);
-        shell.handle_event(key(KeyCode::Right), &services, &help);
-        shell.handle_event(key(KeyCode::Tab), &services, &help);
-        assert_eq!(shell.section, Section::Home);
+        assert_eq!(shell.section, Section::Home, "tab wraps from Help to Home");
         shell.handle_event(key(KeyCode::Char('/')), &services, &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert!(rendered(&terminal).contains("┌ Search ─"));
@@ -1610,7 +1558,6 @@ mod tests {
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.section, Section::Home);
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
-        shell.handle_event(key(KeyCode::Right), &services, &[]);
         assert_eq!(shell.section, Section::Commit);
         assert!(shell.config.dirty());
         assert!(
@@ -1692,7 +1639,7 @@ mod tests {
     }
 
     #[test]
-    fn nav_bar_takes_focus_on_tab_and_switches_sections_with_arrows()
+    fn tab_and_shift_tab_switch_sections_in_one_press_and_arrows_never_do()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Home, &services);
@@ -1704,60 +1651,52 @@ mod tests {
         let version = format!("gitserious v{} ", env!("CARGO_PKG_VERSION"));
         assert!(header.starts_with(" Home  Commit  Config  Help "));
         assert!(header.ends_with(&version));
-        let home = shell.root_areas[Section::Home.index()];
-        let active = terminal.backend().buffer()[(home.x, 0)].clone();
-        assert_eq!(active.fg, theme().text);
-        assert!(
-            active
-                .modifier
-                .contains(Modifier::UNDERLINED | Modifier::BOLD)
-        );
-        let commit = shell.root_areas[Section::Commit.index()];
-        assert_eq!(terminal.backend().buffer()[(commit.x, 0)].fg, theme().dim);
         let original = shell.root_areas;
 
-        shell.handle_event(key(KeyCode::Tab), &services, &[]);
-        assert_eq!(shell.section, Section::Home, "tab focuses the nav bar");
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert_eq!(terminal.backend().buffer()[(home.x, 0)].bg, theme().cursor);
-        assert!(rendered(&terminal).contains("←/→ switch  tab back"));
-        shell.handle_event(key(KeyCode::Right), &services, &[]);
-        shell.handle_event(key(KeyCode::Right), &services, &[]);
-        assert_eq!(shell.section, Section::Config);
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert!(rendered(&terminal).contains("1  Project"));
-        assert!(rendered(&terminal).contains("←/→ switch  tab back"));
-        let config = shell.root_areas[Section::Config.index()];
-        assert_eq!(
-            terminal.backend().buffer()[(config.x, 0)].bg,
-            theme().cursor
-        );
-        shell.handle_event(key(KeyCode::Left), &services, &[]);
-        assert_eq!(shell.section, Section::Commit);
-        shell.handle_event(key(KeyCode::Right), &services, &[]);
-        shell.handle_event(key(KeyCode::Esc), &services, &[]);
-        assert_eq!(
-            shell.section,
+        for expected in [
+            Section::Commit,
             Section::Config,
-            "esc returns focus to the content"
-        );
-        assert!(!shell.nav_focused);
-        shell.handle_event(key(KeyCode::Down), &services, &[]);
-        assert_eq!(
-            shell.section,
+            Section::Help,
+            Section::Home,
+        ] {
+            shell.handle_event(key(KeyCode::Tab), &services, &[]);
+            assert_eq!(shell.section, expected, "one tab moves one section");
+            terminal.draw(|frame| shell.render(frame, &[]))?;
+            let active = shell.root_areas[expected.index()];
+            let cell = terminal.backend().buffer()[(active.x, 0)].clone();
+            assert_eq!(cell.fg, theme().text);
+            assert!(
+                cell.modifier
+                    .contains(Modifier::UNDERLINED | Modifier::BOLD)
+            );
+            let text = rendered(&terminal);
+            assert!(!text.contains("tab back"), "no separate nav bar step");
+            assert!(text.contains("tab nav bar"), "{expected:?}");
+        }
+        for expected in [
+            Section::Help,
             Section::Config,
-            "content keys reach Config again"
-        );
+            Section::Commit,
+            Section::Home,
+        ] {
+            shell.handle_event(key(KeyCode::BackTab), &services, &[]);
+            assert_eq!(
+                shell.section, expected,
+                "one shift+tab moves back one section"
+            );
+        }
+        for code in [KeyCode::Left, KeyCode::Right] {
+            shell.handle_event(key(code), &services, &[]);
+            assert_eq!(shell.section, Section::Home, "arrows never switch sections");
+        }
 
         terminal.backend_mut().resize(66, 18);
         terminal.resize(Rect::new(0, 0, 66, 18))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert_eq!(shell.root_areas, original, "tabs stay left-aligned");
-        shell.handle_event(key(KeyCode::Tab), &services, &[]);
         let help = shell.root_areas[Section::Help.index()];
         shell.handle_event(click(help), &services, &[]);
         assert_eq!(shell.section, Section::Help);
-        assert!(!shell.nav_focused, "a tab click focuses the content");
         Ok(())
     }
 

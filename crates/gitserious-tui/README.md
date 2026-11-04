@@ -46,15 +46,13 @@ Screens draw with the active appearance theme, a set of semantic colors
 (ground, band, text, dim, cursor, pending, done, blocks). Bone is the first
 and, for now, only theme.
 
-Tab or Shift+Tab moves focus to the nav bar and highlights the active tab.
-There, Left and Right switch sections, and Tab, Esc, Enter, or Down return
-focus to the section's content. Clicking a tab opens it with focus on its
-content.
+Tab opens the next section and Shift+Tab the previous one, wrapping from Help
+to Home and back. Clicking a tab opens it.
 
 `gitserious config` opens the shell inside Config. The nav bar stays visible
 above the configuration Menu and its Project and Library widgets, described
-under Configuration. From the Project or Library browser, Tab focuses the nav
-bar, Esc returns to Home, and `q` quits. Every other key, including `/` and `?`, reaches the
+under Configuration. From the Project or Library browser, Tab and Shift+Tab
+switch sections, Esc returns to Home, and `q` quits. Every other key, including `/` and `?`, reaches the
 configuration interface. Config selections and unapplied changes survive
 section visits. Library EDIT keeps focus inside Config until Esc validates and
 saves the item. Tab, root-row clicks, and quit cannot leave EDIT. Project edits
