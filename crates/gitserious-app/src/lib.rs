@@ -49,11 +49,11 @@ pub use taxonomy_configuration_editor::{
     Review, edit_configuration,
 };
 pub use taxonomy_policy::{
-    ConfigurationError, EffectiveConfiguration, GlobalConfiguration, ProjectConfig, ProjectLock,
-    ProjectState, TaxonomyCatalog, TaxonomyOrigin, fingerprint_taxonomy,
-    resolve_effective_configuration,
+    ConfigurationError, EffectiveConfiguration, GlobalConfiguration, ProjectConfig,
+    ProjectConfiguration, ProjectLock, ProjectRevision, ProjectState, StoredProject,
+    TaxonomyCatalog, TaxonomyOrigin, fingerprint_taxonomy, resolve_effective_configuration,
 };
-pub use taxonomy_ports::{GlobalConfigurationStore, ProjectStateStore};
+pub use taxonomy_ports::{GlobalConfigurationStore, ProjectConfigurationStore, ProjectStateStore};
 
 pub use interactive::{
     HelpPage, InteractiveEntry, InteractiveUi, InteractiveWorkspace, run_interactive,

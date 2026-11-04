@@ -399,6 +399,86 @@ impl ProjectLock {
     }
 }
 
+/// Self-contained project policy: a default plus complete taxonomies in picker order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectConfiguration {
+    default_taxonomy: TaxonomyId,
+    taxonomies: Vec<Taxonomy>,
+}
+
+impl ProjectConfiguration {
+    /// Validates a project document without consulting any other configuration.
+    pub fn new(
+        version: u16,
+        default_taxonomy: TaxonomyId,
+        taxonomies: Vec<Taxonomy>,
+    ) -> Result<Self, ConfigurationError> {
+        if version != PROJECT_CONFIG_VERSION {
+            return Err(ConfigurationError::UnsupportedProjectVersion(version));
+        }
+        validate_ids(
+            &taxonomies
+                .iter()
+                .map(Taxonomy::id)
+                .cloned()
+                .collect::<Vec<_>>(),
+        )?;
+        if !taxonomies
+            .iter()
+            .any(|taxonomy| taxonomy.id() == &default_taxonomy)
+        {
+            return Err(ConfigurationError::DefaultNotAvailable(default_taxonomy));
+        }
+        Ok(Self {
+            default_taxonomy,
+            taxonomies,
+        })
+    }
+
+    /// Returns the format version this configuration serializes as.
+    #[must_use]
+    pub const fn version(&self) -> u16 {
+        PROJECT_CONFIG_VERSION
+    }
+
+    /// Returns the project default taxonomy.
+    #[must_use]
+    pub const fn default_taxonomy(&self) -> &TaxonomyId {
+        &self.default_taxonomy
+    }
+
+    /// Returns the project's complete taxonomies in picker order.
+    #[must_use]
+    pub fn taxonomies(&self) -> &[Taxonomy] {
+        &self.taxonomies
+    }
+}
+
+/// Identity of the exact persisted project file, used to refuse stale writes.
+///
+/// It hashes raw bytes, so an external edit that only touches comments still counts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProjectRevision(Fingerprint);
+
+impl ProjectRevision {
+    /// Identifies persisted project file contents.
+    #[must_use]
+    pub fn of_bytes(contents: &[u8]) -> Self {
+        let mut canonical = CanonicalHasher::new(b"gitserious.project-file.v1");
+        canonical.bytes(contents);
+        Self(canonical.finish())
+    }
+}
+
+/// A loaded project configuration and the revision it was read from.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoredProject {
+    /// The validated configuration.
+    pub configuration: ProjectConfiguration,
+    /// The file revision `configuration` was read from.
+    pub revision: ProjectRevision,
+}
+
 /// Repository-local state observed before initialization.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectState {
