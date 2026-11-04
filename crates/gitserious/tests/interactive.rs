@@ -6,7 +6,7 @@ use std::process::{Command, Output};
 
 use gitserious_app::{
     AuthoredCommit, GlobalConfiguration, GlobalConfigurationStore, HelpPage, HomeState,
-    InteractiveEntry, InteractiveUi, InteractiveWorkspace, ProjectConfiguration,
+    InteractiveEntry, InteractiveUi, InteractiveWorkspace, LibraryTaxonomy, ProjectConfiguration,
     initialize_project, run_interactive,
 };
 use gitserious_core::{
@@ -325,6 +325,66 @@ fn home_follows_a_directory_from_no_repository_to_a_tracked_project() -> Result<
         &GitCommitWriter,
         temp.path(),
         &HomeUi(temp.path()),
+        InteractiveEntry::Home,
+        &[],
+    )?;
+    Ok(())
+}
+
+struct LibraryUi;
+impl InteractiveUi for LibraryUi {
+    fn run(
+        &self,
+        _: InteractiveEntry,
+        workspace: &dyn InteractiveWorkspace,
+        _: &[HelpPage],
+    ) -> Result<(), String> {
+        let offered = workspace
+            .library_taxonomies()?
+            .iter()
+            .map(|taxonomy| taxonomy.versioned().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            offered,
+            ["team-changes-v3"],
+            "a taxonomy without types is left out"
+        );
+        Ok(())
+    }
+}
+
+#[test]
+fn initialization_offers_only_library_taxonomies_that_have_types() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::TempDir::new()?;
+    let conventional = &built_in_taxonomies()[0];
+    let custom = |id: &str, version, commit_types: &[CommitTypeDefinition]| {
+        LibraryTaxonomy::new(
+            TaxonomyId::new(id)?,
+            TaxonomyVersion::new(version)?,
+            Description::new("A team taxonomy")?,
+            None,
+            commit_types.to_vec(),
+            true,
+        )
+        .map_err(Box::<dyn Error>::from)
+    };
+    let library = GlobalConfiguration::new(
+        1,
+        conventional.id().clone(),
+        vec![conventional.id().clone()],
+        vec![
+            custom("team-changes", 3, &conventional.commit_types()[..3])?,
+            custom("unfinished", 1, &[])?,
+        ],
+    )?;
+    run_interactive(
+        &GitRepositoryLocator,
+        &TomlProjectStore,
+        &Library(library),
+        &GitRepositoryStatusReader,
+        &GitCommitWriter,
+        temp.path(),
+        &LibraryUi,
         InteractiveEntry::Home,
         &[],
     )?;

@@ -2,7 +2,7 @@ use std::convert::Infallible;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 
-use gitserious_core::{TaxonomyId, TaxonomyVersion};
+use gitserious_core::{Taxonomy, TaxonomyId, TaxonomyVersion};
 
 use crate::taxonomy_configuration_editor::Workspace;
 use crate::{
@@ -53,6 +53,8 @@ pub trait InteractiveWorkspace {
     fn home(&self) -> HomeState;
     /// Creates the project from `configuration`; an existing project is never rewritten.
     fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String>;
+    /// The Library's custom taxonomies a project can include, those with at least one type.
+    fn library_taxonomies(&self) -> Result<Vec<Taxonomy>, String>;
     fn configuration(&self) -> &dyn ConfigurationWorkspace;
     fn repository_status(&self) -> Result<RepositoryStatus, String>;
     fn prepare_commit(&self) -> Result<CommitAuthoringContext, String>;
@@ -186,6 +188,19 @@ where
             .create(&root, configuration)
             .map(|_| ())
             .map_err(|error| error.to_string())
+    }
+
+    fn library_taxonomies(&self) -> Result<Vec<Taxonomy>, String> {
+        let library = self
+            .config
+            .global
+            .load()
+            .map_err(|error| error.to_string())?;
+        Ok(library
+            .custom_taxonomies()
+            .iter()
+            .filter_map(crate::LibraryTaxonomy::usable)
+            .collect())
     }
 
     fn configuration(&self) -> &dyn ConfigurationWorkspace {
