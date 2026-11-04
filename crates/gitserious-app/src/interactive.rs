@@ -236,8 +236,6 @@ where
             self.config.locator,
             self.config.project,
             self.config.start,
-            None,
-            None,
         )
         .map(|(_, context)| context)
         .map_err(|error| error.to_string())

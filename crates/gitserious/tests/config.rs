@@ -53,16 +53,8 @@ fn library_taxonomy_initializes_and_commits_from_the_project_copy() -> Result<()
     assert!(config.contains("id = \"deploy\""));
     assert!(!repository.path().join("gitserious.lock").exists());
 
-    let unknown = home.run(repository.path(), &["commit", "--type", "feat"])?;
-    assert!(!unknown.status.success());
-    assert!(
-        stderr(&unknown).contains("choose one of: deploy"),
-        "{}",
-        stderr(&unknown)
-    );
-
     fs::remove_file(home.library_path())?;
-    let portable = home.run(repository.path(), &["commit", "--type", "deploy"])?;
+    let portable = home.run(repository.path(), &["commit"])?;
     assert!(!portable.status.success());
     assert_eq!(
         stderr(&portable),
@@ -75,10 +67,17 @@ fn assert_domain_initialization(domain: &str, representative: &str) -> Result<()
     let repository = repository()?;
     let home = Home::new()?;
 
-    let initialized = home.run(repository.path(), &["init", "--taxonomy", domain])?;
+    write_library(
+        &home,
+        &format!(
+            "config-version = 1\ndefault-taxonomy = \"{domain}\"\n\
+             available-taxonomies = [\"{domain}\"]\ntaxonomies = []\n"
+        ),
+    )?;
+
+    let initialized = home.run(repository.path(), &["init"])?;
     assert!(initialized.status.success(), "{}", stderr(&initialized));
     assert!(stdout(&initialized).ends_with(&format!(" ({domain}-v1).\n")));
-    assert!(!home.library_path().exists());
     let config_path = repository.path().join("gitserious.toml");
     let config = fs::read_to_string(&config_path)?;
     assert!(config.starts_with(&format!(
@@ -87,21 +86,6 @@ fn assert_domain_initialization(domain: &str, representative: &str) -> Result<()
     assert!(config.contains(&format!("id = \"{representative}\"")));
     assert!(!repository.path().join("gitserious.lock").exists());
 
-    let unavailable = home.run(repository.path(), &["commit", "--type", "feat"])?;
-    assert!(!unavailable.status.success());
-    assert!(
-        stderr(&unavailable).contains("choose one of: "),
-        "{}",
-        stderr(&unavailable)
-    );
-    let selected = home.run(repository.path(), &["commit", "--type", representative])?;
-    assert!(!selected.status.success());
-    assert!(
-        stderr(&selected).contains("interactive terminal"),
-        "{}",
-        stderr(&selected)
-    );
-
     let repeated = home.run(repository.path(), &["init"])?;
     assert!(repeated.status.success(), "{}", stderr(&repeated));
     assert_eq!(fs::read_to_string(config_path)?, config);
@@ -109,14 +93,12 @@ fn assert_domain_initialization(domain: &str, representative: &str) -> Result<()
 }
 
 #[test]
-fn research_initializes_without_global_configuration_and_uses_its_types()
--> Result<(), Box<dyn Error>> {
+fn research_library_default_initializes_with_its_types() -> Result<(), Box<dyn Error>> {
     assert_domain_initialization("research", "hypothesis")
 }
 
 #[test]
-fn infra_ops_initializes_without_global_configuration_and_uses_its_types()
--> Result<(), Box<dyn Error>> {
+fn infra_ops_library_default_initializes_with_its_types() -> Result<(), Box<dyn Error>> {
     let first = gitserious_core::built_in_taxonomies()[2].commit_types()[0]
         .id()
         .to_string();

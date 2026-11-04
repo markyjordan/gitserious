@@ -2,7 +2,7 @@ mod support;
 
 use std::process::ExitCode;
 
-use gitserious_core::{TaxonomyId, built_in_taxonomies};
+use gitserious_core::built_in_taxonomies;
 use support::{Harness, Locator, Project, repository_path};
 
 #[test]
@@ -54,32 +54,6 @@ fn operational_failures_use_stderr_and_exit_one() {
 }
 
 #[test]
-fn init_selects_an_explicit_installed_taxonomy() -> Result<(), Box<dyn std::error::Error>> {
-    let harness = Harness::new(Project::default());
-
-    let (exit, stdout, stderr) = harness.run(&["gitserious", "init", "--taxonomy", "research"]);
-
-    assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
-    assert!(stdout.ends_with(" (research-v1).\n"), "{stdout}");
-    let initialized = harness.project.initialized.borrow();
-    let config = initialized.as_ref().ok_or("init did not write")?;
-    assert_eq!(config.default_taxonomy(), &TaxonomyId::new("research")?);
-    Ok(())
-}
-
-#[test]
-fn init_rejects_an_uninstalled_taxonomy() {
-    let harness = Harness::new(Project::default());
-
-    let (exit, stdout, stderr) = harness.run(&["gitserious", "init", "--taxonomy", "missing"]);
-
-    assert_eq!(exit, ExitCode::FAILURE);
-    assert!(stdout.is_empty());
-    assert_eq!(stderr, "error: taxonomy \"missing\" is not installed\n");
-    assert!(harness.project.initialized.borrow().is_none());
-}
-
-#[test]
 fn help_and_version_succeed_on_stdout_without_touching_adapters() {
     for (arguments, expected) in [
         (
@@ -106,6 +80,9 @@ fn unknown_commands_and_extra_arguments_are_usage_errors() {
     for arguments in [
         &["gitserious", "unknown"][..],
         &["gitserious", "init", "extra"][..],
+        &["gitserious", "init", "--taxonomy", "research"][..],
+        &["gitserious", "commit", "--taxonomy", "research"][..],
+        &["gitserious", "commit", "--type", "feat"][..],
     ] {
         let harness = Harness::new(Project::default());
 

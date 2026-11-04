@@ -126,8 +126,6 @@ fn commit_uses_only_the_embedded_project_taxonomy() -> Result<(), Box<dyn Error>
         &Author,
         &writer,
         Path::new("."),
-        None,
-        None,
     )?;
     let message = writer.0.borrow();
     let message = message.as_ref().ok_or("writer was not called")?;

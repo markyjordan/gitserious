@@ -7,40 +7,14 @@ use std::io;
 
 use gitserious_app::{
     AuthoredCommit, CommitAuthoringContext, CommitAuthoringOutcome, CommitDraftAuthor,
-    CommitDraftAuthorOutcome, create_commit_with_taxonomy,
+    CommitDraftAuthorOutcome, CommitOutcome, create_commit_with_taxonomy,
 };
 use gitserious_core::{
-    AuthoredProperty, CommitDraft, CommitSubject, CommitTypeDefinition, CommitTypeId,
-    PropertyRequirement, PropertyValue, TaxonomyId, built_in_taxonomies,
+    AuthoredProperty, CommitDraft, CommitSubject, CommitTypeDefinition, PropertyRequirement,
+    PropertyValue, TaxonomyId,
 };
 use gitserious_fs::{GitCommitWriter, GitRepositoryLocator, TomlProjectStore};
 use support::{Home, git, head_exists, repository, stderr, stdout};
-
-#[test]
-fn taxonomy_overrides_leave_project_files_unchanged_before_terminal_authoring()
--> Result<(), Box<dyn Error>> {
-    let repository = repository()?;
-    let home = Home::new()?;
-    home.init(repository.path())?;
-    let config = fs::read(repository.path().join("gitserious.toml"))?;
-    let infra_type = built_in_taxonomies()[2].commit_types()[0].id().to_string();
-
-    for arguments in [
-        vec!["commit", "--taxonomy", "research", "--type", "fix"],
-        vec!["commit", "--taxonomy", "infra-ops", "--type", &infra_type],
-    ] {
-        let output = home.run(repository.path(), &arguments)?;
-        assert!(!output.status.success());
-        assert_eq!(
-            stderr(&output),
-            "error: commit authoring requires an interactive terminal\n"
-        );
-        assert_eq!(fs::read(repository.path().join("gitserious.toml"))?, config);
-        assert!(!repository.path().join("gitserious.lock").exists());
-        assert!(!head_exists(repository.path())?);
-    }
-    Ok(())
-}
 
 #[derive(Default)]
 struct ReviewedAuthor(RefCell<String>);
@@ -60,10 +34,15 @@ impl CommitDraftAuthor for ReviewedAuthor {
         &self,
         context: &CommitAuthoringContext,
     ) -> Result<CommitAuthoringOutcome, Self::Error> {
-        let taxonomy = context.initial_taxonomy();
-        let definition = context
-            .preselected_type()
-            .ok_or_else(|| io::Error::other("expected preselected type"))?;
+        let research = TaxonomyId::new("research").map_err(io::Error::other)?;
+        let taxonomy = context
+            .find_taxonomy(&research)
+            .ok_or_else(|| io::Error::other("expected research in project policy"))?;
+        let definition = taxonomy
+            .definitions()
+            .iter()
+            .find(|definition| definition.id().as_str() == "fix")
+            .ok_or_else(|| io::Error::other("expected research fix"))?;
         let properties = definition
             .properties()
             .iter()
@@ -110,8 +89,6 @@ fn git_stores_the_exact_reviewed_taxonomy_message() -> Result<(), Box<dyn Error>
         &author,
         &GitCommitWriter,
         repository.path(),
-        Some(&TaxonomyId::new("research")?),
-        Some(&CommitTypeId::new("fix")?),
     )?;
 
     let object = stdout(&git(repository.path(), &["cat-file", "commit", "HEAD"])?);
@@ -136,7 +113,7 @@ fn project_policy_is_resolved_before_terminal_authoring() -> Result<(), Box<dyn 
     let repository = repository()?;
     let home = Home::new()?;
 
-    let absent = home.run(repository.path(), &["commit", "--type", "feat"])?;
+    let absent = home.run(repository.path(), &["commit"])?;
     assert_eq!(absent.status.code(), Some(1));
     assert!(stdout(&absent).is_empty());
     assert!(
@@ -155,7 +132,7 @@ fn project_policy_is_resolved_before_terminal_authoring() -> Result<(), Box<dyn 
             "default-taxonomy = \"missing\"",
         ),
     )?;
-    let invalid = home.run(repository.path(), &["commit", "--type", "feat"])?;
+    let invalid = home.run(repository.path(), &["commit"])?;
     assert_eq!(invalid.status.code(), Some(1));
     assert!(stdout(&invalid).is_empty());
     assert!(
@@ -178,7 +155,7 @@ fn a_cloned_project_authors_without_any_usable_library() -> Result<(), Box<dyn E
     fs::create_dir_all(library.parent().ok_or("library has a parent")?)?;
     fs::write(&library, "not = [toml\n")?;
 
-    let output = contributor.run(repository.path(), &["commit", "--type", "feat"])?;
+    let output = contributor.run(repository.path(), &["commit"])?;
 
     assert_eq!(
         stderr(&output),
@@ -188,10 +165,29 @@ fn a_cloned_project_authors_without_any_usable_library() -> Result<(), Box<dyn E
     Ok(())
 }
 
+#[derive(Default)]
+struct OfferedTypes(RefCell<Vec<String>>);
+
+impl CommitDraftAuthor for OfferedTypes {
+    type Error = io::Error;
+
+    fn author(
+        &self,
+        definitions: &[CommitTypeDefinition],
+        _: Option<&CommitTypeDefinition>,
+    ) -> Result<CommitDraftAuthorOutcome, Self::Error> {
+        self.0.borrow_mut().extend(
+            definitions
+                .iter()
+                .map(|definition| definition.id().to_string()),
+        );
+        Ok(CommitDraftAuthorOutcome::Cancelled)
+    }
+}
+
 #[test]
 fn project_owned_conventional_replaces_the_built_in_definition() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
-    let home = Home::new()?;
     fs::write(
         repository.path().join("gitserious.toml"),
         r#"config-version = 1
@@ -210,76 +206,42 @@ properties = []
 "#,
     )?;
 
-    let output = home.run(repository.path(), &["commit", "--type", "fix"])?;
+    let author = OfferedTypes::default();
 
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        stderr(&output),
-        "error: commit type \"fix\" is unavailable; choose one of: ship\n"
-    );
+    let outcome = create_commit_with_taxonomy(
+        &GitRepositoryLocator,
+        &TomlProjectStore,
+        &author,
+        &GitCommitWriter,
+        repository.path(),
+    )?;
+
+    assert_eq!(outcome, CommitOutcome::Cancelled);
+    assert_eq!(*author.0.borrow(), ["ship"]);
     Ok(())
 }
 
 #[test]
-fn unavailable_type_is_rejected_before_terminal_authoring() -> Result<(), Box<dyn Error>> {
+fn commit_rejects_non_terminal_execution_without_touching_policy_or_git()
+-> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     let home = Home::new()?;
     home.init(repository.path())?;
+    let config = fs::read(repository.path().join("gitserious.toml"))?;
+    git(repository.path(), &["config", "core.editor", "false"])?;
+    fs::write(repository.path().join("staged.txt"), "staged\n")?;
+    git(repository.path(), &["add", "staged.txt"])?;
 
-    let output = home.run(repository.path(), &["commit", "--type", "custom"])?;
+    let output = home.run(repository.path(), &["commit"])?;
 
     assert_eq!(output.status.code(), Some(1));
     assert!(stdout(&output).is_empty());
     assert_eq!(
         stderr(&output),
-        "error: commit type \"custom\" is unavailable; choose one of: feat, fix, refactor, \
-         perf, test, docs, chore, build, ci, style, revert\n"
+        "error: commit authoring requires an interactive terminal\n"
     );
+    assert_eq!(fs::read(repository.path().join("gitserious.toml"))?, config);
+    assert!(!repository.path().join("gitserious.lock").exists());
     assert!(!head_exists(repository.path())?);
-    Ok(())
-}
-
-#[test]
-fn unknown_taxonomies_are_quoted_as_typed() -> Result<(), Box<dyn Error>> {
-    let repository = repository()?;
-    let home = Home::new()?;
-
-    let init = home.run(repository.path(), &["init", "--taxonomy", "nope"])?;
-    assert_eq!(init.status.code(), Some(1));
-    assert_eq!(stderr(&init), "error: taxonomy \"nope\" is not installed\n");
-    assert!(!repository.path().join("gitserious.toml").exists());
-
-    home.init(repository.path())?;
-    let commit = home.run(repository.path(), &["commit", "--taxonomy", "nope"])?;
-    assert_eq!(commit.status.code(), Some(1));
-    assert_eq!(
-        stderr(&commit),
-        "error: taxonomy \"nope\" is unavailable; choose one of: conventional, research, \
-         infra-ops\n"
-    );
-    assert!(!head_exists(repository.path())?);
-    Ok(())
-}
-
-#[test]
-fn bare_and_typed_commits_reject_non_terminal_execution_without_calling_git()
--> Result<(), Box<dyn Error>> {
-    let repository = repository()?;
-    let home = Home::new()?;
-    home.init(repository.path())?;
-    git(repository.path(), &["config", "core.editor", "false"])?;
-    fs::write(repository.path().join("staged.txt"), "staged\n")?;
-    git(repository.path(), &["add", "staged.txt"])?;
-
-    for arguments in [&["commit"][..], &["commit", "--type", "feat"][..]] {
-        let output = home.run(repository.path(), arguments)?;
-        assert_eq!(output.status.code(), Some(1));
-        assert!(stdout(&output).is_empty());
-        assert_eq!(
-            stderr(&output),
-            "error: commit authoring requires an interactive terminal\n"
-        );
-        assert!(!head_exists(repository.path())?);
-    }
     Ok(())
 }

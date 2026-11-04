@@ -130,15 +130,13 @@ fn display_ids<T: Display>(ids: &[T]) -> String {
         .join(", ")
 }
 
-/// Authors with an explicit taxonomy or the project default.
+/// Authors from the project default taxonomy.
 pub fn create_commit_with_taxonomy<L, S, A, W>(
     locator: &L,
     store: &S,
     author: &A,
     writer: &W,
     start: &Path,
-    requested_taxonomy: Option<&TaxonomyId>,
-    requested_type: Option<&CommitTypeId>,
 ) -> CreateCommitResult<L::Error, S::Error, A::Error, W::Error>
 where
     L: RepositoryLocator + ?Sized,
@@ -146,13 +144,8 @@ where
     A: CommitDraftAuthor + ?Sized,
     W: CommitWriter + ?Sized,
 {
-    let (root, context) = prepare_commit_with_taxonomy::<L, S, A::Error, W::Error>(
-        locator,
-        store,
-        start,
-        requested_taxonomy,
-        requested_type,
-    )?;
+    let (root, context) =
+        prepare_commit_with_taxonomy::<L, S, A::Error, W::Error>(locator, store, start)?;
     let authored = match author
         .author_with_context(&context)
         .map_err(CreateCommitError::Author)?
@@ -173,8 +166,6 @@ pub fn prepare_commit_with_taxonomy<L, S, A, W>(
     locator: &L,
     store: &S,
     start: &Path,
-    requested_taxonomy: Option<&TaxonomyId>,
-    requested_type: Option<&CommitTypeId>,
 ) -> CommitPreparationResult<L::Error, S::Error, A, W>
 where
     L: RepositoryLocator + ?Sized,
@@ -188,23 +179,12 @@ where
         .map_err(CreateCommitError::Store)?
         .ok_or(CreateCommitError::Policy(CommitPolicyError::NotInitialized))?
         .configuration;
-    let selected = requested_taxonomy.unwrap_or_else(|| project.default_taxonomy());
-    let taxonomy = project
-        .find(selected)
-        .ok_or_else(|| CreateCommitError::UnknownTaxonomy {
-            requested: selected.clone(),
-            available: project
-                .taxonomies()
-                .iter()
-                .map(|taxonomy| taxonomy.id().clone())
-                .collect(),
-        })?;
-    if let Some(requested) = requested_type {
-        find_definition::<L::Error, S::Error, A, W>(taxonomy.commit_types(), requested)?;
-    }
-    let context =
-        CommitAuthoringContext::new(project.taxonomies().to_vec(), selected, requested_type)
-            .map_err(CreateCommitError::InvalidContext)?;
+    let context = CommitAuthoringContext::new(
+        project.taxonomies().to_vec(),
+        project.default_taxonomy(),
+        None,
+    )
+    .map_err(CreateCommitError::InvalidContext)?;
     Ok((root, context))
 }
 

@@ -12,8 +12,8 @@ The taxonomy-first public surface is:
 ```text
 gitserious
 gitserious config
-gitserious init [--taxonomy <taxonomy>]
-gitserious commit [--taxonomy <taxonomy>] [--type <type>]
+gitserious init
+gitserious commit
 ```
 
 Configuration belongs to the reviewed TUI.

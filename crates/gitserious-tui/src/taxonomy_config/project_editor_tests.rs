@@ -36,7 +36,7 @@ fn fixture() -> Result<(Workspace, State)> {
     *workspace.project.borrow_mut() = ConfigurationSession::open_project(
         RepositoryRoot::new(std::env::temp_dir())?,
         Some(StoredProject {
-            configuration: initial_project_configuration(&GlobalConfiguration::default(), None)?,
+            configuration: initial_project_configuration(&GlobalConfiguration::default())?,
             revision: ProjectRevision::of_bytes(b"opened"),
         }),
     );
@@ -206,7 +206,7 @@ fn with_library() -> Result<(Workspace, State)> {
     *workspace.project.borrow_mut() = ConfigurationSession::open_project(
         RepositoryRoot::new(std::env::temp_dir())?,
         Some(StoredProject {
-            configuration: initial_project_configuration(&GlobalConfiguration::default(), None)?,
+            configuration: initial_project_configuration(&GlobalConfiguration::default())?,
             revision: ProjectRevision::of_bytes(b"opened"),
         }),
     );

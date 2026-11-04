@@ -16,7 +16,7 @@ use gitserious_core::{
 
 fn project() -> LibraryDraft {
     LibraryDraft::from_project(
-        initial_project_configuration(&GlobalConfiguration::default(), None)
+        initial_project_configuration(&GlobalConfiguration::default())
             .expect("built-ins form a project"),
     )
 }

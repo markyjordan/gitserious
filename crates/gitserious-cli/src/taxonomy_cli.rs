@@ -13,9 +13,7 @@ use gitserious_app::{
     RepositoryLocator, RepositoryRoot, RepositoryStatusReader, create_commit_with_taxonomy,
     edit_configuration, initialize_project, run_interactive,
 };
-use gitserious_core::{
-    CommitMessage, CommitTypeDefinition, CommitTypeId, TaxonomyId, VersionedTaxonomy,
-};
+use gitserious_core::{CommitMessage, CommitTypeDefinition, VersionedTaxonomy};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -33,20 +31,9 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Author and create a durable commit from the staged index.
-    Commit {
-        /// Select a taxonomy for this commit without changing project policy.
-        #[arg(long, value_name = "TAXONOMY")]
-        taxonomy: Option<TaxonomyId>,
-        /// Select a commit type without opening the terminal picker.
-        #[arg(long = "type", value_name = "COMMIT TYPE")]
-        commit_type: Option<CommitTypeId>,
-    },
+    Commit,
     /// Initialize repository-local gitserious policy.
-    Init {
-        /// Select an installed taxonomy for fresh project policy.
-        #[arg(long, value_name = "TAXONOMY")]
-        taxonomy: Option<TaxonomyId>,
-    },
+    Init,
     /// Interactively configure taxonomy policy.
     Config,
 }
@@ -286,17 +273,12 @@ where
         return ExitCode::SUCCESS;
     };
     match command {
-        Command::Commit {
-            taxonomy,
-            commit_type,
-        } => match create_commit_with_taxonomy(
+        Command::Commit => match create_commit_with_taxonomy(
             locator,
             store,
             adapters.author,
             adapters.writer,
             start,
-            taxonomy.as_ref(),
-            commit_type.as_ref(),
         ) {
             Ok(CommitOutcome::Created(output)) => write_commit_output(stdout, stderr, &output),
             Ok(CommitOutcome::Cancelled) => {
@@ -305,12 +287,12 @@ where
             }
             Err(error) => operational_error(stderr, error),
         },
-        Command::Init { taxonomy } => {
+        Command::Init => {
             let global = match global.load() {
                 Ok(value) => value,
                 Err(error) => return operational_error(stderr, error),
             };
-            match initialize_project(locator, store, &global, taxonomy.as_ref(), start) {
+            match initialize_project(locator, store, &global, start) {
                 Ok(outcome) => write_init_outcome(stdout, &outcome),
                 Err(error) => operational_error(stderr, error),
             }
@@ -433,14 +415,14 @@ pub fn interactive_help() -> Vec<HelpPage> {
     let descriptions = [
         "Bare gitserious opens Home. Commit previews Git changes before authoring a durable message. Config configures repository policy and your taxonomy library.",
         "Bare gitserious config opens Config. Project owns the complete taxonomies in gitserious.toml. Library owns taxonomies. Esc validates and saves Library edits. Copies, reorders, and confirmed deletions save immediately. Project changes use review and Apply.",
-        "gitserious commit authors directly from persisted project policy. --taxonomy chooses an available taxonomy for this commit; --type preselects a type. Only Git's staged index is committed. Stage changes with Git before using Start commit in the shell.",
-        "gitserious init writes gitserious.toml with complete copies of your Library's default taxonomies. --taxonomy sets the project default. An existing gitserious.toml is never rewritten.",
+        "gitserious commit authors directly from persisted project policy, starting from the project default taxonomy. Only Git's staged index is committed. Stage changes with Git before using Start commit in the shell.",
+        "gitserious init writes gitserious.toml with complete copies of your Library's default taxonomies. An existing gitserious.toml is never rewritten.",
     ];
     let examples = [
         "gitserious\ngitserious --help",
         "gitserious config",
-        "git add src/\ngitserious commit\ngitserious commit --taxonomy conventional --type feat",
-        "gitserious init\ngitserious init --taxonomy research",
+        "git add src/\ngitserious commit",
+        "gitserious init",
     ];
     let mut pages: Vec<_> = commands.into_iter().enumerate().map(|(index, (title, mut command))| {
         if index > 0 { command = command.bin_name(format!("gitserious {}", title.to_lowercase())); }

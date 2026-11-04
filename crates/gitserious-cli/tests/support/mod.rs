@@ -137,7 +137,6 @@ impl ProjectConfigurationStore for Project {
 pub fn initialized_state() -> Result<ProjectConfiguration, Box<dyn Error>> {
     Ok(initial_project_configuration(
         &GlobalConfiguration::default(),
-        None,
     )?)
 }
 

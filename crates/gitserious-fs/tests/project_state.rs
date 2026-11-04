@@ -33,13 +33,7 @@ fn root(directory: &Path) -> Result<RepositoryRoot, Box<dyn Error>> {
 }
 
 fn init_with(directory: &Path, global: &GlobalConfiguration) -> InitResult {
-    initialize_project(
-        &GitRepositoryLocator,
-        &TomlProjectStore,
-        global,
-        None,
-        directory,
-    )
+    initialize_project(&GitRepositoryLocator, &TomlProjectStore, global, directory)
 }
 
 fn init(directory: &Path) -> InitResult {

@@ -157,7 +157,6 @@ fn shell_services_gate_staging_validate_review_and_retry_git_rejection()
         &GitRepositoryLocator,
         &TomlProjectStore,
         &global,
-        None,
         temp.path(),
     )?;
     fs::write(temp.path().join("file"), "staged later\n")?;
@@ -221,7 +220,6 @@ fn shell_services_reject_absent_and_invalid_policy() -> Result<(), Box<dyn Error
         &GitRepositoryLocator,
         &TomlProjectStore,
         &global,
-        None,
         temp.path(),
     )?;
     let config_path = temp.path().join("gitserious.toml");

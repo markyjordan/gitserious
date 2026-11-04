@@ -5,10 +5,9 @@ use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
 use gitserious_app::{
-    ConfigurationError, GlobalConfiguration, InitOutcome, InitStatus, InitializeProjectError,
-    ProjectConfiguration, ProjectConfigurationStore, ProjectRevision, RepositoryLocator,
-    RepositoryRoot, StoredProject, fingerprint_taxonomy, initial_project_configuration,
-    initialize_project,
+    GlobalConfiguration, InitOutcome, InitStatus, InitializeProjectError, ProjectConfiguration,
+    ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject,
+    fingerprint_taxonomy, initial_project_configuration, initialize_project,
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
@@ -148,7 +147,6 @@ impl ProjectConfigurationStore for FakeStore {
 fn default_project() -> Result<ProjectConfiguration, Box<dyn Error>> {
     Ok(initial_project_configuration(
         &GlobalConfiguration::default(),
-        None,
     )?)
 }
 
@@ -156,9 +154,8 @@ fn init(
     locator: &FakeLocator,
     store: &FakeStore,
     global: &GlobalConfiguration,
-    taxonomy: Option<&TaxonomyId>,
 ) -> Result<InitOutcome, InitializeProjectError<FakeError, FakeError>> {
-    initialize_project(locator, store, global, taxonomy, &repository_path())
+    initialize_project(locator, store, global, &repository_path())
 }
 
 fn repository_path() -> PathBuf {
@@ -177,7 +174,7 @@ fn absent_project_is_created_once_with_complete_definitions() -> Result<(), Box<
     let locator = FakeLocator::available()?;
     let store = FakeStore::new(None);
 
-    let outcome = init(&locator, &store, &GlobalConfiguration::default(), None)?;
+    let outcome = init(&locator, &store, &GlobalConfiguration::default())?;
 
     assert_resolution(InitStatus::Initialized, &outcome);
     assert_eq!(locator.calls.get(), 1);
@@ -204,12 +201,7 @@ fn existing_project_is_never_rewritten_even_when_the_library_changed() -> Result
         Vec::new(),
     )?;
 
-    let outcome = init(
-        &locator,
-        &store,
-        &research_only,
-        Some(&TaxonomyId::new("research")?),
-    )?;
+    let outcome = init(&locator, &store, &research_only)?;
 
     assert_resolution(InitStatus::AlreadyInitialized, &outcome);
     assert_eq!(
@@ -220,36 +212,12 @@ fn existing_project_is_never_rewritten_even_when_the_library_changed() -> Result
 }
 
 #[test]
-fn unknown_requested_taxonomy_is_refused_without_a_write() -> Result<(), Box<dyn Error>> {
-    let locator = FakeLocator::available()?;
-    let store = FakeStore::new(None);
-
-    let error = init(
-        &locator,
-        &store,
-        &GlobalConfiguration::default(),
-        Some(&TaxonomyId::new("custom")?),
-    )
-    .err();
-
-    assert!(matches!(
-        error,
-        Some(InitializeProjectError::Configuration(
-            ConfigurationError::UnknownTaxonomy(id)
-        )) if id.as_str() == "custom"
-    ));
-    assert_eq!(store.calls.borrow().as_slice(), [StoreCall::Load]);
-    Ok(())
-}
-
-#[test]
 fn locator_and_each_store_failure_remain_distinguishable() -> Result<(), Box<dyn Error>> {
     let store = FakeStore::new(None);
     let locator_error = init(
         &FakeLocator::failing(),
         &store,
         &GlobalConfiguration::default(),
-        None,
     );
     assert!(matches!(
         locator_error,
@@ -264,7 +232,7 @@ fn locator_and_each_store_failure_remain_distinguishable() -> Result<(), Box<dyn
         FakeError::Create,
     ] {
         let store = FakeStore::failing(failure);
-        let error = init(&locator, &store, &GlobalConfiguration::default(), None);
+        let error = init(&locator, &store, &GlobalConfiguration::default());
         assert!(matches!(
             error,
             Err(InitializeProjectError::Store(actual)) if actual == failure
@@ -466,32 +434,9 @@ fn initial_project_copies_available_custom_taxonomies() -> Result<(), Box<dyn Er
         vec![fork.clone()].into_iter().map(Into::into).collect(),
     )?;
 
-    let project = initial_project_configuration(&global, None)?;
+    let project = initial_project_configuration(&global)?;
 
     assert_eq!(project.taxonomies().len(), built_in_taxonomies().len() + 1);
     assert_eq!(project.taxonomies().last(), Some(&fork));
-    Ok(())
-}
-
-#[test]
-fn requested_default_outside_the_available_list_is_appended() -> Result<(), Box<dyn Error>> {
-    let global = GlobalConfiguration::new(
-        1,
-        TaxonomyId::new("conventional")?,
-        vec![TaxonomyId::new("conventional")?],
-        Vec::new(),
-    )?;
-
-    let project = initial_project_configuration(&global, Some(&TaxonomyId::new("research")?))?;
-
-    assert_eq!(project.default_taxonomy().as_str(), "research");
-    assert_eq!(
-        project
-            .taxonomies()
-            .iter()
-            .map(|taxonomy| taxonomy.id().as_str())
-            .collect::<Vec<_>>(),
-        ["conventional", "research"]
-    );
     Ok(())
 }
