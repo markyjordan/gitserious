@@ -17,6 +17,10 @@ use gitserious_core::{
 struct Locator(RepositoryRoot);
 impl RepositoryLocator for Locator {
     type Error = Infallible;
+
+    fn is_not_repository(_: &Self::Error) -> bool {
+        false
+    }
     fn locate(&self, _: &Path) -> Result<RepositoryRoot, Self::Error> {
         Ok(self.0.clone())
     }

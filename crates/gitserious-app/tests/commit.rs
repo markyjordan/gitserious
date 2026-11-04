@@ -40,6 +40,10 @@ struct FakeLocator {
 impl RepositoryLocator for FakeLocator {
     type Error = FakeError;
 
+    fn is_not_repository(_: &Self::Error) -> bool {
+        false
+    }
+
     fn locate(&self, _start: &Path) -> Result<RepositoryRoot, Self::Error> {
         self.trace.borrow_mut().push("locate");
         if self.fail {

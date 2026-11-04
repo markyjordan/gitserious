@@ -28,6 +28,10 @@ impl GlobalConfigurationStore for Global {
 struct Locator;
 impl RepositoryLocator for Locator {
     type Error = Infallible;
+
+    fn is_not_repository(_: &Self::Error) -> bool {
+        false
+    }
     fn locate(&self, start: &Path) -> Result<RepositoryRoot, Self::Error> {
         Ok(RepositoryRoot::new(start.to_path_buf()).unwrap_or_else(|_| unreachable!()))
     }

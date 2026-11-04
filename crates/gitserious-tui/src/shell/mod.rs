@@ -1,11 +1,12 @@
 mod commit_view;
-mod wordmark;
+mod home;
 
 use std::io::{self, IsTerminal};
 use std::time::{Duration, Instant};
 
 use gitserious_app::{
-    CommitAuthoringContext, HelpPage, InteractiveEntry, InteractiveUi, InteractiveWorkspace,
+    CommitAuthoringContext, HelpPage, HomeState, InteractiveEntry, InteractiveUi,
+    InteractiveWorkspace, built_in_project_configuration,
 };
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
@@ -24,6 +25,7 @@ use crate::theme::{
     render_footer, render_footer_block, theme,
 };
 use commit_view::CommitView;
+use home::HomeAction;
 
 /// Footer hints while the nav bar has focus.
 const NAV_BAR_HINTS: [(&str, &str); 2] = [("←/→", "switch"), ("tab", "back")];
@@ -120,6 +122,7 @@ enum Action {
     Result,
     Author,
     Resume,
+    Initialize,
     Quit,
 }
 
@@ -142,6 +145,9 @@ struct Shell {
     section: Section,
     config: ConfigView,
     commit: CommitView,
+    home: HomeState,
+    /// Why the last initialization from Home failed.
+    home_error: Option<String>,
     /// Tab moves focus to the nav bar, where Left and Right switch sections.
     nav_focused: bool,
     pending_author: Option<PendingAuthor>,
@@ -163,6 +169,8 @@ impl Shell {
             },
             config: ConfigView::new(workspace.configuration()),
             commit: CommitView::default(),
+            home: workspace.home(),
+            home_error: None,
             nav_focused: false,
             pending_author: None,
             overlay: None,
@@ -194,10 +202,16 @@ impl Shell {
         match action {
             Action::Select(section) => {
                 self.section = section;
-                if section == Section::Commit {
-                    self.commit.refresh(workspace);
+                match section {
+                    Section::Commit => self.commit.refresh(workspace),
+                    Section::Home => {
+                        self.home = workspace.home();
+                        self.home_error = None;
+                    }
+                    Section::Config | Section::Help => {}
                 }
             }
+            Action::Initialize => self.initialize(workspace),
             Action::Refresh => {
                 self.commit.notice.clear();
                 self.commit.refresh(workspace);
@@ -322,6 +336,17 @@ impl Shell {
                     _ => {}
                 }
                 match self.section {
+                    Section::Home if key.code == KeyCode::Enter => {
+                        match HomeAction::of(&self.home) {
+                            Some(HomeAction::InitializeGitserious) => {
+                                return self.execute(Action::Initialize, workspace);
+                            }
+                            Some(HomeAction::GoToCommit) => {
+                                return self.execute(Action::Select(Section::Commit), workspace);
+                            }
+                            None => {}
+                        }
+                    }
                     Section::Commit => match key.code {
                         KeyCode::Char('r') => return self.execute(Action::Refresh, workspace),
                         KeyCode::Char('o') if !self.commit.notice.is_empty() => {
@@ -375,6 +400,20 @@ impl Shell {
         None
     }
 
+    fn initialize(&mut self, workspace: &dyn InteractiveWorkspace) {
+        match workspace.initialize(&built_in_project_configuration()) {
+            Ok(()) => {
+                self.home_error = None;
+                // Config loaded the project before it existed; reload it unless it holds drafts.
+                if !self.config.dirty() {
+                    self.config = ConfigView::new(workspace.configuration());
+                }
+            }
+            Err(error) => self.home_error = Some(error),
+        }
+        self.home = workspace.home();
+    }
+
     fn open_palette(&mut self) {
         self.overlay = Some(Overlay::Palette(Palette {
             query: String::new(),
@@ -388,6 +427,11 @@ impl Shell {
             .into_iter()
             .map(|section| (format!("Open {}", section.label()), Action::Select(section)))
             .collect();
+        if self.section == Section::Home
+            && HomeAction::of(&self.home) == Some(HomeAction::InitializeGitserious)
+        {
+            commands.push(("Initialize gitserious".into(), Action::Initialize));
+        }
         if self.section == Section::Commit {
             commands.push(("Refresh repository".into(), Action::Refresh));
             if !self.commit.notice.is_empty() {
@@ -559,7 +603,9 @@ impl Shell {
                         .areas(body);
                 let footer = render_footer_block(frame, footer);
                 match self.section {
-                    Section::Home => wordmark::render_home(frame, content),
+                    Section::Home => {
+                        home::render(frame, content, &self.home, self.home_error.as_deref());
+                    }
                     Section::Commit => {
                         self.commit
                             .render(frame, content, self.pending_author.is_some())
@@ -570,10 +616,12 @@ impl Shell {
                 if self.nav_focused {
                     render_footer(frame, footer, &NAV_BAR_HINTS, &NAV_BAR_SHELL_HINTS);
                 } else {
+                    let home_hint = HomeAction::of(&self.home).map(HomeAction::hint);
                     let hints: &[(&str, &str)] = match self.section {
                         Section::Commit => &[("↑/↓", "move"), ("←/→", "tree"), ("r", "refresh")],
                         Section::Help => &[("←/→", "page"), ("↑/↓", "scroll")],
-                        Section::Home | Section::Config => &[],
+                        Section::Home => home_hint.as_slice(),
+                        Section::Config => &[],
                     };
                     render_footer(frame, footer, hints, &SHELL_HINTS);
                 }
@@ -727,10 +775,14 @@ mod tests {
     use ratatui::crossterm::event::{self, KeyEvent};
 
     use super::*;
+    use std::cell::RefCell;
+
     use gitserious_app::{
         BranchState, CommitOutput, ConfigurationDestination, ConfigurationSession,
-        ConfigurationWorkspace, GlobalConfiguration, RepositoryRoot, RepositoryStatus,
+        ConfigurationWorkspace, GlobalConfiguration, ProjectConfiguration, RepositoryRoot,
+        RepositoryStatus,
     };
+    use gitserious_core::TaxonomyVersion;
     use ratatui::{Terminal, backend::TestBackend};
 
     struct Services;
@@ -753,6 +805,12 @@ mod tests {
         }
     }
     impl InteractiveWorkspace for Services {
+        fn home(&self) -> HomeState {
+            HomeState::Uninitialized { root: fresh_root() }
+        }
+        fn initialize(&self, _: &ProjectConfiguration) -> Result<(), String> {
+            Err("test initialize unavailable".into())
+        }
         fn configuration(&self) -> &dyn ConfigurationWorkspace {
             self
         }
@@ -773,6 +831,269 @@ mod tests {
         ) -> Result<CommitOutput, String> {
             Err("test submit unavailable".into())
         }
+    }
+
+    fn fresh_root() -> RepositoryRoot {
+        let filesystem_root = std::env::temp_dir()
+            .ancestors()
+            .last()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
+        RepositoryRoot::new(filesystem_root.join("fresh"))
+            .unwrap_or_else(|error| unreachable!("the filesystem root is absolute: {error}"))
+    }
+
+    /// A workspace whose Home state follows initialization.
+    struct HomeWorkspace {
+        state: RefCell<HomeState>,
+        created: RefCell<Option<ProjectConfiguration>>,
+        failure: Option<&'static str>,
+    }
+
+    impl HomeWorkspace {
+        fn new(state: HomeState) -> Self {
+            Self {
+                state: RefCell::new(state),
+                created: RefCell::new(None),
+                failure: None,
+            }
+        }
+    }
+
+    impl InteractiveWorkspace for HomeWorkspace {
+        fn home(&self) -> HomeState {
+            self.state.borrow().clone()
+        }
+        fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
+            if let Some(failure) = self.failure {
+                return Err(failure.into());
+            }
+            *self.state.borrow_mut() = HomeState::Initialized {
+                root: fresh_root(),
+                default: configuration.default_taxonomy().clone(),
+                version: TaxonomyVersion::V1,
+                policy_untracked: true,
+            };
+            *self.created.borrow_mut() = Some(configuration.clone());
+            Ok(())
+        }
+        fn configuration(&self) -> &dyn ConfigurationWorkspace {
+            &Services
+        }
+        fn repository_status(&self) -> Result<RepositoryStatus, String> {
+            Services.repository_status()
+        }
+        fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
+            Services.prepare_commit()
+        }
+        fn submit_commit(
+            &self,
+            authored: &gitserious_app::AuthoredCommit,
+        ) -> Result<CommitOutput, String> {
+            Services.submit_commit(authored)
+        }
+    }
+
+    fn home_screen(
+        workspace: &HomeWorkspace,
+        width: u16,
+        height: u16,
+    ) -> Result<(Shell, Terminal<TestBackend>), Box<dyn std::error::Error>> {
+        let mut shell = Shell::new(InteractiveEntry::Home, workspace);
+        let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        Ok((shell, terminal))
+    }
+
+    fn row_of(text: &str, needle: &str) -> Option<usize> {
+        text.lines().position(|row| row.contains(needle))
+    }
+
+    #[test]
+    fn home_names_the_directory_and_offers_only_the_step_its_state_allows()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = fresh_root();
+        let path = root.as_path().display().to_string();
+        let initialized = |policy_untracked| HomeState::Initialized {
+            root: fresh_root(),
+            default: gitserious_core::built_in_taxonomies()[0].id().clone(),
+            version: TaxonomyVersion::V1,
+            policy_untracked,
+        };
+        for (width, height) in [(87, 40), (100, 30)] {
+            let workspace = HomeWorkspace::new(HomeState::NoRepository {
+                directory: root.as_path().to_path_buf(),
+            });
+            let (_, terminal) = home_screen(&workspace, width, height)?;
+            let text = rendered(&terminal);
+            let hint = row_of(&text, "no git repository found").ok_or("missing hint")?;
+            let column = text
+                .lines()
+                .nth(hint)
+                .unwrap_or_default()
+                .find("no git")
+                .unwrap_or(0);
+            let buffer = terminal.backend().buffer();
+            assert_eq!(
+                buffer[(u16::try_from(column)?, u16::try_from(hint)?)].fg,
+                theme().pending
+            );
+            assert!(row_of(&text, &path).is_some(), "{text}");
+            assert!(
+                !text.contains("initialize"),
+                "no step without a repository yet"
+            );
+            assert!(!text.contains("enter "), "{text}");
+
+            let workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
+            let (_, terminal) = home_screen(&workspace, width, height)?;
+            let text = rendered(&terminal);
+            let rows: Vec<&str> = text.lines().collect();
+            let name = row_of(&text, "fresh").ok_or("missing name")?;
+            assert!(rows[name + 1].contains(&path));
+            let action = row_of(&text, " initialize gitserious ").ok_or("missing action")?;
+            assert_eq!(action, name + 3);
+            assert!(rows[action].trim_end().ends_with("enter"));
+            let wordmark = row_of(&text, "▄████ ███").ok_or("missing wordmark")?;
+            let left = rows[wordmark].chars().take_while(|c| *c == ' ').count();
+            assert_eq!(rows[name].chars().take_while(|c| *c == ' ').count(), left);
+            let buffer = terminal.backend().buffer();
+            assert_eq!(
+                buffer[(u16::try_from(left)?, u16::try_from(action)?)].bg,
+                theme().cursor
+            );
+            assert_eq!(
+                buffer[(u16::try_from(left + 48)?, u16::try_from(action)?)].bg,
+                theme().cursor,
+                "the action row spans the wordmark"
+            );
+            assert!(
+                !text.contains("gitserious.toml"),
+                "no hint about the missing file"
+            );
+            assert!(!text.contains("no git repository"));
+            let content_rows = usize::from(height) - 2;
+            let block = action - wordmark + 1;
+            assert!(
+                (wordmark - 1).abs_diff((content_rows - block) / 2) <= 1,
+                "the block is centered vertically"
+            );
+            assert!(rows[usize::from(height) - 1].starts_with(" enter initialize"));
+
+            let workspace = HomeWorkspace::new(initialized(true));
+            let (_, terminal) = home_screen(&workspace, width, height)?;
+            let text = rendered(&terminal);
+            let rows: Vec<&str> = text.lines().collect();
+            let done = row_of(&text, "✓ fresh is initialized with conventional-v1")
+                .ok_or("missing initialized line")?;
+            assert_eq!(
+                row_of(&text, "◐ gitserious.toml is untracked."),
+                Some(done + 2)
+            );
+            assert!(rows[done + 3].contains("Commit it so the policy travels with the repo:"));
+            assert!(rows[done + 4].contains("git add gitserious.toml"));
+            assert_eq!(row_of(&text, " Go to Commit "), Some(done + 6));
+            assert!(rows[usize::from(height) - 1].starts_with(" enter commit"));
+
+            let workspace = HomeWorkspace::new(initialized(false));
+            let (_, terminal) = home_screen(&workspace, width, height)?;
+            let text = rendered(&terminal);
+            let done = row_of(&text, "is initialized with").ok_or("missing line")?;
+            assert!(!text.contains("untracked"));
+            assert_eq!(row_of(&text, " Go to Commit "), Some(done + 2));
+
+            let workspace = HomeWorkspace::new(HomeState::Unavailable {
+                directory: root.as_path().to_path_buf(),
+                error: "git is not installed".into(),
+            });
+            let (_, terminal) = home_screen(&workspace, width, height)?;
+            let text = rendered(&terminal);
+            let error = row_of(&text, "✗ git is not installed").ok_or("missing error")?;
+            let column = text
+                .lines()
+                .nth(error)
+                .unwrap_or_default()
+                .find('✗')
+                .unwrap_or(0);
+            let column = text.lines().nth(error).unwrap_or_default()[..column]
+                .chars()
+                .count();
+            let buffer = terminal.backend().buffer();
+            assert_eq!(
+                buffer[(u16::try_from(column)?, u16::try_from(error)?)].fg,
+                theme().blocks
+            );
+            assert!(!text.contains("enter "));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn enter_initializes_the_built_ins_and_then_offers_commit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
+        let (mut shell, _) = home_screen(&workspace, 87, 40)?;
+        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        let created = workspace
+            .created
+            .borrow()
+            .clone()
+            .ok_or("nothing initialized")?;
+        assert_eq!(created.default_taxonomy().as_str(), "conventional");
+        assert_eq!(
+            created
+                .taxonomies()
+                .iter()
+                .map(|taxonomy| taxonomy.versioned().to_string())
+                .collect::<Vec<_>>(),
+            ["conventional-v1", "research-v1", "infra-ops-v1"]
+        );
+        assert_eq!(shell.section, Section::Home);
+        assert!(matches!(shell.home, HomeState::Initialized { .. }));
+        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        assert_eq!(shell.section, Section::Commit);
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_initialization_shows_why_and_keeps_the_offer()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
+        workspace.failure = Some("gitserious.toml already exists");
+        let (mut shell, mut terminal) = home_screen(&workspace, 100, 30)?;
+        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        let text = rendered(&terminal);
+        assert!(text.contains("✗ gitserious.toml already exists"), "{text}");
+        assert!(text.contains(" initialize gitserious "));
+        assert!(workspace.created.borrow().is_none());
+        shell.execute(Action::Select(Section::Help), &workspace);
+        shell.execute(Action::Select(Section::Home), &workspace);
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        assert!(
+            !rendered(&terminal).contains("already exists"),
+            "a revisit starts clean"
+        );
+
+        for state in [
+            HomeState::NoRepository {
+                directory: fresh_root().as_path().to_path_buf(),
+            },
+            HomeState::Unavailable {
+                directory: fresh_root().as_path().to_path_buf(),
+                error: "git is not installed".into(),
+            },
+        ] {
+            let workspace = HomeWorkspace::new(state);
+            let (mut shell, _) = home_screen(&workspace, 87, 40)?;
+            shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+            assert_eq!(shell.section, Section::Home);
+            assert!(
+                workspace.created.borrow().is_none(),
+                "enter has no step to take"
+            );
+        }
+        Ok(())
     }
 
     fn key(code: KeyCode) -> Event {
@@ -1271,7 +1592,7 @@ mod tests {
                 .ok_or("missing wordmark")?;
             let tagline = rows
                 .iter()
-                .position(|row| row.contains(wordmark::TAGLINE))
+                .position(|row| row.contains(home::TAGLINE))
                 .ok_or("missing tagline")?;
             assert_eq!(
                 tagline,

@@ -68,4 +68,8 @@ pub trait RepositoryLocator {
     /// Returns the adapter's [`Self::Error`] when no usable worktree can be
     /// discovered.
     fn locate(&self, start: &Path) -> Result<RepositoryRoot, Self::Error>;
+
+    /// Whether `error` means no Git worktree contains the start directory,
+    /// as opposed to Git itself failing.
+    fn is_not_repository(error: &Self::Error) -> bool;
 }

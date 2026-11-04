@@ -113,6 +113,14 @@ where
     })
 }
 
+/// The project a new repository starts with: every built-in taxonomy, the first as default.
+#[must_use]
+pub fn built_in_project_configuration() -> ProjectConfiguration {
+    let taxonomies = gitserious_core::built_in_taxonomies().to_vec();
+    ProjectConfiguration::new(1, taxonomies[0].id().clone(), taxonomies)
+        .unwrap_or_else(|_| unreachable!("the built-in taxonomies form a valid project"))
+}
+
 /// Copies the Library's default environment, plus `requested`, into a new project.
 pub fn initial_project_configuration(
     global: &GlobalConfiguration,

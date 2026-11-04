@@ -57,6 +57,10 @@ impl FakeLocator {
 impl RepositoryLocator for FakeLocator {
     type Error = FakeError;
 
+    fn is_not_repository(_: &Self::Error) -> bool {
+        false
+    }
+
     fn locate(&self, _start: &Path) -> Result<RepositoryRoot, Self::Error> {
         self.calls.set(self.calls.get() + 1);
         self.result.clone()

@@ -11,6 +11,21 @@ the left and `tab nav bar  / commands  q quit` on the right; popups show
 without terminal streams prints help. Home, Library, and Help work outside a
 repository.
 
+Under the tagline, Home names the directory or repository and offers the one
+step its state allows:
+
+- Outside a Git repository, it shows the directory and `no git repository
+  found`.
+- In a repository without `gitserious.toml`, Enter on `initialize gitserious`
+  creates the project with the built-in taxonomies, `conventional-v1` first
+  and default.
+- In an initialized repository, it shows `✓ <name> is initialized with
+  <default>`, warns while `gitserious.toml` is untracked, and Enter on
+  `Go to Commit` opens Commit.
+- When Git or `gitserious.toml` cannot be read, it shows the error.
+
+Home rereads the repository each time you return to it.
+
 Screens draw with the active appearance theme, a set of semantic colors
 (ground, band, text, dim, cursor, pending, done, blocks). Bone is the first
 and, for now, only theme.
