@@ -278,3 +278,23 @@ fn focused_fields_and_their_errors_remain_visible_in_short_inspectors() -> Resul
     }
     Ok(())
 }
+
+#[test]
+fn footer_keys_have_balanced_padding_and_a_separate_label_gap() -> Result {
+    let (view, library) = fixture()?;
+    for width in [64, 85, 138] {
+        let line = view.status_line(Some(&library), true, width);
+        for spans in line.spans.windows(2) {
+            let [chip, label] = spans else { unreachable!() };
+            if chip.style == footer_key_style() {
+                assert_eq!(chip.content.starts_with(' '), chip.content.ends_with(' '));
+                if width == 138 {
+                    assert!(chip.content.starts_with(' '));
+                }
+                assert!(label.content.starts_with(' '));
+                assert_eq!(label.style.bg, Some(JET_BLACK));
+            }
+        }
+    }
+    Ok(())
+}

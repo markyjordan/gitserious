@@ -73,15 +73,26 @@ pub(crate) fn command_hints(hints: &[(&str, &str)]) -> Line<'static> {
     Line::from(spans)
 }
 
+pub(crate) fn footer_key_style() -> Style {
+    Style::new()
+        .fg(Color::Rgb(211, 217, 226))
+        .bg(Color::Rgb(40, 47, 60))
+        .add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn footer_label_style() -> Style {
+    Style::new().fg(Color::Rgb(139, 148, 164)).bg(JET_BLACK)
+}
+
 pub(crate) fn footer_hints(hints: &[(&str, &str)]) -> Line<'static> {
     let mut spans = Vec::with_capacity(hints.len().saturating_mul(3));
     for (index, (key, action)) in hints.iter().copied().enumerate() {
         if index > 0 {
             spans.push(Span::raw("  "));
         }
-        spans.push(Span::styled(key.to_owned(), navigation_key_style()));
+        spans.push(Span::styled(key.to_owned(), footer_key_style()));
         spans.push(Span::raw(": "));
-        spans.push(Span::raw(action.to_owned()));
+        spans.push(Span::styled(action.to_owned(), footer_label_style()));
     }
     Line::from(spans)
 }
@@ -110,7 +121,7 @@ pub(crate) fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &[
         visible.retain(|(hint, _)| *hint != key);
     }
     frame.render_widget(
-        Paragraph::new(footer_hints(&visible)).style(navigation_style()),
+        Paragraph::new(footer_hints(&visible)).style(footer_label_style()),
         area,
     );
 }

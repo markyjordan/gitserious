@@ -1938,12 +1938,46 @@ mod tests {
             .collect()
     }
 
+    pub(super) fn footer_text(text: &str) -> String {
+        let mut text = text.to_owned();
+        for mode in [" NAV ", " EDIT "] {
+            if let Some(at) = text.find(mode) {
+                let end = at + mode.len();
+                let hints = text[end..].trim_start();
+                text = format!(" {mode}  {hints}");
+                break;
+            }
+        }
+        for key in [
+            "←/→",
+            "↑/↓",
+            "enter",
+            "esc",
+            "n",
+            "f",
+            "e",
+            "d",
+            "c",
+            "alt+↑/↓",
+            "tab",
+            "/",
+        ] {
+            text = text.replace(&format!(" {key}  "), &format!(" {key} "));
+        }
+        text
+    }
+
     fn row_text(terminal: &Terminal<TestBackend>, x: u16, y: u16, width: u16) -> String {
         let buffer = terminal.backend().buffer();
-        (x..x + width)
+        let text = (x..x + width)
             .map(|column| buffer[(column, y)].symbol())
             .collect::<Vec<_>>()
-            .concat()
+            .concat();
+        if y == buffer.area.height - 2 {
+            footer_text(&text)
+        } else {
+            text
+        }
     }
 
     #[test]
@@ -1999,7 +2033,8 @@ mod tests {
         assert_eq!(buffer[(0, 27)].symbol(), "└");
         assert_eq!(buffer[(1, 28)].symbol(), "←");
         assert_eq!(buffer[(4, 28)].symbol(), ":");
-        assert!((1..99).all(|x| buffer[(x, 28)].bg == ACCENT));
+        assert!((1..4).all(|x| buffer[(x, 28)].bg == Color::Rgb(40, 47, 60)));
+        assert_eq!(buffer[(6, 28)].bg, JET_BLACK);
 
         state.handle_event(key(KeyCode::Right), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
@@ -2492,6 +2527,37 @@ mod tests {
     }
 
     #[test]
+    fn first_footer_command_chip_starts_one_column_inside_the_inspector_border()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for width in [MINIMUM_WIDTH, 87, 140] {
+            let (workspace, _) = custom_workspace()?;
+            let mut state = State::new(&workspace);
+            state.handle_event(key(KeyCode::Char('2')), &workspace);
+            select_taxonomy(&mut state, 3);
+            let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
+            for editing in [false, true] {
+                if editing {
+                    state.handle_event(key(KeyCode::Char('e')), &workspace);
+                }
+                terminal.draw(|frame| state.render(frame))?;
+                let buffer = terminal.backend().buffer();
+                assert_eq!(buffer[(MENU_WIDTH, 38)].bg, JET_BLACK);
+                assert_eq!(buffer[(MENU_WIDTH + 1, 38)].bg, Color::Rgb(40, 47, 60));
+                assert_eq!(buffer[(0, 38)].bg, JET_BLACK);
+                if width == 140 && !editing {
+                    assert_eq!(buffer[(width - 2, 38)].symbol(), "s");
+                    assert_eq!(buffer[(width - 1, 38)].symbol(), " ");
+                }
+                assert_eq!(
+                    buffer[(1, 38)].bg,
+                    if editing { crate::theme::AMBER } else { ACCENT }
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn embedded_footer_ends_with_the_shell_keys() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
@@ -2501,7 +2567,7 @@ mod tests {
         terminal.draw(|frame| state.render(frame))?;
         let footer = row_text(&terminal, 0, 34, 87);
         assert!(footer.starts_with("  NAV   ←/→ focus  ↑/↓ move  enter open"));
-        assert!(footer.trim_end().ends_with("│ tab tabs  / cmds"));
+        assert!(footer.trim_end().ends_with("tab tabs  / commands"));
         Ok(())
     }
 
@@ -2617,6 +2683,7 @@ mod tests {
                     .taxonomies
                     .status_line(state.library(), embedded, 138)
                     .to_string();
+                let footer = footer_text(&footer);
                 let enter = if next == Some(KeyCode::Enter) {
                     "enter close"
                 } else {
@@ -2643,7 +2710,7 @@ mod tests {
                         .taxonomies
                         .status_line(state.library(), embedded, width - 2);
                     assert_eq!(line.width(), usize::from(width - 2));
-                    let compact = line.to_string();
+                    let compact = footer_text(&line.to_string());
                     assert!(compact.contains("←/→ focus  ↑/↓ move"), "{compact}");
                     assert!(compact.contains(enter), "{compact}");
                     assert!(!compact.contains('…'), "{compact}");
@@ -2909,7 +2976,7 @@ mod tests {
             let footer = row_text(&terminal, 0, height - 2, width);
             assert!(footer.starts_with("  NAV   ←/→ focus  ↑/↓ move  enter open"));
             if width >= 100 {
-                assert!(footer.trim_end().ends_with("│ / cmds"));
+                assert!(footer.trim_end().ends_with("/ commands"));
             }
             assert!(!footer.contains('…'));
             state.handle_event(key(KeyCode::Char('/')), &workspace);
@@ -3164,7 +3231,10 @@ mod tests {
             .initialize_project()?;
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(row_text(&terminal, 0, 24, MENU_WIDTH), "│              │");
+        assert_eq!(
+            row_text(&terminal, 0, 24, MENU_WIDTH),
+            format!("│{}│", " ".repeat(usize::from(MENU_WIDTH) - 2))
+        );
         state.handle_event(key(KeyCode::Down), &workspace);
         assert_eq!(state.category, Category::Taxonomies);
         terminal.draw(|frame| state.render(frame))?;
@@ -3262,7 +3332,7 @@ mod tests {
         let rendered = text(&terminal);
         assert!(rendered.contains("Taxonomies"));
         assert!(rendered.contains("Taxonomy library unavailable."));
-        assert!(rendered.contains("/ cmds"));
+        assert!(footer_text(&rendered).contains("/ commands"));
         assert!(rendered.contains("Global load failed."));
         state.handle_event(key(KeyCode::Char('n')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
@@ -3568,13 +3638,13 @@ mod tests {
                         .taxonomies
                         .status_line(state.library(), embedded, width - 2);
                     assert_eq!(line.width(), usize::from(width - 2));
-                    let footer = line.to_string();
+                    let footer = footer_text(&line.to_string());
                     assert!(
                         footer.contains("e edit  c copy property") && footer.contains("d delete"),
                         "{footer}"
                     );
                     assert!(!footer.contains('…'), "{footer}");
-                    if embedded && footer.contains("/ cmds") {
+                    if embedded && footer.contains("/ commands") {
                         assert!(footer.contains("tab tabs"), "{footer}");
                     }
                 }
@@ -3598,11 +3668,7 @@ mod tests {
                     assert!(footer.starts_with("  NAV   ←/→ focus"), "{footer}");
                     assert!(footer.contains("d delete"), "{footer}");
                     assert!(!footer.contains('…'), "{footer}");
-                    assert_eq!(
-                        footer.contains("to other types"),
-                        width == 140 || (width == 87 && !embedded),
-                        "{footer}"
-                    );
+                    assert_eq!(footer.contains("to other types"), width == 140, "{footer}");
                     assert!(!footer.contains("? help"), "{footer}");
                     assert!(footer.starts_with(' ') && footer.ends_with(' '));
                     assert!(row_text(&terminal, 0, 39, width).trim().is_empty());
