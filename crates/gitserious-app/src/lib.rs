@@ -51,7 +51,7 @@ pub use taxonomy_configuration_editor::{
 };
 pub use taxonomy_policy::{
     ConfigurationError, GlobalConfiguration, ProjectConfiguration, ProjectRevision, StoredProject,
-    TaxonomyCatalog, TaxonomyOrigin, fingerprint_taxonomy,
+    TaxonomyCatalog, TaxonomyOrigin, fingerprint_project_configuration, fingerprint_taxonomy,
 };
 pub use taxonomy_ports::{GlobalConfigurationStore, ProjectConfigurationStore};
 pub use verify_project_configuration::{

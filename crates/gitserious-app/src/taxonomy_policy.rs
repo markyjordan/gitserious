@@ -371,6 +371,20 @@ impl Display for ConfigurationError {
 
 impl Error for ConfigurationError {}
 
+/// Fingerprints a project's effective policy: its format version, default, and each taxonomy
+/// in order. TOML layout and comments never reach the hash, so they cannot change it.
+#[must_use]
+pub fn fingerprint_project_configuration(configuration: &ProjectConfiguration) -> Fingerprint {
+    let mut canonical = CanonicalHasher::new(b"gitserious.project-configuration.v1");
+    canonical.u16(configuration.version());
+    canonical.text(configuration.default_taxonomy().as_str());
+    canonical.usize(configuration.taxonomies().len());
+    for taxonomy in configuration.taxonomies() {
+        canonical.text(&fingerprint_taxonomy(taxonomy).to_string());
+    }
+    canonical.finish()
+}
+
 /// Fingerprints every semantic field in a complete taxonomy.
 #[must_use]
 pub fn fingerprint_taxonomy(taxonomy: &Taxonomy) -> Fingerprint {
@@ -460,6 +474,28 @@ mod tests {
         for (taxonomy, expected) in built_in_taxonomies().iter().zip(expected) {
             assert_eq!(fingerprint_taxonomy(taxonomy).to_string(), expected);
         }
+    }
+
+    #[test]
+    fn project_fingerprints_are_pinned_and_order_sensitive() -> Result<(), ConfigurationError> {
+        let conventional = TaxonomyId::new("conventional")
+            .unwrap_or_else(|_| unreachable!("compiled taxonomy identity is valid"));
+        let forward =
+            ProjectConfiguration::new(1, conventional.clone(), built_in_taxonomies().to_vec())?;
+        let mut reversed = built_in_taxonomies().to_vec();
+        reversed.reverse();
+        let backward = ProjectConfiguration::new(1, conventional, reversed)?;
+
+        assert_eq!(
+            fingerprint_project_configuration(&forward).to_string(),
+            "sha256:186844579e3d0964b3d613cc34f3377b16de9159d807d641914dac48343c15a5",
+            "the canonical project fingerprint changed; bump its domain version"
+        );
+        assert_ne!(
+            fingerprint_project_configuration(&forward),
+            fingerprint_project_configuration(&backward)
+        );
+        Ok(())
     }
 
     #[test]

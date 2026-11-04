@@ -150,3 +150,99 @@ fn verification_needs_no_write_permission() -> Result<(), Box<dyn Error>> {
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     Ok(())
 }
+
+fn json_report(home: &Home, repository: &Path) -> Result<(Option<i32>, String), Box<dyn Error>> {
+    let output = home.run(
+        repository,
+        &["config", "verify", "--project", "--format", "json"],
+    )?;
+    assert!(stderr(&output).is_empty(), "{}", stderr(&output));
+    Ok((output.status.code(), stdout(&output)))
+}
+
+fn field<'a>(report: &'a str, name: &str) -> Option<&'a str> {
+    let start = report.find(&format!("\"{name}\": "))? + name.len() + 4;
+    let end = report[start..].find([',', '\n'])?;
+    Some(&report[start..start + end])
+}
+
+#[test]
+fn json_report_is_deterministic_and_ignores_toml_layout() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    let home = Home::new()?;
+    home.init(repository.path())?;
+    corrupt_library(&home)?;
+    let config = repository.path().join("gitserious.toml");
+    let original = fs::read_to_string(&config)?;
+
+    let (code, first) = json_report(&home, repository.path())?;
+    let (_, second) = json_report(&home, repository.path())?;
+    assert_eq!(code, Some(0));
+    assert_eq!(first, second);
+    assert_eq!(field(&first, "valid"), Some("true"));
+    assert_eq!(field(&first, "default_taxonomy"), Some("\"conventional\""));
+    assert!(first.starts_with("{\n  \"report_version\": 1,\n"));
+    assert!(first.contains("{ \"id\": \"research\", \"version\": 2, \"fingerprint\": \"sha256:"));
+    assert!(first.ends_with("  \"diagnostics\": []\n}\n"));
+    let fingerprint = field(&first, "configuration_fingerprint").ok_or("no fingerprint")?;
+
+    fs::write(
+        &config,
+        format!(
+            "# reviewed by a maintainer\n\n{}",
+            original.replace("\n\n", "\n\n\n# spacer\n")
+        ),
+    )?;
+    let (_, relaid) = json_report(&home, repository.path())?;
+    assert_eq!(
+        field(&relaid, "configuration_fingerprint"),
+        Some(fingerprint)
+    );
+
+    fs::write(
+        &config,
+        original.replace(
+            "default-taxonomy = \"conventional\"",
+            "default-taxonomy = \"research\"",
+        ),
+    )?;
+    let (_, changed) = json_report(&home, repository.path())?;
+    assert_ne!(
+        field(&changed, "configuration_fingerprint"),
+        Some(fingerprint)
+    );
+    Ok(())
+}
+
+#[test]
+fn json_report_describes_invalid_and_absent_projects() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    let home = Home::new()?;
+
+    let (code, absent) = json_report(&home, repository.path())?;
+    assert_eq!(code, Some(1));
+    assert_eq!(field(&absent, "valid"), Some("false"));
+    assert!(absent.contains("\"code\": \"not-initialized\""));
+
+    home.init(repository.path())?;
+    let config = repository.path().join("gitserious.toml");
+    fs::write(
+        &config,
+        fs::read_to_string(&config)?.replace(
+            "default-taxonomy = \"conventional\"",
+            "default-taxonomy = \"missing\"",
+        ),
+    )?;
+    let (code, invalid) = json_report(&home, repository.path())?;
+    assert_eq!(code, Some(1));
+    assert_eq!(field(&invalid, "configuration_fingerprint"), Some("null"));
+    assert!(invalid.contains("\"code\": \"invalid-configuration\""));
+    assert!(invalid.contains("default taxonomy \\\"missing\\\" must also be available"));
+
+    fs::remove_file(&config)?;
+    fs::create_dir(&config)?;
+    let (code, unreadable) = json_report(&home, repository.path())?;
+    assert_eq!(code, Some(3));
+    assert!(unreadable.contains("\"code\": \"unreadable\""));
+    Ok(())
+}
