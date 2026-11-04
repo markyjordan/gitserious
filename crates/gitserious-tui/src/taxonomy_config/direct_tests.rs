@@ -385,7 +385,7 @@ fn conditional_fields_are_required_and_type_and_property_never_show_invalid_chip
         let text = frame(&mut state, width, height)?;
         assert!(!text.contains("▲ invalid"));
         assert!(!text.contains("+ new") && !text.contains("~ modified"));
-        assert!(text.contains("esc save"));
+        assert!(super::tests::footer_text(&text).contains("esc save"));
         assert!(!text.contains("ctrl+s"));
     }
     paste(&mut state, &store, "Explain risky changes");

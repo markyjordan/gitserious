@@ -400,7 +400,10 @@ fn assert_black_canvas(buffer: &Buffer) {
         let x = index % width;
         let continuation = x > 0 && Line::from(buffer.content()[index - 1].symbol()).width() > 1;
         assert!(
-            continuation || matches!(cell.bg, JET_BLACK | ZEBRA_BACKGROUND | ACCENT),
+            continuation
+                || matches!(cell.bg, JET_BLACK | ZEBRA_BACKGROUND | ACCENT)
+                || (index / width == usize::from(buffer.area.height - 1)
+                    && cell.bg == Color::Rgb(40, 47, 60)),
             "unexpected canvas background {:?} on symbol {:?} at ({}, {})",
             cell.bg,
             cell.symbol(),
@@ -469,9 +472,16 @@ fn assert_highlighted_footer(
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend)?;
     terminal.draw(|frame| render(frame, session))?;
-    for column in 0..width {
-        assert_eq!(terminal.backend().buffer()[(column, height - 1)].bg, ACCENT);
-    }
+    let buffer = terminal.backend().buffer();
+    let row = (0..width)
+        .map(|column| &buffer[(column, height - 1)])
+        .collect::<Vec<_>>();
+    assert!(row.iter().any(|cell| cell.bg == Color::Rgb(40, 47, 60)));
+    assert!(row.iter().any(|cell| cell.bg == JET_BLACK));
+    assert!(
+        row.iter()
+            .all(|cell| matches!(cell.bg, JET_BLACK | Color::Rgb(40, 47, 60)))
+    );
     Ok(())
 }
 
@@ -1694,8 +1704,8 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     let action = (key.0 + 8, key.1);
     assert!(buffer[key].modifier.contains(Modifier::BOLD));
     assert!(!buffer[action].modifier.contains(Modifier::BOLD));
-    assert_eq!(buffer[key].bg, ACCENT);
-    assert_eq!(buffer[action].bg, ACCENT);
+    assert_eq!(buffer[key].bg, Color::Rgb(40, 47, 60));
+    assert_eq!(buffer[action].bg, JET_BLACK);
 
     let mut picker = AuthoringSession::new(built_in_commit_types(), None);
     let buffer = rendered_buffer(&mut picker, 100, 24)?;

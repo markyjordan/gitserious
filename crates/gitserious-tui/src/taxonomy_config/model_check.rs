@@ -564,8 +564,8 @@ impl Snapshot {
         self.global.as_ref().and_then(ConfigurationSession::library)
     }
 
-    fn footer(&self) -> &str {
-        self.frame.lines().rev().nth(1).unwrap_or_default()
+    fn footer(&self) -> String {
+        super::tests::footer_text(self.frame.lines().rev().nth(1).unwrap_or_default())
     }
 
     fn staged_library(&self) -> Option<GlobalConfiguration> {

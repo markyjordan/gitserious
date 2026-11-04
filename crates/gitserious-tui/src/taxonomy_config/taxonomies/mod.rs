@@ -23,8 +23,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use super::naming::{problem_sentence, refusal_sentence, single_line};
 use super::{ShellKeys, contains};
 use crate::theme::{
-    ACCENT, AMBER, JET_BLACK, block_title, focus_frame_style, footer_hints, navigation_key_style,
-    navigation_style,
+    ACCENT, AMBER, JET_BLACK, block_title, focus_frame_style, footer_hints, footer_key_style,
+    footer_label_style, navigation_key_style,
 };
 use outline::Row;
 pub(super) use outline::RowKey;
@@ -677,7 +677,7 @@ impl TaxonomiesView {
         width: u16,
     ) -> Line<'static> {
         if let Some(hints) = self.picker_hints() {
-            return footer_hints(&hints).style(navigation_style());
+            return footer_hints(&hints).style(footer_label_style());
         }
         let row = library.and_then(|library| self.selected_row(library));
         let editing = self.editing();
@@ -695,7 +695,7 @@ impl TaxonomiesView {
         let mut trailing = if editing {
             Vec::new()
         } else {
-            vec![("/", "cmds")]
+            vec![("/", "commands")]
         };
         if embedded && !editing {
             trailing.insert(0, ("tab", "tabs"));
@@ -734,33 +734,36 @@ impl TaxonomiesView {
             }
         }
         let width = usize::from(width);
-        let line = |hints: &[(&str, &str)], trailing: &[(&str, &str)]| {
+        let line = |hints: &[(&str, &str)], trailing: &[(&str, &str)], padded: bool| {
             let mut left = chip.clone();
-            left.extend(hint_spans(hints));
+            let mode_width = Line::from(chip.clone()).width();
+            let hint_spacing = if padded { 1 } else { 2 };
+            let inset = usize::from(super::MENU_WIDTH).saturating_sub(mode_width + hint_spacing);
+            left.push(Span::raw(" ".repeat(inset)));
+            left.extend(hint_spans(hints, padded));
             let mut right = Vec::new();
             if !trailing.is_empty() {
-                right.push(Span::styled("│ ", DIM));
-                right.extend(hint_spans(trailing).into_iter().skip(1));
+                right.extend(hint_spans(trailing, padded).into_iter().skip(1));
             }
             (left, right)
         };
         let fits = |(left, right): &(Vec<Span<'static>>, Vec<Span<'static>>)| {
             Line::from(left.clone()).width() + Line::from(right.clone()).width() < width
         };
-        let mut candidate = line(&hints, &trailing);
+        let mut candidate = line(&hints, &trailing, false);
         if property_actions && !fits(&candidate) {
             if let Some((_, label)) = hints.iter_mut().find(|(key, _)| *key == "c") {
                 *label = "copy property";
             }
-            candidate = line(&hints, &trailing);
+            candidate = line(&hints, &trailing, false);
         }
         if !fits(&candidate) {
             hints.retain(|(key, _)| *key != "alt+↑/↓");
-            candidate = line(&hints, &trailing);
+            candidate = line(&hints, &trailing, false);
         }
         while !fits(&candidate) && !trailing.is_empty() {
             trailing.pop();
-            candidate = line(&hints, &trailing);
+            candidate = line(&hints, &trailing, false);
         }
         let optional: &[&str] = if property_actions {
             &["↑/↓"]
@@ -772,7 +775,12 @@ impl TaxonomiesView {
                 break;
             }
             hints.retain(|(key, _)| key != optional);
-            candidate = line(&hints, &trailing);
+            candidate = line(&hints, &trailing, false);
+        }
+        // Choose hints using their original widths, then spend spare space on chip padding.
+        let padded = line(&hints, &trailing, true);
+        if fits(&padded) {
+            candidate = padded;
         }
         fit(candidate.0, candidate.1, width)
     }
@@ -831,14 +839,21 @@ pub(super) struct Observation {
     pub(super) mode: Mode,
 }
 
-fn hint_spans(hints: &[(&str, &str)]) -> Vec<Span<'static>> {
+fn hint_spans(hints: &[(&str, &str)], padded: bool) -> Vec<Span<'static>> {
     hints
         .iter()
         .flat_map(|(key, label)| {
             [
-                Span::raw("  "),
-                Span::styled((*key).to_owned(), KEY_STYLE),
-                Span::styled(format!(" {label}"), DIM),
+                Span::raw(if padded { " " } else { "  " }),
+                Span::styled(
+                    if padded {
+                        format!(" {key} ")
+                    } else {
+                        (*key).to_owned()
+                    },
+                    footer_key_style(),
+                ),
+                Span::styled(format!(" {label}"), footer_label_style()),
             ]
         })
         .collect()
