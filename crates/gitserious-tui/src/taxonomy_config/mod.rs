@@ -179,6 +179,24 @@ impl Category {
             Self::Taxonomies => Self::Project,
         }
     }
+
+    fn menu_line(self, active: bool) -> Line<'static> {
+        let (digit, label) = if active {
+            (
+                navigation_key_style(),
+                Style::default()
+                    .fg(ACCENT)
+                    .add_modifier(Modifier::UNDERLINED),
+            )
+        } else {
+            (Style::default().fg(Color::Gray), Style::default())
+        };
+        Line::from(vec![
+            Span::styled(format!(" {} ", self.index() + 1), digit),
+            Span::raw(" "),
+            Span::styled(format!("{} ", self.label()), label),
+        ])
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -249,7 +267,15 @@ enum Screen {
     ConfirmRemove(NodeId),
 }
 
-const MENU_WIDTH: u16 = 16;
+fn menu_width() -> u16 {
+    let longest_option = Category::ALL
+        .into_iter()
+        .map(|category| category.menu_line(false).width())
+        .max()
+        .unwrap_or_default();
+    let title_width = Line::from(block_title("Menu")).width();
+    u16::try_from(longest_option.max(title_width) + 2).unwrap_or(u16::MAX)
+}
 #[derive(Clone, Debug)]
 struct SettingsDraft {
     selected: usize,
@@ -1195,7 +1221,7 @@ impl State {
             Layout::vertical([Constraint::Min(1), Constraint::Length(FOOTER_HEIGHT)]).areas(area);
         let footer = render_footer_block(frame, footer);
         let [menu, content] =
-            Layout::horizontal([Constraint::Length(MENU_WIDTH), Constraint::Min(1)]).areas(main);
+            Layout::horizontal([Constraint::Length(menu_width()), Constraint::Min(1)]).areas(main);
         self.render_menu(frame, menu);
         let body = content;
         let hints = if let Some(question) = self.confirmation() {
@@ -1254,7 +1280,8 @@ impl State {
     fn render_menu(&mut self, frame: &mut Frame<'_>, area: Rect) {
         self.tab_areas = [Rect::default(); 2];
         let home = matches!(self.screen, Screen::Home);
-        let style = focus_frame_style(home && self.home_focus == HomeFocus::Menu);
+        let focused = home && self.home_focus == HomeFocus::Menu;
+        let style = focus_frame_style(focused);
         frame.render_widget(
             Block::bordered()
                 .border_style(style)
@@ -1271,22 +1298,8 @@ impl State {
                 break;
             }
             let row = Rect::new(area.x.saturating_add(1), y, area.width.saturating_sub(2), 1);
-            let (digit, label) = if category == self.category {
-                (
-                    navigation_key_style(),
-                    Style::default()
-                        .fg(ACCENT)
-                        .add_modifier(Modifier::UNDERLINED),
-                )
-            } else {
-                (Style::default().fg(Color::Gray), Style::default())
-            };
             frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(format!(" {} ", category.index() + 1), digit),
-                    Span::raw(" "),
-                    Span::styled(category.label(), label),
-                ])),
+                Paragraph::new(category.menu_line(category == self.category)),
                 row,
             );
             if home {
@@ -2007,16 +2020,18 @@ mod tests {
         );
         let buffer = terminal.backend().buffer();
         assert!(row_text(&terminal, 0, 0, 100).starts_with("┌ Menu ─"));
-        assert!(row_text(&terminal, MENU_WIDTH, 0, 100 - MENU_WIDTH).starts_with("┌ Project ─"));
+        assert!(
+            row_text(&terminal, menu_width(), 0, 100 - menu_width()).starts_with("┌ Project ─")
+        );
         assert!(home.contains("┌ Commit ─"));
         assert_eq!(buffer[(0, 0)].symbol(), "┌");
-        assert_eq!(buffer[(MENU_WIDTH - 1, 0)].symbol(), "┐");
-        assert_eq!(buffer[(MENU_WIDTH - 1, 27)].symbol(), "┘");
-        assert_eq!(buffer[(MENU_WIDTH, 0)].symbol(), "┌");
+        assert_eq!(buffer[(menu_width() - 1, 0)].symbol(), "┐");
+        assert_eq!(buffer[(menu_width() - 1, 27)].symbol(), "┘");
+        assert_eq!(buffer[(menu_width(), 0)].symbol(), "┌");
         assert_eq!(buffer[(99, 0)].symbol(), "┐");
-        assert_ne!(buffer[(MENU_WIDTH + 1, 1)].symbol(), " ");
-        assert_eq!(buffer[(MENU_WIDTH + 1, 1)].fg, ACCENT);
-        let project_columns = pane_columns(Rect::new(MENU_WIDTH, 0, 100 - MENU_WIDTH, 28));
+        assert_ne!(buffer[(menu_width() + 1, 1)].symbol(), " ");
+        assert_eq!(buffer[(menu_width() + 1, 1)].fg, ACCENT);
+        let project_columns = pane_columns(Rect::new(menu_width(), 0, 100 - menu_width(), 28));
         assert!(
             row_text(
                 &terminal,
@@ -2226,12 +2241,12 @@ mod tests {
             let screen = rows(&terminal);
             assert!(screen[0].starts_with("┌ Menu ─"));
             assert!(
-                row_text(&terminal, MENU_WIDTH, 0, width - MENU_WIDTH)
+                row_text(&terminal, menu_width(), 0, width - menu_width())
                     .starts_with("┌ Commit Message Taxonomies ─")
             );
             let buffer = terminal.backend().buffer();
-            assert_eq!(buffer[(MENU_WIDTH, 0)].fg, Color::Rgb(80, 160, 255));
-            assert_eq!(buffer[(MENU_WIDTH + 1, 1)].fg, Color::Rgb(80, 160, 255));
+            assert_eq!(buffer[(menu_width(), 0)].fg, Color::Rgb(80, 160, 255));
+            assert_eq!(buffer[(menu_width() + 1, 1)].fg, Color::Rgb(80, 160, 255));
             assert_eq!(buffer[(1, height - 2)].bg, Color::Rgb(80, 160, 255));
             for label in [" built-in ", " ◇ read-only "] {
                 let mut count = 0;
@@ -2512,17 +2527,35 @@ mod tests {
         assert!(screen[bottom - 1].contains("│▌▸ infra-ops"));
         assert!(screen.join("\n").contains("Taxonomy infra-ops"));
 
-        let first = row_text(&terminal, MENU_WIDTH + 1, 1, MINIMUM_WIDTH - MENU_WIDTH - 2);
+        let first = row_text(
+            &terminal,
+            menu_width() + 1,
+            1,
+            MINIMUM_WIDTH - menu_width() - 2,
+        );
         let name = first
             .split(['▸', '▾'])
             .nth(1)
             .and_then(|row| row.split_whitespace().next())
             .ok_or("missing first row")?;
-        state.handle_event(click(Rect::new(MENU_WIDTH + 1, 1, 1, 1)), &workspace);
+        state.handle_event(click(Rect::new(menu_width() + 1, 1, 1, 1)), &workspace);
         assert_eq!(
             state.taxonomies.observe(state.library()).cursor_path,
             ["conventional", name]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn menu_rail_fits_its_longest_option_with_one_trailing_space()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
+        terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(row_text(&terminal, 0, 1, menu_width()), "│ 1  Project │");
+        assert_eq!(row_text(&terminal, 0, 2, menu_width()), "│ 2  Library │");
+        assert_eq!(terminal.backend().buffer()[(menu_width(), 0)].symbol(), "┌");
         Ok(())
     }
 
@@ -2541,8 +2574,8 @@ mod tests {
                 }
                 terminal.draw(|frame| state.render(frame))?;
                 let buffer = terminal.backend().buffer();
-                assert_eq!(buffer[(MENU_WIDTH, 38)].bg, JET_BLACK);
-                assert_eq!(buffer[(MENU_WIDTH + 1, 38)].bg, Color::Rgb(40, 47, 60));
+                assert_eq!(buffer[(menu_width(), 38)].bg, JET_BLACK);
+                assert_eq!(buffer[(menu_width() + 1, 38)].bg, Color::Rgb(40, 47, 60));
                 assert_eq!(buffer[(0, 38)].bg, JET_BLACK);
                 if width == 140 && !editing {
                     assert_eq!(buffer[(width - 2, 38)].symbol(), "s");
@@ -3232,8 +3265,8 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
         assert_eq!(
-            row_text(&terminal, 0, 24, MENU_WIDTH),
-            format!("│{}│", " ".repeat(usize::from(MENU_WIDTH) - 2))
+            row_text(&terminal, 0, 24, menu_width()),
+            format!("│{}│", " ".repeat(usize::from(menu_width()) - 2))
         );
         state.handle_event(key(KeyCode::Down), &workspace);
         assert_eq!(state.category, Category::Taxonomies);
@@ -3358,7 +3391,7 @@ mod tests {
         assert!(text(&minimum).contains("Project"));
         let buffer = minimum.backend().buffer();
         assert_eq!(buffer[(0, 0)].symbol(), "┌");
-        assert_eq!(buffer[(MENU_WIDTH, 0)].symbol(), "┌");
+        assert_eq!(buffer[(menu_width(), 0)].symbol(), "┌");
         assert_eq!(buffer[(0, 15)].symbol(), "└");
         Ok(())
     }
@@ -3557,14 +3590,14 @@ mod tests {
                 assert!(!footer.contains("policy"));
                 let inspector_y = (0..height)
                     .find(|y| {
-                        row_text(&terminal, MENU_WIDTH, *y, width - MENU_WIDTH)
+                        row_text(&terminal, menu_width(), *y, width - menu_width())
                             .starts_with("┌ Inspector")
                     })
                     .ok_or("Inspector")?;
                 let frames = |terminal: &Terminal<TestBackend>, outline, inspector| {
                     let buffer = terminal.backend().buffer();
-                    assert_eq!(buffer[(MENU_WIDTH, 0)].fg, outline);
-                    assert_eq!(buffer[(MENU_WIDTH, inspector_y)].fg, inspector);
+                    assert_eq!(buffer[(menu_width(), 0)].fg, outline);
+                    assert_eq!(buffer[(menu_width(), inspector_y)].fg, inspector);
                 };
                 frames(&terminal, ACCENT, ACCENT);
                 assert_eq!(
