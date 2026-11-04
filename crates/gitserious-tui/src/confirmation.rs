@@ -74,6 +74,22 @@ pub(crate) const APPLY_OR_DISCARD: &[Choice] = &[
     },
 ];
 
+pub(crate) const REPLACE_OR_COPY: &[Choice] = &[
+    Choice {
+        keys: &[KeyCode::Char('r')],
+        hint: "r",
+        label: "replace",
+        answer: Answer::Confirm,
+    },
+    Choice {
+        keys: &[KeyCode::Char('c')],
+        hint: "c",
+        label: "copy as new",
+        answer: Answer::Alternate,
+    },
+    keep("keep"),
+];
+
 /// The footer hints for `choices`: the same pairs the dialog's buttons show.
 pub(crate) fn hints(choices: &'static [Choice]) -> Vec<(&'static str, &'static str)> {
     choices

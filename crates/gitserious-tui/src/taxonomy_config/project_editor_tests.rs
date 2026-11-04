@@ -199,3 +199,114 @@ fn an_uninitialized_project_has_no_outline_to_open() {
         matches!(&state.status, Some(Notice::Error(message)) if message.contains("Initialize"))
     );
 }
+
+/// Config opened on an initialized built-in project beside a Library holding `team`.
+fn with_library() -> Result<(Workspace, State)> {
+    let workspace = super::copy_tests::team()?;
+    *workspace.project.borrow_mut() = ConfigurationSession::open_project(
+        RepositoryRoot::new(std::env::temp_dir())?,
+        Some(StoredProject {
+            configuration: initial_project_configuration(&GlobalConfiguration::default(), None)?,
+            revision: ProjectRevision::of_bytes(b"opened"),
+        }),
+    );
+    let state = State::new(&workspace);
+    Ok((workspace, state))
+}
+
+fn import_row(state: &mut State, workspace: &Workspace, id: &str) -> Result {
+    state.project_taxonomies.select(
+        draft(state)?
+            .find_path(&["conventional"])
+            .ok_or("conventional")?,
+    );
+    press(state, workspace, KeyCode::Char('i'));
+    let rows = state.catalog().ok_or("the Library loads")?;
+    let index = rows
+        .iter()
+        .position(|taxonomy| taxonomy.id().as_str() == id)
+        .ok_or("row missing")?;
+    for _ in 0..index {
+        press(state, workspace, KeyCode::Down);
+    }
+    press(state, workspace, KeyCode::Enter);
+    Ok(())
+}
+
+#[test]
+fn importing_copies_new_library_taxonomies_and_skips_identical_ones() -> Result {
+    let (workspace, mut state) = with_library()?;
+    open_outline(&mut state, &workspace);
+
+    import_row(&mut state, &workspace, "team")?;
+    assert!(matches!(state.screen, Screen::Home));
+    assert!(draft(&state)?.find_path(&["team"]).is_some());
+    assert!(matches!(&state.status, Some(Notice::Info(message)) if message.contains("Ctrl+S")));
+
+    import_row(&mut state, &workspace, "conventional")?;
+    assert!(
+        matches!(&state.status, Some(Notice::Info(message)) if message.contains("already has"))
+    );
+    assert_eq!(workspace.saves(), 0);
+    assert!(state.scope_dirty(ConfigurationDestination::Project));
+    Ok(())
+}
+
+#[test]
+fn a_different_project_copy_is_replaced_or_kept_only_on_request() -> Result {
+    let (workspace, mut state) = with_library()?;
+    open_outline(&mut state, &workspace);
+    select(&mut state, &workspace, &["conventional", "fix"])?;
+    press(&mut state, &workspace, KeyCode::Char('e'));
+    replace(&mut state, &workspace, "repair")?;
+    press(&mut state, &workspace, KeyCode::Esc);
+
+    import_row(&mut state, &workspace, "conventional")?;
+    let question = state.confirmation().ok_or("no conflict dialog")?;
+    assert!(question.message.contains("differs from the Library's"));
+    press(&mut state, &workspace, KeyCode::Esc);
+    assert!(
+        draft(&state)?
+            .find_path(&["conventional", "repair"])
+            .is_some()
+    );
+
+    import_row(&mut state, &workspace, "conventional")?;
+    press(&mut state, &workspace, KeyCode::Char('c'));
+    assert!(
+        draft(&state)?
+            .find_path(&["conventional-copy", "fix"])
+            .is_some()
+    );
+    assert!(
+        draft(&state)?
+            .find_path(&["conventional", "repair"])
+            .is_some()
+    );
+
+    import_row(&mut state, &workspace, "conventional")?;
+    press(&mut state, &workspace, KeyCode::Char('r'));
+    assert!(draft(&state)?.find_path(&["conventional", "fix"]).is_some());
+    assert!(
+        draft(&state)?
+            .find_path(&["conventional", "repair"])
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn importing_needs_the_library_but_editing_does_not() -> Result {
+    let (workspace, mut state) = fixture()?;
+    open_outline(&mut state, &workspace);
+    select(&mut state, &workspace, &["conventional"])?;
+
+    press(&mut state, &workspace, KeyCode::Char('i'));
+
+    assert!(matches!(state.screen, Screen::Home));
+    assert!(
+        matches!(&state.status, Some(Notice::Error(message)) if message.contains("the Library is corrupt"))
+    );
+    assert_eq!(state.editor(), Some(Editor::Project));
+    Ok(())
+}
