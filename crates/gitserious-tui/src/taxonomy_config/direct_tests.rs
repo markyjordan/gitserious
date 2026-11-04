@@ -130,8 +130,8 @@ fn stored(store: &Store) -> Result<GlobalConfiguration> {
         .global
         .borrow()
         .library()
+        .and_then(LibraryDraft::persisted)
         .ok_or("stored Library missing")?
-        .persisted()
         .clone())
 }
 

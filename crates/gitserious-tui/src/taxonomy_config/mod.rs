@@ -1072,7 +1072,8 @@ impl State {
             }
             PendingAction::InitializeProject => {
                 self.active_scope = ConfigurationDestination::Project;
-                let Some(library) = self.library().map(LibraryDraft::persisted).cloned() else {
+                let Some(library) = self.library().and_then(LibraryDraft::persisted).cloned()
+                else {
                     self.status = Some(Notice::error(format!(
                         "Initializing copies taxonomies from the Library. {}",
                         self.library_error()
@@ -1137,6 +1138,7 @@ impl State {
                 .and_then(|session| {
                     session
                         .persisted_project_config()
+                        .cloned()
                         .or_else(|| session.project_config())
                 })
                 .map(|config| config.taxonomies().to_vec())
@@ -1450,12 +1452,19 @@ impl State {
             return "Repository unavailable.".into();
         };
         let path = root.as_path().join("gitserious.toml");
-        let Some(config) = session.project_config() else {
+        if session.project_draft().is_none() {
             return format!(
                 "Commit taxonomy\n  None\n\nProject configuration\n  {}\n  Absent\n\nStatus\n  {status}\n  {guidance}",
                 path.display()
             );
+        }
+        let Some(config) = session
+            .project_config()
+            .or_else(|| session.persisted_project_config().cloned())
+        else {
+            return format!("Status\n  {status}\n  {guidance}");
         };
+        let config = &config;
         let ids = |config: &ProjectConfiguration| {
             config
                 .taxonomies()
@@ -1637,6 +1646,8 @@ fn project_status(session: &ConfigurationSession) -> &'static str {
         } else {
             "Not initialized"
         }
+    } else if session.project_config().is_none() {
+        "Invalid"
     } else if session.is_dirty() {
         "Changes staged"
     } else {
@@ -1649,6 +1660,9 @@ fn project_guidance(status: &str) -> &'static str {
         "Not initialized" => "Press i to initialize and review.",
         "Initialization staged" => "Review and apply initialization with Ctrl+S.",
         "Changes staged" => "Review Ctrl+S; commits use gitserious.toml as last applied.",
+        "Invalid" => {
+            "Fix the problems shown in Taxonomies; commits use gitserious.toml as last applied."
+        }
         _ => "",
     }
 }

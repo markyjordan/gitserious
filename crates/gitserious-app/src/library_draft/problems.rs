@@ -7,11 +7,14 @@ use gitserious_core::{
     PropertyDefinition, PropertyKey, PropertyRequirement, TaxonomyId, built_in_taxonomies,
 };
 
+use super::Owner;
 use super::{
     DraftField, LibraryDraft, LoadedPath, NodeId, Policy, PropertyNode, TaxonomyNode, TypeNode,
 };
 use crate::taxonomy_policy::validate_selection;
-use crate::{ConfigurationError, GlobalConfiguration, LibraryTaxonomy, TaxonomyOrigin};
+use crate::{
+    ConfigurationError, GlobalConfiguration, LibraryTaxonomy, ProjectConfiguration, TaxonomyOrigin,
+};
 
 /// Where a problem sits.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,6 +36,10 @@ pub enum ProblemKind {
     VersionLimit,
     /// The default or available taxonomies do not resolve.
     Selection(ConfigurationError),
+    /// A project taxonomy has no commit types, so commits could not use it.
+    NoTypes,
+    /// The draft was asked to build into the other owner's configuration.
+    WrongOwner,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -72,11 +79,63 @@ impl Display for Problem {
             ProblemKind::VersionLimit => formatter
                 .write_str("taxonomy version limit reached; fork this taxonomy to continue"),
             ProblemKind::Selection(error) => error.fmt(formatter),
+            ProblemKind::NoTypes => {
+                formatter.write_str("a project taxonomy needs at least one commit type")
+            }
+            ProblemKind::WrongOwner => {
+                formatter.write_str("this draft belongs to a different configuration")
+            }
         }
     }
 }
 
-pub(super) fn build(draft: &LibraryDraft) -> Result<GlobalConfiguration, Vec<Problem>> {
+pub(super) const fn wrong_owner() -> Problem {
+    Problem {
+        site: ProblemSite::Selection,
+        kind: ProblemKind::WrongOwner,
+    }
+}
+
+pub(super) fn build_owner(draft: &LibraryDraft) -> Result<Owner, Vec<Problem>> {
+    if draft.is_project() {
+        build_project(draft).map(|(configuration, records)| Owner::Project {
+            configuration,
+            records,
+        })
+    } else {
+        build(draft).map(Owner::Library)
+    }
+}
+
+/// A project's taxonomies in outline order; each needs a type, and the default must be one of
+/// them. Every taxonomy is available, so the stored available list is not consulted.
+fn build_project(
+    draft: &LibraryDraft,
+) -> Result<(ProjectConfiguration, Vec<LibraryTaxonomy>), Vec<Problem>> {
+    let (custom, mut problems) = custom(draft);
+    let mut taxonomies = Vec::new();
+    for (index, record) in &custom {
+        match record.usable() {
+            Some(taxonomy) => taxonomies.push(taxonomy),
+            None => problems.push(Problem::field(
+                &draft.taxonomies[*index].id,
+                DraftField::Name,
+                ProblemKind::NoTypes,
+            )),
+        }
+    }
+    if !problems.is_empty() {
+        return Err(problems);
+    }
+    let configuration = ProjectConfiguration::new(1, draft.default.clone(), taxonomies)
+        .map_err(|error| vec![selection(error)])?;
+    Ok((
+        configuration,
+        custom.into_iter().map(|(_, record)| record).collect(),
+    ))
+}
+
+fn build(draft: &LibraryDraft) -> Result<GlobalConfiguration, Vec<Problem>> {
     let (custom, mut problems) = custom(draft);
     let installed = draft
         .taxonomies
@@ -321,8 +380,7 @@ fn loaded<'a>(
 ) -> Option<&'a str> {
     let (taxonomy, rest) = baseline?.names().split_first()?;
     let (description, types) = if let Some(stored) = draft
-        .persisted
-        .custom_taxonomies()
+        .records()
         .iter()
         .find(|stored| stored.id().as_str() == taxonomy)
     {

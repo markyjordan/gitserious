@@ -264,7 +264,7 @@ fn project_mutations_require_the_project_destination_and_initialized_state()
     uninitialized.initialize_project(&with_team())?;
     let staged = uninitialized.project_config().ok_or("nothing staged")?;
     assert_eq!(
-        ids(staged),
+        ids(&staged),
         ["conventional", "research", "infra-ops", "team"]
     );
     assert!(uninitialized.initialize_project(&with_team()).is_err());
@@ -292,14 +292,14 @@ fn project_selection_rejects_invalid_choices_without_changing_the_draft()
         ),
     ] {
         assert!(session.configure_project(default, &available).is_err());
-        assert_eq!(session.project_config(), Some(&built_in_project()));
+        assert_eq!(session.project_config(), Some(built_in_project()));
         assert!(!session.is_dirty());
     }
 
     session.configure_project(id("conventional"), &[id("conventional")])?;
     session.configure_project(id("conventional"), &[id("conventional"), id("research")])?;
     assert_eq!(
-        ids(session.project_config().ok_or("no draft")?),
+        ids(&session.project_config().ok_or("no draft")?),
         ["conventional", "research"]
     );
     Ok(())
