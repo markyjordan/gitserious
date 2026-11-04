@@ -88,6 +88,10 @@ impl ProjectConfigurationStore for FakeStore {
     fn ensure_local_state(&self, _root: &RepositoryRoot) -> Result<(), Self::Error> {
         Err(FakeError("unexpected ensure local state"))
     }
+
+    fn is_invalid_document(_: &Self::Error) -> bool {
+        false
+    }
 }
 
 struct FakeAuthor {

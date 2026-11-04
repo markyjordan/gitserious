@@ -9,9 +9,10 @@ use clap::{CommandFactory, Parser, Subcommand};
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
     ConfigurationEditor, GlobalConfigurationStore, HelpPage, InitOutcome, InitStatus,
-    InteractiveEntry, InteractiveUi, ProjectConfigurationStore, RepositoryLocator, RepositoryRoot,
-    RepositoryStatusReader, TaxonomyOrigin, create_commit_with_taxonomy, edit_configuration,
-    initialize_project, run_interactive,
+    InteractiveEntry, InteractiveUi, ProjectConfigurationStore, ProjectVerification,
+    RepositoryLocator, RepositoryRoot, RepositoryStatusReader, TaxonomyOrigin, VerifyProjectError,
+    create_commit_with_taxonomy, edit_configuration, initialize_project, run_interactive,
+    verify_project_configuration,
 };
 use gitserious_core::{
     CommitMessage, CommitTypeDefinition, CommitTypeId, PropertyRequirement, Taxonomy, TaxonomyId,
@@ -62,6 +63,12 @@ enum ConfigAction {
     Show {
         /// Taxonomy identifier.
         taxonomy: TaxonomyId,
+    },
+    /// Check gitserious.toml without writing anything or reading the Library.
+    Verify {
+        /// Verify the repository's gitserious.toml.
+        #[arg(long, required = true)]
+        project: bool,
     },
 }
 
@@ -335,16 +342,22 @@ where
         Command::Config {
             action: Some(action),
         } => {
-            let global = match global.load() {
-                Ok(value) => value,
-                Err(error) => return operational_error(stderr, error),
-            };
-            let catalog = match global.catalog() {
-                Ok(value) => value,
-                Err(error) => return operational_error(stderr, error),
+            let library = || {
+                let global = global.load().map_err(|error| error.to_string())?;
+                let catalog = global.catalog().map_err(|error| error.to_string())?;
+                Ok::<_, String>((global, catalog))
             };
             match action {
+                ConfigAction::Verify { .. } => write_verification(
+                    stdout,
+                    stderr,
+                    verify_project_configuration(locator, store, start),
+                ),
                 ConfigAction::List => {
+                    let (global, catalog) = match library() {
+                        Ok(value) => value,
+                        Err(error) => return operational_error(stderr, error),
+                    };
                     for taxonomy in catalog.taxonomies() {
                         let origin = catalog
                             .origin(taxonomy.id())
@@ -375,18 +388,21 @@ where
                     }
                     ExitCode::SUCCESS
                 }
-                ConfigAction::Show { taxonomy } => match catalog.find(&taxonomy) {
-                    Some(taxonomy) => {
-                        if write!(stdout, "{}", render_taxonomy(taxonomy)).is_ok() {
-                            ExitCode::SUCCESS
-                        } else {
-                            ExitCode::FAILURE
+                ConfigAction::Show { taxonomy } => match library() {
+                    Err(error) => operational_error(stderr, error),
+                    Ok((_, catalog)) => match catalog.find(&taxonomy) {
+                        Some(taxonomy) => {
+                            if write!(stdout, "{}", render_taxonomy(taxonomy)).is_ok() {
+                                ExitCode::SUCCESS
+                            } else {
+                                ExitCode::FAILURE
+                            }
                         }
-                    }
-                    None => operational_error(
-                        stderr,
-                        format!("taxonomy \"{taxonomy}\" is not installed"),
-                    ),
+                        None => operational_error(
+                            stderr,
+                            format!("taxonomy \"{taxonomy}\" is not installed"),
+                        ),
+                    },
                 },
             }
         }
@@ -457,6 +473,46 @@ fn write_init_outcome(output: &mut (impl Write + ?Sized), outcome: &InitOutcome)
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+/// `config verify` exits 0 when valid, 1 when invalid or absent, and 3 when the file cannot be read.
+const VERIFY_ENVIRONMENT_ERROR: u8 = 3;
+
+fn write_verification<L: Display, S: Display>(
+    stdout: &mut (impl Write + ?Sized),
+    stderr: &mut (impl Write + ?Sized),
+    result: Result<ProjectVerification, VerifyProjectError<L, S>>,
+) -> ExitCode {
+    match result {
+        Ok(ProjectVerification::Valid(configuration)) => {
+            let taxonomies = configuration
+                .taxonomies()
+                .iter()
+                .map(|taxonomy| format!("{}@{}", taxonomy.id(), taxonomy.version()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            if writeln!(
+                stdout,
+                "gitserious.toml is valid.\ndefault: {}\ntaxonomies: {taxonomies}",
+                configuration.default_taxonomy()
+            )
+            .is_ok()
+            {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Ok(ProjectVerification::NotInitialized) => operational_error(
+            stderr,
+            "gitserious is not initialized; gitserious.toml is missing",
+        ),
+        Ok(ProjectVerification::Invalid(message)) => operational_error(stderr, message),
+        Err(error) => {
+            let _ = writeln!(stderr, "error: {error}");
+            ExitCode::from(VERIFY_ENVIRONMENT_ERROR)
+        }
     }
 }
 
@@ -534,13 +590,13 @@ pub fn interactive_help() -> Vec<HelpPage> {
     ];
     let descriptions = [
         "Bare gitserious opens Home. Commit previews Git changes before authoring a durable message. Config configures repository policy and your taxonomy library.",
-        "Bare gitserious config opens Config. Project owns the complete taxonomies in gitserious.toml. Library owns taxonomies. Esc validates and saves Library edits. Copies, reorders, and confirmed deletions save immediately. Project changes use review and Apply.",
+        "Bare gitserious config opens Config. Project owns the complete taxonomies in gitserious.toml. Library owns taxonomies. Esc validates and saves Library edits. Copies, reorders, and confirmed deletions save immediately. Project changes use review and Apply. config verify --project checks gitserious.toml without writing or reading the Library; it exits 0 when valid, 1 when invalid or missing, 2 for usage errors, and 3 when the file cannot be read.",
         "gitserious commit authors directly from persisted project policy. --taxonomy chooses an available taxonomy for this commit; --type preselects a type. Only Git's staged index is committed. Stage changes with Git before using Start commit in the shell.",
         "gitserious init writes gitserious.toml with complete copies of your Library's default taxonomies. --taxonomy sets the project default. An existing gitserious.toml is never rewritten.",
     ];
     let examples = [
         "gitserious\ngitserious --help",
-        "gitserious config\ngitserious config list\ngitserious config show conventional",
+        "gitserious config\ngitserious config list\ngitserious config show conventional\ngitserious config verify --project",
         "git add src/\ngitserious commit\ngitserious commit --taxonomy conventional --type feat",
         "gitserious init\ngitserious init --taxonomy research",
     ];

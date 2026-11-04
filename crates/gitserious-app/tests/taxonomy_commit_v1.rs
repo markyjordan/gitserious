@@ -49,6 +49,10 @@ impl ProjectConfigurationStore for Store {
     fn ensure_local_state(&self, _: &RepositoryRoot) -> Result<(), Self::Error> {
         unreachable!("commit never writes local state")
     }
+
+    fn is_invalid_document(_: &Self::Error) -> bool {
+        false
+    }
 }
 
 struct Author;

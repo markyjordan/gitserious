@@ -590,6 +590,10 @@ impl ProjectConfigurationStore for NoProject {
     fn ensure_local_state(&self, _: &RepositoryRoot) -> Result<(), Self::Error> {
         Err(FakeError("unexpected project write"))
     }
+
+    fn is_invalid_document(_: &Self::Error) -> bool {
+        false
+    }
 }
 
 struct Script<F>(F);

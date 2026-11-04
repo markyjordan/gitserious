@@ -24,6 +24,7 @@ mod taxonomy_authoring_context;
 mod taxonomy_configuration_editor;
 mod taxonomy_policy;
 mod taxonomy_ports;
+mod verify_project_configuration;
 
 pub use commit_draft_author::{CommitDraftAuthor, CommitDraftAuthorOutcome};
 pub use commit_writer::{CommitOutput, CommitWriter};
@@ -53,6 +54,9 @@ pub use taxonomy_policy::{
     TaxonomyCatalog, TaxonomyOrigin, fingerprint_taxonomy,
 };
 pub use taxonomy_ports::{GlobalConfigurationStore, ProjectConfigurationStore};
+pub use verify_project_configuration::{
+    ProjectVerification, VerifyProjectError, verify_project_configuration,
+};
 
 pub use interactive::{
     HelpPage, InteractiveEntry, InteractiveUi, InteractiveWorkspace, run_interactive,

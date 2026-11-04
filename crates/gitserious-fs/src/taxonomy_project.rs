@@ -86,6 +86,10 @@ impl ProjectConfigurationStore for TomlProjectStore {
         }
         Ok(())
     }
+
+    fn is_invalid_document(error: &Self::Error) -> bool {
+        matches!(error, ProjectStateError::Format { .. })
+    }
 }
 
 fn read_bytes(path: &Path) -> Result<Vec<u8>, ProjectStateError> {

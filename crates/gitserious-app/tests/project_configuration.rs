@@ -190,6 +190,10 @@ impl ProjectConfigurationStore for Project {
     fn ensure_local_state(&self, _: &RepositoryRoot) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    fn is_invalid_document(_: &Self::Error) -> bool {
+        false
+    }
 }
 
 struct Script<F>(F);
