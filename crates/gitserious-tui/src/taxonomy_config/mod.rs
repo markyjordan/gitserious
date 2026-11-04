@@ -33,6 +33,8 @@ mod home_overlay;
 #[cfg(test)]
 mod model_check;
 mod naming;
+#[cfg(test)]
+mod project_editor_tests;
 mod review;
 #[cfg(test)]
 mod summary_scroll_tests;
@@ -107,8 +109,8 @@ impl ConfigView {
     /// Which keys the shell may take before Config sees them.
     pub(crate) fn shell_keys(&self) -> ShellKeys {
         match (&self.state.screen, &self.state.home_overlay) {
-            (Screen::Home, None) if self.state.category == Category::Taxonomies => {
-                self.state.taxonomies.shell_keys()
+            (Screen::Home, None) if self.state.editor().is_some() => {
+                self.state.editor_view().shell_keys()
             }
             (Screen::Home, None) => ShellKeys::Navigation,
             _ => ShellKeys::None,
@@ -116,7 +118,7 @@ impl ConfigView {
     }
 
     pub(crate) fn modal(&self) -> bool {
-        self.state.home_overlay.is_some() || self.state.taxonomies.editing()
+        self.state.home_overlay.is_some() || self.state.editor_view().editing()
     }
 
     pub(crate) fn dirty(&self) -> bool {
@@ -235,6 +237,20 @@ impl ProjectSection {
     }
 }
 
+/// What Config > Project shows: its sections, or the outline over its own taxonomies.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProjectView {
+    Sections,
+    Outline,
+}
+
+/// Which draft the taxonomy outline edits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Editor {
+    Library,
+    Project,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum PendingAction {
     EditProject,
@@ -296,6 +312,9 @@ struct State {
     category: Category,
     home_focus: HomeFocus,
     taxonomies: TaxonomiesView,
+    /// The outline over the project's own taxonomies, shown while `project_view` is `Outline`.
+    project_taxonomies: TaxonomiesView,
+    project_view: ProjectView,
     project_section: ProjectSection,
     screen: Screen,
     home_overlay: Option<CommandPaletteState>,
@@ -326,6 +345,8 @@ impl State {
             category: Category::Project,
             home_focus: HomeFocus::Menu,
             taxonomies: TaxonomiesView::default(),
+            project_taxonomies: TaxonomiesView::default(),
+            project_view: ProjectView::Sections,
             project_section: ProjectSection::Commit,
             screen: Screen::Home,
             home_overlay: None,
@@ -346,11 +367,16 @@ impl State {
     fn confirmation(&self) -> Option<Confirmation<'static>> {
         let (title, message, choices) = match &self.screen {
             Screen::ConfirmRemove(node) => {
-                let library = self.library()?;
+                let library = self.editor_draft()?;
+                let owner = if library.is_project() {
+                    "this project"
+                } else {
+                    "the Library"
+                };
                 match library.node(node)? {
                     NodeRef::Taxonomy(taxonomy) => (
                         "Delete Taxonomy",
-                        format!("Delete taxonomy \"{}\" from the Library?", taxonomy.name()),
+                        format!("Delete taxonomy \"{}\" from {owner}?", taxonomy.name()),
                         REMOVE,
                     ),
                     NodeRef::Type { commit_type, .. } => (
@@ -420,30 +446,74 @@ impl State {
         self.host_visible
             && !self.too_small
             && matches!(self.screen, Screen::Home)
-            && self.category == Category::Taxonomies
+            && self.editor().is_some()
             && self.home_focus == HomeFocus::Content
             && self.home_overlay.is_none()
-            && self.taxonomies.navigating()
+            && self.editor_view().navigating()
     }
 
     fn advance(&mut self, elapsed: Duration, host_visible: bool) {
         self.host_visible = host_visible;
-        if self.animation_visible() {
-            self.taxonomies.advance(elapsed);
+        let visible = self.animation_visible();
+        let view = self.editor_view_mut();
+        if visible {
+            view.advance(elapsed);
         } else {
-            self.taxonomies.reset_animation();
+            view.reset_animation();
         }
     }
 
     fn next_frame_in(&self) -> Option<Duration> {
         self.animation_visible()
-            .then(|| self.taxonomies.next_frame_in())
+            .then(|| self.editor_view().next_frame_in())
             .flatten()
+    }
+
+    /// The outline keys and rendering go to: the Library, or the project while its taxonomies
+    /// are open.
+    fn editor(&self) -> Option<Editor> {
+        match self.category {
+            Category::Taxonomies => Some(Editor::Library),
+            Category::Project if self.project_view == ProjectView::Outline => Some(Editor::Project),
+            Category::Project => None,
+        }
+    }
+
+    fn editor_view(&self) -> &TaxonomiesView {
+        match self.editor() {
+            Some(Editor::Project) => &self.project_taxonomies,
+            _ => &self.taxonomies,
+        }
+    }
+
+    fn editor_view_mut(&mut self) -> &mut TaxonomiesView {
+        match self.editor() {
+            Some(Editor::Project) => &mut self.project_taxonomies,
+            _ => &mut self.taxonomies,
+        }
+    }
+
+    fn editor_draft(&self) -> Option<&LibraryDraft> {
+        match self.editor()? {
+            Editor::Library => self.library(),
+            Editor::Project => self.project.as_ref()?.project_draft(),
+        }
+    }
+
+    fn editor_parts_mut(&mut self) -> Option<(&mut TaxonomiesView, &mut LibraryDraft)> {
+        match self.editor()? {
+            Editor::Library => Some((&mut self.taxonomies, self.global.as_mut()?.library_mut()?)),
+            Editor::Project => Some((
+                &mut self.project_taxonomies,
+                self.project.as_mut()?.project_draft_mut()?,
+            )),
+        }
     }
 
     fn handle_event(&mut self, event: Event, workspace: &dyn ConfigurationWorkspace) -> bool {
         if matches!(event, Event::Resize(_, _)) {
             self.taxonomies.reset_animation();
+            self.project_taxonomies.reset_animation();
         }
         let before_global = self.global.clone();
         let before_view = self.taxonomies.clone();
@@ -491,7 +561,7 @@ impl State {
             }
         }
         if !self.animation_visible() {
-            self.taxonomies.reset_animation();
+            self.editor_view_mut().reset_animation();
         }
         quit
     }
@@ -522,12 +592,8 @@ impl State {
         }
         if let Event::Paste(text) = &event {
             if matches!(self.screen, Screen::Home)
-                && self.category == Category::Taxonomies
-                && let Some(library) = self
-                    .global
-                    .as_mut()
-                    .and_then(ConfigurationSession::library_mut)
-                && let Err(error) = self.taxonomies.paste(text, library)
+                && let Some((view, library)) = self.editor_parts_mut()
+                && let Err(error) = view.paste(text, library)
             {
                 self.status = Some(Notice::error(error));
             }
@@ -535,8 +601,8 @@ impl State {
         }
         if let Event::Mouse(mouse) = event {
             if self.too_small
-                || self.taxonomies.picker_hints().is_some()
-                || self.taxonomies.editing()
+                || self.editor_view().picker_hints().is_some()
+                || self.editor_view().editing()
             {
                 return false;
             }
@@ -553,6 +619,7 @@ impl State {
                     }
                 } else if matches!(self.screen, Screen::Home)
                     && self.category == Category::Project
+                    && self.project_view == ProjectView::Sections
                     && contains(self.project_area, mouse.column, mouse.row)
                 {
                     let index = usize::from(mouse.row.saturating_sub(self.project_area.y));
@@ -562,10 +629,8 @@ impl State {
                         self.project_scroll = 0;
                     }
                 } else if matches!(self.screen, Screen::Home)
-                    && self.category == Category::Taxonomies
-                    && let Some(library) =
-                        self.global.as_ref().and_then(ConfigurationSession::library)
-                    && self.taxonomies.click(mouse.column, mouse.row, library)
+                    && let Some((view, library)) = self.editor_parts_mut()
+                    && view.click(mouse.column, mouse.row, library)
                 {
                     self.home_focus = HomeFocus::Content;
                 }
@@ -696,29 +761,31 @@ impl State {
     }
 
     fn home_key(&mut self, key: KeyEvent, _workspace: &dyn ConfigurationWorkspace) -> bool {
-        if self.category == Category::Taxonomies && self.taxonomies.editing() {
-            if let Some(library) = self
-                .global
-                .as_mut()
-                .and_then(ConfigurationSession::library_mut)
-                && let Err(error) = self.taxonomies.edit_key(key, library)
+        let editor = self.editor();
+        if editor.is_some() && self.editor_view().editing() {
+            if let Some((view, library)) = self.editor_parts_mut()
+                && let Err(error) = view.edit_key(key, library)
             {
                 self.status = Some(Notice::error(error));
             }
             return false;
         }
-        if self.category == Category::Taxonomies
+        if let Some(editor) = editor
             && self.home_focus == HomeFocus::Content
-            && let Some(library) = self.global.as_ref().and_then(ConfigurationSession::library)
+            && let Some((view, library)) = self.editor_parts_mut()
         {
-            match self.taxonomies.key(key, library) {
+            match view.key(key, library) {
                 Nav::Handled => return false,
+                Nav::Sidebar if editor == Editor::Project => {
+                    self.project_view = ProjectView::Sections;
+                    return false;
+                }
                 Nav::Sidebar => {
                     self.home_focus = HomeFocus::Menu;
                     return false;
                 }
                 Nav::Act(action) => {
-                    self.request_global_action(PendingAction::Library(action));
+                    self.request_editor_action(editor, PendingAction::Library(action));
                     return false;
                 }
                 Nav::Unhandled => {}
@@ -774,27 +841,26 @@ impl State {
             KeyCode::PageDown if self.category == Category::Project => {
                 self.project_scroll = self.project_scroll.saturating_add(8);
             }
-            KeyCode::Enter if self.category == Category::Project => {
-                if self.project_section == ProjectSection::Commit {
-                    self.request_project_action(PendingAction::EditProject);
-                }
-            }
+            KeyCode::Enter if self.category == Category::Project => match self.project_section {
+                ProjectSection::Commit => self.request_project_action(PendingAction::EditProject),
+                ProjectSection::Taxonomies => self.open_project_taxonomies(),
+                ProjectSection::Files => {}
+            },
             KeyCode::Char('i') if self.category == Category::Project => {
                 self.request_project_action(PendingAction::InitializeProject);
             }
-            KeyCode::Char(letter @ ('e' | 'f' | 'n'))
-                if self.category == Category::Taxonomies && key.modifiers.is_empty() =>
-            {
-                self.request_global_action(PendingAction::Library(match letter {
-                    'e' => LibraryAction::Edit,
-                    'f' => LibraryAction::Fork,
-                    _ => LibraryAction::Create,
-                }));
-            }
-            KeyCode::Char('d')
-                if self.category == Category::Taxonomies && key.modifiers.is_empty() =>
-            {
-                self.request_global_action(PendingAction::Delete);
+            KeyCode::Char(letter @ ('e' | 'f' | 'n' | 'd')) if key.modifiers.is_empty() => {
+                if let Some(editor) = editor {
+                    self.request_editor_action(
+                        editor,
+                        match letter {
+                            'e' => PendingAction::Library(LibraryAction::Edit),
+                            'f' => PendingAction::Library(LibraryAction::Fork),
+                            'n' => PendingAction::Library(LibraryAction::Create),
+                            _ => PendingAction::Delete,
+                        },
+                    );
+                }
             }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.category == Category::Project {
@@ -964,16 +1030,12 @@ impl State {
     /// Removes `node` after its dialog confirmed it and lands on its neighbor.
     fn remove(&mut self, node: &NodeId) {
         self.screen = Screen::Home;
-        let Some(library) = self
-            .global
-            .as_mut()
-            .and_then(ConfigurationSession::library_mut)
-        else {
+        let Some((view, library)) = self.editor_parts_mut() else {
             return;
         };
         match library.edit(node, DraftEdit::Remove) {
             Ok(landing) => {
-                self.taxonomies.select(landing);
+                view.select(landing);
             }
             Err(refusal) => {
                 self.status = Some(Notice::error(naming::refusal_sentence(refusal, None)));
@@ -1023,6 +1085,63 @@ impl State {
         let (session, error) = split_result(result);
         self.project = session;
         self.project_error = error;
+    }
+
+    /// Routes an outline action to the Library or, while its taxonomies are open, the project.
+    fn request_editor_action(&mut self, editor: Editor, action: PendingAction) {
+        match editor {
+            Editor::Library => self.request_global_action(action),
+            Editor::Project => self.project_edit(action),
+        }
+    }
+
+    /// Opens the outline over the project's own taxonomies.
+    fn open_project_taxonomies(&mut self) {
+        if self
+            .project
+            .as_ref()
+            .and_then(ConfigurationSession::project_draft)
+            .is_none()
+        {
+            self.status = Some(Notice::error(
+                "Initialize the project before editing its taxonomies.".into(),
+            ));
+            return;
+        }
+        self.active_scope = ConfigurationDestination::Project;
+        self.project_view = ProjectView::Outline;
+        self.home_focus = HomeFocus::Content;
+    }
+
+    /// Stages an outline action on the project draft. Nothing is written until Apply.
+    fn project_edit(&mut self, action: PendingAction) {
+        self.active_scope = ConfigurationDestination::Project;
+        self.status = None;
+        match action {
+            PendingAction::Library(action) => {
+                if let Some((view, draft)) = self.editor_parts_mut()
+                    && let Err(error) = view.act(action, draft)
+                {
+                    self.status = Some(Notice::error(error));
+                }
+            }
+            PendingAction::Delete => {
+                let Some(draft) = self.editor_draft() else {
+                    return;
+                };
+                let Some(node) = self.project_taxonomies.selected(draft) else {
+                    return;
+                };
+                if let Some(blocker) = draft.removal_blocker(node.id()) {
+                    self.status = Some(Notice::error(format!(
+                        "{blocker}. Choose another default before deleting it."
+                    )));
+                    return;
+                }
+                self.screen = Screen::ConfirmRemove(node.id().clone());
+            }
+            _ => {}
+        }
     }
 
     fn request_global_action(&mut self, action: PendingAction) {
@@ -1213,20 +1332,22 @@ impl State {
         self.render_menu(frame, menu);
         let body = content;
         let hints = if let Some(question) = self.confirmation() {
-            if self.category == Category::Project {
-                self.render_project(frame, body);
-            } else {
+            if self.editor().is_some() {
                 self.render_taxonomies(frame, body);
+            } else {
+                self.render_project(frame, body);
             }
             self.dialog.render(frame, body, &question);
             confirmation::hints(question.choices)
         } else {
             match self.screen.clone() {
-                Screen::Home if self.category == Category::Taxonomies => {
+                Screen::Home if self.editor().is_some() => {
                     self.render_taxonomies(frame, body);
-                    let line =
-                        self.taxonomies
-                            .status_line(self.library(), self.embedded, footer.width);
+                    let line = self.editor_view().status_line(
+                        self.editor_draft(),
+                        self.embedded,
+                        footer.width,
+                    );
                     frame.render_widget(Paragraph::new(line), footer);
                     Vec::new()
                 }
@@ -1511,7 +1632,9 @@ impl State {
                     })
                     .collect::<Vec<_>>()
                     .join("\n\n");
-                format!("{entries}\n\nStatus\n  {status}")
+                format!(
+                    "{entries}\n\nEdit\n  Enter opens these taxonomies; Ctrl+S reviews changes before applying.\n\nStatus\n  {status}"
+                )
             }
             ProjectSection::Files => format!(
                 "Project configuration\n  {}\n  {}\n\nStatus\n  {status}\n  {guidance}",
@@ -1528,9 +1651,18 @@ impl State {
     fn render_taxonomies(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let focused = matches!(self.screen, Screen::Home) && self.home_focus == HomeFocus::Content;
         let animate = self.animation_visible();
-        let library = self.global.as_ref().and_then(ConfigurationSession::library);
-        self.taxonomies
-            .render(frame, area, library, focused, animate);
+        if self.editor() == Some(Editor::Project) {
+            let draft = self
+                .project
+                .as_ref()
+                .and_then(ConfigurationSession::project_draft);
+            self.project_taxonomies
+                .render(frame, area, draft, focused, animate);
+        } else {
+            let library = self.global.as_ref().and_then(ConfigurationSession::library);
+            self.taxonomies
+                .render(frame, area, library, focused, animate);
+        }
     }
 
     fn render_settings(

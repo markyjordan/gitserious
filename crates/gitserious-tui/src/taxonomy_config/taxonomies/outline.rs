@@ -203,7 +203,15 @@ pub(super) fn render(
                 );
                 target = summary_target(row, open, chip, row_area, viewport);
             }
-            row_line(row, open, chip, index == selected, focused, width)
+            row_line(
+                row,
+                open,
+                chip,
+                chips.library,
+                index == selected,
+                focused,
+                width,
+            )
         })
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines), inner);
@@ -239,6 +247,15 @@ fn last_type(taxonomy: &TaxonomyNode, commit_type: &TypeNode) -> bool {
 
 const fn branch(last: bool) -> &'static str {
     if last { "└─ " } else { "├─ " }
+}
+
+/// A project owns every taxonomy it holds, so its rows say so instead of naming a Library origin.
+pub(super) const fn origin_label(library: &LibraryDraft, origin: TaxonomyOrigin) -> &'static str {
+    if library.is_project() {
+        "project"
+    } else {
+        origin.as_str()
+    }
 }
 
 fn property_branch(taxonomy: &TaxonomyNode, commit_type: &TypeNode, last: bool) -> String {
@@ -302,6 +319,7 @@ fn row_line(
     row: Row<'_>,
     open: bool,
     chip: Option<Chip>,
+    library: &LibraryDraft,
     selected: bool,
     focused: bool,
     width: usize,
@@ -345,7 +363,7 @@ fn row_line(
             vec![chip.map_or_else(
                 || {
                     Span::styled(
-                        format!(" {} ", taxonomy.origin().as_str()),
+                        format!(" {} ", origin_label(library, taxonomy.origin())),
                         if taxonomy.origin() == gitserious_app::TaxonomyOrigin::BuiltIn {
                             READ_ONLY_STYLE
                         } else {
