@@ -27,10 +27,6 @@ pub trait ProjectConfigurationStore {
 
     /// Ensures repository-local ignored state exists.
     fn ensure_local_state(&self, root: &RepositoryRoot) -> Result<(), Self::Error>;
-
-    /// Whether `error` means the file exists but is not a valid project document,
-    /// as opposed to a failure to reach or read it.
-    fn is_invalid_document(error: &Self::Error) -> bool;
 }
 
 /// Persists one user-level taxonomy environment atomically.

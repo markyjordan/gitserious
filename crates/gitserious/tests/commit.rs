@@ -249,10 +249,6 @@ fn unknown_taxonomies_are_quoted_as_typed() -> Result<(), Box<dyn Error>> {
     assert_eq!(stderr(&init), "error: taxonomy \"nope\" is not installed\n");
     assert!(!repository.path().join("gitserious.toml").exists());
 
-    let show = home.run(repository.path(), &["config", "show", "nope"])?;
-    assert_eq!(show.status.code(), Some(1));
-    assert_eq!(stderr(&show), "error: taxonomy \"nope\" is not installed\n");
-
     home.init(repository.path())?;
     let commit = home.run(repository.path(), &["commit", "--taxonomy", "nope"])?;
     assert_eq!(commit.status.code(), Some(1));

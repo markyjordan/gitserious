@@ -63,9 +63,7 @@ diagnostic that names the defect.
 
 ### Configuration user experience
 
-Bare `gitserious config` opens the configuration TUI. Taxonomy-focused
-`config list`, `config show`, and `config verify --project` remain available for
-noninteractive inspection.
+Bare `gitserious config` opens the configuration TUI.
 
 Support browse, create, edit, fork, select, and delete where applicable.
 Provide forms for taxonomy types, property descriptions and ordering, requirement

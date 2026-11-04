@@ -143,10 +143,6 @@ impl ProjectConfigurationStore for FakeStore {
         self.calls.borrow_mut().push(StoreCall::EnsureLocalState);
         self.maybe_fail(FakeError::EnsureLocalState)
     }
-
-    fn is_invalid_document(_: &Self::Error) -> bool {
-        false
-    }
 }
 
 fn default_project() -> Result<ProjectConfiguration, Box<dyn Error>> {
