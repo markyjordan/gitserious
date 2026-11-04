@@ -237,6 +237,19 @@ impl ProjectConfiguration {
         })
     }
 
+    /// A new project in `taxonomies` order, whose first taxonomy is the default.
+    ///
+    /// # Errors
+    /// Returns an error when `taxonomies` is empty or repeats an identity.
+    pub fn with_first_as_default(taxonomies: Vec<Taxonomy>) -> Result<Self, ConfigurationError> {
+        let default = taxonomies
+            .first()
+            .ok_or(ConfigurationError::EmptyAvailableTaxonomies)?
+            .id()
+            .clone();
+        Self::new(PROJECT_CONFIG_VERSION, default, taxonomies)
+    }
+
     /// Returns the format version this configuration serializes as.
     #[must_use]
     pub const fn version(&self) -> u16 {
