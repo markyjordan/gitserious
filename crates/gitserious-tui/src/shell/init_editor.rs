@@ -195,12 +195,15 @@ impl InitEditor {
         let mut head = vec![
             Line::default(),
             Line::styled(
-                format!(" Initialize {name}"),
+                format!(" initialize {name}"),
                 text.add_modifier(Modifier::BOLD),
             ),
         ];
         head.extend(inset(&root.display().to_string(), dim, width));
-        head.extend([Line::default(), Line::styled(" Taxonomies", dim)]);
+        head.extend([
+            Line::default(),
+            Line::styled(" commit message taxonomies", dim),
+        ]);
         let initialize = spread(
             vec![Span::styled(
                 if self.creates_repository {
@@ -304,7 +307,7 @@ impl InitEditor {
         }
         lines.extend([
             Line::from(vec![
-                Span::styled("Taxonomy ", dim),
+                Span::styled("taxonomy ", dim),
                 Span::styled(taxonomy.id().to_string(), text.add_modifier(Modifier::BOLD)),
             ]),
             Line::default(),
@@ -595,7 +598,7 @@ mod tests {
                 "the top scrolled away"
             );
             assert!(
-                rows.iter().any(|row| row.contains("Taxonomy team-30")),
+                rows.iter().any(|row| row.contains("taxonomy team-30")),
                 "{width}x{height}"
             );
         }
@@ -642,7 +645,7 @@ mod tests {
                     .any(|row| row.contains(" initialize git and gitserious"))
             );
             assert!(
-                !rows.iter().any(|row| row.contains("Taxonomy ")),
+                !rows.iter().any(|row| row.contains("taxonomy ")),
                 "the plan replaces the preview"
             );
         }
@@ -661,7 +664,7 @@ mod tests {
         press(&mut editor, KeyCode::Up);
         let rows = screen(&editor, 87, 40)?;
         assert!(
-            rows.iter().any(|row| row.contains("Taxonomy research")),
+            rows.iter().any(|row| row.contains("taxonomy research")),
             "leaving the row restores the preview"
         );
         assert!(!rows.iter().any(|row| row.contains("will write")));
@@ -739,11 +742,11 @@ mod tests {
             let rows = screen(&editor, width, height)?;
             let title = rows
                 .iter()
-                .position(|row| row.contains("Taxonomy conventional"))
+                .position(|row| row.contains("taxonomy conventional"))
                 .ok_or("missing preview")?;
             if wide {
                 assert_eq!(title, 1, "{width}x{height}");
-                assert!(rows[title].starts_with(" Initialize fresh"));
+                assert!(rows[title].starts_with(" initialize fresh"));
                 assert!(rows.iter().all(|row| row.contains('│')), "{width}x{height}");
             } else {
                 assert_eq!(rows[title - 1].trim_matches('─'), "", "{width}x{height}");
@@ -754,11 +757,11 @@ mod tests {
         assert!(
             screen(&editor, 100, 30)?
                 .iter()
-                .any(|row| row.contains("Taxonomy research"))
+                .any(|row| row.contains("taxonomy research"))
         );
         press(&mut editor, KeyCode::Down);
         let rows = screen(&editor, 100, 30)?;
-        assert!(rows.iter().any(|row| row.contains("Taxonomy infra-ops")));
+        assert!(rows.iter().any(|row| row.contains("taxonomy infra-ops")));
         assert!(
             rows.iter().any(|row| row.trim_end().ends_with('…')),
             "long properties are cut"

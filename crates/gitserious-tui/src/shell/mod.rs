@@ -1075,7 +1075,7 @@ mod tests {
         shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let text = rendered(&terminal);
-        assert!(text.contains(" Initialize fresh"), "{text}");
+        assert!(text.contains(" initialize fresh"), "{text}");
         assert!(text.contains("esc back  space include  enter default"));
         shell.handle_event(key(KeyCode::Esc), &workspace, &[]);
         assert!(workspace.created.borrow().is_none(), "esc writes nothing");
@@ -1093,7 +1093,7 @@ mod tests {
         shell.handle_event(key(KeyCode::BackTab), &workspace, &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(
-            rendered(&terminal).contains(" Initialize fresh"),
+            rendered(&terminal).contains(" initialize fresh"),
             "the editor survives a visit to another section"
         );
         for _ in 0..3 {
@@ -1208,7 +1208,7 @@ mod tests {
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let text = rendered(&terminal);
         assert!(text.contains("✗ gitserious.toml already exists"), "{text}");
-        assert!(text.contains(" Initialize fresh"), "the editor stays open");
+        assert!(text.contains(" initialize fresh"), "the editor stays open");
         shell.handle_event(key(KeyCode::Esc), &workspace, &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(rendered(&terminal).contains(" initialize gitserious "));
@@ -1237,7 +1237,7 @@ mod tests {
         shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(
-            rendered(&terminal).contains(" Initialize fresh"),
+            rendered(&terminal).contains(" initialize fresh"),
             "a plain directory opens the editor too"
         );
         Ok(())
