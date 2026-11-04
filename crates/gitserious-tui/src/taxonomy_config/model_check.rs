@@ -547,7 +547,7 @@ impl Snapshot {
                 .map(|hints| {
                     hints
                         .into_iter()
-                        .map(|(hint, label)| format!("{hint}: {label}"))
+                        .map(|(hint, label)| format!("{hint} {label}"))
                         .collect()
                 }),
             too_small: state.too_small,
@@ -565,7 +565,7 @@ impl Snapshot {
     }
 
     fn footer(&self) -> String {
-        super::tests::footer_text(self.frame.lines().rev().nth(1).unwrap_or_default())
+        super::tests::footer_text(self.frame.lines().last().unwrap_or_default())
     }
 
     fn staged_library(&self) -> Option<GlobalConfiguration> {

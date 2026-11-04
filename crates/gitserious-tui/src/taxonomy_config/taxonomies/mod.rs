@@ -698,7 +698,7 @@ impl TaxonomiesView {
             vec![("/", "commands")]
         };
         if embedded && !editing {
-            trailing.insert(0, ("tab", "tabs"));
+            trailing.insert(0, ("tab", "nav bar"));
         }
         if let Some(row) = row {
             let node = row.node();
