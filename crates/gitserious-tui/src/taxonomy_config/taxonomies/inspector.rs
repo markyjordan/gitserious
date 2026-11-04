@@ -138,7 +138,10 @@ fn describe(
         }
         (Some(chip), _) => vec![chip.span()],
         (None, NodeRef::Taxonomy(taxonomy)) => vec![Span::styled(
-            format!(" {} ", taxonomy.origin().as_str()),
+            format!(
+                " {} ",
+                super::outline::origin_label(library, taxonomy.origin())
+            ),
             CUSTOM_STYLE,
         )],
         (None, _) => Vec::new(),

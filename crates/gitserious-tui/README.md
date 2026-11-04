@@ -46,7 +46,12 @@ a Menu entry. Left and Right move focus between Menu and content. Clicking a
 Menu entry switches to it while browsing.
 
 Project shows the commit default, the project's own taxonomies, and
-`gitserious.toml` status. It never reads the Library, so it works when the
+`gitserious.toml` status. Enter on its Taxonomies section opens the same outline
+and Inspector the Library uses, over the project's own definitions: create,
+fork, edit, and delete taxonomies, types, and properties, including the
+project's copy of a built-in such as `conventional`. These edits stay staged
+until Project review applies them, and the project default cannot be deleted.
+Left at the outline's root returns to the sections. It never reads the Library, so it works when the
 Library is missing or corrupt. An uninitialized repository offers `i` to review
 initialization, which copies the Library's default taxonomies. Ctrl+S opens
 Project review, and Enter applies `gitserious.toml`; Apply refuses if the file
