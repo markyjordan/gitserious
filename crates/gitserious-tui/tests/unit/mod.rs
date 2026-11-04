@@ -18,7 +18,7 @@ use tui_textarea::{CursorMove, CursorRenderMode, TextArea, WrapMode};
 
 use crate::RatatuiCommitDraftAuthor;
 use crate::author::RatatuiCommitDraftAuthorError;
-use crate::theme::ACCENT;
+use crate::theme::{ACCENT, theme};
 
 mod author_harness {
     pub(crate) mod state {
@@ -403,7 +403,7 @@ fn assert_black_canvas(buffer: &Buffer) {
             continuation
                 || matches!(cell.bg, JET_BLACK | ZEBRA_BACKGROUND | ACCENT)
                 || (index / width == usize::from(buffer.area.height - 1)
-                    && cell.bg == Color::Rgb(40, 47, 60)),
+                    && cell.bg == theme().band),
             "unexpected canvas background {:?} on symbol {:?} at ({}, {})",
             cell.bg,
             cell.symbol(),
@@ -476,12 +476,12 @@ fn assert_highlighted_footer(
     let row = (0..width)
         .map(|column| &buffer[(column, height - 1)])
         .collect::<Vec<_>>();
-    assert!(row.iter().any(|cell| cell.bg == Color::Rgb(40, 47, 60)));
-    assert!(row.iter().any(|cell| cell.bg == JET_BLACK));
+    assert!(row.iter().all(|cell| cell.bg == theme().band));
     assert!(
         row.iter()
-            .all(|cell| matches!(cell.bg, JET_BLACK | Color::Rgb(40, 47, 60)))
+            .any(|cell| cell.fg == theme().text && cell.modifier.contains(Modifier::BOLD))
     );
+    assert!(row.iter().any(|cell| cell.fg == theme().dim));
     Ok(())
 }
 
@@ -1487,8 +1487,8 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
             .count(),
         1
     );
-    assert!(text.contains("enter: select"));
-    assert!(text.contains("tab: switch"));
+    assert!(text.contains("enter select"));
+    assert!(text.contains("tab switch"));
     assert_stage_header(&mut picker, 100, 24, "select taxonomy and type")?;
     let picker_buffer = rendered_buffer(&mut picker, 100, 24)?;
     assert_eq!(picker_buffer[(0, 1)].symbol(), "┌");
@@ -1541,7 +1541,7 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(text.contains("review and submit"));
     assert!(!text.contains("Review the exact canonical message before Git creates the commit."));
     assert!(text.contains("feat: compose durable message"));
-    assert!(text.contains("enter: commit"));
+    assert!(text.contains("enter commit"));
     assert_stage_header(&mut review, 100, 24, "review and submit")?;
     let review_buffer = rendered_buffer(&mut review, 100, 24)?;
     assert_eq!(
@@ -1689,7 +1689,7 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     assert!(!buffer[authored].modifier.contains(Modifier::UNDERLINED));
 
     let footer = row_text(&buffer, 100, 31);
-    assert!(footer.contains("↑/↓: move  esc: back  ctrl+s: review"));
+    assert!(footer.contains("↑/↓ move  esc back  ctrl+s review"));
     assert!(!footer.contains('|'));
     assert!(!footer.contains("col 6/80"));
     assert!(!footer.contains('▌'));
@@ -1700,17 +1700,19 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     assert_eq!(status, (90, 29));
     assert_eq!(status.0 + u16::try_from("col 6/80".len())?, 98);
     assert_eq!(buffer[status].bg, JET_BLACK);
-    let key = find_ascii(&buffer, 100, 32, "ctrl+s: review").ok_or("missing key hint")?;
-    let action = (key.0 + 8, key.1);
+    let key = find_ascii(&buffer, 100, 32, "ctrl+s review").ok_or("missing key hint")?;
+    let action = (key.0 + 7, key.1);
     assert!(buffer[key].modifier.contains(Modifier::BOLD));
     assert!(!buffer[action].modifier.contains(Modifier::BOLD));
-    assert_eq!(buffer[key].bg, Color::Rgb(40, 47, 60));
-    assert_eq!(buffer[action].bg, JET_BLACK);
+    assert_eq!(buffer[key].fg, theme().text);
+    assert_eq!(buffer[action].fg, theme().dim);
+    assert_eq!(buffer[key].bg, theme().band);
+    assert_eq!(buffer[action].bg, theme().band);
 
     let mut picker = AuthoringSession::new(built_in_commit_types(), None);
     let buffer = rendered_buffer(&mut picker, 100, 24)?;
     let footer = row_text(&buffer, 100, 23);
-    assert!(footer.contains("tab: switch  ↑/↓: move  enter: select  esc/q: cancel"));
+    assert!(footer.contains("tab switch  ↑/↓ move  enter select  esc/q cancel"));
     assert!(!footer.contains('|'));
     assert!(!footer.contains("/j"));
     assert!(!footer.contains("/k"));
@@ -1719,7 +1721,7 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     let mut review = valid_feat_session();
     let buffer = rendered_buffer(&mut review, 100, 24)?;
     let footer = row_text(&buffer, 100, 23);
-    assert!(footer.contains("enter: commit  esc: edit  ↑/↓: scroll  q/ctrl+c: cancel"));
+    assert!(footer.contains("enter commit  esc edit  ↑/↓ scroll  q/ctrl+c cancel"));
     assert!(!footer.contains('|'));
     assert!(!footer.contains("Ctrl"));
     assert!(!footer.contains('·'));

@@ -12,6 +12,40 @@ pub(crate) const ACCENT: Color = Color::Rgb(80, 160, 255);
 /// Unapplied changes and EDIT.
 pub(crate) const AMBER: Color = Color::Rgb(255, 176, 0);
 
+/// One appearance: the semantic colors every redesigned screen draws with.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Theme {
+    /// Content background.
+    pub ground: Color,
+    /// The navigation bar and footer background.
+    pub band: Color,
+    pub text: Color,
+    pub dim: Color,
+    /// The selected row's background.
+    pub cursor: Color,
+    /// Something waiting on the user, such as an uninitialized repository.
+    pub pending: Color,
+    pub done: Color,
+    /// A problem that blocks the next step.
+    pub blocks: Color,
+}
+
+pub(crate) const BONE: Theme = Theme {
+    ground: Color::Rgb(0x11, 0x10, 0x0E),
+    band: Color::Rgb(0x1F, 0x1D, 0x1A),
+    text: Color::Rgb(0xED, 0xEB, 0xDD),
+    dim: Color::Rgb(0xA3, 0x9F, 0x91),
+    cursor: Color::Rgb(0xED, 0xEB, 0xDD),
+    pending: Color::Rgb(0xE8, 0xA3, 0x3D),
+    done: Color::Rgb(0xA9, 0xC9, 0xA0),
+    blocks: Color::Rgb(0xEA, 0x8F, 0x7F),
+};
+
+/// The active appearance.
+pub(crate) const fn theme() -> &'static Theme {
+    &BONE
+}
+
 pub(crate) fn block_title(title: &str) -> String {
     format!(" {} ", title.trim())
 }
@@ -75,13 +109,13 @@ pub(crate) fn command_hints(hints: &[(&str, &str)]) -> Line<'static> {
 
 pub(crate) fn footer_key_style() -> Style {
     Style::new()
-        .fg(Color::Rgb(211, 217, 226))
-        .bg(Color::Rgb(40, 47, 60))
+        .fg(theme().text)
+        .bg(theme().band)
         .add_modifier(Modifier::BOLD)
 }
 
 pub(crate) fn footer_label_style() -> Style {
-    Style::new().fg(Color::Rgb(139, 148, 164)).bg(JET_BLACK)
+    Style::new().fg(theme().dim).bg(theme().band)
 }
 
 pub(crate) fn footer_hints(hints: &[(&str, &str)]) -> Line<'static> {
@@ -91,19 +125,23 @@ pub(crate) fn footer_hints(hints: &[(&str, &str)]) -> Line<'static> {
             spans.push(Span::raw("  "));
         }
         spans.push(Span::styled(key.to_owned(), footer_key_style()));
-        spans.push(Span::raw(": "));
+        spans.push(Span::raw(" "));
         spans.push(Span::styled(action.to_owned(), footer_label_style()));
     }
     Line::from(spans)
 }
 
-pub(crate) const FOOTER_HEIGHT: u16 = 2;
+pub(crate) const FOOTER_HEIGHT: u16 = 1;
+
+/// The shell keys every root footer ends with.
+pub(crate) const SHELL_HINTS: [(&str, &str); 3] =
+    [("tab", "nav bar"), ("/", "commands"), ("q", "quit")];
 
 /// Render the footer background and return its content area.
 pub(crate) fn render_footer_block(frame: &mut Frame<'_>, area: Rect) -> Rect {
     let block = Block::default()
-        .padding(Padding::new(1, 1, 0, 1))
-        .style(Style::new().fg(Color::White).bg(JET_BLACK));
+        .padding(Padding::horizontal(1))
+        .style(Style::new().fg(theme().text).bg(theme().band));
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
@@ -111,11 +149,24 @@ pub(crate) fn render_footer_block(frame: &mut Frame<'_>, area: Rect) -> Rect {
 }
 
 pub(crate) fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &[(&str, &str)]) {
-    let mut visible = hints.to_vec();
-    // Keep the switch and command hints readable on compact terminals. Arrow controls
+    render_footer(frame, area, hints, &[]);
+}
+
+/// Contextual hints on the left and shell hints on the right.
+pub(crate) fn render_footer(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    left: &[(&str, &str)],
+    right: &[(&str, &str)],
+) {
+    let right = footer_hints(right);
+    let right_width = u16::try_from(right.width()).unwrap_or(u16::MAX);
+    let left_width = area.width.saturating_sub(right_width.saturating_add(2));
+    let mut visible = left.to_vec();
+    // Keep the action hints readable on compact terminals. Arrow controls
     // are also documented in contextual Help and can be omitted from a crowded footer.
     for key in ["↑/↓", "←/→"] {
-        if footer_hints(&visible).width() <= usize::from(area.width) {
+        if footer_hints(&visible).width() <= usize::from(left_width) {
             break;
         }
         visible.retain(|(hint, _)| *hint != key);
@@ -123,6 +174,17 @@ pub(crate) fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &[
     frame.render_widget(
         Paragraph::new(footer_hints(&visible)).style(footer_label_style()),
         area,
+    );
+    frame.render_widget(
+        Paragraph::new(right)
+            .style(footer_label_style())
+            .right_aligned(),
+        Rect::new(
+            area.right().saturating_sub(right_width),
+            area.y,
+            right_width.min(area.width),
+            area.height,
+        ),
     );
 }
 
@@ -166,7 +228,7 @@ mod tests {
         let row = (0..100)
             .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
             .collect::<String>();
-        assert!(row.starts_with("tab: switch  ↑/↓: move  enter: select"));
+        assert!(row.starts_with("tab switch  ↑/↓ move  enter select"));
         assert!(!row.contains('|'));
         Ok(())
     }
@@ -190,7 +252,7 @@ mod tests {
         let row = (0..40)
             .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
             .collect::<String>();
-        assert!(row.starts_with("tab/shift+tab: switch  /: commands"));
+        assert!(row.starts_with("tab/shift+tab switch  / commands"));
         Ok(())
     }
 

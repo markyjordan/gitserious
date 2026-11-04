@@ -2,19 +2,28 @@
 
 ## Unified interactive shell
 
-Bare `gitserious` opens Home with centered Home, Commit, Config, and Help root
-choices. Home centers the package version inside a full-width bordered
-content block directly beneath the navigation frame. Command footers show
-`key: action` hints; popups show `[key] action`. Crowded footers drop arrow
-hints first. Tab advances and Shift+Tab reverses through root sections. Bare
-invocation without terminal streams prints help. Home, Library, and Help work
-outside a repository.
+Bare `gitserious` opens Home. The nav bar is the top row: Home, Commit,
+Config, and Help on the left, with the active tab underlined, and the package
+version on the right. Home shows the static GITSERIOUS wordmark and its
+tagline. The footer is the bottom row, with contextual `key action` hints on
+the left and `tab nav bar  / commands  q quit` on the right; popups show
+`[key] action`. Crowded footers drop arrow hints first. Bare invocation
+without terminal streams prints help. Home, Library, and Help work outside a
+repository.
 
-`gitserious config` opens the shell inside Config. The root row stays visible
+Screens draw with the active appearance theme, a set of semantic colors
+(ground, band, text, dim, cursor, pending, done, blocks). Bone is the first
+and, for now, only theme.
+
+Tab or Shift+Tab moves focus to the nav bar and highlights the active tab.
+There, Left and Right switch sections, and Tab, Esc, Enter, or Down return
+focus to the section's content. Clicking a tab opens it with focus on its
+content.
+
+`gitserious config` opens the shell inside Config. The nav bar stays visible
 above the configuration Menu and its Project and Library widgets, described
-under Configuration. From the Project or Library browser, Tab and Shift+Tab
-switch root sections, Esc returns to Home, and `q` quits; the config footer adds
-`tab/shift+tab: switch`. Every other key, including `/` and `?`, reaches the
+under Configuration. From the Project or Library browser, Tab focuses the nav
+bar, Esc returns to Home, and `q` quits. Every other key, including `/` and `?`, reaches the
 configuration interface. Config selections and unapplied changes survive
 section visits. Library EDIT keeps focus inside Config until Esc validates and
 saves the item. Tab, root-row clicks, and quit cannot leave EDIT. Project edits
@@ -111,7 +120,7 @@ storage error. Successful saves retain node identities, selection, expansion,
 and scroll position. Library has no review, apply, pending count, or discard
 flow. Library saves leave global selections and Project files unchanged.
 
-Configuration requires 66 columns and 18 rows, or 21 rows inside the shell.
+Configuration requires 66 columns and 18 rows, inside the shell or alone.
 Resizing retains editor state. The outline, Inspector, and footer adapt to
 compact and wide terminals.
 

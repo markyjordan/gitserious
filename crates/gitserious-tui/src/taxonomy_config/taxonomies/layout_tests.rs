@@ -1,4 +1,5 @@
 use crate::library_lookup::LibraryLookup;
+use crate::theme::theme;
 use gitserious_app::{ConfigurationSession, GlobalConfiguration};
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
@@ -292,7 +293,7 @@ fn footer_keys_have_balanced_padding_and_a_separate_label_gap() -> Result {
                     assert!(chip.content.starts_with(' '));
                 }
                 assert!(label.content.starts_with(' '));
-                assert_eq!(label.style.bg, Some(JET_BLACK));
+                assert_eq!(label.style.bg, Some(theme().band));
             }
         }
     }

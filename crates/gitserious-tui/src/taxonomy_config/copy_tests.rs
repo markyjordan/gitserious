@@ -131,7 +131,7 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
     open_constraints(&mut state, &workspace)?;
     let rows = screen(&mut state)?;
     assert!(!rows.iter().any(|row| row.contains("c copy to other types")));
-    let footer = super::tests::footer_text(rows.iter().rev().nth(1).ok_or("footer")?);
+    let footer = super::tests::footer_text(rows.last().ok_or("footer")?);
     assert!(
         footer.contains("e edit")
             && footer.contains("c copy property")
@@ -139,9 +139,9 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
         "{footer}"
     );
     assert!(
-        super::tests::footer_text(&rows[38]).contains("e edit  c copy property"),
+        super::tests::footer_text(&rows[39]).contains("e edit  c copy property"),
         "{}",
-        rows[38]
+        rows[39]
     );
 
     press(&mut state, &workspace, &[KeyCode::Char('c')]);
@@ -155,9 +155,9 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
         rows.contains("[ ] fix") && rows.contains("[ ] docs"),
         "{rows}"
     );
-    let footer = rows.lines().rev().nth(1).unwrap_or_default();
+    let footer = rows.lines().last().unwrap_or_default();
     assert!(
-        footer.starts_with(" ↑/↓: move  space: toggle  enter: copy  esc: cancel"),
+        footer.starts_with(" ↑/↓ move  space toggle  enter copy  esc cancel"),
         "{footer}"
     );
     press(&mut state, &workspace, &[KeyCode::Enter]);
