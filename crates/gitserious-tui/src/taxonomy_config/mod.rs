@@ -180,22 +180,43 @@ impl Category {
         }
     }
 
-    fn menu_line(self, active: bool) -> Line<'static> {
-        let (digit, label) = if active {
-            (
-                navigation_key_style(),
-                Style::default()
-                    .fg(ACCENT)
-                    .add_modifier(Modifier::UNDERLINED),
+    fn menu_line(self, selected: bool, focused: bool) -> Line<'static> {
+        let text_style = if selected {
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let gutter = if selected {
+            Span::styled(
+                "▌",
+                if focused {
+                    Style::default().fg(ACCENT)
+                } else {
+                    frame_style()
+                },
             )
         } else {
-            (Style::default().fg(Color::Gray), Style::default())
+            Span::raw(" ")
         };
         Line::from(vec![
-            Span::styled(format!(" {} ", self.index() + 1), digit),
-            Span::raw(" "),
-            Span::styled(format!("{} ", self.label()), label),
+            gutter,
+            Span::styled(
+                format!("{}  ", self.index() + 1),
+                if selected {
+                    text_style
+                } else {
+                    Style::default().fg(Color::Gray)
+                },
+            ),
+            Span::styled(format!("{} ", self.label()), text_style),
         ])
+        .style(if selected {
+            taxonomies::BAND
+        } else {
+            Style::default()
+        })
     }
 }
 
@@ -270,7 +291,7 @@ enum Screen {
 fn menu_width() -> u16 {
     let longest_option = Category::ALL
         .into_iter()
-        .map(|category| category.menu_line(false).width())
+        .map(|category| category.menu_line(false, false).width())
         .max()
         .unwrap_or_default();
     let title_width = Line::from(block_title("Menu")).width();
@@ -1299,7 +1320,7 @@ impl State {
             }
             let row = Rect::new(area.x.saturating_add(1), y, area.width.saturating_sub(2), 1);
             frame.render_widget(
-                Paragraph::new(category.menu_line(category == self.category)),
+                Paragraph::new(category.menu_line(category == self.category, focused)),
                 row,
             );
             if home {
@@ -2042,9 +2063,14 @@ mod tests {
             .starts_with("Commit taxonomy")
         );
         assert_eq!(buffer[(2, 1)].symbol(), "1");
-        assert_eq!(buffer[(2, 1)].bg, ACCENT);
-        assert_eq!(buffer[(5, 1)].fg, ACCENT);
-        assert!(buffer[(5, 1)].modifier.contains(Modifier::UNDERLINED));
+        assert_eq!(buffer[(1, 1)].symbol(), "▌");
+        assert_eq!(buffer[(1, 1)].fg, ACCENT);
+        assert_eq!(buffer[(5, 1)].fg, Color::White);
+        for x in 1..menu_width() - 1 {
+            assert_eq!(buffer[(x, 1)].bg, Color::Rgb(40, 40, 40));
+            assert_eq!(buffer[(x, 1)].modifier.contains(Modifier::BOLD), x > 1);
+            assert!(!buffer[(x, 1)].modifier.contains(Modifier::UNDERLINED));
+        }
         assert_eq!(buffer[(0, 27)].symbol(), "└");
         assert_eq!(buffer[(1, 28)].symbol(), "←");
         assert_eq!(buffer[(4, 28)].symbol(), ":");
@@ -2264,7 +2290,7 @@ mod tests {
                 assert!(count > 0, "missing {label}");
             }
 
-            assert!(screen[2].contains(" 2  Library"));
+            assert!(screen[2].contains("▌2  Library"));
             let outline = |name: &str| {
                 screen
                     .iter()
@@ -2553,7 +2579,7 @@ mod tests {
         let mut state = State::new(&workspace);
         let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(row_text(&terminal, 0, 1, menu_width()), "│ 1  Project │");
+        assert_eq!(row_text(&terminal, 0, 1, menu_width()), "│▌1  Project │");
         assert_eq!(row_text(&terminal, 0, 2, menu_width()), "│ 2  Library │");
         assert_eq!(terminal.backend().buffer()[(menu_width(), 0)].symbol(), "┌");
         Ok(())

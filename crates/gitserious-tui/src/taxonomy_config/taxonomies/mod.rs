@@ -42,7 +42,7 @@ const DIM: Style = Style::new().fg(Color::Gray);
 const KEY_STYLE: Style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
 const READ_ONLY_STYLE: Style = Style::new().fg(Color::Black).bg(Color::Rgb(211, 211, 211));
 const CUSTOM_STYLE: Style = Style::new().fg(Color::Black).bg(Color::Rgb(144, 238, 144));
-const BAND: Style = Style::new().bg(Color::Rgb(40, 40, 40));
+pub(super) const BAND: Style = Style::new().bg(Color::Rgb(40, 40, 40));
 const EDIT_CHIP: Style = Style::new()
     .fg(JET_BLACK)
     .bg(AMBER)
