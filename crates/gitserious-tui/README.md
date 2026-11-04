@@ -19,7 +19,7 @@ step its state allows:
   below; Initialize runs `git init`, which honors `init.defaultBranch`, and
   then writes the project. If `git init` fails, nothing is written.
 - In a repository without `gitserious.toml`, Enter on `initialize gitserious`
-  opens `Initialize <name>`, described below.
+  opens `initialize <name>`, described below.
 - In an initialized repository, it shows `✓ <name> is initialized with
   <default>`, warns while `gitserious.toml` is untracked, and Enter on
   `Go to Commit` opens Commit.
@@ -27,7 +27,7 @@ step its state allows:
 
 Home rereads the repository each time you return to it.
 
-`Initialize <name>` lists the taxonomies the new `gitserious.toml` will hold.
+`initialize <name>` lists the taxonomies the new `gitserious.toml` will hold.
 The built-ins start included, `conventional-v1` first; every Library
 taxonomy with at least one type follows, excluded and tagged `custom`. If
 the Library cannot be read, the editor names the error and still offers the
