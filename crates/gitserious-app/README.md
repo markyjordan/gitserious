@@ -13,20 +13,20 @@ live only in the global user library. A fork is a version-one snapshot with
 informational source identity and version.
 
 Global configuration contains the default taxonomy, ordered available set, and
-custom library. Project configuration contains optional default and available
-overrides. Each project field falls back independently to the corresponding
-global field, and the effective default must be available.
+custom library.
 
-## Portable project locks
+## Self-contained project configuration
 
-Project locks contain the complete ordered taxonomy definitions used for commit
-authoring. Commit creation validates only the authored project fingerprint and
-then uses the pinned lock, so another machine does not need the originating
-global custom taxonomy. Later global edits appear as an available project-policy
-update and require reviewed refresh; they do not silently alter commits.
+`ProjectConfiguration` is a project default plus the complete ordered taxonomy
+definitions the project offers. Its constructor is the whole resolver: it checks
+the format version, a nonempty set of unique identities, and default membership,
+without reading the Library or the built-ins. A project may hold its own copy of
+a built-in identity, and that copy wins. Initialization copies the Library's
+default environment once; later Library edits never reach an existing project.
 
 Configuration sessions stage one persistence destination at a time. Global
-changes use whole-snapshot compare-and-swap. Project apply and initialization
-write `gitserious.toml` and `gitserious.lock` through the project-state port.
-Review is required before either adapter is called, and save failures retain the
-draft.
+changes use whole-snapshot compare-and-swap. A Project session opens without the
+Library and remembers the `ProjectRevision` it read. Apply writes
+`gitserious.toml` through `ProjectConfigurationStore` only while that revision is
+still on disk, so an external edit is never overwritten. Review is required
+before the adapter is called, and save failures retain the draft.

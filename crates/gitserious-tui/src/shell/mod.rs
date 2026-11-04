@@ -739,8 +739,7 @@ mod tests {
     use super::*;
     use gitserious_app::{
         BranchState, CommitOutput, ConfigurationDestination, ConfigurationSession,
-        ConfigurationWorkspace, GlobalConfiguration, ProjectState, RepositoryRoot,
-        RepositoryStatus,
+        ConfigurationWorkspace, GlobalConfiguration, RepositoryRoot, RepositoryStatus,
     };
     use ratatui::{Terminal, backend::TestBackend};
 
@@ -753,11 +752,10 @@ mod tests {
             let global = GlobalConfiguration::default();
             match destination {
                 ConfigurationDestination::Global => Ok(ConfigurationSession::open_global(global)),
-                ConfigurationDestination::Project => ConfigurationSession::open_project(
+                ConfigurationDestination::Project => Ok(ConfigurationSession::open_project(
                     RepositoryRoot::new(std::env::temp_dir()).map_err(|error| error.to_string())?,
-                    global,
-                    ProjectState::Absent,
-                ),
+                    None,
+                )),
             }
         }
         fn save(&self, _: &ConfigurationSession) -> Result<ConfigurationSession, String> {

@@ -6,7 +6,7 @@ use gitserious_core::{CommitTypeDefinition, CommitTypeId, CommitValidationErrors
 
 use crate::{
     CommitAuthoringContext, CommitAuthoringOutcome, CommitDraftAuthor, CommitOutput, CommitWriter,
-    ProjectState, ProjectStateStore, RepositoryLocator,
+    ProjectConfigurationStore, RepositoryLocator,
 };
 
 /// Result of an interactive commit workflow.
@@ -21,14 +21,8 @@ pub enum CommitOutcome {
 /// A project-policy condition that prevents safe authoring.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CommitPolicyError {
-    /// No project artifacts exist.
+    /// The repository has no gitserious.toml.
     NotInitialized,
-    /// Authored configuration exists without its lock.
-    MissingLock,
-    /// A lock exists without authored configuration.
-    OrphanLock,
-    /// Authored project configuration and lock disagree.
-    StaleLock,
 }
 
 impl Display for CommitPolicyError {
@@ -36,15 +30,6 @@ impl Display for CommitPolicyError {
         match self {
             Self::NotInitialized => formatter.write_str(
                 "gitserious is not initialized; run `gitserious init` before committing",
-            ),
-            Self::MissingLock => formatter.write_str(
-                "gitserious.lock is missing; run `gitserious config`, open Project, and review Apply/Refresh",
-            ),
-            Self::OrphanLock => formatter.write_str(
-                "gitserious.lock exists without gitserious.toml; restore or remove the orphan lock",
-            ),
-            Self::StaleLock => formatter.write_str(
-                "gitserious.toml and gitserious.lock disagree; run `gitserious config`, open Project, and review Apply/Refresh",
             ),
         }
     }
@@ -145,7 +130,7 @@ fn display_ids<T: Display>(ids: &[T]) -> String {
         .join(", ")
 }
 
-/// Authors with an explicit taxonomy or the pinned project default.
+/// Authors with an explicit taxonomy or the project default.
 pub fn create_commit_with_taxonomy<L, S, A, W>(
     locator: &L,
     store: &S,
@@ -157,7 +142,7 @@ pub fn create_commit_with_taxonomy<L, S, A, W>(
 ) -> CreateCommitResult<L::Error, S::Error, A::Error, W::Error>
 where
     L: RepositoryLocator + ?Sized,
-    S: ProjectStateStore + ?Sized,
+    S: ProjectConfigurationStore + ?Sized,
     A: CommitDraftAuthor + ?Sized,
     W: CommitWriter + ?Sized,
 {
@@ -193,35 +178,22 @@ pub fn prepare_commit_with_taxonomy<L, S, A, W>(
 ) -> CommitPreparationResult<L::Error, S::Error, A, W>
 where
     L: RepositoryLocator + ?Sized,
-    S: ProjectStateStore + ?Sized,
+    S: ProjectConfigurationStore + ?Sized,
 {
     let root = locator
         .locate(start)
         .map_err(CreateCommitError::Repository)?;
-    let state = store.inspect(&root).map_err(CreateCommitError::Store)?;
-    let (config, lock) = match state {
-        ProjectState::Absent => {
-            return Err(CreateCommitError::Policy(CommitPolicyError::NotInitialized));
-        }
-        ProjectState::ConfigOnly(_) => {
-            return Err(CreateCommitError::Policy(CommitPolicyError::MissingLock));
-        }
-        ProjectState::LockOnly => {
-            return Err(CreateCommitError::Policy(CommitPolicyError::OrphanLock));
-        }
-        ProjectState::Initialized { config, lock } => (config, lock),
-    };
-    if !lock.matches(&config) {
-        return Err(CreateCommitError::Policy(CommitPolicyError::StaleLock));
-    }
-    let selected = requested_taxonomy.unwrap_or_else(|| lock.default_taxonomy());
-    let taxonomy = lock
-        .taxonomies()
-        .iter()
-        .find(|taxonomy| taxonomy.id() == selected)
+    let project = store
+        .load(&root)
+        .map_err(CreateCommitError::Store)?
+        .ok_or(CreateCommitError::Policy(CommitPolicyError::NotInitialized))?
+        .configuration;
+    let selected = requested_taxonomy.unwrap_or_else(|| project.default_taxonomy());
+    let taxonomy = project
+        .find(selected)
         .ok_or_else(|| CreateCommitError::UnknownTaxonomy {
             requested: selected.clone(),
-            available: lock
+            available: project
                 .taxonomies()
                 .iter()
                 .map(|taxonomy| taxonomy.id().clone())
@@ -230,8 +202,9 @@ where
     if let Some(requested) = requested_type {
         find_definition::<L::Error, S::Error, A, W>(taxonomy.commit_types(), requested)?;
     }
-    let context = CommitAuthoringContext::new(lock.taxonomies().to_vec(), selected, requested_type)
-        .map_err(CreateCommitError::InvalidContext)?;
+    let context =
+        CommitAuthoringContext::new(project.taxonomies().to_vec(), selected, requested_type)
+            .map_err(CreateCommitError::InvalidContext)?;
     Ok((root, context))
 }
 

@@ -12,9 +12,9 @@ use std::path::Path;
 use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationError, ConfigurationSession,
     ConfigurationWorkspace, DraftEdit, DraftField, EditRefusal, GlobalConfiguration,
-    GlobalConfigurationStore, LibraryDraft, NodeId, ProblemKind, ProjectConfig, ProjectLock,
-    ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot, TaxonomyCatalog,
-    TaxonomyOrigin, edit_configuration,
+    GlobalConfigurationStore, LibraryDraft, NodeId, ProblemKind, ProjectConfiguration,
+    ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject,
+    TaxonomyCatalog, TaxonomyOrigin, edit_configuration,
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
@@ -378,18 +378,13 @@ fn deletes_refuse_built_ins_and_a_selected_taxonomy_does_not_build_until_unselec
 #[test]
 fn library_edits_belong_to_the_global_destination() -> Result<(), Box<dyn Error>> {
     let root = RepositoryRoot::new(std::env::temp_dir())?;
-    let mut session = ConfigurationSession::open_project(
-        root,
-        GlobalConfiguration::default(),
-        ProjectState::Absent,
-    )?;
+    let mut session = ConfigurationSession::open_project(root, None);
 
     assert!(session.library_mut().is_none());
     let error = session
         .configure_global(id("research"), built_in_ids())
         .expect_err("a project session edited the global library");
     assert!(error.contains("Global configuration"), "{error}");
-    assert_eq!(session.global(), Some(&GlobalConfiguration::default()));
     Ok(())
 }
 
@@ -571,42 +566,28 @@ impl RepositoryLocator for NoRepository {
 
 struct NoProject;
 
-impl ProjectStateStore for NoProject {
+impl ProjectConfigurationStore for NoProject {
     type Error = FakeError;
 
-    fn inspect(&self, _: &RepositoryRoot) -> Result<ProjectState, Self::Error> {
+    fn load(&self, _: &RepositoryRoot) -> Result<Option<StoredProject>, Self::Error> {
         Err(FakeError("unexpected project read"))
     }
+    fn create(
+        &self,
+        _: &RepositoryRoot,
+        _: &ProjectConfiguration,
+    ) -> Result<ProjectRevision, Self::Error> {
+        Err(FakeError("unexpected project write"))
+    }
+    fn replace(
+        &self,
+        _: &RepositoryRoot,
+        _: ProjectRevision,
+        _: &ProjectConfiguration,
+    ) -> Result<ProjectRevision, Self::Error> {
+        Err(FakeError("unexpected project write"))
+    }
     fn ensure_local_state(&self, _: &RepositoryRoot) -> Result<(), Self::Error> {
-        Err(FakeError("unexpected project write"))
-    }
-    fn initialize(
-        &self,
-        _: &RepositoryRoot,
-        _: &ProjectConfig,
-        _: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Err(FakeError("unexpected project write"))
-    }
-    fn create_lock(&self, _: &RepositoryRoot, _: &ProjectLock) -> Result<(), Self::Error> {
-        Err(FakeError("unexpected project write"))
-    }
-    fn replace_lock(
-        &self,
-        _: &RepositoryRoot,
-        _: &ProjectLock,
-        _: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Err(FakeError("unexpected project write"))
-    }
-    fn compare_and_swap(
-        &self,
-        _: &RepositoryRoot,
-        _: &ProjectConfig,
-        _: &ProjectLock,
-        _: &ProjectConfig,
-        _: &ProjectLock,
-    ) -> Result<(), Self::Error> {
         Err(FakeError("unexpected project write"))
     }
 }

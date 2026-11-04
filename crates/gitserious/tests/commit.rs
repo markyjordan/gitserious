@@ -13,8 +13,8 @@ use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitSubject, CommitTypeDefinition, CommitTypeId,
     PropertyRequirement, PropertyValue, TaxonomyId, built_in_taxonomies,
 };
-use gitserious_fs::{GitCommitWriter, GitRepositoryLocator, TomlProjectStateStore};
-use support::{Home, git, head_exists, repository, stderr, stdout, with_stale_fingerprint};
+use gitserious_fs::{GitCommitWriter, GitRepositoryLocator, TomlProjectStore};
+use support::{Home, git, head_exists, repository, stderr, stdout};
 
 #[test]
 fn taxonomy_overrides_leave_project_files_unchanged_before_terminal_authoring()
@@ -23,7 +23,6 @@ fn taxonomy_overrides_leave_project_files_unchanged_before_terminal_authoring()
     let home = Home::new()?;
     home.init(repository.path())?;
     let config = fs::read(repository.path().join("gitserious.toml"))?;
-    let lock = fs::read(repository.path().join("gitserious.lock"))?;
     let infra_type = built_in_taxonomies()[2].commit_types()[0].id().to_string();
 
     for arguments in [
@@ -37,7 +36,7 @@ fn taxonomy_overrides_leave_project_files_unchanged_before_terminal_authoring()
             "error: commit authoring requires an interactive terminal\n"
         );
         assert_eq!(fs::read(repository.path().join("gitserious.toml"))?, config);
-        assert_eq!(fs::read(repository.path().join("gitserious.lock"))?, lock);
+        assert!(!repository.path().join("gitserious.lock").exists());
         assert!(!head_exists(repository.path())?);
     }
     Ok(())
@@ -101,14 +100,13 @@ fn git_stores_the_exact_reviewed_taxonomy_message() -> Result<(), Box<dyn Error>
     let home = Home::new()?;
     home.init(repository.path())?;
     let config = fs::read(repository.path().join("gitserious.toml"))?;
-    let lock = fs::read(repository.path().join("gitserious.lock"))?;
     fs::write(repository.path().join("change.txt"), "reviewed change\n")?;
     git(repository.path(), &["add", "change.txt"])?;
     let author = ReviewedAuthor::default();
 
     create_commit_with_taxonomy(
         &GitRepositoryLocator,
-        &TomlProjectStateStore,
+        &TomlProjectStore,
         &author,
         &GitCommitWriter,
         repository.path(),
@@ -122,7 +120,7 @@ fn git_stores_the_exact_reviewed_taxonomy_message() -> Result<(), Box<dyn Error>
     assert!(message.contains("\nsymptom:\nreviewed symptom\n"));
     assert!(message.contains("Gitserious-Taxonomy: research@2\n"));
     assert_eq!(fs::read(repository.path().join("gitserious.toml"))?, config);
-    assert_eq!(fs::read(repository.path().join("gitserious.lock"))?, lock);
+    assert!(!repository.path().join("gitserious.lock").exists());
     assert_eq!(
         stdout(&git(
             repository.path(),
@@ -148,13 +146,77 @@ fn project_policy_is_resolved_before_terminal_authoring() -> Result<(), Box<dyn 
     );
 
     home.init(repository.path())?;
-    let lock = repository.path().join("gitserious.lock");
-    fs::write(&lock, with_stale_fingerprint(&fs::read_to_string(&lock)?)?)?;
-    let stale = home.run(repository.path(), &["commit", "--type", "feat"])?;
-    assert_eq!(stale.status.code(), Some(1));
-    assert!(stdout(&stale).is_empty());
-    assert!(stderr(&stale).contains("disagree"), "{}", stderr(&stale));
+    let config = repository.path().join("gitserious.toml");
+    let valid = fs::read_to_string(&config)?;
+    fs::write(
+        &config,
+        valid.replace(
+            "default-taxonomy = \"conventional\"",
+            "default-taxonomy = \"missing\"",
+        ),
+    )?;
+    let invalid = home.run(repository.path(), &["commit", "--type", "feat"])?;
+    assert_eq!(invalid.status.code(), Some(1));
+    assert!(stdout(&invalid).is_empty());
+    assert!(
+        stderr(&invalid).contains("invalid project configuration")
+            && stderr(&invalid).contains("default taxonomy \"missing\""),
+        "{}",
+        stderr(&invalid)
+    );
     assert!(!head_exists(repository.path())?);
+    Ok(())
+}
+
+#[test]
+fn a_cloned_project_authors_without_any_usable_library() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    let author = Home::new()?;
+    author.init(repository.path())?;
+    let contributor = Home::new()?;
+    let library = contributor.library_path();
+    fs::create_dir_all(library.parent().ok_or("library has a parent")?)?;
+    fs::write(&library, "not = [toml\n")?;
+
+    let output = contributor.run(repository.path(), &["commit", "--type", "feat"])?;
+
+    assert_eq!(
+        stderr(&output),
+        "error: commit authoring requires an interactive terminal\n"
+    );
+    assert_eq!(fs::read_to_string(&library)?, "not = [toml\n");
+    Ok(())
+}
+
+#[test]
+fn project_owned_conventional_replaces_the_built_in_definition() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    let home = Home::new()?;
+    fs::write(
+        repository.path().join("gitserious.toml"),
+        r#"config-version = 1
+default-taxonomy = "conventional"
+
+[[taxonomies]]
+id = "conventional"
+version = 7
+description = "A project-owned conventional taxonomy."
+
+[[taxonomies.commit-types]]
+id = "ship"
+schema-version = 1
+description = "Ships a change."
+properties = []
+"#,
+    )?;
+
+    let output = home.run(repository.path(), &["commit", "--type", "fix"])?;
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr(&output),
+        "error: commit type \"fix\" is unavailable; choose one of: ship\n"
+    );
     Ok(())
 }
 

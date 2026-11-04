@@ -13,7 +13,7 @@ use gitserious_core::{
     Taxonomy, TaxonomyId, TaxonomyVersion,
 };
 use gitserious_fs::{
-    GitCommitWriter, GitRepositoryLocator, GitRepositoryStatusReader, TomlProjectStateStore,
+    GitCommitWriter, GitRepositoryLocator, GitRepositoryStatusReader, TomlProjectStore,
 };
 
 struct Library(GlobalConfiguration);
@@ -152,7 +152,7 @@ fn shell_services_gate_staging_validate_review_and_retry_git_rejection()
     )?;
     initialize_project(
         &GitRepositoryLocator,
-        &TomlProjectStateStore,
+        &TomlProjectStore,
         &global,
         None,
         temp.path(),
@@ -161,7 +161,7 @@ fn shell_services_gate_staging_validate_review_and_retry_git_rejection()
     fs::write(temp.path().join("untracked"), "leave me alone\n")?;
     run_interactive(
         &GitRepositoryLocator,
-        &TomlProjectStateStore,
+        &TomlProjectStore,
         &Library(global),
         &GitRepositoryStatusReader,
         &GitCommitWriter,
@@ -191,7 +191,7 @@ impl InteractiveUi for BlockedUi<'_> {
 }
 
 #[test]
-fn shell_services_reject_absent_missing_orphan_and_stale_policy() -> Result<(), Box<dyn Error>> {
+fn shell_services_reject_absent_and_invalid_policy() -> Result<(), Box<dyn Error>> {
     let temp = tempfile::TempDir::new()?;
     git(temp.path(), &["init", "-b", "main"])?;
     fs::write(temp.path().join("file"), "staged\n")?;
@@ -201,7 +201,7 @@ fn shell_services_reject_absent_missing_orphan_and_stale_policy() -> Result<(), 
     let check = |expected: &str| {
         run_interactive(
             &GitRepositoryLocator,
-            &TomlProjectStateStore,
+            &TomlProjectStore,
             &library,
             &GitRepositoryStatusReader,
             &GitCommitWriter,
@@ -214,26 +214,26 @@ fn shell_services_reject_absent_missing_orphan_and_stale_policy() -> Result<(), 
     check("not initialized")?;
     initialize_project(
         &GitRepositoryLocator,
-        &TomlProjectStateStore,
+        &TomlProjectStore,
         &global,
         None,
         temp.path(),
     )?;
     let config_path = temp.path().join("gitserious.toml");
-    let lock_path = temp.path().join("gitserious.lock");
-    let config = fs::read(&config_path)?;
-    let lock = fs::read(&lock_path)?;
-    fs::remove_file(&lock_path)?;
-    check("lock is missing")?;
-    fs::write(&lock_path, lock)?;
-    fs::remove_file(&config_path)?;
-    check("without gitserious.toml")?;
+    let config = fs::read_to_string(&config_path)?;
+    fs::write(
+        &config_path,
+        config.replace(
+            "default-taxonomy = \"conventional\"",
+            "default-taxonomy = \"missing\"",
+        ),
+    )?;
+    check("default taxonomy \"missing\"")?;
     fs::write(
         &config_path,
         "config-version = 1\ndefault-taxonomy = \"research\"\n",
     )?;
-    check("disagree")?;
-    fs::write(&config_path, config)?;
+    check("missing field `taxonomies`")?;
     assert!(!temp.path().join(".git/refs/heads/main").exists());
     Ok(())
 }

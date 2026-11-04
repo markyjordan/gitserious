@@ -7,8 +7,8 @@ use crate::confirmation::{
 };
 use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
-    DraftEdit, EditRefusal, LibraryDraft, NodeId, NodeRef, ProjectConfig, RepositoryRoot,
-    TaxonomyOrigin, resolve_effective_configuration,
+    DraftEdit, EditRefusal, LibraryDraft, NodeId, NodeRef, ProjectConfiguration, RepositoryRoot,
+    TaxonomyOrigin,
 };
 use gitserious_core::{Taxonomy, TaxonomyId};
 use ratatui::Frame;
@@ -229,17 +229,17 @@ enum HomeFocus {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProjectSection {
     Commit,
-    Resolution,
+    Taxonomies,
     Files,
 }
 
 impl ProjectSection {
-    const ALL: [Self; 3] = [Self::Commit, Self::Resolution, Self::Files];
+    const ALL: [Self; 3] = [Self::Commit, Self::Taxonomies, Self::Files];
 
     const fn index(self) -> usize {
         match self {
             Self::Commit => 0,
-            Self::Resolution => 1,
+            Self::Taxonomies => 1,
             Self::Files => 2,
         }
     }
@@ -247,7 +247,7 @@ impl ProjectSection {
     const fn label(self) -> &'static str {
         match self {
             Self::Commit => "Commit",
-            Self::Resolution => "Resolution",
+            Self::Taxonomies => "Taxonomies",
             Self::Files => "Files",
         }
     }
@@ -302,8 +302,6 @@ struct SettingsDraft {
     selected: usize,
     default: TaxonomyId,
     available: Vec<TaxonomyId>,
-    inherit_default: bool,
-    inherit_available: bool,
 }
 
 struct State {
@@ -861,10 +859,7 @@ impl State {
         let Some(session) = self.session(destination) else {
             return;
         };
-        let Ok(catalog) = session.catalog() else {
-            return;
-        };
-        let (default, available, inherit_default, inherit_available) = match destination {
+        let (default, available) = match destination {
             ConfigurationDestination::Global => {
                 let Some(library) = session.library() else {
                     return;
@@ -872,31 +867,24 @@ impl State {
                 (
                     library.default_taxonomy().clone(),
                     library.available_taxonomies().to_vec(),
-                    false,
-                    false,
                 )
             }
             ConfigurationDestination::Project => {
-                let (Some(config), Some(global)) = (session.project_config(), session.global())
-                else {
+                let Some(config) = session.project_config() else {
                     return;
                 };
                 (
+                    config.default_taxonomy().clone(),
                     config
-                        .default_taxonomy()
-                        .unwrap_or_else(|| global.default_taxonomy())
-                        .clone(),
-                    config
-                        .available_taxonomies()
-                        .unwrap_or_else(|| global.available_taxonomies())
-                        .to_vec(),
-                    config.default_taxonomy().is_none(),
-                    config.available_taxonomies().is_none(),
+                        .taxonomies()
+                        .iter()
+                        .map(|taxonomy| taxonomy.id().clone())
+                        .collect(),
                 )
             }
         };
-        let selected = catalog
-            .taxonomies()
+        let selected = self
+            .settings_rows(destination)
             .iter()
             .position(|taxonomy| taxonomy.id() == &default)
             .unwrap_or(0);
@@ -904,19 +892,18 @@ impl State {
             selected,
             default,
             available,
-            inherit_default,
-            inherit_available,
         });
         self.screen = Screen::Settings(destination);
     }
 
     fn settings_key(&mut self, key: KeyEvent, destination: ConfigurationDestination) -> bool {
-        let count = self.catalog().map_or(0, |items| items.len());
-        let selected_id = self.catalog().and_then(|items| {
-            items
-                .get(self.settings.as_ref()?.selected)
-                .map(|item| item.id().clone())
-        });
+        let rows = self.settings_rows(destination);
+        let count = rows.len();
+        let selected_id = self
+            .settings
+            .as_ref()
+            .and_then(|settings| rows.get(settings.selected))
+            .map(|item| item.id().clone());
         let Some(settings) = &mut self.settings else {
             return false;
         };
@@ -933,7 +920,6 @@ impl State {
             }
             KeyCode::Char(' ') => {
                 if let Some(id) = selected_id {
-                    settings.inherit_available = false;
                     if id == settings.default {
                         self.status = Some(Notice::error(
                             "Choose another default before removing this taxonomy.".into(),
@@ -949,32 +935,10 @@ impl State {
             }
             KeyCode::Enter => {
                 if let Some(id) = selected_id {
-                    settings.inherit_default = false;
                     settings.default = id.clone();
                     if !settings.available.contains(&id) {
-                        settings.inherit_available = false;
                         settings.available.push(id);
                     }
-                }
-            }
-            KeyCode::Char('d') if destination == ConfigurationDestination::Project => {
-                settings.inherit_default = true;
-                if let Some(global) = self.project.as_ref().and_then(ConfigurationSession::global) {
-                    settings.default = global.default_taxonomy().clone();
-                }
-            }
-            KeyCode::Char('a') if destination == ConfigurationDestination::Project => {
-                settings.inherit_available = true;
-                if let Some(global) = self.project.as_ref().and_then(ConfigurationSession::global) {
-                    settings.available = global.available_taxonomies().to_vec();
-                }
-            }
-            KeyCode::Char('r') if destination == ConfigurationDestination::Project => {
-                settings.inherit_default = true;
-                settings.inherit_available = true;
-                if let Some(global) = self.project.as_ref().and_then(ConfigurationSession::global) {
-                    settings.default = global.default_taxonomy().clone();
-                    settings.available = global.available_taxonomies().to_vec();
                 }
             }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -994,10 +958,7 @@ impl State {
                         .as_mut()
                         .ok_or("project configuration is unavailable".to_owned())
                         .and_then(|session| {
-                            session.configure_project(
-                                (!settings.inherit_default).then(|| settings.default.clone()),
-                                (!settings.inherit_available).then(|| settings.available.clone()),
-                            )
+                            session.configure_project(settings.default.clone(), &settings.available)
                         }),
                 };
                 match result {
@@ -1131,12 +1092,19 @@ impl State {
             }
             PendingAction::InitializeProject => {
                 self.active_scope = ConfigurationDestination::Project;
+                let Some(library) = self.library().map(LibraryDraft::persisted).cloned() else {
+                    self.status = Some(Notice::error(format!(
+                        "Initializing copies taxonomies from the Library. {}",
+                        self.library_error()
+                    )));
+                    return;
+                };
                 let Some(session) = &mut self.project else {
                     self.status = Some(Notice::error(self.project_error.clone()));
                     return;
                 };
                 match session
-                    .initialize_project()
+                    .initialize_project(&library)
                     .and_then(|()| session.review().map(|_| ()))
                 {
                     Ok(()) => self.screen = Screen::Review(ConfigurationDestination::Project),
@@ -1176,6 +1144,23 @@ impl State {
         match destination {
             ConfigurationDestination::Global => self.global.as_ref(),
             ConfigurationDestination::Project => self.project.as_ref(),
+        }
+    }
+
+    /// The taxonomies a settings screen lists: the Library for Global, the project's own for Project.
+    fn settings_rows(&self, destination: ConfigurationDestination) -> Vec<Taxonomy> {
+        match destination {
+            ConfigurationDestination::Global => self.catalog().unwrap_or_default(),
+            ConfigurationDestination::Project => self
+                .project
+                .as_ref()
+                .and_then(|session| {
+                    session
+                        .persisted_project_config()
+                        .or_else(|| session.project_config())
+                })
+                .map(|config| config.taxonomies().to_vec())
+                .unwrap_or_default(),
         }
     }
 
@@ -1277,7 +1262,6 @@ impl State {
                         ("space", "available"),
                         ("enter", "default"),
                         ("alt+↑/↓", "reorder"),
-                        ("d/a/r", "inherit"),
                         ("ctrl+s", "stage"),
                         ("esc", "back"),
                     ]
@@ -1332,10 +1316,7 @@ impl State {
     fn render_notice(&self, frame: &mut Frame<'_>, area: Rect) {
         let load_error = if matches!(self.screen, Screen::Home) {
             match self.category {
-                Category::Project => self.project.as_ref().map_or_else(
-                    || Some(self.project_error.clone()),
-                    ConfigurationSession::source_error,
-                ),
+                Category::Project => self.project.is_none().then(|| self.project_error.clone()),
                 Category::Taxonomies => self.global.is_none().then(|| self.library_error()),
             }
         } else {
@@ -1483,136 +1464,75 @@ impl State {
         let Some(session) = &self.project else {
             return self.project_error.clone();
         };
-        let inherited = ProjectConfig::inherited();
-        let config = session.project_config().unwrap_or(&inherited);
-        let Some(baseline) = session.global() else {
-            return self.project_error.clone();
-        };
-        let effective = resolve_effective_configuration(baseline, config);
-        let available = effective.as_ref().map_or_else(
-            |error| format!("Unresolved: {error}"),
-            |value| {
-                value
-                    .taxonomies()
-                    .iter()
-                    .map(|taxonomy| taxonomy.id().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            },
-        );
-        let default = effective.as_ref().map_or_else(
-            |error| format!("Unresolved: {error}"),
-            |value| value.default_taxonomy().to_string(),
-        );
-        let pinned = session
-            .persisted_project_config()
-            .and_then(|config| session.lock().filter(|lock| lock.matches(config)));
-        let commit_default = pinned.map_or_else(
-            || format!("{default} (preview; commit blocked)"),
-            |lock| lock.default_taxonomy().to_string(),
-        );
-        let commit_available = pinned.map_or_else(
-            || format!("{available} (preview; commit blocked)"),
-            |lock| {
-                lock.taxonomies()
-                    .iter()
-                    .map(|taxonomy| taxonomy.id().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            },
-        );
         let status = project_status(session);
+        let guidance = project_guidance(status);
+        let Some(root) = session.root() else {
+            return "Repository unavailable.".into();
+        };
+        let path = root.as_path().join("gitserious.toml");
+        let Some(config) = session.project_config() else {
+            return format!(
+                "Commit taxonomy\n  None\n\nProject configuration\n  {}\n  Absent\n\nStatus\n  {status}\n  {guidance}",
+                path.display()
+            );
+        };
+        let ids = |config: &ProjectConfiguration| {
+            config
+                .taxonomies()
+                .iter()
+                .map(|taxonomy| taxonomy.id().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         match self.project_section {
             ProjectSection::Commit => {
-                let persisted = session.persisted_project_config().unwrap_or(&inherited);
+                let applied = session.persisted_project_config().unwrap_or(config);
                 let staged = if session.is_dirty() {
-                    format!("\n\nStaged resolution\n  Default: {default}\n  Available: {available}")
+                    format!(
+                        "\n\nStaged\n  Default: {}\n  Available: {}",
+                        config.default_taxonomy(),
+                        ids(config)
+                    )
                 } else {
                     String::new()
                 };
                 format!(
-                    "Commit taxonomy\n  {commit_default}\n\nSource\n  {}\n\nLibrary baseline\n  {}\n\nAvailable taxonomies\n  {commit_available}{staged}\n\nStatus\n  {status}\n  {}",
-                    if persisted.default_taxonomy().is_some() {
-                        "Project override"
-                    } else {
-                        "Inherited Library baseline"
-                    },
-                    baseline.default_taxonomy(),
-                    project_guidance(status),
+                    "Commit taxonomy\n  {}\n\nAvailable taxonomies\n  {}{staged}\n\nSource\n  gitserious.toml only; the Library is not consulted\n\nStatus\n  {status}\n  {guidance}",
+                    applied.default_taxonomy(),
+                    ids(applied),
                 )
             }
-            ProjectSection::Resolution => {
-                let library_path = self.library_path.as_ref().map_or_else(
-                    || "Library config location unavailable".into(),
-                    |path| path.display().to_string(),
-                );
-                let project_path = session.root().map_or_else(String::new, |root| {
-                    root.as_path().join("gitserious.toml").display().to_string()
-                });
-                let project_default = config
-                    .default_taxonomy()
-                    .map_or_else(|| "inherit".into(), ToString::to_string);
-                let project_available = config.available_taxonomies().map_or_else(
-                    || "inherit".into(),
-                    |values| {
-                        values
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    },
-                );
-                let pinned_default = session.lock().map_or_else(
-                    || "Unavailable".to_owned(),
-                    |lock| lock.default_taxonomy().to_string(),
-                );
-                let pinned_available = session.lock().map_or_else(
-                    || "Unavailable".to_owned(),
-                    |lock| {
-                        lock.taxonomies()
-                            .iter()
-                            .map(|taxonomy| taxonomy.id().to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    },
-                );
-                format!(
-                    "Library baseline\n  {library_path}\n  Default: {}\n  Available: {}\n\n{}\n  {project_path}\n  Default: {project_default}\n  Available: {project_available}\n\nCurrent resolution\n  Default: {default}\n  Available: {available}\n\nPinned lock\n  Default: {pinned_default}\n  Available: {pinned_available}\n\nStatus\n  {status}",
-                    baseline.default_taxonomy(),
-                    baseline
-                        .available_taxonomies()
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    if session.is_dirty() {
-                        "Project overrides (staged)"
-                    } else {
-                        "Project overrides"
-                    },
-                )
+            ProjectSection::Taxonomies => {
+                let entries = config
+                    .taxonomies()
+                    .iter()
+                    .map(|taxonomy| {
+                        format!(
+                            "{}  v{}\n  {}\n  Types: {}",
+                            taxonomy.id(),
+                            taxonomy.version().get(),
+                            taxonomy.description(),
+                            taxonomy
+                                .commit_types()
+                                .iter()
+                                .map(|definition| definition.id().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                format!("{entries}\n\nStatus\n  {status}")
             }
-            ProjectSection::Files => {
-                let Some(root) = session.root() else {
-                    return "Repository unavailable.".into();
-                };
-                format!(
-                    "Project configuration\n  {}\n  {}\n\nLock\n  {}\n  {}\n\nStatus\n  {status}\n  {}",
-                    root.as_path().join("gitserious.toml").display(),
-                    if session.persisted_project_config().is_some() {
-                        "Present"
-                    } else {
-                        "Absent"
-                    },
-                    root.as_path().join("gitserious.lock").display(),
-                    if session.lock().is_some() {
-                        "Present"
-                    } else {
-                        "Absent"
-                    },
-                    project_guidance(status),
-                )
-            }
+            ProjectSection::Files => format!(
+                "Project configuration\n  {}\n  {}\n\nStatus\n  {status}\n  {guidance}",
+                path.display(),
+                if session.persisted_project_config().is_some() {
+                    "Present"
+                } else {
+                    "Absent"
+                },
+            ),
         }
     }
 
@@ -1633,7 +1553,7 @@ impl State {
         let Some(settings) = &self.settings else {
             return;
         };
-        let items = self.catalog().unwrap_or_default();
+        let items = self.settings_rows(destination);
         let rows = items
             .iter()
             .enumerate()
@@ -1662,22 +1582,9 @@ impl State {
             .collect::<Vec<_>>();
         let mut state = ListState::default();
         state.select(Some(settings.selected));
-        let inheritance = if destination == ConfigurationDestination::Project {
-            format!(
-                "default: {} | available: {} | r: reset both",
-                if settings.inherit_default {
-                    "inherited"
-                } else {
-                    "override"
-                },
-                if settings.inherit_available {
-                    "inherited"
-                } else {
-                    "override"
-                }
-            )
-        } else {
-            "global commit environment".into()
+        let inheritance = match destination {
+            ConfigurationDestination::Project => "taxonomies stored in gitserious.toml",
+            ConfigurationDestination::Global => "global commit environment",
         };
         let parts = Layout::vertical([Constraint::Length(2), Constraint::Min(1)]).split(area);
         frame.render_widget(
@@ -1744,26 +1651,16 @@ fn pane_columns(area: Rect) -> std::rc::Rc<[Rect]> {
 }
 
 fn project_status(session: &ConfigurationSession) -> &'static str {
-    let Some(config) = session.persisted_project_config() else {
-        return if session.project_config().is_some() {
+    if session.persisted_project_config().is_none() {
+        if session.project_config().is_some() {
             "Initialization staged"
         } else {
             "Not initialized"
-        };
-    };
-    let Some(lock) = session.lock() else {
-        return "Lock missing";
-    };
-    if !lock.matches(config) {
-        "Stale lock"
+        }
     } else if session.is_dirty() {
         "Changes staged"
-    } else if session.source_error().is_some() {
-        "Source unavailable"
-    } else if session.update_available() {
-        "Update available"
     } else {
-        "In sync"
+        "Valid"
     }
 }
 
@@ -1771,12 +1668,7 @@ fn project_guidance(status: &str) -> &'static str {
     match status {
         "Not initialized" => "Press i to initialize and review.",
         "Initialization staged" => "Review and apply initialization with Ctrl+S.",
-        "Changes staged" => "Review Ctrl+S; commits still use the pinned lock.",
-        "Lock missing" => "Run gitserious init to create the missing lock.",
-        "Stale lock" | "Update available" => "Review and refresh the lock with Ctrl+S.",
-        "Source unavailable" => {
-            "Pinned commits use the lock; restore Library source before refresh."
-        }
+        "Changes staged" => "Review Ctrl+S; commits use gitserious.toml as last applied.",
         _ => "",
     }
 }
@@ -1815,7 +1707,8 @@ mod tests {
     use std::cell::{Cell, RefCell};
 
     use gitserious_app::{
-        DraftField, GlobalConfiguration, ProjectLock, ProjectState, RepositoryRoot,
+        DraftField, GlobalConfiguration, ProjectConfiguration, ProjectRevision, RepositoryRoot,
+        StoredProject, initial_project_configuration,
     };
     use gitserious_core::{
         CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
@@ -1839,10 +1732,7 @@ mod tests {
             let root = RepositoryRoot::new(std::env::temp_dir()).unwrap_or_else(|_| unreachable!());
             Self {
                 global: RefCell::new(ConfigurationSession::open_global(global.clone())),
-                project: RefCell::new(
-                    ConfigurationSession::open_project(root, global, ProjectState::Absent)
-                        .unwrap_or_else(|_| unreachable!()),
-                ),
+                project: RefCell::new(ConfigurationSession::open_project(root, None)),
                 saves: Cell::new(0),
             }
         }
@@ -2015,8 +1905,7 @@ mod tests {
     }
 
     #[test]
-    fn project_shows_inherited_preview_resolution_files_and_initialize()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn project_shows_sections_files_and_initialize() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
         state.library_path = Some(PathBuf::from("/library/config.toml"));
@@ -2027,10 +1916,10 @@ mod tests {
         assert!(home.contains("Project"));
         assert!(home.contains("Library"));
         assert!(home.contains("Commit"));
-        assert!(home.contains("Resolution"));
+        assert!(home.contains("Taxonomies"));
         assert!(home.contains("Files"));
-        assert!(home.contains("conventional"));
         assert!(home.contains("Not initialized"));
+        assert!(home.contains("Press i to initialize"));
         assert!(
             state
                 .project
@@ -2079,20 +1968,17 @@ mod tests {
 
         state.handle_event(key(KeyCode::Right), &workspace);
         state.handle_event(key(KeyCode::Down), &workspace);
-        assert_eq!(state.project_section, ProjectSection::Resolution);
+        assert_eq!(state.project_section, ProjectSection::Taxonomies);
         terminal.draw(|frame| state.render(frame))?;
-        let resolution = text(&terminal);
-        assert!(resolution.contains("/library/config.toml"));
-        assert!(resolution.contains("Project overrides"));
-        assert!(state.project_detail().contains("Current resolution"));
-        assert!(state.project_detail().contains("Pinned lock"));
+        assert!(text(&terminal).contains("Taxonomies"));
+        assert!(state.project_detail().contains("Not initialized"));
         state.handle_event(key(KeyCode::Down), &workspace);
         assert_eq!(state.project_section, ProjectSection::Files);
         terminal.draw(|frame| state.render(frame))?;
         let files = text(&terminal);
         assert!(files.contains("Project configuration"));
         assert!(state.project_detail().contains("gitserious.toml"));
-        assert!(state.project_detail().contains("gitserious.lock"));
+        assert!(!state.project_detail().contains("gitserious.lock"));
         assert!(files.contains("Absent"));
         state.handle_event(key(KeyCode::Up), &workspace);
         state.handle_event(key(KeyCode::Up), &workspace);
@@ -2112,139 +1998,68 @@ mod tests {
     }
 
     #[test]
-    fn project_panels_distinguish_overrides_lock_drift_and_missing_sources()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn project_panels_show_only_the_embedded_policy() -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
-        let global = GlobalConfiguration::default();
         let root = RepositoryRoot::new(std::env::temp_dir())?;
-        let inherited = ProjectConfig::inherited();
-        let inherited_lock = ProjectLock::capture(
-            &inherited,
-            &resolve_effective_configuration(&global, &inherited)?,
-        )?;
-        let override_config = ProjectConfig::new(1, Some(TaxonomyId::new("research")?), None)?;
-        let override_lock = ProjectLock::capture(
-            &override_config,
-            &resolve_effective_configuration(&global, &override_config)?,
-        )?;
-        state.project = Some(ConfigurationSession::open_project(
-            root.clone(),
-            global.clone(),
-            ProjectState::Initialized {
-                config: override_config.clone(),
-                lock: override_lock,
-            },
-        )?);
-        let commit = state.project_detail();
-        assert!(commit.contains("research"));
-        assert!(commit.contains("Project override"));
-        assert!(commit.contains("Library baseline\n  conventional"));
-        state.handle_event(key(KeyCode::Enter), &workspace);
-        assert!(matches!(
-            state.screen,
-            Screen::Settings(ConfigurationDestination::Project)
-        ));
-        state.handle_event(key(KeyCode::Esc), &workspace);
-        state.project_section = ProjectSection::Files;
-        assert!(state.project_detail().contains("In sync"));
-
-        state
-            .project
-            .as_mut()
-            .ok_or("missing project")?
-            .configure_project(Some(TaxonomyId::new("infra-ops")?), None)?;
-        state.project_section = ProjectSection::Commit;
-        let staged = state.project_detail();
-        assert!(staged.contains("Commit taxonomy\n  research"));
-        assert!(staged.contains("Staged resolution\n  Default: infra-ops"));
-        assert!(staged.contains("Changes staged"));
-        assert!(!staged.contains("commit blocked"));
-        state.project_section = ProjectSection::Files;
-        assert!(state.project_detail().contains("Present"));
-
-        state.project = Some(ConfigurationSession::open_project(
-            root.clone(),
-            global.clone(),
-            ProjectState::ConfigOnly(override_config.clone()),
-        )?);
-        assert!(state.project_detail().contains("Lock missing"));
-        assert!(state.project_detail().contains("gitserious init"));
-
-        state.project = Some(ConfigurationSession::open_project(
-            root.clone(),
-            global.clone(),
-            ProjectState::Initialized {
-                config: override_config,
-                lock: inherited_lock.clone(),
-            },
-        )?);
-        assert!(state.project_detail().contains("Stale lock"));
-        state.project_section = ProjectSection::Commit;
-        assert!(state.project_detail().contains("commit blocked"));
-
-        let changed_global = GlobalConfiguration::new(
-            1,
-            TaxonomyId::new("research")?,
-            global.available_taxonomies().to_vec(),
-            Vec::new(),
-        )?;
-        state.project = Some(ConfigurationSession::open_project(
-            root.clone(),
-            changed_global,
-            ProjectState::Initialized {
-                config: inherited.clone(),
-                lock: inherited_lock.clone(),
-            },
-        )?);
-        assert!(state.project_detail().contains("Update available"));
-        state.project_section = ProjectSection::Commit;
-        let commit = state.project_detail();
-        assert!(commit.contains("Commit taxonomy\n  conventional"));
-        assert!(commit.contains("Library baseline\n  research"));
-        assert!(commit.contains("Update available"));
-
-        let missing = ProjectConfig::new(1, Some(TaxonomyId::new("missing")?), None)?;
-        state.project = Some(ConfigurationSession::open_project(
-            root,
-            global,
-            ProjectState::Initialized {
-                config: missing,
-                lock: inherited_lock,
-            },
-        )?);
-        state.project_section = ProjectSection::Commit;
-        assert!(state.project_detail().contains("Unresolved"));
-        assert!(
-            state
-                .project
-                .as_ref()
-                .ok_or("missing project")?
-                .source_error()
-                .is_some()
-        );
-
         let mut authored = ConfigurationSession::open_global(GlobalConfiguration::default());
         fork_as(&mut authored, "conventional", "team")?;
         let authored = authored
             .library()
             .and_then(|library| library.build().ok())
             .ok_or("the fork builds")?;
-        let team = TaxonomyId::new("team")?;
-        let config = ProjectConfig::new(1, Some(team.clone()), Some(vec![team]))?;
-        let lock = ProjectLock::capture(
-            &config,
-            &resolve_effective_configuration(&authored, &config)?,
-        )?;
+        let team = authored
+            .catalog()?
+            .find(&TaxonomyId::new("team")?)
+            .cloned()
+            .ok_or("the fork is in the catalog")?;
+        let research = initial_project_configuration(&GlobalConfiguration::default(), None)?
+            .taxonomies()[1]
+            .clone();
+        let project = ProjectConfiguration::new(1, team.id().clone(), vec![team, research])?;
         state.project = Some(ConfigurationSession::open_project(
-            RepositoryRoot::new(std::env::temp_dir())?,
-            GlobalConfiguration::default(),
-            ProjectState::Initialized { config, lock },
-        )?);
-        let pinned = state.project_detail();
-        assert!(pinned.contains("Commit taxonomy\n  team"));
-        assert!(pinned.contains("Source unavailable"));
-        assert!(!pinned.contains("commit blocked"));
+            root,
+            Some(StoredProject {
+                configuration: project,
+                revision: ProjectRevision::of_bytes(b"opened"),
+            }),
+        ));
+        state.global = None;
+        state.global_error = "the Library is corrupt".into();
+
+        let commit = state.project_detail();
+        assert!(commit.contains("Commit taxonomy\n  team"));
+        assert!(commit.contains("Available taxonomies\n  team, research"));
+        assert!(commit.contains("the Library is not consulted"));
+        assert!(commit.contains("Valid"));
+        state.project_section = ProjectSection::Taxonomies;
+        let taxonomies = state.project_detail();
+        assert!(taxonomies.contains("team  v1"));
+        assert!(taxonomies.contains("Types: feat, fix"));
+
+        state.project_section = ProjectSection::Commit;
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        assert!(matches!(
+            state.screen,
+            Screen::Settings(ConfigurationDestination::Project)
+        ));
+        assert_eq!(
+            state
+                .settings_rows(ConfigurationDestination::Project)
+                .iter()
+                .map(|taxonomy| taxonomy.id().as_str())
+                .collect::<Vec<_>>(),
+            ["team", "research"]
+        );
+        state.handle_event(key(KeyCode::Down), &workspace);
+        state.handle_event(key(KeyCode::Enter), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
+        assert!(matches!(state.screen, Screen::Home));
+        let staged = state.project_detail();
+        assert!(staged.contains("Commit taxonomy\n  team"));
+        assert!(staged.contains("Staged\n  Default: research\n  Available: team, research"));
+        assert!(staged.contains("Changes staged"));
+        assert_eq!(workspace.saves.get(), 0);
         Ok(())
     }
 
@@ -3139,7 +2954,7 @@ mod tests {
             .project
             .as_mut()
             .ok_or("missing project")?
-            .initialize_project()?;
+            .initialize_project(&GlobalConfiguration::default())?;
         state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
         state.handle_event(key(KeyCode::Char('/')), &workspace);
@@ -3287,7 +3102,7 @@ mod tests {
             .project
             .as_mut()
             .ok_or("missing project")?
-            .initialize_project()?;
+            .initialize_project(&GlobalConfiguration::default())?;
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
         assert_eq!(

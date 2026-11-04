@@ -32,11 +32,11 @@ pub use create_taxonomy_commit::{
     validate_reviewed_commit,
 };
 pub use directory_creator::DirectoryCreator;
-pub use gitserious_core::Fingerprint;
 pub use global_path_resolver::GlobalPathResolver;
 pub use global_paths::GlobalPaths;
 pub use initialize_taxonomy_project::{
-    InitOutcome, InitStatus, InitializeProjectError, initialize_project,
+    InitOutcome, InitStatus, InitializeProjectError, initial_project_configuration,
+    initialize_project,
 };
 pub use repository_locator::{RepositoryLocator, RepositoryRoot, RepositoryRootError};
 pub use resolve_global_paths::resolve_global_paths;
@@ -49,11 +49,10 @@ pub use taxonomy_configuration_editor::{
     Review, edit_configuration,
 };
 pub use taxonomy_policy::{
-    ConfigurationError, EffectiveConfiguration, GlobalConfiguration, ProjectConfig,
-    ProjectConfiguration, ProjectLock, ProjectRevision, ProjectState, StoredProject,
-    TaxonomyCatalog, TaxonomyOrigin, fingerprint_taxonomy, resolve_effective_configuration,
+    ConfigurationError, GlobalConfiguration, ProjectConfiguration, ProjectRevision, StoredProject,
+    TaxonomyCatalog, TaxonomyOrigin, fingerprint_taxonomy,
 };
-pub use taxonomy_ports::{GlobalConfigurationStore, ProjectConfigurationStore, ProjectStateStore};
+pub use taxonomy_ports::{GlobalConfigurationStore, ProjectConfigurationStore};
 
 pub use interactive::{
     HelpPage, InteractiveEntry, InteractiveUi, InteractiveWorkspace, run_interactive,

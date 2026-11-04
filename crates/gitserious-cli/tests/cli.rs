@@ -21,9 +21,9 @@ fn init_dispatches_and_reports_the_exact_resolution() -> Result<(), Box<dyn std:
     );
     assert!(stderr.is_empty());
     let initialized = harness.project.initialized.borrow();
-    let (config, lock) = initialized.as_ref().ok_or("init did not write")?;
-    assert_eq!(config.default_taxonomy(), None);
-    assert_eq!(lock.taxonomies(), built_in_taxonomies());
+    let config = initialized.as_ref().ok_or("init did not write")?;
+    assert_eq!(config.default_taxonomy().as_str(), "conventional");
+    assert_eq!(config.taxonomies(), built_in_taxonomies());
     Ok(())
 }
 
@@ -62,12 +62,8 @@ fn init_selects_an_explicit_installed_taxonomy() -> Result<(), Box<dyn std::erro
     assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
     assert!(stdout.ends_with(" (research@2).\n"), "{stdout}");
     let initialized = harness.project.initialized.borrow();
-    let (config, lock) = initialized.as_ref().ok_or("init did not write")?;
-    assert_eq!(
-        config.default_taxonomy(),
-        Some(&TaxonomyId::new("research")?)
-    );
-    assert_eq!(lock.default_taxonomy().as_str(), "research");
+    let config = initialized.as_ref().ok_or("init did not write")?;
+    assert_eq!(config.default_taxonomy(), &TaxonomyId::new("research")?);
     Ok(())
 }
 

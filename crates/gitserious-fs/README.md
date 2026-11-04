@@ -20,10 +20,13 @@ Roaming AppData Known Folder.
 
 The global `config.toml` stores the default taxonomy, ordered available set,
 and global-only custom taxonomy aggregates. Repository `gitserious.toml` stores
-only optional default and available overrides. Generated `gitserious.lock`
-stores the complete resolved taxonomies so commit authoring remains portable.
-All three files use the taxonomy-first version-one format and reject the earlier
-pre-release `templates`, `typesets`, and `active-template` shape explicitly.
+the project default and the complete ordered taxonomy definitions, so a clone
+that includes it authors commits without any Library. `TomlProjectStore` reads
+only that root file, identifies each read by a hash of its bytes, and replaces it
+atomically only while that revision is current. Nothing under `.gitserious/` is
+read as project policy, and no lock file is written. The global file rejects the
+earlier pre-release `templates`, `typesets`, and `active-template` shape
+explicitly.
 
 A binary compiled inside WSL is a Linux binary and therefore follows XDG. A
 native Windows executable launched from WSL still follows Windows AppData.

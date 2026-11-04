@@ -92,12 +92,11 @@ taxonomy CLI selection, focused TUI navigation, and two-trailer provenance.
 
 - All built-ins resolve in order as `conventional`, `research`, and
   `infra-ops`.
-- Global and project selection obey independent fallback and default-in-available
-  invariants.
+- Global selection obeys the default-in-available invariant; a project's default
+  is one of its own embedded taxonomies.
 - Custom taxonomy CRUD and snapshot forking preserve ordering and versions.
-- Portable locks author commits without the originating global custom taxonomy.
-- Project-config/lock mismatches fail with the path through
-  `gitserious config` → Project → Review/Apply.
+- A cloned `gitserious.toml` authors commits with an empty or corrupt Library.
+- An invalid `gitserious.toml` fails with a diagnostic and is never regenerated.
 - The TUI saves validated Library edits directly and Project edits after review, preserves failed drafts, restores
   navigation position, and renders correctly at minimum and wide sizes.
 - Locked tests, formatting, warnings-denied Clippy, rustdoc, `just ci`, diff

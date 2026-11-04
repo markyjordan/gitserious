@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use gitserious_app::{
-    GlobalConfiguration, GlobalConfigurationStore, ProjectConfig, ProjectLock, ProjectState,
-    ProjectStateStore, RepositoryLocator, RepositoryRoot,
+    GlobalConfiguration, GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore,
+    ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject,
 };
 
 struct Global(RefCell<GlobalConfiguration>);
@@ -34,41 +34,29 @@ impl RepositoryLocator for Locator {
 }
 
 struct Project;
-impl ProjectStateStore for Project {
+impl ProjectConfigurationStore for Project {
     type Error = Infallible;
-    fn inspect(&self, _: &RepositoryRoot) -> Result<ProjectState, Self::Error> {
-        Ok(ProjectState::Absent)
+
+    fn load(&self, _: &RepositoryRoot) -> Result<Option<StoredProject>, Self::Error> {
+        Ok(None)
+    }
+    fn create(
+        &self,
+        _: &RepositoryRoot,
+        configuration: &ProjectConfiguration,
+    ) -> Result<ProjectRevision, Self::Error> {
+        let _ = configuration;
+        Ok(ProjectRevision::of_bytes(b"created"))
+    }
+    fn replace(
+        &self,
+        _: &RepositoryRoot,
+        _: ProjectRevision,
+        _: &ProjectConfiguration,
+    ) -> Result<ProjectRevision, Self::Error> {
+        unreachable!("config list and show never write")
     }
     fn ensure_local_state(&self, _: &RepositoryRoot) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    fn initialize(
-        &self,
-        _: &RepositoryRoot,
-        _: &ProjectConfig,
-        _: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    fn create_lock(&self, _: &RepositoryRoot, _: &ProjectLock) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    fn replace_lock(
-        &self,
-        _: &RepositoryRoot,
-        _: &ProjectLock,
-        _: &ProjectLock,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    fn compare_and_swap(
-        &self,
-        _: &RepositoryRoot,
-        _: &ProjectConfig,
-        _: &ProjectLock,
-        _: &ProjectConfig,
-        _: &ProjectLock,
-    ) -> Result<(), Self::Error> {
         Ok(())
     }
 }

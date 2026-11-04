@@ -4,9 +4,9 @@ use std::path::Path;
 use gitserious_core::TaxonomyId;
 
 use crate::{
-    GlobalConfiguration, GlobalConfigurationStore, LibraryDraft, Problem, ProjectConfig,
-    ProjectLock, ProjectState, ProjectStateStore, RepositoryLocator, RepositoryRoot,
-    TaxonomyCatalog, resolve_effective_configuration,
+    GlobalConfiguration, GlobalConfigurationStore, LibraryDraft, Problem, ProjectConfiguration,
+    ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject,
+    TaxonomyCatalog, initial_project_configuration,
 };
 
 /// Persistence destination edited by one reviewed session.
@@ -26,12 +26,10 @@ enum Scope {
 #[derive(Clone, Debug)]
 struct ProjectScope {
     root: RepositoryRoot,
-    /// The Library the project resolves against; a Project session never edits it.
-    global: GlobalConfiguration,
-    baseline: Option<(ProjectConfig, ProjectLock)>,
-    original: Option<ProjectConfig>,
-    working: Option<ProjectConfig>,
-    lock: Option<ProjectLock>,
+    /// The revision Apply must still find on disk; none before initialization.
+    baseline: Option<ProjectRevision>,
+    original: Option<ProjectConfiguration>,
+    working: Option<ProjectConfiguration>,
 }
 
 /// One in-memory configuration draft and its guarded baseline.
@@ -49,34 +47,21 @@ impl ConfigurationSession {
         }
     }
 
-    /// Opens a project snapshot without performing I/O.
-    pub fn open_project(
-        root: RepositoryRoot,
-        global: GlobalConfiguration,
-        state: ProjectState,
-    ) -> Result<Self, String> {
-        let (original, lock, baseline) = match state {
-            ProjectState::Absent => (None, None, None),
-            ProjectState::ConfigOnly(config) => (Some(config), None, None),
-            ProjectState::Initialized { config, lock } => (
-                Some(config.clone()),
-                Some(lock.clone()),
-                Some((config, lock)),
-            ),
-            ProjectState::LockOnly => {
-                return Err("gitserious.lock exists without gitserious.toml; restore or remove the orphan lock".into());
-            }
+    /// Opens a project snapshot without performing I/O or reading the Library.
+    #[must_use]
+    pub fn open_project(root: RepositoryRoot, stored: Option<StoredProject>) -> Self {
+        let (baseline, original) = match stored {
+            Some(stored) => (Some(stored.revision), Some(stored.configuration)),
+            None => (None, None),
         };
-        Ok(Self {
+        Self {
             scope: Scope::Project(Box::new(ProjectScope {
                 root,
-                global,
                 baseline,
                 working: original.clone(),
                 original,
-                lock,
             })),
-        })
+        }
     }
 
     /// Returns the project root when present.
@@ -105,18 +90,9 @@ impl ConfigurationSession {
         }
     }
 
-    /// Returns the Library a Project session resolves against.
+    /// Returns the working project configuration, or none before initialization.
     #[must_use]
-    pub const fn global(&self) -> Option<&GlobalConfiguration> {
-        match &self.scope {
-            Scope::Global(_) => None,
-            Scope::Project(project) => Some(&project.global),
-        }
-    }
-
-    /// Returns the working project overrides, or none before initialization.
-    #[must_use]
-    pub const fn project_config(&self) -> Option<&ProjectConfig> {
+    pub const fn project_config(&self) -> Option<&ProjectConfiguration> {
         match &self.scope {
             Scope::Global(_) => None,
             Scope::Project(project) => project.working.as_ref(),
@@ -125,29 +101,22 @@ impl ConfigurationSession {
 
     /// Returns the persisted project configuration captured before staged edits.
     #[must_use]
-    pub const fn persisted_project_config(&self) -> Option<&ProjectConfig> {
+    pub const fn persisted_project_config(&self) -> Option<&ProjectConfiguration> {
         match &self.scope {
             Scope::Global(_) => None,
             Scope::Project(project) => project.original.as_ref(),
         }
     }
 
-    /// Returns the currently pinned lock.
-    #[must_use]
-    pub const fn lock(&self) -> Option<&ProjectLock> {
-        match &self.scope {
-            Scope::Global(_) => None,
-            Scope::Project(project) => project.lock.as_ref(),
-        }
-    }
-
-    /// Returns the merged taxonomy library.
+    /// Returns the merged taxonomy library of a Global session.
     pub fn catalog(&self) -> Result<TaxonomyCatalog, String> {
         match &self.scope {
-            Scope::Global(library) => library.persisted().catalog(),
-            Scope::Project(project) => project.global.catalog(),
+            Scope::Global(library) => library
+                .persisted()
+                .catalog()
+                .map_err(|error| error.to_string()),
+            Scope::Project(_) => Err("a Project session does not read the Library".into()),
         }
-        .map_err(|error| error.to_string())
     }
 
     /// Returns whether this draft differs from its persisted baseline.
@@ -157,31 +126,6 @@ impl ConfigurationSession {
             Scope::Global(library) => library.is_changed(),
             Scope::Project(project) => project.working != project.original,
         }
-    }
-
-    /// Returns whether current global state would produce a different project lock.
-    #[must_use]
-    pub fn update_available(&self) -> bool {
-        let Scope::Project(project) = &self.scope else {
-            return false;
-        };
-        let (Some(config), Some(lock)) = (&project.working, &project.lock) else {
-            return false;
-        };
-        resolve_effective_configuration(&project.global, config)
-            .and_then(|effective| ProjectLock::capture(config, &effective))
-            .is_ok_and(|candidate| candidate != *lock)
-    }
-
-    /// Returns the current effective-resolution error, if a source is unavailable.
-    #[must_use]
-    pub fn source_error(&self) -> Option<String> {
-        let Scope::Project(project) = &self.scope else {
-            return None;
-        };
-        resolve_effective_configuration(&project.global, project.working.as_ref()?)
-            .err()
-            .map(|error| error.to_string())
     }
 
     /// Replaces global selection while retaining the taxonomy library.
@@ -207,32 +151,48 @@ impl ConfigurationSession {
         Ok(())
     }
 
-    /// Replaces project overrides. Passing none for both fields restores inheritance.
+    /// Selects the project default and the order of the taxonomies it keeps.
+    ///
+    /// `available` may name any taxonomy the project held when the session opened.
     pub fn configure_project(
         &mut self,
-        default: Option<TaxonomyId>,
-        available: Option<Vec<TaxonomyId>>,
+        default: TaxonomyId,
+        available: &[TaxonomyId],
     ) -> Result<(), String> {
         let Scope::Project(project) = &mut self.scope else {
-            return Err("project overrides require the Project destination".into());
+            return Err("project changes require the Project destination".into());
         };
-        let config =
-            ProjectConfig::new(1, default, available).map_err(|error| error.to_string())?;
-        resolve_effective_configuration(&project.global, &config)
-            .map_err(|error| error.to_string())?;
-        project.working = Some(config);
+        let pool = project
+            .original
+            .iter()
+            .chain(&project.working)
+            .flat_map(ProjectConfiguration::taxonomies)
+            .collect::<Vec<_>>();
+        let taxonomies = available
+            .iter()
+            .map(|id| {
+                pool.iter()
+                    .find(|taxonomy| taxonomy.id() == id)
+                    .map(|taxonomy| (*taxonomy).clone())
+                    .ok_or_else(|| format!("taxonomy \"{id}\" is not part of this project"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        project.working = Some(
+            ProjectConfiguration::new(1, default, taxonomies).map_err(|error| error.to_string())?,
+        );
         Ok(())
     }
 
-    /// Stages initialization with inherited global fields.
-    pub fn initialize_project(&mut self) -> Result<(), String> {
+    /// Stages initialization with copies of the Library's default environment.
+    pub fn initialize_project(&mut self, library: &GlobalConfiguration) -> Result<(), String> {
         let Scope::Project(project) = &mut self.scope else {
-            return Err("project overrides require the Project destination".into());
+            return Err("project changes require the Project destination".into());
         };
         if project.working.is_some() {
             return Err("project is already initialized".into());
         }
-        project.working = Some(ProjectConfig::inherited());
+        project.working =
+            Some(initial_project_configuration(library, None).map_err(|error| error.to_string())?);
         Ok(())
     }
 
@@ -247,19 +207,17 @@ impl ConfigurationSession {
                     .working
                     .as_ref()
                     .ok_or("project initialization has not been staged")?;
-                let effective = resolve_effective_configuration(&project.global, config)
-                    .map_err(|error| error.to_string())?;
                 Ok(Review {
                     changes: format!(
-                        "PROJECT CONFIGURATION\n\nDefault\n  {}\n\nAvailable\n  {}\n\nPortable lock\n  {} taxonomy snapshots",
-                        effective.default_taxonomy(),
-                        effective
+                        "PROJECT CONFIGURATION\n\nDefault\n  {}\n\nTaxonomies\n  {}\n\nFile\n  gitserious.toml holds {} complete taxonomy definitions",
+                        config.default_taxonomy(),
+                        config
                             .taxonomies()
                             .iter()
                             .map(|taxonomy| taxonomy.id().to_string())
                             .collect::<Vec<_>>()
                             .join(", "),
-                        effective.taxonomies().len(),
+                        config.taxonomies().len(),
                     ),
                 })
             }
@@ -302,7 +260,7 @@ pub fn edit_configuration<L, S, G>(
 where
     L: RepositoryLocator + ?Sized,
     L::Error: Display,
-    S: ProjectStateStore + ?Sized,
+    S: ProjectConfigurationStore + ?Sized,
     S::Error: Display,
     G: GlobalConfigurationStore + ?Sized,
     G::Error: Display,
@@ -326,25 +284,26 @@ impl<L, S, G> ConfigurationWorkspace for Workspace<'_, L, S, G>
 where
     L: RepositoryLocator + ?Sized,
     L::Error: Display,
-    S: ProjectStateStore + ?Sized,
+    S: ProjectConfigurationStore + ?Sized,
     S::Error: Display,
     G: GlobalConfigurationStore + ?Sized,
     G::Error: Display,
 {
     fn load(&self, destination: ConfigurationDestination) -> Result<ConfigurationSession, String> {
-        let global = self.global.load().map_err(|error| error.to_string())?;
         match destination {
-            ConfigurationDestination::Global => Ok(ConfigurationSession::open_global(global)),
+            ConfigurationDestination::Global => Ok(ConfigurationSession::open_global(
+                self.global.load().map_err(|error| error.to_string())?,
+            )),
             ConfigurationDestination::Project => {
                 let root = self
                     .locator
                     .locate(self.start)
                     .map_err(|error| error.to_string())?;
-                let state = self
+                let stored = self
                     .project
-                    .inspect(&root)
+                    .load(&root)
                     .map_err(|error| error.to_string())?;
-                ConfigurationSession::open_project(root, global, state)
+                Ok(ConfigurationSession::open_project(root, stored))
             }
         }
     }
@@ -368,33 +327,25 @@ where
             Scope::Project(project) => {
                 let ProjectScope {
                     root,
-                    global,
                     baseline,
                     working,
                     ..
                 } = project.as_ref();
-                let config = working
+                let configuration = working
                     .as_ref()
                     .ok_or("project initialization has not been staged")?;
-                let effective = resolve_effective_configuration(global, config)
-                    .map_err(|error| error.to_string())?;
-                let lock =
-                    ProjectLock::capture(config, &effective).map_err(|error| error.to_string())?;
-                match baseline {
-                    None => self.project.initialize(root, config, &lock),
-                    Some((old_config, old_lock)) => self
-                        .project
-                        .compare_and_swap(root, old_config, old_lock, config, &lock),
+                let revision = match baseline {
+                    None => self.project.create(root, configuration),
+                    Some(expected) => self.project.replace(root, *expected, configuration),
                 }
                 .map_err(|error| error.to_string())?;
-                ConfigurationSession::open_project(
+                Ok(ConfigurationSession::open_project(
                     root.clone(),
-                    global.clone(),
-                    ProjectState::Initialized {
-                        config: config.clone(),
-                        lock,
-                    },
-                )
+                    Some(StoredProject {
+                        configuration: configuration.clone(),
+                        revision,
+                    }),
+                ))
             }
         }
     }
