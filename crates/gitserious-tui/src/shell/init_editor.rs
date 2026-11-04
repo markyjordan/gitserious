@@ -15,6 +15,7 @@ use crate::theme::theme;
 /// The narrowest pane that still fits a taxonomy row or a preview line.
 const MINIMUM_PANE_WIDTH: u16 = 44;
 const TYPE_COLUMN_WIDTH: usize = 13;
+const PATH_COLUMN_WIDTH: usize = 17;
 
 /// One taxonomy the new project could start with.
 struct Candidate {
@@ -37,13 +38,19 @@ pub(super) struct InitEditor {
     rows: Vec<Candidate>,
     /// A taxonomy row, or `rows.len()` for the Initialize row.
     cursor: usize,
-    /// The taxonomy the preview shows, kept while the cursor is on the Initialize row.
+    /// The taxonomy the preview returns to when the cursor leaves the Initialize row.
     previewed: usize,
+    /// No Git repository exists yet, so initializing runs `git init` first.
+    creates_repository: bool,
 }
 
 impl InitEditor {
     /// Built-ins start included in their order; custom taxonomies start excluded after them.
-    pub(super) fn new(built_ins: &[Taxonomy], custom: &[Taxonomy]) -> Self {
+    pub(super) fn new(
+        built_ins: &[Taxonomy],
+        custom: &[Taxonomy],
+        creates_repository: bool,
+    ) -> Self {
         let rows = built_ins
             .iter()
             .map(|taxonomy| (taxonomy, false))
@@ -58,6 +65,7 @@ impl InitEditor {
             rows,
             cursor: 0,
             previewed: 0,
+            creates_repository,
         }
     }
 
@@ -194,7 +202,14 @@ impl InitEditor {
         head.extend(inset(&root.display().to_string(), dim, width));
         head.extend([Line::default(), Line::styled(" Taxonomies", dim)]);
         let initialize = spread(
-            vec![Span::styled(" Initialize repository", text)],
+            vec![Span::styled(
+                if self.creates_repository {
+                    " initialize git and gitserious"
+                } else {
+                    " initialize gitserious"
+                },
+                text,
+            )],
             Span::styled("enter ", dim),
             width,
             self.on_initialize_row(),
@@ -267,7 +282,12 @@ impl InitEditor {
     }
 
     /// `top_gap` aligns the title with the list's title when the panes sit side by side.
+    /// On the Initialize row, what initializing writes; otherwise the selected taxonomy.
     fn render_preview(&self, frame: &mut Frame<'_>, area: Rect, top_gap: bool) {
+        if self.on_initialize_row() {
+            self.render_write_plan(frame, area, top_gap);
+            return;
+        }
         let Some(row) = self.rows.get(self.previewed) else {
             return;
         };
@@ -304,6 +324,50 @@ impl InitEditor {
                 Span::styled(format!("{id:<TYPE_COLUMN_WIDTH$}"), text),
                 Span::styled(truncate(&properties, budget), dim),
             ]));
+        }
+        render_wrapped(frame, area, lines);
+    }
+
+    fn render_write_plan(&self, frame: &mut Frame<'_>, area: Rect, top_gap: bool) {
+        let text = Style::new().fg(theme().text);
+        let dim = Style::new().fg(theme().dim);
+        let [area] = Layout::horizontal([Constraint::Fill(1)])
+            .horizontal_margin(1)
+            .areas(area);
+        let default = self.default_row().map_or_else(String::new, |row| {
+            self.rows[row].taxonomy.versioned().to_string()
+        });
+        let mut entries = Vec::new();
+        if self.creates_repository {
+            entries.push((".git/", "a new Git repository".to_owned()));
+        }
+        entries.push((".gitserious/", "local state Git ignores".to_owned()));
+        entries.push((
+            "gitserious.toml",
+            format!("the project's taxonomies, {default} first"),
+        ));
+        let mut lines = Vec::new();
+        if top_gap {
+            lines.push(Line::default());
+        }
+        lines.extend([
+            Line::styled(
+                "gitserious will write the following:",
+                text.add_modifier(Modifier::BOLD),
+            ),
+            Line::default(),
+        ]);
+        let budget = usize::from(area.width)
+            .saturating_sub(PATH_COLUMN_WIDTH)
+            .max(1);
+        for (path, purpose) in entries {
+            for (index, part) in wrap_words(&purpose, budget).into_iter().enumerate() {
+                let path = if index == 0 { path } else { "" };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{path:<PATH_COLUMN_WIDTH$}"), text),
+                    Span::styled(part, dim),
+                ]));
+            }
         }
         render_wrapped(frame, area, lines);
     }
@@ -345,6 +409,21 @@ fn spread(
     } else {
         Line::from(left)
     }
+}
+
+/// Splits `text` at spaces into lines of at most `budget` columns.
+fn wrap_words(text: &str, budget: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for word in text.split(' ') {
+        match lines.last_mut() {
+            Some(line) if line.len() + 1 + word.len() <= budget => {
+                line.push(' ');
+                line.push_str(word);
+            }
+            _ => lines.push(word.to_owned()),
+        }
+    }
+    lines
 }
 
 /// Cuts `text` to `budget` columns, ending with `…` when anything is cut.
@@ -421,7 +500,7 @@ mod tests {
     #[test]
     fn built_ins_start_included_with_conventional_first_and_library_taxonomies_excluded()
     -> Result<(), Box<dyn std::error::Error>> {
-        let mut editor = InitEditor::new(built_in_taxonomies(), &[team_changes()?]);
+        let mut editor = InitEditor::new(built_in_taxonomies(), &[team_changes()?], false);
         let rows = screen(&editor, 87, 40)?;
         assert!(
             rows[5].starts_with(" ✓ 1  conventional-v1  default"),
@@ -443,7 +522,7 @@ mod tests {
     #[test]
     fn space_includes_enter_makes_the_default_and_alt_arrows_reorder()
     -> Result<(), Box<dyn std::error::Error>> {
-        let mut editor = InitEditor::new(built_in_taxonomies(), &[team_changes()?]);
+        let mut editor = InitEditor::new(built_in_taxonomies(), &[team_changes()?], false);
         for _ in 0..3 {
             press(&mut editor, KeyCode::Down);
         }
@@ -491,7 +570,7 @@ mod tests {
                 )?)
             })
             .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
-        let mut editor = InitEditor::new(built_in_taxonomies(), &library);
+        let mut editor = InitEditor::new(built_in_taxonomies(), &library, false);
         for _ in 0..32 {
             press(&mut editor, KeyCode::Down);
         }
@@ -503,7 +582,7 @@ mod tests {
                 .ok_or("the selected row scrolled out of view")?;
             let initialize = rows
                 .iter()
-                .position(|row| row.contains("Initialize repository"))
+                .position(|row| row.contains("initialize gitserious"))
                 .ok_or("the Initialize row scrolled out of view")?;
             assert_eq!(initialize, selected + 2, "{width}x{height}");
             assert!(
@@ -530,8 +609,89 @@ mod tests {
     }
 
     #[test]
+    fn the_initialize_row_lists_what_initializing_writes() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut editor = InitEditor::new(built_in_taxonomies(), &[], true);
+        let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
+        terminal.draw(|frame| editor.render(frame, frame.area(), Path::new("/src/fresh"), None))?;
+        let first = terminal.backend().buffer()[(1, 5)].clone();
+        assert_eq!(first.bg, theme().cursor, "conventional-v1 starts selected");
+        for _ in 0..3 {
+            press(&mut editor, KeyCode::Down);
+        }
+        for (width, height) in [(87, 40), (100, 30)] {
+            let rows = screen(&editor, width, height)?;
+            let heading = rows
+                .iter()
+                .position(|row| row.contains("gitserious will write the following:"))
+                .ok_or("missing write plan")?;
+            let entries: Vec<&String> = rows[heading + 2..heading + 5].iter().collect();
+            assert!(
+                entries[0].contains(".git/            a new Git repository"),
+                "{entries:?}"
+            );
+            assert!(entries[1].contains(".gitserious/     local state Git ignores"));
+            assert!(
+                entries[2].contains("gitserious.toml  the project's taxonomies,"),
+                "{entries:?}"
+            );
+            let plan = rows[heading..].join("\n");
+            assert!(plan.contains("conventional-v1 first"), "{plan}");
+            assert!(
+                rows.iter()
+                    .any(|row| row.contains(" initialize git and gitserious"))
+            );
+            assert!(
+                !rows.iter().any(|row| row.contains("Taxonomy ")),
+                "the plan replaces the preview"
+            );
+        }
+
+        press(&mut editor, KeyCode::Up);
+        press(&mut editor, KeyCode::Enter);
+        for _ in 0..3 {
+            press(&mut editor, KeyCode::Down);
+        }
+        let rows = screen(&editor, 87, 40)?;
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("taxonomies, infra-ops-v1 first")),
+            "the plan names the default"
+        );
+        press(&mut editor, KeyCode::Up);
+        let rows = screen(&editor, 87, 40)?;
+        assert!(
+            rows.iter().any(|row| row.contains("Taxonomy research")),
+            "leaving the row restores the preview"
+        );
+        assert!(!rows.iter().any(|row| row.contains("will write")));
+
+        let mut editor = InitEditor::new(built_in_taxonomies(), &[], false);
+        for _ in 0..3 {
+            press(&mut editor, KeyCode::Down);
+        }
+        let rows = screen(&editor, 100, 30)?;
+        let heading = rows
+            .iter()
+            .position(|row| row.contains("gitserious will write the following:"))
+            .ok_or("missing write plan")?;
+        assert!(rows[heading + 2].contains(".gitserious/"));
+        assert!(rows[heading + 3].contains("gitserious.toml"));
+        assert!(
+            !rows.iter().any(|row| row.contains(".git/ ")),
+            "an existing repository gets no git init"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.contains(" initialize gitserious "))
+        );
+        assert!(!rows.iter().any(|row| row.contains("initialize git and")));
+        Ok(())
+    }
+
+    #[test]
     fn a_long_path_wraps_inside_the_inset() -> Result<(), Box<dyn std::error::Error>> {
-        let editor = InitEditor::new(built_in_taxonomies(), &[]);
+        let editor = InitEditor::new(built_in_taxonomies(), &[], false);
         let root = Path::new("/").join("a".repeat(120)).join("fresh");
         let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
         terminal.draw(|frame| editor.render(frame, frame.area(), &root, None))?;
@@ -549,14 +709,14 @@ mod tests {
                 .iter()
                 .all(|row| row.starts_with(" /") || row.starts_with(" a"))
         );
-        assert!(rows.iter().any(|row| row.contains("Initialize repository")));
+        assert!(rows.iter().any(|row| row.contains("initialize gitserious")));
         Ok(())
     }
 
     #[test]
     fn the_last_included_taxonomy_cannot_be_excluded_and_esc_writes_nothing()
     -> Result<(), Box<dyn std::error::Error>> {
-        let mut editor = InitEditor::new(&built_in_taxonomies()[..1], &[]);
+        let mut editor = InitEditor::new(&built_in_taxonomies()[..1], &[], false);
         press(&mut editor, KeyCode::Char(' '));
         assert!(screen(&editor, 87, 40)?[5].starts_with(" ✓ 1  conventional-v1"));
         assert!(matches!(
@@ -569,7 +729,7 @@ mod tests {
     #[test]
     fn the_preview_sits_beside_the_list_on_wide_terminals_and_under_it_on_tall_ones()
     -> Result<(), Box<dyn std::error::Error>> {
-        let mut editor = InitEditor::new(built_in_taxonomies(), &[]);
+        let mut editor = InitEditor::new(built_in_taxonomies(), &[], false);
         for (width, height, wide) in [
             (87, 40, false),
             (100, 30, true),
@@ -587,7 +747,7 @@ mod tests {
                 assert!(rows.iter().all(|row| row.contains('│')), "{width}x{height}");
             } else {
                 assert_eq!(rows[title - 1].trim_matches('─'), "", "{width}x{height}");
-                assert!(rows[title - 2].contains("Initialize repository"));
+                assert!(rows[title - 2].contains("initialize gitserious"));
             }
         }
         press(&mut editor, KeyCode::Down);
@@ -596,21 +756,18 @@ mod tests {
                 .iter()
                 .any(|row| row.contains("Taxonomy research"))
         );
-        for _ in 0..3 {
-            press(&mut editor, KeyCode::Down);
-        }
+        press(&mut editor, KeyCode::Down);
         let rows = screen(&editor, 100, 30)?;
-        assert!(
-            rows.iter().any(|row| row.contains("Taxonomy infra-ops")),
-            "the Initialize row keeps the last preview"
-        );
+        assert!(rows.iter().any(|row| row.contains("Taxonomy infra-ops")));
         assert!(
             rows.iter().any(|row| row.trim_end().ends_with('…')),
             "long properties are cut"
         );
+        press(&mut editor, KeyCode::Down);
+        let rows = screen(&editor, 100, 30)?;
         let initialize = rows
             .iter()
-            .position(|row| row.contains("Initialize repository"))
+            .position(|row| row.contains("initialize gitserious"))
             .ok_or("missing Initialize row")?;
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| editor.render(frame, frame.area(), Path::new("/src/fresh"), None))?;

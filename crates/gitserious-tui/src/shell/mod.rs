@@ -219,7 +219,12 @@ impl Shell {
                     self.home_error = Some(format!("Library taxonomies are unavailable: {error}"));
                     Vec::new()
                 });
-                self.init_editor = Some(InitEditor::new(built_in_taxonomies(), &library));
+                let creates_repository = matches!(self.home, HomeState::NoRepository { .. });
+                self.init_editor = Some(InitEditor::new(
+                    built_in_taxonomies(),
+                    &library,
+                    creates_repository,
+                ));
             }
             Action::Refresh => {
                 self.commit.notice.clear();
@@ -1203,10 +1208,7 @@ mod tests {
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let text = rendered(&terminal);
         assert!(text.contains("✗ gitserious.toml already exists"), "{text}");
-        assert!(
-            text.contains("Initialize repository"),
-            "the editor stays open"
-        );
+        assert!(text.contains(" Initialize fresh"), "the editor stays open");
         shell.handle_event(key(KeyCode::Esc), &workspace, &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(rendered(&terminal).contains(" initialize gitserious "));

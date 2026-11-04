@@ -35,12 +35,16 @@ built-ins. The first included
 taxonomy is the default, the one a commit considers first. Space includes or
 excludes the selected taxonomy, though the last included one stays. Enter
 makes it the default by moving it to the top. Alt+Up and Alt+Down reorder. A long list scrolls with the selection and keeps
-`Initialize repository` in view.
+the initialize row in view.
 The preview shows the selected taxonomy's types and their properties, beside
 the list when the terminal is at least two and a half times as wide as it is
-tall and each pane gets 44 columns, and under the list otherwise. Enter on
-`Initialize repository` writes the project; Esc returns to Home and writes
-nothing. The editor stays open across visits to other sections.
+tall and each pane gets 44 columns, and under the list otherwise.
+
+The last row reads `initialize git and gitserious` in a directory without Git
+and `initialize gitserious` in a repository. With it selected, the preview
+pane reads `gitserious will write the following:` and lists `.git/` when Git
+is initialized too, then `.gitserious/`, and `gitserious.toml` with its
+default taxonomy. Enter writes them; Esc returns to Home and writes nothing. The editor stays open across visits to other sections.
 
 Screens draw with the active appearance theme, a set of semantic colors
 (ground, band, text, dim, cursor, pending, done, blocks). Bone is the first
