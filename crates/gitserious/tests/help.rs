@@ -1,6 +1,9 @@
 use std::error::Error;
 use std::process::{Command, Output};
 
+use gitserious_app::{HelpPage, HelpSpan};
+use gitserious_cli::interactive_help;
+
 const DOCUMENTED: [&str; 3] = ["init", "config", "commit"];
 const COLUMNS: usize = 100;
 
@@ -203,4 +206,69 @@ fn help_for_an_unknown_command_is_a_usage_error_naming_the_valid_ones() -> Resul
         assert!(stderr.contains(command), "{stderr}");
     }
     Ok(())
+}
+
+fn page_text(page: &HelpPage, width: u16) -> String {
+    page.lines(width)
+        .iter()
+        .map(|line| {
+            let mut text: String = line.iter().map(|span| span.text.as_str()).collect();
+            text.push('\n');
+            text
+        })
+        .collect()
+}
+
+#[test]
+fn each_help_page_shows_what_its_invocation_prints_at_the_same_width() -> Result<(), Box<dyn Error>>
+{
+    let pages = interactive_help();
+    let shown: Vec<_> = pages
+        .iter()
+        .map(|page| (page.title.as_str(), page.invocation.as_str()))
+        .collect();
+
+    assert_eq!(
+        shown,
+        [
+            ("Overview", "gitserious --help"),
+            ("Init", "gitserious help init"),
+            ("Config", "gitserious help config"),
+            ("Commit", "gitserious help commit"),
+        ]
+    );
+    for page in &pages {
+        let arguments: Vec<_> = page.invocation.split(' ').skip(1).collect();
+        for width in [50, 80, 120] {
+            assert_eq!(
+                page_text(page, width),
+                succeed_at(usize::from(width), &arguments)?,
+                "{} at {width}",
+                page.invocation
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn help_pages_mark_headings_and_names_strong_and_leave_descriptions_plain() {
+    for page in interactive_help() {
+        let spans: Vec<HelpSpan> = page.lines(80).concat();
+        let strong: Vec<_> = spans
+            .iter()
+            .filter(|span| span.strong)
+            .map(|span| span.text.as_str())
+            .collect();
+
+        for name in ["Usage:", "Options:", "-h", "--help"] {
+            assert!(strong.contains(&name), "{}: {strong:?}", page.invocation);
+        }
+        assert!(
+            spans.iter().any(|span| !span.strong
+                && span.text.trim() == "Display the concise help for this command"),
+            "{}: {spans:?}",
+            page.invocation
+        );
+    }
 }

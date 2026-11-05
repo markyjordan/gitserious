@@ -1,6 +1,7 @@
 use std::convert::Infallible;
-use std::fmt::Display;
+use std::fmt::{self, Debug, Display, Formatter};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use gitserious_core::{Taxonomy, TaxonomyId, TaxonomyVersion};
 
@@ -22,11 +23,53 @@ pub enum InteractiveEntry {
     Config,
 }
 
+/// A run of help text; `strong` marks a heading or a command or flag name.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HelpSpan {
+    pub text: String,
+    pub strong: bool,
+}
+
+/// One line of help, already wrapped to the width it was rendered at.
+pub type HelpLine = Vec<HelpSpan>;
+
 /// Presentation content supplied by the CLI without a TUI-to-CLI dependency.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct HelpPage {
     pub title: String,
-    pub text: String,
+    /// The command line whose output the page shows.
+    pub invocation: String,
+    render: Arc<dyn Fn(u16) -> Vec<HelpLine> + Send + Sync>,
+}
+
+impl HelpPage {
+    pub fn new(
+        title: impl Into<String>,
+        invocation: impl Into<String>,
+        render: impl Fn(u16) -> Vec<HelpLine> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            invocation: invocation.into(),
+            render: Arc::new(render),
+        }
+    }
+
+    /// The page wrapped to `width` columns.
+    #[must_use]
+    pub fn lines(&self, width: u16) -> Vec<HelpLine> {
+        (self.render)(width)
+    }
+}
+
+impl Debug for HelpPage {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HelpPage")
+            .field("title", &self.title)
+            .field("invocation", &self.invocation)
+            .finish_non_exhaustive()
+    }
 }
 
 /// What Home shows about the directory gitserious started in.

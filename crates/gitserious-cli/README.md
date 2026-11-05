@@ -26,5 +26,6 @@ still enters authoring directly.
 Help has two tiers. `-h` and `--help` print the same concise help.
 `gitserious help [<command>]` prints the detailed help, through `$PAGER` or
 `less` when stdout is a terminal; `--no-pager` prints it directly. Both wrap
-to the terminal width, up to 100 columns. The shell Help pages show the same
-text the CLI prints.
+to the terminal width, up to 100 columns. The shell Help pages show what
+`gitserious --help` and `gitserious help <command>` print at the pane's width,
+with headings and names in bold.

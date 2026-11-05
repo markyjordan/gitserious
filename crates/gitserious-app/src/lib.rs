@@ -57,7 +57,8 @@ pub use taxonomy_policy::{
 pub use taxonomy_ports::{GlobalConfigurationStore, ProjectConfigurationStore};
 
 pub use interactive::{
-    HelpPage, HomeState, InteractiveEntry, InteractiveUi, InteractiveWorkspace, run_interactive,
+    HelpLine, HelpPage, HelpSpan, HomeState, InteractiveEntry, InteractiveUi, InteractiveWorkspace,
+    run_interactive,
 };
 pub use library_draft::{
     Collision, CopyIn, DraftEdit, DraftField, EditRefusal, LibraryDraft, NodeId, NodeRef, Policy,

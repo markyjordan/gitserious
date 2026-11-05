@@ -15,7 +15,8 @@ use ratatui::crossterm::event::{
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::author::{AuthoringCheckpoint, embedded_author};
@@ -688,25 +689,38 @@ impl Shell {
     }
 
     fn render_help(&mut self, frame: &mut Frame<'_>, area: Rect, help: &[HelpPage]) {
-        if let Some(page) = help.get(self.help_page) {
-            let block = Block::bordered()
-                .border_style(frame_style())
-                .title(block_title(&format!(
-                    "Help — {} ({}/{})",
-                    page.title,
-                    self.help_page + 1,
-                    help.len()
-                )));
-            let inner = block.inner(area);
-            let paragraph = Paragraph::new(page.text.as_str()).wrap(Wrap { trim: false });
-            let maximum = paragraph
-                .line_count(inner.width)
-                .saturating_sub(usize::from(inner.height));
-            self.help_scroll = self
-                .help_scroll
-                .min(u16::try_from(maximum).unwrap_or(u16::MAX));
-            frame.render_widget(paragraph.scroll((self.help_scroll, 0)).block(block), area);
-        }
+        let Some(page) = help.get(self.help_page) else {
+            return;
+        };
+        let area = Block::new().padding(Padding::new(1, 1, 1, 0)).inner(area);
+        let text = Style::new().fg(theme().text);
+        let dim = Style::new().fg(theme().dim);
+        let strong = text.add_modifier(Modifier::BOLD);
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled("$ ", dim),
+                Span::styled(page.invocation.as_str(), text),
+            ]),
+            Line::default(),
+        ];
+        lines.extend(page.lines(area.width).into_iter().map(|line| {
+            // Prose at column 0 reads in the text color; indented descriptions recede.
+            let plain = if line.first().is_some_and(|span| span.text.starts_with(' ')) {
+                dim
+            } else {
+                text
+            };
+            Line::from(
+                line.into_iter()
+                    .map(|span| Span::styled(span.text, if span.strong { strong } else { plain }))
+                    .collect::<Vec<_>>(),
+            )
+        }));
+        let maximum = lines.len().saturating_sub(usize::from(area.height));
+        self.help_scroll = self
+            .help_scroll
+            .min(u16::try_from(maximum).unwrap_or(u16::MAX));
+        frame.render_widget(Paragraph::new(lines).scroll((self.help_scroll, 0)), area);
     }
 
     fn render_overlay(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -799,8 +813,8 @@ mod tests {
 
     use gitserious_app::{
         BranchState, CommitOutput, ConfigurationDestination, ConfigurationSession,
-        ConfigurationWorkspace, GlobalConfiguration, ProjectConfiguration, RepositoryRoot,
-        RepositoryStatus,
+        ConfigurationWorkspace, GlobalConfiguration, HelpLine, HelpSpan, ProjectConfiguration,
+        RepositoryRoot, RepositoryStatus,
     };
     use gitserious_core::TaxonomyVersion;
     use ratatui::{Terminal, backend::TestBackend};
@@ -1246,6 +1260,30 @@ mod tests {
     fn key(code: KeyCode) -> Event {
         Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
     }
+    fn span(text: &str, strong: bool) -> HelpSpan {
+        HelpSpan {
+            text: text.into(),
+            strong,
+        }
+    }
+
+    fn numbered(count: usize) -> Vec<HelpLine> {
+        (1..=count)
+            .map(|number| vec![span(&format!("line {number}"), false)])
+            .collect()
+    }
+
+    /// The column and row where `needle` first appears on screen.
+    fn position(terminal: &Terminal<TestBackend>, needle: &str) -> Option<(u16, u16)> {
+        rendered(terminal).lines().enumerate().find_map(|(y, row)| {
+            let x = row.find(needle)?;
+            Some((
+                u16::try_from(row[..x].chars().count()).ok()?,
+                u16::try_from(y).ok()?,
+            ))
+        })
+    }
+
     fn rendered(terminal: &Terminal<TestBackend>) -> String {
         terminal
             .backend()
@@ -1510,14 +1548,8 @@ mod tests {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Home, &services);
         let help = vec![
-            HelpPage {
-                title: "Overview".into(),
-                text: "line\n".repeat(100),
-            },
-            HelpPage {
-                title: "Config".into(),
-                text: "config help".into(),
-            },
+            HelpPage::new("Overview", "gitserious --help", |_| numbered(100)),
+            HelpPage::new("Config", "gitserious help config", |_| numbered(1)),
         ];
         shell.handle_event(key(KeyCode::BackTab), &services, &help);
         assert_eq!(shell.section, Section::Help);
@@ -1528,7 +1560,7 @@ mod tests {
         assert_eq!(shell.help_scroll, 0);
         let mut terminal = Terminal::new(TestBackend::new(66, 18))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
-        assert!(rendered(&terminal).contains("┌ Help — Config (2/2) ─"));
+        assert!(rendered(&terminal).contains("$ gitserious help config"));
         shell.handle_event(key(KeyCode::Tab), &services, &help);
         assert_eq!(shell.section, Section::Home, "tab wraps from Help to Home");
         shell.handle_event(key(KeyCode::Char('/')), &services, &help);
@@ -1546,6 +1578,150 @@ mod tests {
         terminal.resize(Rect::new(0, 0, 40, 10))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert!(rendered(&terminal).contains("Terminal too small"));
+        Ok(())
+    }
+
+    #[test]
+    fn help_opens_with_its_invocation_and_bolds_only_headings_and_names()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let services = Services;
+        let mut shell = Shell::new(InteractiveEntry::Home, &services);
+        let help = vec![HelpPage::new("Overview", "gitserious --help", |_| {
+            vec![
+                vec![
+                    span("Usage:", true),
+                    span(" ", false),
+                    span("gitserious", true),
+                    span(" [COMMAND]", false),
+                ],
+                vec![],
+                vec![span("Options:", true)],
+                vec![
+                    span("  ", false),
+                    span("-h, --help", true),
+                    span("  Display the concise help", false),
+                ],
+            ]
+        })];
+        shell.handle_event(key(KeyCode::BackTab), &services, &help);
+        let mut terminal = Terminal::new(TestBackend::new(66, 18))?;
+        terminal.draw(|frame| shell.render(frame, &help))?;
+
+        let text = rendered(&terminal);
+        assert!(!text.contains("┌ Help"), "{text}");
+        let (x, y) = position(&terminal, "$ gitserious --help").ok_or("missing invocation")?;
+        assert_eq!((x, y), (1, 2), "one blank row under the header");
+        let (usage_x, usage_y) = position(&terminal, "Usage:").ok_or("missing usage")?;
+        assert_eq!(
+            (usage_x, usage_y),
+            (x, y + 2),
+            "one blank row, then the help"
+        );
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(x, y)].fg, theme().dim);
+        assert_eq!(buffer[(x + 2, y)].fg, theme().text);
+        for needle in ["Usage:", "gitserious [", "Options:", "-h, --help"] {
+            let (x, y) = position(&terminal, needle).ok_or(needle)?;
+            assert!(buffer[(x, y)].modifier.contains(Modifier::BOLD), "{needle}");
+            assert_eq!(buffer[(x, y)].fg, theme().text, "{needle}");
+        }
+        for (needle, color) in [("[COMMAND]", theme().text), ("Display", theme().dim)] {
+            let (x, y) = position(&terminal, needle).ok_or(needle)?;
+            assert!(
+                !buffer[(x, y)].modifier.contains(Modifier::BOLD),
+                "{needle}"
+            );
+            assert_eq!(buffer[(x, y)].fg, color, "{needle}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn help_keeps_a_wrapped_description_under_its_column() -> Result<(), Box<dyn std::error::Error>>
+    {
+        const DESCRIPTION: &str = "Author and create a durable commit from the staged index";
+        let listing = |width: u16| {
+            let room = usize::from(width) - 10;
+            let mut rows = vec![String::new()];
+            for word in DESCRIPTION.split(' ') {
+                let row = rows.last().map_or(0, String::len);
+                if row > 0 && row + 1 + word.len() > room {
+                    rows.push(String::new());
+                }
+                if let Some(row) = rows.last_mut() {
+                    if !row.is_empty() {
+                        row.push(' ');
+                    }
+                    row.push_str(word);
+                }
+            }
+            rows.iter()
+                .enumerate()
+                .map(|(index, row)| {
+                    if index == 0 {
+                        vec![
+                            span("  ", false),
+                            span("commit", true),
+                            span("  ", false),
+                            span(row, false),
+                        ]
+                    } else {
+                        vec![span(&format!("{:10}{row}", ""), false)]
+                    }
+                })
+                .collect()
+        };
+        let services = Services;
+        let mut shell = Shell::new(InteractiveEntry::Home, &services);
+        let help = vec![HelpPage::new("Overview", "gitserious --help", listing)];
+        shell.handle_event(key(KeyCode::BackTab), &services, &help);
+        let mut terminal = Terminal::new(TestBackend::new(66, 18))?;
+        terminal.draw(|frame| shell.render(frame, &help))?;
+
+        let text = rendered(&terminal);
+        let rows: Vec<&str> = text.lines().collect();
+        let (column, y) = position(&terminal, "Author").ok_or("missing description")?;
+        let continuation = rows[usize::from(y) + 1];
+        assert_eq!(
+            continuation.len() - continuation.trim_start().len(),
+            usize::from(column),
+            "{text}"
+        );
+        assert_eq!(
+            format!(
+                "{} {}",
+                rows[usize::from(y)].trim_end(),
+                continuation.trim()
+            ),
+            format!("   commit  {DESCRIPTION}"),
+            "{text}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn help_scrolls_to_its_last_line_at_the_minimum_size() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let services = Services;
+        let mut shell = Shell::new(InteractiveEntry::Home, &services);
+        let help = vec![HelpPage::new("Overview", "gitserious --help", |_| {
+            numbered(40)
+        })];
+        shell.handle_event(key(KeyCode::BackTab), &services, &help);
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        terminal.draw(|frame| shell.render(frame, &help))?;
+        assert!(!rendered(&terminal).contains("line 40"));
+
+        for _ in 0..10 {
+            shell.handle_event(key(KeyCode::PageDown), &services, &help);
+        }
+        terminal.draw(|frame| shell.render(frame, &help))?;
+        let last = MINIMUM_HEIGHT - FOOTER_HEIGHT - 1;
+        assert_eq!(position(&terminal, "line 40"), Some((1, last)));
+
+        shell.handle_event(key(KeyCode::Up), &services, &help);
+        terminal.draw(|frame| shell.render(frame, &help))?;
+        assert_eq!(position(&terminal, "line 39"), Some((1, last)));
         Ok(())
     }
 

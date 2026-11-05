@@ -5,16 +5,20 @@ use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::process::{self, ExitCode, Stdio};
 
+use clap::builder::StyledStr;
+use clap::builder::styling::{Style, Styles};
 use clap::error::ErrorKind;
 use clap::{ArgAction, CommandFactory, Parser, Subcommand};
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
-    ConfigurationEditor, GlobalConfigurationStore, HelpPage, InitOutcome, InitStatus,
-    InteractiveEntry, InteractiveUi, ProjectConfigurationStore, RepositoryInitializer,
+    ConfigurationEditor, GlobalConfigurationStore, HelpLine, HelpPage, HelpSpan, InitOutcome,
+    InitStatus, InteractiveEntry, InteractiveUi, ProjectConfigurationStore, RepositoryInitializer,
     RepositoryLocator, RepositoryRoot, RepositoryStatusReader, create_commit_with_taxonomy,
     edit_configuration, initialize_project, run_interactive,
 };
 use gitserious_core::{CommitMessage, CommitTypeDefinition, VersionedTaxonomy};
+
+const HELP_WIDTH: usize = 100;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -23,7 +27,7 @@ use gitserious_core::{CommitMessage, CommitTypeDefinition, VersionedTaxonomy};
     version,
     about = "Create durable commit-message policy for Git repositories",
     disable_colored_help = true,
-    max_term_width = 100,
+    max_term_width = HELP_WIDTH,
     disable_help_flag = true,
     disable_help_subcommand = true,
     after_help = "Use `gitserious help` for more details.",
@@ -275,7 +279,7 @@ where
         if entry == InteractiveEntry::Home
             && (!std::io::stdin().is_terminal() || !std::io::stdout().is_terminal())
         {
-            return write_all(stdout, &concise_help());
+            return write_all(stdout, &printed(&concise_help(Cli::command())));
         }
         let Some((ui, status, initializer)) = adapters.interactive else {
             return operational_error(stderr, "interactive shell is not configured");
@@ -333,26 +337,28 @@ where
                 Err(error) => operational_error(stderr, error),
             }
         }
-        Command::Help { no_pager, command } => match detailed_help(command.as_deref()) {
-            Ok(text) => write_help(stdout, &text, no_pager),
-            Err(error) => write_clap_error(stdout, stderr, &error),
-        },
+        Command::Help { no_pager, command } => {
+            match detailed_help(Cli::command(), command.as_deref()) {
+                Ok(help) => write_help(stdout, &printed(&help), no_pager),
+                Err(error) => write_clap_error(stdout, stderr, &error),
+            }
+        }
     }
 }
 
-fn concise_help() -> String {
-    trailing_newline(&Cli::command().render_help().to_string())
+/// The concise help `-h` and `--help` print, rendered by `root`.
+fn concise_help(mut root: clap::Command) -> StyledStr {
+    root.render_help()
 }
 
-/// The long help `gitserious help [<command>]` prints.
-fn detailed_help(command: Option<&str>) -> Result<String, clap::Error> {
-    let mut root = Cli::command();
+/// The long help `gitserious help [<command>]` prints, rendered by `root`.
+fn detailed_help(mut root: clap::Command, command: Option<&str>) -> Result<StyledStr, clap::Error> {
     root.build();
     let Some(name) = command else {
-        return Ok(trailing_newline(&root.render_long_help().to_string()));
+        return Ok(root.render_long_help());
     };
     if let Some(subcommand) = root.find_subcommand_mut(name) {
-        return Ok(trailing_newline(&subcommand.render_long_help().to_string()));
+        return Ok(subcommand.render_long_help());
     }
     let names: Vec<_> = root
         .get_subcommands()
@@ -367,8 +373,9 @@ fn detailed_help(command: Option<&str>) -> Result<String, clap::Error> {
     ))
 }
 
-fn trailing_newline(text: &str) -> String {
-    format!("{}\n", text.trim_end())
+/// Help as the CLI prints it: plain text ending in one newline.
+fn printed(help: &StyledStr) -> String {
+    format!("{}\n", help.to_string().trim_end())
 }
 
 fn write_help(stdout: &mut (impl Write + ?Sized), text: &str, no_pager: bool) -> ExitCode {
@@ -497,19 +504,134 @@ impl CommitWriter for UnsupportedCommitAdapter {
     }
 }
 
-/// Help pages for the unified Help surface, each the text the CLI prints.
+/// Help pages for the unified Help surface, each showing what its invocation prints.
 #[must_use]
 pub fn interactive_help() -> Vec<HelpPage> {
-    let mut pages = vec![HelpPage {
-        title: "Overview".into(),
-        text: concise_help(),
-    }];
+    let mut pages = vec![HelpPage::new("Overview", "gitserious --help", |width| {
+        help_lines(&concise_help(styled_root(width)))
+    })];
     for (title, command) in [("Init", "init"), ("Config", "config"), ("Commit", "commit")] {
-        pages.push(HelpPage {
-            title: title.into(),
-            text: detailed_help(Some(command)).unwrap_or_else(|error| error.to_string()),
-        });
+        pages.push(HelpPage::new(
+            title,
+            format!("gitserious help {command}"),
+            move |width| {
+                help_lines(
+                    &detailed_help(styled_root(width), Some(command))
+                        .unwrap_or_else(|error| error.render()),
+                )
+            },
+        ));
     }
-    pages.push(HelpPage { title: "Keyboard Navigation".into(), text: "NAME\n    gitserious — keyboard navigation\n\nDESCRIPTION\n    Tab / Shift+Tab: switch to the next or previous section from any overview, including Config's Project and Library.\n    Esc: close an overlay, go back, or return to Home from an overview.\n    Enter: open the selected item or start a staged commit.\n    /: contextual commands. ?: contextual help. q: quit at overview level.\n\nCONFIG\n    Menu: Up/Down selects Project or Library; Left/Right moves focus between Menu and its widgets.\n    Library: n creates, e edits, f forks, and d deletes a taxonomy.\n    Library NAV: Enter opens or closes a node; arrows move rows or panel focus.\n    Library EDIT: Enter and Up/Down move fields; Esc validates and saves. Correct inline errors before leaving EDIT.\n    Tab, navigation clicks, and quit cannot leave Library EDIT. Esc removes a new item only while it still equals its initial blank values.\n    Library copies, reorders, and confirmed deletions save immediately. A taxonomy needs a type before it can be included in a project.\n    Project: Ctrl+S reviews changes; Enter applies from Review.\n\nCOMMIT\n    Overview: r refreshes; o shows the full Git result; Left/Right controls directories.\n    Picker: Tab / Shift+Tab selects taxonomy; Up/Down selects type; Enter composes.\n    Composer: Ctrl+S validates and reviews; Esc returns through discard protection.\n    Review: Enter submits; Esc returns to editing.\n\nHELP\n    Left/Right selects pages; Up/Down and Page Up/Page Down scroll.\n".into() });
     pages
+}
+
+/// The root command as a terminal `width` columns wide renders it, names in bold.
+fn styled_root(width: u16) -> clap::Command {
+    const BOLD: Style = Style::new().bold();
+    // An explicit width bypasses `max_term_width`, so apply the CLI's cap here.
+    Cli::command()
+        .term_width(usize::from(width).min(HELP_WIDTH))
+        .styles(Styles::plain().header(BOLD).usage(BOLD).literal(BOLD))
+}
+
+/// Splits rendered help into lines of spans that are strong while SGR bold is on.
+fn help_lines(help: &StyledStr) -> Vec<HelpLine> {
+    let ansi = help.ansi().to_string();
+    let mut pieces = ansi.split('\x1b');
+    let mut lines = Lines::default();
+    lines.push(pieces.next().unwrap_or_default());
+    for piece in pieces {
+        let Some(sequence) = piece.strip_prefix('[') else {
+            lines.push(piece);
+            continue;
+        };
+        let end = sequence
+            .find(|character| ('@'..='~').contains(&character))
+            .unwrap_or(sequence.len());
+        let (parameters, rest) = sequence.split_at(end);
+        let mut text = rest.chars();
+        if text.next() == Some('m') {
+            for parameter in parameters.split(';') {
+                match parameter {
+                    "1" => lines.strong = true,
+                    "" | "0" | "22" => lines.strong = false,
+                    _ => {}
+                }
+            }
+        }
+        lines.push(text.as_str());
+    }
+    lines.finish()
+}
+
+#[derive(Default)]
+struct Lines {
+    done: Vec<HelpLine>,
+    current: HelpLine,
+    strong: bool,
+}
+
+impl Lines {
+    fn push(&mut self, text: &str) {
+        for (index, part) in text.split('\n').enumerate() {
+            if index > 0 {
+                self.done.push(std::mem::take(&mut self.current));
+            }
+            if part.is_empty() {
+                continue;
+            }
+            match self.current.last_mut() {
+                Some(span) if span.strong == self.strong => span.text.push_str(part),
+                _ => self.current.push(HelpSpan {
+                    text: part.into(),
+                    strong: self.strong,
+                }),
+            }
+        }
+    }
+
+    /// The lines without trailing blank ones, as `printed` trims them.
+    fn finish(mut self) -> Vec<HelpLine> {
+        self.done.push(self.current);
+        while self
+            .done
+            .last()
+            .is_some_and(|line| line.iter().all(|span| span.text.trim().is_empty()))
+        {
+            self.done.pop();
+        }
+        self.done
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn span(text: &str, strong: bool) -> HelpSpan {
+        HelpSpan {
+            text: text.into(),
+            strong,
+        }
+    }
+
+    #[test]
+    fn help_spans_are_strong_only_while_sgr_bold_is_on() {
+        let help = StyledStr::from(
+            "\x1b[1mUsage:\x1b[m a\x1b[1;4mb\x1b[22mc\x1b[1m\nd\x1b[0me\x1b[32mf\x1b[1m\n\n",
+        );
+
+        assert_eq!(
+            help_lines(&help),
+            [
+                vec![
+                    span("Usage:", true),
+                    span(" a", false),
+                    span("b", true),
+                    span("c", false),
+                ],
+                vec![span("d", true), span("ef", false)],
+            ]
+        );
+    }
 }
