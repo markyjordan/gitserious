@@ -2379,12 +2379,12 @@ mod tests {
             assert!(
                 outline("conventional")
                     .trim_end()
-                    .ends_with(" v1  11 types")
+                    .ends_with(" 11 types  v1")
             );
             assert!(outline("infra-ops").contains(" infra-ops      built-in "));
-            assert!(outline("infra-ops").trim_end().ends_with(" v1  10 types"));
+            assert!(outline("infra-ops").trim_end().ends_with(" 10 types  v1"));
             assert!(outline("original").contains(" original       custom "));
-            assert!(outline("original").trim_end().ends_with(" v3   1 type"));
+            assert!(outline("original").trim_end().ends_with("  1 type   v3"));
             let text = screen.join("\n");
             let rule = rule_row(&terminal).ok_or("missing the rule above the Inspector")?;
             assert!(screen[usize::from(rule) + 1].contains("│ Taxonomy conventional "));
@@ -3827,7 +3827,7 @@ mod tests {
             .find(|row| row.contains("▾ team "))
             .ok_or("team row")?;
         assert!(team.contains(" custom "), "{team}");
-        assert!(team.contains(" v1  11 types │ "), "{team}");
+        assert!(team.contains(" 11 types  v1 │ "), "{team}");
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(matches!(
             state.taxonomies.observe(state.library()).mode,

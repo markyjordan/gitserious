@@ -126,7 +126,7 @@ fn colors(cell: &Cell) -> (Color, Color) {
 }
 
 #[test]
-fn taxonomy_rows_name_their_origin_version_and_type_count() -> Result {
+fn taxonomy_rows_name_their_origin_type_count_and_version() -> Result {
     for size in SIZES {
         let (_, mut state) = fixture()?;
         let frame = Frame::draw(&mut state, size)?;
@@ -134,19 +134,19 @@ fn taxonomy_rows_name_their_origin_version_and_type_count() -> Result {
             (
                 "▾ conventional ",
                 " ▾ conventional   built-in ",
-                " v1  11 types",
+                " 11 types  v1",
             ),
             (
                 "▸ research ",
                 " ▸ research       built-in ",
-                " v1  10 types",
+                " 10 types  v1",
             ),
             (
                 "▸ infra-ops ",
                 " ▸ infra-ops      built-in ",
-                " v1  10 types",
+                " 10 types  v1",
             ),
-            ("▸ team ", " ▸ team           custom   ", " v1   3 types"),
+            ("▸ team ", " ▸ team           custom   ", "  3 types  v1"),
             (
                 "▸ draft-ideas ",
                 " ▸ draft-ideas    custom   ",

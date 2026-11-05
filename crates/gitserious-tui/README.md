@@ -131,6 +131,8 @@ and 125x51. Enter
 opens or closes a node, Up and Down select rows, and Page Up and Page Down page
 through Inspector details. A pane with more rows than fit counts the rest in
 its last row.
+Valid taxonomy rows align their type count before their version (`11 types  v1`);
+narrow rows drop the count before the version.
 Built-in taxonomies show their origin in the outline and read-only status in
 the Inspector. `f` forks a taxonomy, `n` creates one, `e` opens EDIT, and `d`
 asks for deletion confirmation. Expanded custom taxonomies and types include
