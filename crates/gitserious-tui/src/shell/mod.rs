@@ -1379,7 +1379,7 @@ mod tests {
             let title = 1 + u16::from(height >= 24);
             assert_eq!(text(0, title, 13), " 1  Project  ", "{width}x{height}");
             let top = title + 3;
-            assert!(text(content, title, width).starts_with(" Library "));
+            assert!(text(content, title, width).starts_with(" Commit message taxonomy library "));
             assert!(text(content, top, width).starts_with(" ▸ conventional"));
             for y in 1..height - 1 {
                 let row = text(content, y, width);
@@ -1401,7 +1401,10 @@ mod tests {
                 // The outline column takes half the content and the Inspector starts at the top.
                 let rule = content + (width - content) / 2;
                 assert!((1..height - 1).all(|y| dim(rule, y, "│")));
-                assert_eq!(text(content, title, rule).trim(), "Library");
+                assert_eq!(
+                    text(content, title, rule).trim(),
+                    "Commit message taxonomy library"
+                );
                 assert!(text(rule + 1, title, width).starts_with(" Taxonomy conventional "));
             }
             assert_eq!(buffer[(1, height - 1)].symbol(), " ");

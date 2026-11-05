@@ -19,7 +19,7 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, path: &Path, home: Optio
     let dim = Style::new().fg(theme().dim);
     frame.render_widget(
         Paragraph::new(Span::styled(
-            "Library",
+            "Commit message taxonomy library",
             Style::new().fg(theme().text).add_modifier(Modifier::BOLD),
         )),
         title,
