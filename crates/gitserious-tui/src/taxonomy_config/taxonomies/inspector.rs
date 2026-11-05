@@ -105,7 +105,7 @@ pub(super) fn render(
 
 /// The lines and the rows the focused field takes. A focus means EDIT: a type or property lays
 /// out every field to edit in turn. Browsing drops the name the heading already shows; a
-/// property leads with its policy, and a type lists what the composer asks.
+/// property leads with its policy, and a type lists its property guidance.
 fn describe(
     chips: &Chips<'_>,
     node: NodeRef<'_>,
@@ -240,7 +240,7 @@ fn describe(
                 );
             } else {
                 show(&mut lines, DraftField::Description);
-                lines.extend(composer_lines(commit_type.properties(), width));
+                lines.extend(property_guidance_lines(commit_type.properties(), width));
             }
         }
         NodeRef::Property { property, .. } => {
@@ -272,16 +272,13 @@ fn describe(
     (lines, focused)
 }
 
-/// What the commit composer asks for a type: under a section heading, each property's key with
-/// its policy flush right, and its description indented and dim beneath it.
-fn composer_lines(properties: &[PropertyNode], width: usize) -> Vec<Line<'static>> {
+/// A type's properties: each key with its policy flush right, followed by its indented,
+/// dim description.
+fn property_guidance_lines(properties: &[PropertyNode], width: usize) -> Vec<Line<'static>> {
     if properties.is_empty() {
         return Vec::new();
     }
-    let mut lines = vec![
-        Line::default(),
-        Line::styled("The composer asks", DIM.add_modifier(Modifier::BOLD)),
-    ];
+    let mut lines = vec![Line::default()];
     for property in properties {
         let policy = property.policy();
         lines.push(fit(
