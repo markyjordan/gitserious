@@ -264,7 +264,7 @@ fn edit_lists_every_policy_with_the_current_one_bold_and_underlined() -> Result 
 #[test]
 fn heading_badges_are_plain_and_built_ins_end_with_the_fork_hint() -> Result {
     for size in SIZES {
-        let (_, mut state) = fixture()?;
+        let (workspace, mut state) = fixture()?;
         for (path, badge, color, last) in [
             (
                 &["conventional"][..],
@@ -300,6 +300,10 @@ fn heading_badges_are_plain_and_built_ins_end_with_the_fork_hint() -> Result {
                 }
                 None => assert_eq!(heading.text.trim(), format!("Taxonomy {}", path[0])),
             }
+            // A type can run past the Inspector; a page down shows its end.
+            press(&mut state, &workspace, &[KeyCode::PageDown]);
+            let terminal = draw(&mut state, size)?;
+            let rows = inspector(&state, terminal.backend().buffer());
             let text = rows
                 .iter()
                 .map(|row| row.text.trim())

@@ -40,6 +40,8 @@ mod library_policy_tests;
 #[cfg(test)]
 mod library_rows_tests;
 #[cfg(test)]
+mod library_type_tests;
+#[cfg(test)]
 mod model_check;
 mod naming;
 #[cfg(test)]
@@ -2569,7 +2571,8 @@ mod tests {
         assert!(screen.contains("│ ├─ ▸ fix       cause · decision · constraints"));
         assert!(screen.contains("Type feat"));
         assert!(screen.contains("in conventional"));
-        assert!(screen.contains("Properties   3"));
+        assert!(screen.contains("The composer asks"));
+        assert!(!screen.contains("Properties"));
         assert!(screen.contains(" NAV "));
 
         let screen = press(&mut state, KeyCode::Enter)?;
@@ -2794,7 +2797,12 @@ mod tests {
         assert_eq!(rule_row(&terminal), Some(OUTLINE_TOP + 18));
         assert!(screen[usize::from(OUTLINE_TOP) + 16].contains("▸ release-notes "));
         assert!(screen[usize::from(OUTLINE_TOP) + 17].contains("│ + new taxonomy "));
-        assert!(!screen.join("\n").contains("more"));
+        // The Inspector below the rule may count rows of its own.
+        assert!(
+            !screen[..usize::from(OUTLINE_TOP + 18)]
+                .join("\n")
+                .contains("more")
+        );
         Ok(())
     }
 
