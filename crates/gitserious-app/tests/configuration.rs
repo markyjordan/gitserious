@@ -7,7 +7,7 @@ use library_lookup::LibraryLookup;
 use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationError, ConfigurationSession,
@@ -533,6 +533,10 @@ impl FakeGlobalStore {
 impl GlobalConfigurationStore for FakeGlobalStore {
     type Error = FakeError;
 
+    fn path(&self) -> PathBuf {
+        PathBuf::from("/home/tester/.config/gitserious/config.toml")
+    }
+
     fn load(&self) -> Result<GlobalConfiguration, Self::Error> {
         Ok(self.current.borrow().clone())
     }
@@ -618,6 +622,19 @@ where
         Path::new("."),
         &Script(script),
     )
+}
+
+#[test]
+fn the_workspace_names_the_library_file() -> Result<(), Box<dyn Error>> {
+    let store = FakeGlobalStore::new(GlobalConfiguration::default());
+    edit_global(&store, |workspace| {
+        assert_eq!(
+            workspace.library_path(),
+            Path::new("/home/tester/.config/gitserious/config.toml")
+        );
+        Ok(())
+    })?;
+    Ok(())
 }
 
 #[test]

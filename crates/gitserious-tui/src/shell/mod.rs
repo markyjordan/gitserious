@@ -801,6 +801,9 @@ mod tests {
         fn save(&self, _: &ConfigurationSession) -> Result<ConfigurationSession, String> {
             Err("test save unavailable".into())
         }
+        fn library_path(&self) -> std::path::PathBuf {
+            "/home/tester/.config/gitserious/config.toml".into()
+        }
     }
     impl InteractiveWorkspace for Services {
         fn home(&self) -> HomeState {
@@ -1333,7 +1336,7 @@ mod tests {
     }
 
     #[test]
-    fn embedded_config_splits_the_bordered_panels_equally_after_its_header_and_footer()
+    fn embedded_config_splits_the_bordered_panels_equally_below_the_library_header()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
@@ -1350,19 +1353,21 @@ mod tests {
             terminal.resize(Rect::new(0, 0, width, height))?;
             terminal.draw(|frame| shell.render(frame, &[]))?;
             let buffer = terminal.backend().buffer();
-            let content = height - 2;
-            let outline = content.div_ceil(2);
-            let inspector_y = 1 + outline;
+            // The shell header, then the Library's padding, title, file, and blank rows.
+            let top = 1 + 4;
+            let panels = height - 1 - top;
+            let outline = panels.div_ceil(2);
+            let inspector_y = top + outline;
             let x = (0..width)
-                .find(|x| buffer[(*x, 1)].symbol() == "┌")
+                .find(|x| buffer[(*x, top)].symbol() == "┌")
                 .ok_or("outline border")?;
             assert_eq!(buffer[(x, inspector_y - 1)].symbol(), "└");
             assert_eq!(buffer[(x, inspector_y)].symbol(), "┌");
             assert_eq!(buffer[(x, height - 2)].symbol(), "└");
-            assert_eq!(outline - (height - 1 - inspector_y), content % 2);
+            assert_eq!(outline - (height - 1 - inspector_y), panels % 2);
             if height == 40 {
-                assert_eq!(outline, 19);
-                assert_eq!(height - 1 - inspector_y, 19);
+                assert_eq!(outline, 17);
+                assert_eq!(height - 1 - inspector_y, 17);
             }
             assert_eq!(buffer[(1, height - 1)].symbol(), " ");
             assert_eq!(buffer[(2, height - 1)].symbol(), "N");

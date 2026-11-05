@@ -1,4 +1,5 @@
 use std::io::{self, IsTerminal};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::confirmation::{
@@ -33,6 +34,7 @@ mod copy_tests;
 mod direct_tests;
 mod home_overlay;
 mod library_copy;
+mod library_header;
 #[cfg(test)]
 mod model_check;
 mod naming;
@@ -323,6 +325,9 @@ struct State {
     host_visible: bool,
     project_area: Rect,
     tab_areas: [Rect; 2],
+    library_path: PathBuf,
+    /// The directory the Library header shortens to `~`.
+    home: Option<PathBuf>,
 }
 
 impl State {
@@ -355,6 +360,10 @@ impl State {
             host_visible: true,
             project_area: Rect::default(),
             tab_areas: [Rect::default(); 2],
+            library_path: workspace.library_path(),
+            home: std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .filter(|home| home.is_absolute()),
         }
     }
 
@@ -1704,9 +1713,15 @@ impl State {
             self.project_taxonomies
                 .render(frame, area, draft, focused, animate);
         } else {
+            let [header, outline] = Layout::vertical([
+                Constraint::Length(library_header::HEIGHT),
+                Constraint::Min(0),
+            ])
+            .areas(area);
+            library_header::render(frame, header, &self.library_path, self.home.as_deref());
             let library = self.global.as_ref().and_then(ConfigurationSession::library);
             self.taxonomies
-                .render(frame, area, library, focused, animate);
+                .render(frame, outline, library, focused, animate);
         }
     }
 
@@ -1892,10 +1907,15 @@ mod tests {
     use super::*;
     use crate::theme::ACCENT;
 
+    const LIBRARY_PATH: &str = "/home/tester/.config/gitserious/config.toml";
+    /// The Library outline's top border, below the page header.
+    const OUTLINE_TOP: u16 = 4;
+
     pub(super) struct Workspace {
         pub(super) global: RefCell<ConfigurationSession>,
         pub(super) project: RefCell<ConfigurationSession>,
         saves: Cell<usize>,
+        library_path: PathBuf,
     }
 
     impl Workspace {
@@ -1906,6 +1926,7 @@ mod tests {
                 global: RefCell::new(ConfigurationSession::open_global(global.clone())),
                 project: RefCell::new(ConfigurationSession::open_project(root, None)),
                 saves: Cell::new(0),
+                library_path: PathBuf::from(LIBRARY_PATH),
             }
         }
 
@@ -2008,6 +2029,10 @@ mod tests {
                     Ok(saved)
                 }
             }
+        }
+
+        fn library_path(&self) -> PathBuf {
+            self.library_path.clone()
         }
     }
 
@@ -2267,12 +2292,18 @@ mod tests {
             let screen = rows(&terminal);
             assert_eq!(screen[0].chars().nth(usize::from(RAIL_WIDTH)), Some('│'));
             assert!(
-                row_text(&terminal, CONTENT_X, 0, width - CONTENT_X)
+                row_text(&terminal, CONTENT_X, OUTLINE_TOP, width - CONTENT_X)
                     .starts_with("┌ Commit Message Taxonomies ─")
             );
             let buffer = terminal.backend().buffer();
-            assert_eq!(buffer[(CONTENT_X, 0)].fg, Color::Rgb(80, 160, 255));
-            assert_eq!(buffer[(CONTENT_X + 1, 1)].fg, Color::Rgb(80, 160, 255));
+            assert_eq!(
+                buffer[(CONTENT_X, OUTLINE_TOP)].fg,
+                Color::Rgb(80, 160, 255)
+            );
+            assert_eq!(
+                buffer[(CONTENT_X + 1, OUTLINE_TOP + 1)].fg,
+                Color::Rgb(80, 160, 255)
+            );
             assert_eq!(buffer[(1, height - 1)].bg, Color::Rgb(80, 160, 255));
             for label in [" built-in ", " ◇ read-only "] {
                 let mut count = 0;
@@ -2541,29 +2572,95 @@ mod tests {
             .iter()
             .position(|row| row.contains(" more ┘"))
             .ok_or("missing the hidden-rows count")?;
-        let visible = bottom - 1;
+        let top = usize::from(OUTLINE_TOP);
+        let visible = bottom - top - 1;
         assert!(screen[bottom].contains(&format!("↓ {} more", 14 - visible)));
-        assert!(!screen[0].contains("more"));
+        assert!(!screen[top].contains("more"));
         for _ in 0..20 {
             state.handle_event(key(KeyCode::Down), &workspace);
         }
         terminal.draw(|frame| state.render(frame))?;
         let screen = rows(&terminal);
-        assert!(screen[0].contains(&format!("↑ {} more", 14 - visible)));
+        assert!(screen[top].contains(&format!("↑ {} more", 14 - visible)));
         assert!(screen[bottom - 1].contains("│▌▸ infra-ops"));
         assert!(screen.join("\n").contains("Taxonomy infra-ops"));
 
-        let first = row_text(&terminal, CONTENT_X + 1, 1, MINIMUM_WIDTH - CONTENT_X - 2);
+        let first = row_text(
+            &terminal,
+            CONTENT_X + 1,
+            OUTLINE_TOP + 1,
+            MINIMUM_WIDTH - CONTENT_X - 2,
+        );
         let name = first
             .split(['▸', '▾'])
             .nth(1)
             .and_then(|row| row.split_whitespace().next())
             .ok_or("missing first row")?;
-        state.handle_event(click(Rect::new(CONTENT_X + 1, 1, 1, 1)), &workspace);
+        state.handle_event(
+            click(Rect::new(CONTENT_X + 1, OUTLINE_TOP + 1, 1, 1)),
+            &workspace,
+        );
         assert_eq!(
             state.taxonomies.observe(state.library()).cursor_path,
             ["conventional", name]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn the_library_opens_under_a_header_naming_its_file_from_home()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.home = Some(PathBuf::from("/home/tester"));
+        state.handle_event(key(KeyCode::Char('2')), &workspace);
+        let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let width = 87 - CONTENT_X;
+        assert_eq!(row_text(&terminal, 0, 1, RAIL_WIDTH), " 1  Project  ");
+        let title = row_text(&terminal, CONTENT_X, 1, width);
+        assert!(title.starts_with(" Library "), "{title}");
+        assert!(title.ends_with(" saves as you go "), "{title}");
+        let file = row_text(&terminal, CONTENT_X, 2, width);
+        assert_eq!(
+            file.trim_end(),
+            format!(
+                " ~{}.config/gitserious/config.toml",
+                std::path::MAIN_SEPARATOR
+            )
+        );
+        assert_eq!(row_text(&terminal, CONTENT_X, 3, width).trim(), "");
+        assert!(row_text(&terminal, CONTENT_X, OUTLINE_TOP, width).starts_with("┌"));
+
+        let buffer = terminal.backend().buffer();
+        let library = &buffer[(CONTENT_X + 1, 1)];
+        assert_eq!(library.fg, theme().text);
+        assert!(library.modifier.contains(Modifier::BOLD));
+        assert_eq!(buffer[(87 - 2, 1)].fg, theme().dim);
+        assert_eq!(buffer[(CONTENT_X + 1, 2)].fg, theme().dim);
+
+        state.handle_event(key(KeyCode::Char('1')), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(!rows(&terminal).join("\n").contains("saves as you go"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_long_library_path_keeps_its_end_inside_the_content()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = "/srv/shared/gitserious/configuration/for/every/team/library/config.toml";
+        let mut workspace = Workspace::new();
+        workspace.library_path = PathBuf::from(path);
+        let mut state = State::new(&workspace);
+        state.handle_event(key(KeyCode::Char('2')), &workspace);
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let room = usize::from(MINIMUM_WIDTH - CONTENT_X - 2);
+        let file = row_text(&terminal, CONTENT_X, 2, MINIMUM_WIDTH - CONTENT_X);
+        assert_eq!(file, format!(" …{} ", &path[path.len() - (room - 1)..]));
+        assert_eq!(row_text(&terminal, 0, 2, RAIL_WIDTH + 1), " 2  Library  │");
+        let title = row_text(&terminal, CONTENT_X, 1, MINIMUM_WIDTH - CONTENT_X);
+        assert!(title.ends_with(" saves as you go "), "{title}");
         Ok(())
     }
 
@@ -2590,7 +2687,7 @@ mod tests {
                 );
                 assert_eq!(buffer[(RAIL_WIDTH, y)].symbol(), "│", "{width}x{height}");
             }
-            assert_eq!(buffer[(CONTENT_X, 0)].symbol(), "┌");
+            assert_eq!(buffer[(CONTENT_X, OUTLINE_TOP)].symbol(), "┌");
             assert_eq!(row_text(&terminal, 0, 1, RAIL_WIDTH), " 1  Project  ");
             assert_eq!(row_text(&terminal, 0, 2, RAIL_WIDTH), " 2  Library  ");
             for x in 0..RAIL_WIDTH {
@@ -3711,7 +3808,7 @@ mod tests {
                     .ok_or("Inspector")?;
                 let frames = |terminal: &Terminal<TestBackend>, outline, inspector| {
                     let buffer = terminal.backend().buffer();
-                    assert_eq!(buffer[(CONTENT_X, 0)].fg, outline);
+                    assert_eq!(buffer[(CONTENT_X, OUTLINE_TOP)].fg, outline);
                     assert_eq!(buffer[(CONTENT_X, inspector_y)].fg, inspector);
                 };
                 frames(&terminal, ACCENT, ACCENT);
@@ -3837,7 +3934,13 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| state.render(frame))?;
             let screen = rows(&terminal).join("\n");
-            assert!(screen.contains("130/100"), "{screen}");
+            // At the minimum size the Library header leaves the Inspector no room for the
+            // description's row.
+            assert_eq!(
+                screen.contains("130/100"),
+                height > MINIMUM_HEIGHT,
+                "{screen}"
+            );
             let footer = row_text(&terminal, 0, height - 1, width);
             assert!(footer.starts_with("  NAV   ←/→ focus"), "{footer}");
             assert!(!footer.contains("←/→ policy"), "{footer}");
