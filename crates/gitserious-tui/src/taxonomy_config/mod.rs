@@ -18,13 +18,13 @@ use ratatui::crossterm::event::{
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::theme::{
-    ACCENT, FOOTER_HEIGHT, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, SHELL_HINTS, block_title,
+    FOOTER_HEIGHT, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, SHELL_HINTS, block_title,
     centered_rect, focus_frame_style, frame_style, navigation_key_style, normalize_background,
     render_footer, render_footer_block, render_navigation_row, row_style, section_heading_style,
-    selected_style,
+    selected_style, theme,
 };
 
 #[cfg(test)]
@@ -167,42 +167,31 @@ impl Category {
         }
     }
 
-    fn menu_line(self, selected: bool, focused: bool) -> Line<'static> {
-        let text_style = if selected {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::White)
+    /// The rail row: the location underlined, or the filled cursor while the rail has focus.
+    fn rail_row(self, here: bool, focused: bool, pending: bool) -> Paragraph<'static> {
+        let label = format!(" {}  {}", self.index() + 1, self.label());
+        let mut line = match (here, focused) {
+            (true, false) => Line::from(vec![
+                Span::raw(" "),
+                Span::styled(
+                    label.trim_start().to_owned(),
+                    Style::new()
+                        .fg(theme().text)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                ),
+            ]),
+            _ => Line::from(label),
         };
-        let gutter = if selected {
-            Span::styled(
-                "▌",
-                if focused {
-                    Style::default().fg(ACCENT)
-                } else {
-                    frame_style()
-                },
-            )
-        } else {
-            Span::raw(" ")
-        };
-        Line::from(vec![
-            gutter,
-            Span::styled(
-                format!("{}  ", self.index() + 1),
-                if selected {
-                    text_style
-                } else {
-                    Style::default().fg(Color::Gray)
-                },
-            ),
-            Span::styled(format!("{} ", self.label()), text_style),
-        ])
-        .style(if selected {
-            taxonomies::BAND
-        } else {
-            Style::default()
+        if pending {
+            line.push_span(Span::styled(" ●", Style::new().fg(theme().pending)));
+        }
+        Paragraph::new(line).style(match (here, focused) {
+            (true, true) => Style::new()
+                .fg(theme().ground)
+                .bg(theme().cursor)
+                .add_modifier(Modifier::BOLD),
+            (true, false) => Style::new(),
+            (false, _) => Style::new().fg(theme().dim),
         })
     }
 }
@@ -297,15 +286,11 @@ enum Screen {
     ExportConflict(TaxonomyId),
 }
 
-fn menu_width() -> u16 {
-    let longest_option = Category::ALL
-        .into_iter()
-        .map(|category| category.menu_line(false, false).width())
-        .max()
-        .unwrap_or_default();
-    let title_width = Line::from(block_title("Menu")).width();
-    u16::try_from(longest_option.max(title_width) + 2).unwrap_or(u16::MAX)
-}
+/// The Config rail's width at every terminal size, before the rule that ends it.
+const RAIL_WIDTH: u16 = 13;
+/// Where the content starts, right of the rail and its rule.
+const CONTENT_X: u16 = RAIL_WIDTH + 1;
+
 #[derive(Clone, Debug)]
 struct SettingsDraft {
     selected: usize,
@@ -1373,9 +1358,19 @@ impl State {
         let [main, footer] =
             Layout::vertical([Constraint::Min(1), Constraint::Length(FOOTER_HEIGHT)]).areas(area);
         let footer = render_footer_block(frame, footer);
-        let [menu, content] =
-            Layout::horizontal([Constraint::Length(menu_width()), Constraint::Min(1)]).areas(main);
-        self.render_menu(frame, menu);
+        let [rail, rule, content] = Layout::horizontal([
+            Constraint::Length(RAIL_WIDTH),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .areas(main);
+        self.render_rail(frame, rail);
+        frame.render_widget(
+            Block::new()
+                .borders(Borders::LEFT)
+                .border_style(Style::new().fg(theme().dim)),
+            rule,
+        );
         let body = content;
         let hints = if let Some(question) = self.confirmation() {
             if self.editor().is_some() {
@@ -1445,29 +1440,19 @@ impl State {
         normalize_background(frame, area);
     }
 
-    fn render_menu(&mut self, frame: &mut Frame<'_>, area: Rect) {
+    fn render_rail(&mut self, frame: &mut Frame<'_>, area: Rect) {
         self.tab_areas = [Rect::default(); 2];
         let home = matches!(self.screen, Screen::Home);
         let focused = home && self.home_focus == HomeFocus::Menu;
-        let style = focus_frame_style(focused);
-        frame.render_widget(
-            Block::bordered()
-                .border_style(style)
-                .title_style(style)
-                .title(block_title("Menu")),
-            area,
-        );
-        for category in Category::ALL {
-            let y = area
-                .y
-                .saturating_add(1)
-                .saturating_add(u16::try_from(category.index()).unwrap_or(u16::MAX));
-            if y >= area.bottom().saturating_sub(1) {
-                break;
-            }
-            let row = Rect::new(area.x.saturating_add(1), y, area.width.saturating_sub(2), 1);
+        let pending = self.scope_dirty(ConfigurationDestination::Project);
+        for (category, y) in Category::ALL.into_iter().zip(area.y + 1..area.bottom()) {
+            let row = Rect::new(area.x, y, area.width, 1);
             frame.render_widget(
-                Paragraph::new(category.menu_line(category == self.category, focused)),
+                category.rail_row(
+                    category == self.category,
+                    focused,
+                    pending && category == Category::Project,
+                ),
                 row,
             );
             if home {
@@ -1905,7 +1890,7 @@ mod tests {
 
     use super::naming::problem_sentence;
     use super::*;
-    use crate::theme::theme;
+    use crate::theme::ACCENT;
 
     pub(super) struct Workspace {
         pub(super) global: RefCell<ConfigurationSession>,
@@ -2006,11 +1991,23 @@ mod tests {
                         .saved()
                         .map_err(|problems| format!("{problems:?}"))?;
                     *self.global.borrow_mut() = saved.clone();
-                    return Ok(saved);
+                    Ok(saved)
                 }
-                Some(_) => *self.project.borrow_mut() = session.clone(),
+                Some(root) => {
+                    let configuration = session
+                        .project_config()
+                        .ok_or("project initialization has not been staged")?;
+                    let saved = ConfigurationSession::open_project(
+                        root.clone(),
+                        Some(StoredProject {
+                            configuration,
+                            revision: ProjectRevision::of_bytes(b"saved"),
+                        }),
+                    );
+                    *self.project.borrow_mut() = saved.clone();
+                    Ok(saved)
+                }
             }
-            Ok(session.clone())
         }
     }
 
@@ -2115,19 +2112,17 @@ mod tests {
                 .is_none()
         );
         let buffer = terminal.backend().buffer();
-        assert!(row_text(&terminal, 0, 0, 100).starts_with("┌ Menu ─"));
-        assert!(
-            row_text(&terminal, menu_width(), 0, 100 - menu_width()).starts_with("┌ Project ─")
-        );
+        assert_eq!(row_text(&terminal, 0, 0, RAIL_WIDTH), " ".repeat(13));
+        for y in 0..29 {
+            assert_eq!(buffer[(RAIL_WIDTH, y)].symbol(), "│");
+        }
+        assert!(row_text(&terminal, CONTENT_X, 0, 100 - CONTENT_X).starts_with("┌ Project ─"));
         assert!(home.contains("┌ Commit ─"));
-        assert_eq!(buffer[(0, 0)].symbol(), "┌");
-        assert_eq!(buffer[(menu_width() - 1, 0)].symbol(), "┐");
-        assert_eq!(buffer[(menu_width() - 1, 28)].symbol(), "┘");
-        assert_eq!(buffer[(menu_width(), 0)].symbol(), "┌");
+        assert_eq!(buffer[(CONTENT_X, 0)].symbol(), "┌");
         assert_eq!(buffer[(99, 0)].symbol(), "┐");
-        assert_ne!(buffer[(menu_width() + 1, 1)].symbol(), " ");
-        assert_eq!(buffer[(menu_width() + 1, 1)].fg, ACCENT);
-        let project_columns = pane_columns(Rect::new(menu_width(), 0, 100 - menu_width(), 29));
+        assert_ne!(buffer[(CONTENT_X + 1, 1)].symbol(), " ");
+        assert_eq!(buffer[(CONTENT_X + 1, 1)].fg, ACCENT);
+        let project_columns = pane_columns(Rect::new(CONTENT_X, 0, 100 - CONTENT_X, 29));
         assert!(
             row_text(
                 &terminal,
@@ -2137,16 +2132,14 @@ mod tests {
             )
             .starts_with("Commit taxonomy")
         );
-        assert_eq!(buffer[(2, 1)].symbol(), "1");
-        assert_eq!(buffer[(1, 1)].symbol(), "▌");
-        assert_eq!(buffer[(1, 1)].fg, ACCENT);
-        assert_eq!(buffer[(5, 1)].fg, Color::White);
-        for x in 1..menu_width() - 1 {
-            assert_eq!(buffer[(x, 1)].bg, Color::Rgb(40, 40, 40));
-            assert_eq!(buffer[(x, 1)].modifier.contains(Modifier::BOLD), x > 1);
-            assert!(!buffer[(x, 1)].modifier.contains(Modifier::UNDERLINED));
+        assert_eq!(row_text(&terminal, 0, 1, RAIL_WIDTH), " 1  Project  ");
+        for x in 0..RAIL_WIDTH {
+            assert_eq!(buffer[(x, 1)].fg, theme().ground, "the rail cursor at {x}");
+            assert_eq!(buffer[(x, 1)].bg, theme().cursor, "the rail cursor at {x}");
+            assert!(buffer[(x, 1)].modifier.contains(Modifier::BOLD));
         }
-        assert_eq!(buffer[(0, 28)].symbol(), "└");
+        assert_eq!(row_text(&terminal, 0, 2, RAIL_WIDTH), " 2  Library  ");
+        assert_eq!(buffer[(1, 2)].fg, theme().dim);
         assert_eq!(buffer[(1, 29)].symbol(), "←");
         assert_eq!(buffer[(4, 29)].symbol(), " ");
         for x in 1..4 {
@@ -2272,14 +2265,14 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| state.render(frame))?;
             let screen = rows(&terminal);
-            assert!(screen[0].starts_with("┌ Menu ─"));
+            assert_eq!(screen[0].chars().nth(usize::from(RAIL_WIDTH)), Some('│'));
             assert!(
-                row_text(&terminal, menu_width(), 0, width - menu_width())
+                row_text(&terminal, CONTENT_X, 0, width - CONTENT_X)
                     .starts_with("┌ Commit Message Taxonomies ─")
             );
             let buffer = terminal.backend().buffer();
-            assert_eq!(buffer[(menu_width(), 0)].fg, Color::Rgb(80, 160, 255));
-            assert_eq!(buffer[(menu_width() + 1, 1)].fg, Color::Rgb(80, 160, 255));
+            assert_eq!(buffer[(CONTENT_X, 0)].fg, Color::Rgb(80, 160, 255));
+            assert_eq!(buffer[(CONTENT_X + 1, 1)].fg, Color::Rgb(80, 160, 255));
             assert_eq!(buffer[(1, height - 1)].bg, Color::Rgb(80, 160, 255));
             for label in [" built-in ", " ◇ read-only "] {
                 let mut count = 0;
@@ -2297,7 +2290,7 @@ mod tests {
                 assert!(count > 0, "missing {label}");
             }
 
-            assert!(screen[2].contains("▌2  Library"));
+            assert!(screen[2].starts_with(" 2  Library  │"));
             let outline = |name: &str| {
                 screen
                     .iter()
@@ -2560,18 +2553,13 @@ mod tests {
         assert!(screen[bottom - 1].contains("│▌▸ infra-ops"));
         assert!(screen.join("\n").contains("Taxonomy infra-ops"));
 
-        let first = row_text(
-            &terminal,
-            menu_width() + 1,
-            1,
-            MINIMUM_WIDTH - menu_width() - 2,
-        );
+        let first = row_text(&terminal, CONTENT_X + 1, 1, MINIMUM_WIDTH - CONTENT_X - 2);
         let name = first
             .split(['▸', '▾'])
             .nth(1)
             .and_then(|row| row.split_whitespace().next())
             .ok_or("missing first row")?;
-        state.handle_event(click(Rect::new(menu_width() + 1, 1, 1, 1)), &workspace);
+        state.handle_event(click(Rect::new(CONTENT_X + 1, 1, 1, 1)), &workspace);
         assert_eq!(
             state.taxonomies.observe(state.library()).cursor_path,
             ["conventional", name]
@@ -2580,15 +2568,111 @@ mod tests {
     }
 
     #[test]
-    fn menu_rail_fits_its_longest_option_with_one_trailing_space()
+    fn rail_is_thirteen_columns_ruled_off_without_a_box() -> Result<(), Box<dyn std::error::Error>>
+    {
+        for (width, height) in [
+            (MINIMUM_WIDTH, MINIMUM_HEIGHT),
+            (87, 40),
+            (100, 30),
+            (140, 40),
+        ] {
+            let workspace = Workspace::new();
+            let mut state = State::new(&workspace);
+            state.handle_event(key(KeyCode::Char('2')), &workspace);
+            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+            terminal.draw(|frame| state.render(frame))?;
+            let buffer = terminal.backend().buffer();
+            for y in 0..height - 1 {
+                let rail = row_text(&terminal, 0, y, RAIL_WIDTH);
+                assert!(
+                    !rail.contains(['┌', '┐', '└', '┘', '─', '│', '▌']),
+                    "{width}x{height} row {y}: {rail}"
+                );
+                assert_eq!(buffer[(RAIL_WIDTH, y)].symbol(), "│", "{width}x{height}");
+            }
+            assert_eq!(buffer[(CONTENT_X, 0)].symbol(), "┌");
+            assert_eq!(row_text(&terminal, 0, 1, RAIL_WIDTH), " 1  Project  ");
+            assert_eq!(row_text(&terminal, 0, 2, RAIL_WIDTH), " 2  Library  ");
+            for x in 0..RAIL_WIDTH {
+                let project = &buffer[(x, 1)];
+                assert!(!project.modifier.contains(Modifier::UNDERLINED));
+                assert_ne!(project.bg, theme().cursor);
+                let library = &buffer[(x, 2)];
+                assert_ne!(
+                    library.bg,
+                    theme().cursor,
+                    "only the content shows a cursor"
+                );
+                assert_eq!(
+                    library.modifier.contains(Modifier::UNDERLINED),
+                    (1..11).contains(&x),
+                    "Library underlined from its number to its label, at {x}"
+                );
+            }
+            assert_eq!(buffer[(1, 1)].fg, theme().dim);
+            assert_eq!(
+                (buffer[(1, 2)].fg, buffer[(4, 2)].fg),
+                (theme().text, theme().text)
+            );
+            assert!(buffer[(4, 2)].modifier.contains(Modifier::BOLD));
+
+            state.handle_event(key(KeyCode::Left), &workspace);
+            assert_eq!(state.home_focus, HomeFocus::Menu);
+            terminal.draw(|frame| state.render(frame))?;
+            let buffer = terminal.backend().buffer();
+            for x in 0..RAIL_WIDTH {
+                let cell = &buffer[(x, 2)];
+                assert_eq!(
+                    (cell.fg, cell.bg),
+                    (theme().ground, theme().cursor),
+                    "at {x}"
+                );
+                assert_ne!(buffer[(x, 1)].bg, theme().cursor);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rail_marks_unapplied_project_changes_until_apply_or_discard()
     -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
-        terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(row_text(&terminal, 0, 1, menu_width()), "│▌1  Project │");
-        assert_eq!(row_text(&terminal, 0, 2, menu_width()), "│ 2  Library │");
-        assert_eq!(terminal.backend().buffer()[(menu_width(), 0)].symbol(), "┌");
+        for (answer, saves) in [('a', 1), ('d', 0)] {
+            let workspace = Workspace::new();
+            let mut state = State::new(&workspace);
+            let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
+            let project_row = |state: &mut State,
+                               terminal: &mut Terminal<TestBackend>|
+             -> Result<String, Box<dyn std::error::Error>> {
+                terminal.draw(|frame| state.render(frame))?;
+                Ok(row_text(terminal, 0, 1, RAIL_WIDTH))
+            };
+            assert_eq!(project_row(&mut state, &mut terminal)?, " 1  Project  ");
+
+            press(
+                &mut state,
+                &workspace,
+                &[KeyCode::Right, KeyCode::Char('i'), KeyCode::Esc],
+            );
+            assert!(matches!(state.screen, Screen::Home));
+            assert!(state.scope_dirty(ConfigurationDestination::Project));
+            press(&mut state, &workspace, &[KeyCode::Char('2')]);
+            assert_eq!(project_row(&mut state, &mut terminal)?, " 1  Project ●");
+            let dot = &terminal.backend().buffer()[(12, 1)];
+            assert_eq!(dot.fg, theme().pending);
+            assert_eq!(row_text(&terminal, 0, 2, RAIL_WIDTH), " 2  Library  ");
+
+            press(&mut state, &workspace, &[KeyCode::Char('n')]);
+            assert!(matches!(state.screen, Screen::ScopeChange(_)));
+            assert_eq!(project_row(&mut state, &mut terminal)?, " 1  Project ●");
+            press(&mut state, &workspace, &[KeyCode::Char(answer)]);
+            assert_eq!(workspace.saves.get(), saves);
+            assert!(!state.scope_dirty(ConfigurationDestination::Project));
+            assert_eq!(
+                project_row(&mut state, &mut terminal)?,
+                " 1  Project  ",
+                "after {answer}"
+            );
+        }
         Ok(())
     }
 
@@ -2607,10 +2691,10 @@ mod tests {
                 }
                 terminal.draw(|frame| state.render(frame))?;
                 let buffer = terminal.backend().buffer();
-                let gap = &buffer[(menu_width(), 39)];
+                let gap = &buffer[(CONTENT_X, 39)];
                 assert_eq!(gap.bg, theme().band);
                 assert!(!gap.modifier.contains(Modifier::BOLD));
-                let chip = &buffer[(menu_width() + 1, 39)];
+                let chip = &buffer[(CONTENT_X + 1, 39)];
                 assert_eq!((chip.fg, chip.bg), (theme().text, theme().band));
                 assert!(chip.modifier.contains(Modifier::BOLD));
                 assert_eq!(buffer[(0, 39)].bg, theme().band);
@@ -3241,7 +3325,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         state.status = Some(Notice::Error("Invalid selection".into()));
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(0, 25)].symbol(), "│");
+        assert_eq!(terminal.backend().buffer()[(RAIL_WIDTH, 25)].symbol(), "│");
         assert_eq!(terminal.backend().buffer()[(45, 27)].fg, Color::Red);
         assert!(text(&terminal).contains("Invalid selection"));
 
@@ -3295,8 +3379,8 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
         assert_eq!(
-            row_text(&terminal, 0, 24, menu_width()),
-            format!("│{}│", " ".repeat(usize::from(menu_width()) - 2))
+            row_text(&terminal, 0, 24, CONTENT_X),
+            format!("{}│", " ".repeat(usize::from(RAIL_WIDTH)))
         );
         state.handle_event(key(KeyCode::Down), &workspace);
         assert_eq!(state.category, Category::Taxonomies);
@@ -3420,9 +3504,10 @@ mod tests {
         minimum.draw(|frame| state.render(frame))?;
         assert!(text(&minimum).contains("Project"));
         let buffer = minimum.backend().buffer();
-        assert_eq!(buffer[(0, 0)].symbol(), "┌");
-        assert_eq!(buffer[(menu_width(), 0)].symbol(), "┌");
-        assert_eq!(buffer[(0, 16)].symbol(), "└");
+        assert_eq!(buffer[(RAIL_WIDTH, 0)].symbol(), "│");
+        assert_eq!(buffer[(RAIL_WIDTH, 16)].symbol(), "│");
+        assert_eq!(buffer[(CONTENT_X, 0)].symbol(), "┌");
+        assert_eq!(buffer[(CONTENT_X, 16)].symbol(), "└");
         Ok(())
     }
 
@@ -3620,14 +3705,14 @@ mod tests {
                 assert!(!footer.contains("policy"));
                 let inspector_y = (0..height)
                     .find(|y| {
-                        row_text(&terminal, menu_width(), *y, width - menu_width())
+                        row_text(&terminal, CONTENT_X, *y, width - CONTENT_X)
                             .starts_with("┌ Inspector")
                     })
                     .ok_or("Inspector")?;
                 let frames = |terminal: &Terminal<TestBackend>, outline, inspector| {
                     let buffer = terminal.backend().buffer();
-                    assert_eq!(buffer[(menu_width(), 0)].fg, outline);
-                    assert_eq!(buffer[(menu_width(), inspector_y)].fg, inspector);
+                    assert_eq!(buffer[(CONTENT_X, 0)].fg, outline);
+                    assert_eq!(buffer[(CONTENT_X, inspector_y)].fg, inspector);
                 };
                 frames(&terminal, ACCENT, ACCENT);
                 assert_eq!(

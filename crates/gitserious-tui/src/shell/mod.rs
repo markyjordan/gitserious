@@ -1354,7 +1354,7 @@ mod tests {
             let outline = content.div_ceil(2);
             let inspector_y = 1 + outline;
             let x = (0..width)
-                .find(|x| buffer[(*x, 1)].symbol() == "┌" && *x > 0)
+                .find(|x| buffer[(*x, 1)].symbol() == "┌")
                 .ok_or("outline border")?;
             assert_eq!(buffer[(x, inspector_y - 1)].symbol(), "└");
             assert_eq!(buffer[(x, inspector_y)].symbol(), "┌");

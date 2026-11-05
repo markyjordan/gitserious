@@ -738,7 +738,7 @@ impl TaxonomiesView {
             let mut left = chip.clone();
             let mode_width = Line::from(chip.clone()).width();
             let hint_spacing = if padded { 1 } else { 2 };
-            let inset = usize::from(super::menu_width()).saturating_sub(mode_width + hint_spacing);
+            let inset = usize::from(super::CONTENT_X).saturating_sub(mode_width + hint_spacing);
             left.push(Span::raw(" ".repeat(inset)));
             left.extend(hint_spans(hints, padded));
             let mut right = Vec::new();

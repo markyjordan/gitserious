@@ -1227,7 +1227,7 @@ fn shows_in_order(frame: &str, text: &str) -> bool {
         .lines()
         .flat_map(|row| {
             row.chars()
-                .skip(usize::from(menu_width()))
+                .skip(usize::from(RAIL_WIDTH))
                 .map(|character| match character {
                     '│' | '▌' => ' ',
                     other => other,
