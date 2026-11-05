@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
@@ -83,6 +83,10 @@ struct BrokenLibrary;
 
 impl GlobalConfigurationStore for BrokenLibrary {
     type Error = FakeError;
+
+    fn path(&self) -> PathBuf {
+        PathBuf::from("/config/config.toml")
+    }
 
     fn load(&self) -> Result<GlobalConfiguration, Self::Error> {
         Err(FakeError("the Library is corrupt"))

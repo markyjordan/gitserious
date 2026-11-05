@@ -1,5 +1,5 @@
 use std::fmt::Display;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use gitserious_core::TaxonomyId;
 
@@ -294,6 +294,8 @@ fn first_problem(problems: &[Problem]) -> String {
 pub trait ConfigurationWorkspace {
     fn load(&self, destination: ConfigurationDestination) -> Result<ConfigurationSession, String>;
     fn save(&self, session: &ConfigurationSession) -> Result<ConfigurationSession, String>;
+    /// The file a Global session loads from and saves to.
+    fn library_path(&self) -> PathBuf;
 }
 
 /// Interaction adapter for reviewed configuration authoring.
@@ -403,5 +405,9 @@ where
                 ))
             }
         }
+    }
+
+    fn library_path(&self) -> PathBuf {
+        self.global.path()
     }
 }

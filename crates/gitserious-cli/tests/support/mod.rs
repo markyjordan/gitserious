@@ -69,6 +69,10 @@ impl Global {
 impl GlobalConfigurationStore for Global {
     type Error = FakeError;
 
+    fn path(&self) -> PathBuf {
+        PathBuf::from("/config/config.toml")
+    }
+
     fn load(&self) -> Result<GlobalConfiguration, Self::Error> {
         if self.fail {
             return Err(FakeError("global configuration unavailable"));

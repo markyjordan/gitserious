@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::convert::Infallible;
 use std::error::Error;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use gitserious_app::{
@@ -22,6 +22,9 @@ use gitserious_fs::{
 struct Library(GlobalConfiguration);
 impl GlobalConfigurationStore for Library {
     type Error = Infallible;
+    fn path(&self) -> PathBuf {
+        PathBuf::from("/config/config.toml")
+    }
     fn load(&self) -> Result<GlobalConfiguration, Self::Error> {
         Ok(self.0.clone())
     }

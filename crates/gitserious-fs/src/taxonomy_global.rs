@@ -28,15 +28,14 @@ impl TomlGlobalConfigurationStore {
     pub const fn new(directory: StorageDirectory) -> Self {
         Self { directory }
     }
-    /// Returns the user-library configuration file path without reading it.
-    #[must_use]
-    pub fn path(&self) -> PathBuf {
-        self.directory.as_path().join("config.toml")
-    }
 }
 
 impl GlobalConfigurationStore for TomlGlobalConfigurationStore {
     type Error = GlobalConfigurationError;
+
+    fn path(&self) -> PathBuf {
+        self.directory.as_path().join("config.toml")
+    }
 
     fn load(&self) -> Result<GlobalConfiguration, Self::Error> {
         read_configuration(&self.path())

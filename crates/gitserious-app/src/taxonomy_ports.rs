@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::{
     GlobalConfiguration, ProjectConfiguration, ProjectRevision, RepositoryRoot, StoredProject,
 };
@@ -33,6 +35,9 @@ pub trait ProjectConfigurationStore {
 pub trait GlobalConfigurationStore {
     /// Adapter-specific persistence failure.
     type Error;
+
+    /// Returns the file that holds the snapshot, without reading it.
+    fn path(&self) -> PathBuf;
 
     /// Loads the complete current snapshot.
     fn load(&self) -> Result<GlobalConfiguration, Self::Error>;

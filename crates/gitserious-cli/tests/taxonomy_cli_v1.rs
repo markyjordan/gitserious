@@ -12,6 +12,9 @@ struct Global(RefCell<GlobalConfiguration>);
 
 impl GlobalConfigurationStore for Global {
     type Error = Infallible;
+    fn path(&self) -> PathBuf {
+        PathBuf::from("/config/config.toml")
+    }
     fn load(&self) -> Result<GlobalConfiguration, Self::Error> {
         Ok(self.0.borrow().clone())
     }

@@ -31,6 +31,9 @@ impl ConfigurationWorkspace for Store {
         }
         self.inner.save(session)
     }
+    fn library_path(&self) -> std::path::PathBuf {
+        self.inner.library_path()
+    }
 }
 
 fn fixture() -> Result<(Store, State)> {
