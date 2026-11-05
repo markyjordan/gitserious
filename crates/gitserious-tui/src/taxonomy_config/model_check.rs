@@ -1064,16 +1064,22 @@ fn saved_eligibility_badges(
                 ));
             }
         }
-        let inspector = after
-            .frame
-            .split("Inspector")
-            .nth(1)
-            .unwrap_or_default()
-            .lines()
-            .rev()
-            .skip(2)
+        let area = after.taxonomies.inspector_area;
+        let inspector = rows
+            .iter()
+            .skip(usize::from(area.y))
+            .take(usize::from(area.height))
+            .map(|row| {
+                row.chars()
+                    .skip(usize::from(area.x))
+                    .take(usize::from(area.width))
+                    .collect::<String>()
+            })
             .collect::<Vec<_>>()
             .join("\n");
+        if inspector.trim().is_empty() {
+            return Err("The Inspector shows nothing for the selected property.".into());
+        }
         if inspector.contains("copy to other types") || inspector.contains("d delete") {
             return Err("Property actions remain in the Inspector.".into());
         }

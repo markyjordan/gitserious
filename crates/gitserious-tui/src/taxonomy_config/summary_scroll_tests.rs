@@ -175,6 +175,8 @@ fn built_in_summaries_use_the_full_unbadged_width() -> Result {
     for code in [KeyCode::Enter, KeyCode::Down] {
         state.handle_event(key(code), &workspace);
     }
+    // The outline is never wider than 85 columns, too narrow for provision's six properties,
+    // so its summary scrolls beside the Inspector too.
     for width in [MINIMUM_WIDTH, 87, 140, MINIMUM_WIDTH] {
         let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
         let initial = draw(&mut state, &mut terminal)?;
@@ -208,16 +210,12 @@ fn built_in_summaries_use_the_full_unbadged_width() -> Result {
             !line.contains("read-only") && !line.contains("built-in"),
             "{line}"
         );
-        if width < 140 {
-            assert_eq!(state.next_frame_in(), Some(HOLD));
-            assert_ne!(initial[(area.right() - 1, y)].symbol(), " ");
-            state.advance(HOLD, true);
-            let moved = draw(&mut state, &mut terminal)?;
-            assert_ne!(initial, moved);
-            outside_unchanged(&initial, &moved, area);
-        } else {
-            assert_eq!(state.next_frame_in(), None);
-        }
+        assert_eq!(state.next_frame_in(), Some(HOLD));
+        assert_ne!(initial[(area.right() - 1, y)].symbol(), " ");
+        state.advance(HOLD, true);
+        let moved = draw(&mut state, &mut terminal)?;
+        assert_ne!(initial, moved);
+        outside_unchanged(&initial, &moved, area);
     }
     Ok(())
 }
@@ -326,11 +324,15 @@ fn resize_and_small_viewports_clear_old_phase_in_standalone_config() -> Result {
         );
         state.advance(HOLD, true);
     }
-    select(&mut state, "long")?;
+    select(&mut state, "fitting")?;
     terminal.backend_mut().resize(200, 30);
     terminal.resize(Rect::new(0, 0, 200, 30))?;
     draw(&mut state, &mut terminal)?;
     assert_eq!(state.next_frame_in(), None);
+    // At most 64 columns wide, the outline still scrolls a long summary on a wide terminal.
+    select(&mut state, "long")?;
+    draw(&mut state, &mut terminal)?;
+    assert_eq!(state.next_frame_in(), Some(HOLD));
     Ok(())
 }
 

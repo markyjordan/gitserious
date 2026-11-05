@@ -9,13 +9,13 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::theme::theme;
 
-/// One row level with the rail's top padding, the title, the file, and a blank row.
-pub(super) const HEIGHT: u16 = 4;
+/// The title, the file, and a blank row.
+pub(super) const HEIGHT: u16 = 3;
 
 /// Names the page and the file the Library saves to.
 pub(super) fn render(frame: &mut Frame<'_>, area: Rect, path: &Path, home: Option<&Path>) {
-    let [_, title, file] =
-        Layout::vertical([Constraint::Length(1); 3]).areas(area.inner(Margin::new(1, 0)));
+    let [title, file] =
+        Layout::vertical([Constraint::Length(1); 2]).areas(area.inner(Margin::new(1, 0)));
     let dim = Style::new().fg(theme().dim);
     frame.render_widget(
         Paragraph::new(Span::styled(
