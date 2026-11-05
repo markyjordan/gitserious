@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use gitserious_app::{DraftField, NodeRef, Policy, ProblemSite, TaxonomyOrigin};
+use gitserious_app::{DraftField, NodeRef, Policy, ProblemSite, PropertyNode, TaxonomyOrigin};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -9,7 +9,7 @@ use ratatui::widgets::Paragraph;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::super::hanging_wrap;
-use super::{BAND, Chips, DIM, KEY_STYLE, fit, panes};
+use super::{BAND, Chips, DIM, KEY_STYLE, fit, panes, policy_style};
 use crate::theme::{ACCENT, theme};
 
 /// Labels and the values beside them start in these columns.
@@ -103,9 +103,9 @@ pub(super) fn render(
     inner.height
 }
 
-/// The lines and the rows the focused field takes. A focus means EDIT: the property lays out
-/// every field to edit in turn, where browsing leads with its policy and drops the name the
-/// heading already shows.
+/// The lines and the rows the focused field takes. A focus means EDIT: a type or property lays
+/// out every field to edit in turn. Browsing drops the name the heading already shows; a
+/// property leads with its policy, and a type lists what the composer asks.
 fn describe(
     chips: &Chips<'_>,
     node: NodeRef<'_>,
@@ -231,13 +231,18 @@ fn describe(
             }
         }
         NodeRef::Type { commit_type, .. } => {
-            show(&mut lines, DraftField::Name);
-            show(&mut lines, DraftField::Description);
-            fact(
-                &mut lines,
-                "Properties",
-                &commit_type.properties().len().to_string(),
-            );
+            if editing {
+                show(&mut lines, DraftField::Name);
+                show(&mut lines, DraftField::Description);
+                fact(
+                    &mut lines,
+                    "Properties",
+                    &commit_type.properties().len().to_string(),
+                );
+            } else {
+                show(&mut lines, DraftField::Description);
+                lines.extend(composer_lines(commit_type.properties(), width));
+            }
         }
         NodeRef::Property { property, .. } => {
             let conditional = property.policy() == Policy::Conditional;
@@ -266,6 +271,51 @@ fn describe(
         lines.push(hint("f", "fork to customize"));
     }
     (lines, focused)
+}
+
+/// What the commit composer asks for a type: under a section heading, each property's key with
+/// its policy flush right, and its description indented and dim beneath it.
+fn composer_lines(properties: &[PropertyNode], width: usize) -> Vec<Line<'static>> {
+    if properties.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = vec![
+        Line::default(),
+        Line::styled("The composer asks", DIM.add_modifier(Modifier::BOLD)),
+    ];
+    for property in properties {
+        let policy = property.policy();
+        lines.push(fit(
+            vec![Span::raw(property.name().to_owned())],
+            vec![Span::styled(policy.label(), policy_style(policy))],
+            width,
+        ));
+        let graphemes = property
+            .description()
+            .graphemes(true)
+            .map(|grapheme| {
+                if grapheme.contains(['\n', '\r']) {
+                    " "
+                } else {
+                    grapheme
+                }
+            })
+            .collect::<Vec<_>>();
+        if graphemes.is_empty() {
+            continue;
+        }
+        lines.extend(
+            wrap(&graphemes, width.saturating_sub(2))
+                .into_iter()
+                .map(|(start, end)| {
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(graphemes[start..end].concat(), DIM),
+                    ])
+                }),
+        );
+    }
+    lines
 }
 
 /// `label` in the label column and `value` wrapped beneath its own first column.
