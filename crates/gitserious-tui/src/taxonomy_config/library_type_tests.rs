@@ -136,7 +136,7 @@ fn a_built_in_type_lists_its_properties_without_a_heading_and_pages_to_the_fork_
         );
         let mut at = 3 + continued(&rows, 3, &" ".repeat(13)).count() + 1;
         assert_eq!(text(at), "");
-        for (key, policy, guidance) in FIX {
+        for (index, (key, policy, guidance)) in FIX.into_iter().enumerate() {
             at += 1;
             let row = &rows[at];
             assert!(row.text.starts_with(&format!("{key} ")), "{}", row.text);
@@ -178,6 +178,11 @@ fn a_built_in_type_lists_its_properties_without_a_heading_and_pages_to_the_fork_
                 guidance
             );
             at += lines.len();
+            if index + 1 < FIX.len() {
+                assert_eq!(text(at + 1), "", "one blank row between properties");
+                assert!(!text(at + 2).is_empty(), "exactly one blank row");
+                at += 1;
+            }
         }
         assert_eq!(text(at + 1), "");
         assert_eq!(text(at + 2), "f fork to customize");
@@ -232,6 +237,12 @@ fn a_custom_type_shows_each_policy_in_the_outline_style() -> Result {
         for cell in row("constraints")?.cells("conditional")? {
             assert_eq!(cell.fg, theme().pending);
         }
+        let conditional = rows
+            .iter()
+            .position(|row| row.text.starts_with("constraints "))
+            .ok_or("conditional guidance")?;
+        assert!(rows[conditional - 1].text.trim().is_empty());
+        assert!(!rows[conditional - 2].text.trim().is_empty());
         let text = rows.iter().map(|row| row.text.as_str()).collect::<String>();
         assert!(!text.contains("fork"), "{text}");
     }

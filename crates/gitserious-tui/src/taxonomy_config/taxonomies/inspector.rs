@@ -273,13 +273,16 @@ fn describe(
 }
 
 /// A type's properties: each key with its policy flush right, followed by its indented,
-/// dim description.
+/// dim description. One blank row separates adjacent properties.
 fn property_guidance_lines(properties: &[PropertyNode], width: usize) -> Vec<Line<'static>> {
     if properties.is_empty() {
         return Vec::new();
     }
     let mut lines = vec![Line::default()];
-    for property in properties {
+    for (index, property) in properties.iter().enumerate() {
+        if index > 0 {
+            lines.push(Line::default());
+        }
         let policy = property.policy();
         lines.push(fit(
             vec![Span::raw(property.name().to_owned())],
