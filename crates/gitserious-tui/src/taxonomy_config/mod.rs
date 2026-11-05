@@ -1513,12 +1513,12 @@ impl State {
         };
         let (message, style) = match (&self.status, load_error) {
             (Some(Notice::Error(message)), _) => {
-                (message.clone(), Style::default().fg(theme().blocks))
+                (message.clone(), Style::default().fg(theme().pending))
             }
             (Some(Notice::Info(message)), _) => {
                 (message.clone(), Style::default().fg(theme().text))
             }
-            (None, Some(message)) => (sentence(&message), Style::default().fg(theme().blocks)),
+            (None, Some(message)) => (sentence(&message), Style::default().fg(theme().pending)),
             (None, None) => return,
         };
         let width = area.width.min(56);
@@ -1534,12 +1534,7 @@ impl State {
             height,
         );
         frame.render_widget(Clear, popup);
-        frame.render_widget(
-            Block::bordered()
-                .border_style(frame_style())
-                .style(Style::default().bg(theme().ground)),
-            popup,
-        );
+        frame.render_widget(crate::theme::popup_block(), popup);
         frame.render_widget(
             lines.style(style),
             Rect::new(
@@ -3712,7 +3707,7 @@ mod tests {
         state.status = Some(Notice::Error("Invalid selection".into()));
         terminal.draw(|frame| state.render(frame))?;
         assert_eq!(terminal.backend().buffer()[(RAIL_WIDTH, 25)].symbol(), "│");
-        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().blocks);
+        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().pending);
         assert!(text(&terminal).contains("Invalid selection"));
 
         state.status = Some(Notice::Info("Configuration applied.".into()));
@@ -3734,7 +3729,7 @@ mod tests {
         state.project = None;
         state.project_error = "project load failed".into();
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().blocks);
+        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().pending);
 
         state.status = Some(Notice::Info("Review pending".into()));
         terminal.draw(|frame| state.render(frame))?;
@@ -3747,7 +3742,7 @@ mod tests {
         state.global = None;
         state.global_error = "global load failed".into();
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().blocks);
+        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().pending);
         assert!(text(&terminal).contains("Global load failed."));
         Ok(())
     }

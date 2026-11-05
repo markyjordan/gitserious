@@ -1,13 +1,10 @@
 use ratatui::Frame;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::{Color, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 
-use crate::theme::{
-    JET_BLACK, centered_rect, frame_style, navigation_style, section_heading_style,
-};
+use crate::theme::{centered_rect, popup_block, popup_heading_style, popup_hints};
 
 /// What a confirmation's choice does.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -159,17 +156,11 @@ impl ConfirmDialog {
         self.invalidate();
         let popup = centered_rect(58, 9.min(area.height), area);
         frame.render_widget(Clear, popup);
-        frame.render_widget(
-            Block::bordered()
-                .border_type(BorderType::Double)
-                .border_style(frame_style())
-                .style(Style::default().fg(Color::White).bg(JET_BLACK)),
-            popup,
-        );
+        frame.render_widget(popup_block(), popup);
         let labels = question
             .choices
             .iter()
-            .map(|choice| format!(" {}: {} ", choice.hint, choice.label))
+            .map(|choice| format!(" {} {} ", choice.hint, choice.label))
             .collect::<Vec<_>>();
         let widths = labels
             .iter()
@@ -201,7 +192,7 @@ impl ConfirmDialog {
         frame.render_widget(
             Paragraph::new(question.title)
                 .centered()
-                .style(section_heading_style()),
+                .style(popup_heading_style()),
             Rect::new(content_x, content_y, content_width, 1),
         );
         frame.render_widget(
@@ -225,14 +216,14 @@ impl ConfirmDialog {
         let mut confirm = None;
         let mut keep = None;
         let mut alternate = None;
-        for ((choice, label), area) in question
+        for ((choice, _label), area) in question
             .choices
             .iter()
             .zip(&labels)
             .zip(areas.iter().step_by(2))
         {
             frame.render_widget(
-                Paragraph::new(label.as_str()).style(navigation_style()),
+                Paragraph::new(popup_hints(&[(choice.hint, choice.label)])).centered(),
                 *area,
             );
             match choice.answer {
@@ -258,6 +249,7 @@ fn button_width(label: &str) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::theme;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::crossterm::event::{KeyEvent, KeyModifiers, MouseEvent};
@@ -299,11 +291,10 @@ mod tests {
             for area in [buttons.confirm, buttons.keep] {
                 assert!(area.right() <= width && area.bottom() <= height);
                 for x in area.x..area.right() {
-                    assert_eq!(
-                        terminal.backend().buffer()[(x, area.y)].bg,
-                        crate::theme::ACCENT
+                    assert_eq!(terminal.backend().buffer()[(x, area.y)].bg, theme().ground);
+                    assert!(
+                        matches!(terminal.backend().buffer()[(x, area.y)].fg, fg if fg == theme().pending || fg == theme().dim || fg == theme().text)
                     );
-                    assert_eq!(terminal.backend().buffer()[(x, area.y)].fg, JET_BLACK);
                 }
             }
             assert_eq!(
