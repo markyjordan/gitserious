@@ -122,8 +122,10 @@ changed on disk after Project opened. Browsing Library preserves pending Project
 edits. A Library action asks you to apply or discard those Project edits before
 proceeding. Commit authoring uses `gitserious.toml` as last applied.
 
-Library has a taxonomy outline and an Inspector. Under 100 columns the
-Inspector sits below the outline; from 100 columns it sits beside it. Enter
+Library has a taxonomy outline and an Inspector. The Inspector sits beside the
+outline when the terminal has at least 100 columns and is at least three times
+as wide as it is tall. Otherwise it sits below the outline, including at 87x40
+and 125x51. Enter
 opens or closes a node, Up and Down select rows, and Page Up and Page Down page
 through Inspector details. A pane with more rows than fit counts the rest in
 its last row.

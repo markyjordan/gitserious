@@ -2821,7 +2821,7 @@ mod tests {
     }
 
     #[test]
-    fn from_100_columns_the_inspector_sits_beside_an_outline_of_half_the_content_up_to_64()
+    fn wide_short_terminals_place_the_inspector_beside_an_outline_capped_at_64()
     -> Result<(), Box<dyn std::error::Error>> {
         for (width, outline) in [(100, 43), (140, 63), (160, 64)] {
             let workspace = crowded_workspace()?;

@@ -7,8 +7,9 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use super::super::content_padding;
 use crate::theme::theme;
 
-/// Terminals this wide put the Inspector beside the outline instead of below it.
+/// Side-by-side panes need both room for two columns and a wide terminal shape.
 const SIDE_BY_SIDE_WIDTH: u16 = 100;
+const SIDE_BY_SIDE_ASPECT: u32 = 3;
 const OUTLINE_MAX_WIDTH: u16 = 64;
 
 /// Where the header, the outline, and the Inspector go, and the dim rule between the outline
@@ -23,9 +24,10 @@ pub(super) struct Panes {
 
 impl Panes {
     /// Splits `area` on a `terminal` this size. The outline column starts with `lead` rows for
-    /// a header. Under 100 columns the outline takes its `outline_rows` up to 60% of the rows
-    /// below the header, rule included, and the Inspector sits below it. From 100 columns the
-    /// outline takes half the width, at most 64 columns, and the Inspector sits beside it.
+    /// a header. The Inspector sits beside the outline only from 100 columns when the terminal
+    /// is at least three times as wide as it is tall. Otherwise the outline takes its
+    /// `outline_rows` up to 60% of the rows below the header, rule included, above the Inspector.
+    /// Side-by-side, the outline takes half the width, at most 64 columns.
     pub(super) fn new(area: Rect, terminal: Rect, lead: u16, outline_rows: usize) -> Self {
         let pad = content_padding(terminal);
         let padded = |column: Rect| {
@@ -37,7 +39,9 @@ impl Panes {
             .areas(column);
             inside
         };
-        if terminal.width >= SIDE_BY_SIDE_WIDTH {
+        if terminal.width >= SIDE_BY_SIDE_WIDTH
+            && u32::from(terminal.width) >= SIDE_BY_SIDE_ASPECT * u32::from(terminal.height)
+        {
             let [left, rule, right] = Layout::horizontal([
                 Constraint::Length((area.width / 2).min(OUTLINE_MAX_WIDTH)),
                 Constraint::Length(1),
