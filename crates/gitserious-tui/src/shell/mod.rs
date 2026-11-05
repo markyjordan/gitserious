@@ -606,6 +606,9 @@ impl Shell {
             self.render_header(frame, header);
             if self.section == Section::Config {
                 self.config.render(frame, body);
+                if self.config.modal() {
+                    crate::theme::dim_region(frame, header);
+                }
             } else {
                 let [content, footer] =
                     Layout::vertical([Constraint::Min(1), Constraint::Length(FOOTER_HEIGHT)])
@@ -1395,7 +1398,7 @@ mod tests {
                 assert!(text(rule + 1, title, width).starts_with(" Taxonomy conventional "));
             }
             assert_eq!(buffer[(1, height - 1)].symbol(), " ");
-            assert_eq!(buffer[(2, height - 1)].symbol(), "N");
+            assert!(!text(0, height - 1, width).contains("NAV"));
         }
         Ok(())
     }
@@ -1425,7 +1428,14 @@ mod tests {
                     .to_owned();
                 // The Library status line drops its trailing hints when crowded.
                 if section != Section::Config || width == 87 {
-                    assert!(footer.contains("tab nav bar"), "{section:?}: {footer}");
+                    assert!(
+                        footer
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .windows(3)
+                            .any(|words| words == ["tab", "nav", "bar"]),
+                        "{section:?}: {footer}"
+                    );
                 }
             }
         }

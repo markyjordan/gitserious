@@ -22,10 +22,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::naming::{problem_sentence, refusal_sentence, single_line};
 use super::{ShellKeys, contains};
-use crate::theme::{
-    AMBER, JET_BLACK, footer_hints, footer_key_style, footer_label_style, navigation_key_style,
-    theme,
-};
+use crate::theme::{AMBER, JET_BLACK, footer_hints, footer_key_style, footer_label_style, theme};
 use outline::Row;
 pub(super) use outline::RowKey;
 
@@ -647,6 +644,18 @@ impl TaxonomiesView {
             &mut self.summary_scroll,
             animate.then_some(area),
         );
+        if self.editing() {
+            crate::theme::dim_region(frame, panes.outline);
+            let y =
+                self.outline_area.y + u16::try_from(selected - self.outline_offset).unwrap_or(0);
+            if y < self.outline_area.bottom() {
+                frame.buffer_mut()[(panes.outline.x, y)]
+                    .set_symbol("▌")
+                    .set_fg(AMBER)
+                    .set_bg(theme().band)
+                    .set_style(Style::new().remove_modifier(Modifier::DIM));
+            }
+        }
         if let Some(node) = rows.get(selected).and_then(|row| row.node()) {
             let focus = match &self.mode {
                 Mode::Edit {
@@ -703,34 +712,43 @@ impl TaxonomiesView {
         let chip = vec![if editing {
             Span::styled(" EDIT ", EDIT_CHIP)
         } else {
-            Span::styled(" NAV ", navigation_key_style())
+            Span::raw("")
         }];
         let mut hints = Vec::new();
         let mut trailing = if editing {
             Vec::new()
         } else {
-            vec![("/", "commands")]
+            vec![("/", "commands"), ("q", "quit")]
         };
         if embedded && !editing {
             trailing.insert(0, ("tab", "nav bar"));
         }
         if matches!(row, Some(Row::NewTaxonomy)) {
-            hints.extend([("←/→", "focus"), ("↑/↓", "move"), ("enter", "new")]);
+            hints.extend([("enter", "new")]);
         } else if let Some(row) = row
             && let Some(node) = row.node()
         {
             let built_in = node.taxonomy().origin() == TaxonomyOrigin::BuiltIn;
             if editing {
-                hints.extend([("enter", "next field"), ("esc", "save")]);
+                let policy = matches!(
+                    self.mode,
+                    Mode::Edit {
+                        field: DraftField::Policy,
+                        ..
+                    }
+                );
+                hints.extend([
+                    ("enter", "next field"),
+                    ("←/→", if policy { "policy" } else { "cursor" }),
+                    ("esc", "save"),
+                ]);
             } else if !built_in && matches!(node, NodeRef::Property { .. }) {
-                hints.extend([("←/→", "focus"), ("↑/↓", "move")]);
                 hints.extend([
                     ("e", "edit"),
                     ("c", "copy property to other types"),
                     ("d", "delete"),
                 ]);
             } else if matches!(row, Row::Node(_)) {
-                hints.extend([("←/→", "focus"), ("↑/↓", "move")]);
                 if outline::has_children(row) {
                     hints.push(if self.expanded.contains(node.id()) {
                         ("enter", "close")
@@ -738,8 +756,9 @@ impl TaxonomiesView {
                         ("enter", "open")
                     });
                 }
-                hints.extend([("n", "new"), ("f", "fork")]);
+                hints.push(("f", "fork"));
                 if !built_in {
+                    hints.push(("n", "new"));
                     hints.push(("e", "edit"));
                     hints.push(("d", "delete"));
                     if !matches!(node, NodeRef::Taxonomy(_)) {
@@ -747,20 +766,38 @@ impl TaxonomiesView {
                     }
                 }
             } else {
-                hints.extend([("←/→", "focus"), ("↑/↓", "move"), ("enter", "add")]);
+                hints.push(("enter", "add"));
             }
+        }
+        if !editing {
+            hints.extend([("↑/↓", "move"), ("←", "menu")]);
         }
         let width = usize::from(width);
         let line = |hints: &[(&str, &str)], trailing: &[(&str, &str)], padded: bool| {
             let mut left = chip.clone();
-            let mode_width = Line::from(chip.clone()).width();
-            let hint_spacing = if padded { 1 } else { 2 };
-            let inset = usize::from(super::CONTENT_X).saturating_sub(mode_width + hint_spacing);
-            left.push(Span::raw(" ".repeat(inset)));
-            left.extend(hint_spans(hints, padded));
+            let spans = hint_spans(hints, padded);
+            left.extend(spans.into_iter().skip(usize::from(!editing)));
             let mut right = Vec::new();
             if !trailing.is_empty() {
                 right.extend(hint_spans(trailing, padded).into_iter().skip(1));
+            }
+            if let (Some(library), Mode::Edit { node, field, .. }) = (library, &self.mode)
+                && let Some(limit) = field.limit()
+                && let Some(text) = library.text(node, *field)
+            {
+                let used = text.graphemes(true).count();
+                let invalid = library
+                    .field_problems(node)
+                    .iter()
+                    .any(|problem| problem.site == ProblemSite::Field(node.clone(), *field));
+                right.push(Span::styled(
+                    format!("{used}/{limit}"),
+                    if invalid {
+                        Style::new().fg(Color::Red)
+                    } else {
+                        DIM
+                    },
+                ));
             }
             (left, right)
         };
@@ -779,13 +816,17 @@ impl TaxonomiesView {
             candidate = line(&hints, &trailing, false);
         }
         while !fits(&candidate) && !trailing.is_empty() {
-            trailing.pop();
+            if trailing.len() == 3 {
+                trailing.drain(..2);
+            } else {
+                trailing.pop();
+            }
             candidate = line(&hints, &trailing, false);
         }
         let optional: &[&str] = if property_actions {
             &["↑/↓"]
         } else {
-            &["d", "e", "f", "n"]
+            &["d", "n", "f", "e"]
         };
         for optional in optional {
             if fits(&candidate) {

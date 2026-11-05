@@ -10,7 +10,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::super::hanging_wrap;
 use super::{BAND, Chips, DIM, KEY_STYLE, fit, panes, policy_style};
-use crate::theme::{ACCENT, theme};
+use crate::theme::{AMBER, theme};
 
 /// Labels and the values beside them start in these columns.
 const LABEL_WIDTH: usize = 13;
@@ -89,7 +89,7 @@ pub(super) fn render(
                 .as_ref()
                 .is_some_and(|focused| focused.band.contains(&index));
             let gutter = if band {
-                Span::styled("▌", Style::default().fg(ACCENT))
+                Span::styled("▌", Style::default().fg(AMBER))
             } else {
                 Span::raw(" ")
             };
@@ -132,6 +132,7 @@ fn describe(
         ),
     ];
     let badge = match chip {
+        _ if editing => vec![Span::styled("EDIT", Style::new().fg(AMBER))],
         _ if built_in => vec![Span::styled("◇ read-only", DIM)],
         Some(chip) => vec![chip.span()],
         None => Vec::new(),
@@ -171,11 +172,9 @@ fn describe(
             }
         } else {
             let text = library.text(id, field).unwrap_or_default();
-            let limit = field.limit().filter(|_| editable.contains(&field));
             lines.extend(field_lines(
                 field,
                 text,
-                limit,
                 focus.and_then(|focus| focus.cursor),
                 !problems.is_empty(),
                 width,
@@ -338,14 +337,11 @@ fn fact_lines(label: &str, value: &str, width: usize) -> Vec<Line<'static>> {
         .collect()
 }
 
-/// A text field: its label, its text wrapped in the value column with room for the cursor,
-/// `used/limit` at the end of the first row when the field is editable, and the cursor. An
-/// empty Condition shows a placeholder, and a field with a problem draws its label and counter
-/// red.
+/// A text field: its label and value, wrapped with room for the cursor. An empty Condition shows a placeholder, and a field with a problem draws
+/// its label red. The footer owns the focused field's character count.
 fn field_lines(
     field: DraftField,
     text: &str,
-    limit: Option<usize>,
     cursor: Option<usize>,
     invalid: bool,
     width: usize,
@@ -361,8 +357,7 @@ fn field_lines(
             }
         })
         .collect::<Vec<_>>();
-    let counter = limit.map(|limit| format!("{}/{limit}", graphemes.len()));
-    let column = value_width(width, limit);
+    let column = width.saturating_sub(LABEL_WIDTH + 1).max(1);
     let rows = wrap(&graphemes, column);
     let caret_row = cursor.map(|cursor| super::text_layout::cursor_row(&rows, cursor));
     rows.iter()
@@ -392,10 +387,7 @@ fn field_lines(
                 }
                 None => spans.push(Span::raw(graphemes[start..end].concat())),
             }
-            match counter.as_ref().filter(|_| index == 0) {
-                Some(counter) => fit(spans, vec![Span::styled(counter.clone(), style)], width),
-                None => Line::from(spans),
-            }
+            Line::from(spans)
         })
         .collect()
 }
@@ -415,11 +407,6 @@ fn problem_lines(problem: &str, width: usize) -> Vec<Line<'static>> {
             ])
         })
         .collect()
-}
-
-pub(super) fn value_width(width: usize, limit: Option<usize>) -> usize {
-    let counter = limit.map_or(0, |limit| format!("{limit}/{limit}").len().max(7) + 1);
-    width.saturating_sub(LABEL_WIDTH + counter + 1).max(1)
 }
 
 use super::text_layout::wrap;

@@ -315,10 +315,7 @@ fn focused_fields_and_their_errors_remain_visible_in_short_inspectors() -> Resul
             assert!(inspector.contains(label), "{inspector}");
             assert!(inspector.contains(problem), "{inspector}");
             assert!(inspector.contains("▲"), "{inspector}");
-            assert!(
-                inspector.contains("0/80") || inspector.contains("0/100"),
-                "{inspector}"
-            );
+            assert!(!inspector.contains("0/80") && !inspector.contains("0/100"));
         }
     }
     Ok(())
