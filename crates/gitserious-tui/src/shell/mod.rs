@@ -1323,7 +1323,8 @@ mod tests {
         assert!(text.contains("tab nav bar  / commands  q quit"));
         shell.handle_event(key(KeyCode::Down), &services, &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert!(rendered(&terminal).contains("saves as you go"));
+        assert!(!rendered(&terminal).contains("saves as you go"));
+        assert!(rendered(&terminal).contains("config.toml"));
         shell.handle_event(key(KeyCode::BackTab), &services, &[]);
         assert_eq!(shell.section, Section::Commit);
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
@@ -1332,7 +1333,8 @@ mod tests {
         shell.handle_event(key(KeyCode::BackTab), &services, &[]);
         assert_eq!(shell.section, Section::Config);
         terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert!(rendered(&terminal).contains("saves as you go"));
+        assert!(!rendered(&terminal).contains("saves as you go"));
+        assert!(rendered(&terminal).contains("config.toml"));
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.section, Section::Home);
         Ok(())
@@ -1399,7 +1401,7 @@ mod tests {
                 // The outline column takes half the content and the Inspector starts at the top.
                 let rule = content + (width - content) / 2;
                 assert!((1..height - 1).all(|y| dim(rule, y, "│")));
-                assert!(text(content, title, rule).ends_with(" saves as you go "));
+                assert_eq!(text(content, title, rule).trim(), "Library");
                 assert!(text(rule + 1, title, width).starts_with(" Taxonomy conventional "));
             }
             assert_eq!(buffer[(1, height - 1)].symbol(), " ");
