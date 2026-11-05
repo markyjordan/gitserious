@@ -1,14 +1,15 @@
+use crate::theme::theme;
 use std::collections::BTreeSet;
 
 use gitserious_app::{LibraryDraft, NodeId, NodeRef};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Margin, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
 use crate::theme::{
-    JET_BLACK, centered_rect, frame_style, navigation_style, section_heading_style, selected_style,
+    centered_rect, frame_style, navigation_style, section_heading_style, selected_style,
 };
 
 pub(super) const CHOICES: [(&str, &str); 3] =
@@ -38,7 +39,7 @@ pub(super) fn render(
         Block::bordered()
             .border_type(BorderType::Double)
             .border_style(frame_style())
-            .style(Style::default().fg(Color::White).bg(JET_BLACK)),
+            .style(Style::default().fg(theme().text).bg(theme().ground)),
         popup,
     );
     let [title, _, message, _, list, _, buttons] = Layout::vertical([

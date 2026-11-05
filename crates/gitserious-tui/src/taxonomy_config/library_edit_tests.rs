@@ -44,7 +44,7 @@ fn edit_focus_has_amber_cues_muted_navigation_and_a_footer_counter() -> Result {
         let footer = tests::footer_text(&row(&terminal, size.1 - 1));
         assert!(footer.contains("EDIT   enter next field  ←/→ cursor  esc save"));
         assert!(footer.trim_end().ends_with("11/80"));
-        assert_eq!(buffer[(1, size.1 - 1)].bg, crate::theme::AMBER);
+        assert_eq!(buffer[(1, size.1 - 1)].bg, theme().pending);
         assert!(buffer[(4, 2)].modifier.contains(Modifier::DIM));
         let areas = state.taxonomies.observe(state.library());
         let mut gutters = 0;
@@ -56,7 +56,7 @@ fn edit_focus_has_amber_cues_muted_navigation_and_a_footer_counter() -> Result {
             for x in 0..size.0 {
                 let cell = &buffer[(x, y)];
                 if cell.symbol() == "▌" {
-                    assert_eq!(cell.fg, crate::theme::AMBER);
+                    assert_eq!(cell.fg, theme().pending);
                     gutters += 1;
                 }
                 if areas.inspector_area.contains((x, y).into()) {
@@ -113,7 +113,10 @@ fn an_empty_condition_keeps_editing_and_colors_its_footer_count_red() -> Result 
                 .chars()
                 .count(),
         )?;
-        assert_eq!(terminal.backend().buffer()[(x, size.1 - 1)].fg, Color::Red);
+        assert_eq!(
+            terminal.backend().buffer()[(x, size.1 - 1)].fg,
+            theme().blocks
+        );
         let area = state.taxonomies.observe(state.library()).inspector_area;
         let buffer = terminal.backend().buffer();
         let text = (area.y..area.bottom())

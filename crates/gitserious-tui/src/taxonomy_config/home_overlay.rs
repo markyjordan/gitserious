@@ -1,3 +1,4 @@
+use crate::theme::theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -5,7 +6,7 @@ use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Para
 
 use super::Category;
 use crate::theme::{
-    JET_BLACK, block_title, centered_rect, frame_style, navigation_key_style, section_heading_style,
+    block_title, centered_rect, frame_style, navigation_key_style, section_heading_style,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -147,7 +148,7 @@ fn popup_block() -> Block<'static> {
     Block::bordered()
         .border_type(BorderType::Double)
         .border_style(frame_style())
-        .style(Style::default().bg(JET_BLACK))
+        .style(Style::default().bg(theme().ground))
 }
 
 fn render_palette(

@@ -6,7 +6,7 @@ use super::library_rows_tests::{Result, fixture, press, select};
 use super::tests::Workspace;
 use super::*;
 
-const DIM: Color = Color::Gray;
+const DIM: Color = theme().dim;
 const SIZES: [(u16, u16); 3] = [(87, 40), (125, 51), (100, 30)];
 
 /// The fix type's properties as conventional defines them: key, policy, and description.

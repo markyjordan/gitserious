@@ -5,8 +5,8 @@ use ratatui::buffer::{Buffer, Cell};
 use super::library_rows_tests::{Result, fixture, press, select};
 use super::*;
 
-const DIM: Color = Color::Gray;
-const SIZES: [(u16, u16); 2] = [(87, 40), (100, 30)];
+const DIM: Color = theme().dim;
+const SIZES: [(u16, u16); 3] = [(87, 40), (125, 51), (100, 30)];
 const POLICIES: [&str; 4] = ["required", "recommended", "conditional", "optional"];
 
 /// One row of the screen: where it is and its text.
@@ -113,7 +113,7 @@ fn policy_words_are_plain_text_and_a_selected_required_row_reads() -> Result {
         }
         let conditional = outline_row(&state, buffer, "constraints ")?;
         for cell in conditional.cells("conditional")? {
-            assert_eq!((cell.fg, cell.bg), (DIM, JET_BLACK));
+            assert_eq!((cell.fg, cell.bg), (DIM, theme().ground));
         }
 
         // Off the cursor, required is bright at normal weight and the rest dim.
@@ -121,7 +121,7 @@ fn policy_words_are_plain_text_and_a_selected_required_row_reads() -> Result {
         let terminal = draw(&mut state, size)?;
         let buffer = terminal.backend().buffer();
         for cell in outline_row(&state, buffer, "intent ")?.cells("required")? {
-            assert_eq!((cell.fg, cell.bg), (theme().text, JET_BLACK));
+            assert_eq!((cell.fg, cell.bg), (theme().text, theme().ground));
             assert!(!cell.modifier.contains(Modifier::BOLD));
         }
 
@@ -170,7 +170,7 @@ fn browsing_a_property_leads_with_its_policy_and_names_it_only_in_the_heading() 
             .ok_or("Policy")?;
         assert_eq!(policy.text.trim_end(), " Policy       conditional");
         for cell in policy.cells("conditional")? {
-            assert_eq!(cell.fg, Color::White);
+            assert_eq!(cell.fg, theme().text);
         }
         assert!(
             rows.iter()
@@ -182,7 +182,7 @@ fn browsing_a_property_leads_with_its_policy_and_names_it_only_in_the_heading() 
         );
         for row in &rows {
             for cell in row.cells(&row.text)? {
-                assert_eq!(cell.bg, JET_BLACK, "a chip in {:?}", row.text);
+                assert_eq!(cell.bg, theme().ground, "a chip in {:?}", row.text);
             }
         }
 
@@ -197,7 +197,7 @@ fn browsing_a_property_leads_with_its_policy_and_names_it_only_in_the_heading() 
             .find(|row| row.text.starts_with(" Policy "))
             .ok_or("Policy")?;
         for cell in policy.cells("required")? {
-            assert_eq!((cell.fg, cell.bg), (Color::White, JET_BLACK));
+            assert_eq!((cell.fg, cell.bg), (theme().text, theme().ground));
         }
     }
     Ok(())
@@ -247,7 +247,7 @@ fn edit_lists_every_policy_with_the_current_one_bold_and_underlined() -> Result 
                 .find(|row| row.text.contains(word))
                 .ok_or(word)?;
             for cell in row.cells(word)? {
-                assert_eq!(cell.bg, JET_BLACK);
+                assert_eq!(cell.bg, theme().ground);
                 let current = word == "conditional";
                 assert_eq!(cell.fg, if current { theme().text } else { DIM });
                 assert_eq!(
@@ -295,7 +295,7 @@ fn heading_badges_are_plain_and_built_ins_end_with_the_fork_hint() -> Result {
                 Some(badge) => {
                     assert!(heading.text.trim_end().ends_with(badge), "{}", heading.text);
                     for cell in heading.cells(badge)? {
-                        assert_eq!((cell.fg, cell.bg), (color, JET_BLACK));
+                        assert_eq!((cell.fg, cell.bg), (color, theme().ground));
                     }
                 }
                 None => assert_eq!(heading.text.trim(), format!("Taxonomy {}", path[0])),

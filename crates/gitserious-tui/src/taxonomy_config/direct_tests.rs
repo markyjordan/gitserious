@@ -313,7 +313,7 @@ fn zero_type_entry_reopens_unlocks_until_eligible_and_stays_locked_after_last_ty
                         assert!(row.trim_end().ends_with("▲ invalid"), "{row}");
                         for dx in 0.."▲ invalid".chars().count() {
                             let cell = &buffer[(x + u16::try_from(dx)?, y)];
-                            assert_eq!((cell.fg, cell.bg), (theme().blocks, JET_BLACK));
+                            assert_eq!((cell.fg, cell.bg), (theme().blocks, theme().ground));
                         }
                     }
                     count += 1;

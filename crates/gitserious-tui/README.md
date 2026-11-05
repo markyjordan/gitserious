@@ -122,7 +122,9 @@ changed on disk after Project opened. Browsing Library preserves pending Project
 edits. A Library action asks you to apply or discard those Project edits before
 proceeding. Commit authoring uses `gitserious.toml` as last applied.
 
-Library has a taxonomy outline and an Inspector. The Inspector sits beside the
+Config uses the shared Bone palette: ground behind content, band behind
+raised rows, text for values, dim for context, pending orange for EDIT, and
+blocks coral for validation. Library has a taxonomy outline and an Inspector. The Inspector sits beside the
 outline when the terminal has at least 100 columns and is at least three times
 as wide as it is tall. Otherwise it sits below the outline, including at 87x40
 and 125x51. Enter
@@ -140,7 +142,7 @@ In EDIT, Enter advances through fields, Up and Down move between fields, and
 Left and Right move the text cursor or cycle property policy. Esc validates
 and saves the item. Amber gutters mark the selected node and focused field.
 The surrounding navigation dims, and EDIT appears in the Inspector and footer.
-The footer shows only the focused text field's character count, in red when
+The footer shows only the focused text field's character count, in coral when
 that field is invalid. Browsing has no mode badge.
 Missing descriptions, invalid or duplicate normalized
 names, and incomplete conditional policies keep EDIT open, focus the first

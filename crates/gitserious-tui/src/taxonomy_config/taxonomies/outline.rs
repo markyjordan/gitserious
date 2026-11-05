@@ -3,18 +3,18 @@ use std::collections::BTreeSet;
 use gitserious_app::{LibraryDraft, NodeId, NodeRef, TaxonomyNode, TaxonomyOrigin, TypeNode};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::summary_scroll::{SummaryScroll, Target};
 use super::{Chip, Chips, DIM, fit, panes, policy_style};
-use crate::theme::{frame_style, theme};
+use crate::theme::theme;
 
 pub(super) const ADD_TYPE: &str = "+ add type";
 pub(super) const ADD_PROPERTY: &str = "+ add property";
 const NEW_TAXONOMY: &str = "+ new taxonomy";
-const TEXT: Style = Style::new().fg(Color::White);
+const TEXT: Style = Style::new().fg(theme().text);
 
 /// What a row stands for. The add rows are not drafts, so they name the node they add to.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -426,13 +426,13 @@ fn row_line(
     width: usize,
 ) -> Line<'static> {
     let gutter = Span::raw(" ");
-    let marker = Span::styled(if open { "▾ " } else { "▸ " }, frame_style());
+    let marker = Span::styled(if open { "▾ " } else { "▸ " }, Style::new().fg(theme().dim));
     let (left, right) = match row {
         Row::NewTaxonomy => (vec![gutter, Span::styled(NEW_TAXONOMY, DIM)], Vec::new()),
         Row::AddType(_) => (
             vec![
                 gutter,
-                Span::styled(branch(true), frame_style()),
+                Span::styled(branch(true), Style::new().fg(theme().dim)),
                 Span::styled(ADD_TYPE, DIM),
             ],
             Vec::new(),
@@ -440,7 +440,10 @@ fn row_line(
         Row::AddProperty(taxonomy, commit_type) => (
             vec![
                 gutter,
-                Span::styled(property_branch(taxonomy, commit_type, true), frame_style()),
+                Span::styled(
+                    property_branch(taxonomy, commit_type, true),
+                    Style::new().fg(theme().dim),
+                ),
                 Span::styled(ADD_PROPERTY, DIM),
             ],
             Vec::new(),
@@ -490,7 +493,10 @@ fn row_line(
             );
             let mut left = vec![
                 gutter,
-                Span::styled(branch(last_type(taxonomy, commit_type)), frame_style()),
+                Span::styled(
+                    branch(last_type(taxonomy, commit_type)),
+                    Style::new().fg(theme().dim),
+                ),
                 marker,
                 Span::styled(name, TEXT),
             ];
@@ -516,7 +522,10 @@ fn row_line(
             (
                 vec![
                     gutter,
-                    Span::styled(property_branch(taxonomy, commit_type, last), frame_style()),
+                    Span::styled(
+                        property_branch(taxonomy, commit_type, last),
+                        Style::new().fg(theme().dim),
+                    ),
                     Span::styled(name, TEXT),
                     Span::styled(property.policy().label(), policy_style(property.policy())),
                 ],

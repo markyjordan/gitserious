@@ -9,8 +9,8 @@ use super::*;
 
 pub(super) type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-const DIM: Color = Color::Gray;
-const SIZES: [(u16, u16); 2] = [(87, 40), (100, 30)];
+const DIM: Color = theme().dim;
+const SIZES: [(u16, u16); 3] = [(87, 40), (125, 51), (100, 30)];
 
 /// Keys that take focus from the outline, and how to tell that they did.
 type FocusAway = (&'static [KeyCode], fn(&State) -> bool);
@@ -65,6 +65,7 @@ impl Frame {
     fn draw(state: &mut State, (width, height): (u16, u16)) -> Result<Self> {
         let mut terminal = Terminal::new(TestBackend::new(width, height))?;
         terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(terminal.backend().buffer()[(0, 0)].bg, theme().ground);
         let outline = state.taxonomies.observe(state.library()).outline_area;
         Ok(Self { terminal, outline })
     }
@@ -157,12 +158,12 @@ fn taxonomy_rows_name_their_origin_version_and_type_count() -> Result {
             assert!(row.ends_with(end), "{size:?}: {row:?}");
         }
         let custom = frame.cell("▸ team ", "custom")?;
-        assert_eq!(colors(custom), (Color::White, JET_BLACK));
+        assert_eq!(colors(custom), (theme().text, theme().ground));
         assert!(custom.modifier.contains(Modifier::BOLD));
         assert_eq!(frame.cell("▸ research ", "v1")?.fg, DIM);
         assert_eq!(frame.cell("▸ research ", "10 types")?.fg, DIM);
         let invalid = frame.cell("▸ draft-ideas ", "▲ invalid")?;
-        assert_eq!(colors(invalid), (theme().blocks, JET_BLACK));
+        assert_eq!(colors(invalid), (theme().blocks, theme().ground));
         let (_, last) = frame.row("+ new taxonomy")?;
         assert_eq!(
             frame
@@ -197,8 +198,8 @@ fn add_rows_are_dim() -> Result {
         );
         assert!(frame.row(" └─ + add type")?.1.ends_with("+ add type"));
         for label in ["+ add property", "+ add type"] {
-            assert_eq!(colors(frame.cell(label, label)?), (DIM, JET_BLACK));
-            assert_eq!(frame.cell(label, "└─")?.fg, Color::DarkGray);
+            assert_eq!(colors(frame.cell(label, label)?), (DIM, theme().ground));
+            assert_eq!(frame.cell(label, "└─")?.fg, theme().dim);
         }
     }
     Ok(())
@@ -283,9 +284,9 @@ fn the_cursor_is_a_bone_bar_with_focus_and_a_raised_row_without() -> Result {
             let frame = Frame::draw(&mut state, size)?;
             let row = frame.row_cells("▸ team ")?;
             assert!(row.iter().all(|cell| cell.bg == theme().band), "{keys:?}");
-            assert_eq!(frame.cell("▸ team ", "team")?.fg, Color::White);
-            assert_eq!(frame.cell("▸ team ", "custom")?.fg, Color::White);
-            assert_eq!(frame.cell("▸ team ", "3 types")?.fg, Color::White);
+            assert_eq!(frame.cell("▸ team ", "team")?.fg, theme().text);
+            assert_eq!(frame.cell("▸ team ", "custom")?.fg, theme().text);
+            assert_eq!(frame.cell("▸ team ", "3 types")?.fg, theme().text);
         }
     }
     Ok(())
