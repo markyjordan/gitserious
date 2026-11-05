@@ -1339,7 +1339,7 @@ mod tests {
     }
 
     #[test]
-    fn embedded_config_places_the_inspector_below_or_beside_the_library_by_width()
+    fn embedded_config_places_the_library_inspector_by_terminal_shape()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
@@ -1347,13 +1347,18 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
         // Content starts right of the 13-column rail and its rule.
         let content = 14;
-        for (width, height) in [
-            (87, 40),
-            (87, 41),
-            (MINIMUM_WIDTH, MINIMUM_HEIGHT),
-            (87, 23),
-            (100, 30),
-            (87, 40),
+        for (width, height, stacked) in [
+            (87, 40, true),
+            (125, 51, true),
+            (100, 30, false),
+            (125, 42, true),
+            (125, 41, false),
+            (100, 34, true),
+            (100, 33, false),
+            (99, 18, true),
+            (MINIMUM_WIDTH, MINIMUM_HEIGHT, true),
+            (87, 23, true),
+            (87, 40, true),
         ] {
             terminal.backend_mut().resize(width, height);
             terminal.resize(Rect::new(0, 0, width, height))?;
@@ -1381,7 +1386,7 @@ mod tests {
                     "{width}x{height}: {row}"
                 );
             }
-            if width < 100 {
+            if stacked {
                 // Three collapsed taxonomies and the new taxonomy row, then the rule across the
                 // content.
                 let rule = top + 4;
