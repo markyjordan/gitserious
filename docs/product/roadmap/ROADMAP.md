@@ -218,6 +218,21 @@ under the existing release posture. Hypothesis evaluation is not a release gate.
 - Build MCP v2 in a v0.1 patch release.
 - Iterate on the Conventional taxonomy after the initial release.
 
+### Dry run
+
+Add a global flag that previews a command without changing anything. The flag
+is planned and not yet implemented. Its help line reads:
+
+```text
+-n, --dry-run  Show what would change without writing anything
+```
+
+- `gitserious init -n` prints what it would write and writes nothing.
+- `gitserious commit -n` authors and validates the message, prints it, and
+  skips `git commit`.
+- Bare `gitserious -n` and `gitserious config -n` open the TUI with every save
+  and initialization disabled.
+
 ## v0.3.0
 
 Deliver Lore indexing and query capabilities for recovering historical context.

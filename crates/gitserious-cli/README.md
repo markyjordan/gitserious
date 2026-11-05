@@ -11,13 +11,19 @@ The taxonomy-first public surface is:
 
 ```text
 gitserious
-gitserious config
 gitserious init
+gitserious config
 gitserious commit
+gitserious help [<command>]
 ```
 
 Configuration belongs to the reviewed TUI.
 
-Bare `gitserious` opens the unified Home TUI in a terminal and prints help when
-redirected. Bare `config` enters the shell at Config; `commit` still enters
-authoring directly. The shell Help pages receive CLI-owned presentation data.
+Bare `gitserious` opens the unified Home TUI in a terminal and prints the
+concise help when redirected. Bare `config` enters the shell at Config; `commit`
+still enters authoring directly.
+
+Help has two tiers. `-h` and `--help` print the same concise help.
+`gitserious help [<command>]` prints the detailed help, through `$PAGER` or
+`less` when stdout is a terminal; `--no-pager` prints it directly. The shell
+Help pages show the same text the CLI prints.

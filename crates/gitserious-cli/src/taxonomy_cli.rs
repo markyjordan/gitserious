@@ -3,9 +3,10 @@ use std::ffi::OsString;
 use std::fmt::{self, Display, Formatter};
 use std::io::{IsTerminal, Write};
 use std::path::Path;
-use std::process::ExitCode;
+use std::process::{self, ExitCode, Stdio};
 
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::error::ErrorKind;
+use clap::{ArgAction, CommandFactory, Parser, Subcommand};
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
     ConfigurationEditor, GlobalConfigurationStore, HelpPage, InitOutcome, InitStatus,
@@ -18,24 +19,77 @@ use gitserious_core::{CommitMessage, CommitTypeDefinition, VersionedTaxonomy};
 #[derive(Debug, Parser)]
 #[command(
     name = "gitserious",
+    bin_name = "gitserious",
     version,
     about = "Create durable commit-message policy for Git repositories",
     disable_colored_help = true,
+    disable_help_flag = true,
+    disable_help_subcommand = true,
+    after_help = "Use `gitserious help` for more details.",
+    after_long_help = "Use `gitserious help <command>` for more information on a specific command.",
     subcommand_required = false
 )]
 struct Cli {
+    #[arg(
+        short,
+        long,
+        global = true,
+        action = ArgAction::HelpShort,
+        help = "Display the concise help for this command"
+    )]
+    help: Option<bool>,
     #[command(subcommand)]
     command: Option<Command>,
 }
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Author and create a durable commit from the staged index.
-    Commit,
     /// Initialize repository-local gitserious policy.
+    ///
+    /// Init writes `gitserious.toml` at the root of the current Git repository.
+    /// It holds complete copies of the taxonomies your Library gives new
+    /// projects. The Library's default taxonomy becomes the project default.
+    ///
+    /// An existing `gitserious.toml` is never rewritten.
+    #[command(
+        verbatim_doc_comment,
+        about = "Initialize repository-local gitserious policy"
+    )]
     Init,
     /// Interactively configure taxonomy policy.
+    ///
+    /// Config opens in the terminal with two sections. Project edits the
+    /// taxonomies in this repository's `gitserious.toml`. Library edits the
+    /// taxonomies in your global configuration, which new projects copy.
+    ///
+    /// Library edits save when you press Esc. Copies, reorders, and confirmed
+    /// deletions save at once. Project changes save only after you review and
+    /// apply them.
+    #[command(
+        verbatim_doc_comment,
+        about = "Interactively configure taxonomy policy"
+    )]
     Config,
+    /// Author and create a durable commit from the staged index.
+    ///
+    /// Commit starts from the project default taxonomy in `gitserious.toml`.
+    /// You choose a type, write its properties, and review the exact message
+    /// before gitserious passes it to `git commit`.
+    ///
+    /// Only staged changes are committed. Stage them with `git add` first.
+    #[command(
+        verbatim_doc_comment,
+        about = "Author and create a durable commit from the staged index"
+    )]
+    Commit,
+    /// Display documentation for a command
+    Help {
+        /// Print the documentation directly instead of through a pager
+        #[arg(long)]
+        no_pager: bool,
+        /// The command to document
+        command: Option<String>,
+    },
 }
 
 type InteractiveAdapters<'a> = (
@@ -221,19 +275,7 @@ where
 {
     let cli = match Cli::try_parse_from(arguments) {
         Ok(cli) => cli,
-        Err(error) => {
-            let exit = exit_code(error.exit_code());
-            let result = if error.use_stderr() {
-                write!(stderr, "{error}")
-            } else {
-                write!(stdout, "{error}")
-            };
-            return if result.is_ok() {
-                exit
-            } else {
-                ExitCode::FAILURE
-            };
-        }
+        Err(error) => return write_clap_error(stdout, stderr, &error),
     };
     let entry = match &cli.command {
         None => Some(InteractiveEntry::Home),
@@ -244,11 +286,7 @@ where
         if entry == InteractiveEntry::Home
             && (!std::io::stdin().is_terminal() || !std::io::stdout().is_terminal())
         {
-            return if writeln!(stdout, "{}", Cli::command().render_long_help()).is_ok() {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::FAILURE
-            };
+            return write_all(stdout, &concise_help());
         }
         let Some((ui, status, initializer)) = adapters.interactive else {
             return operational_error(stderr, "interactive shell is not configured");
@@ -306,6 +344,91 @@ where
                 Err(error) => operational_error(stderr, error),
             }
         }
+        Command::Help { no_pager, command } => match detailed_help(command.as_deref()) {
+            Ok(text) => write_help(stdout, &text, no_pager),
+            Err(error) => write_clap_error(stdout, stderr, &error),
+        },
+    }
+}
+
+fn concise_help() -> String {
+    trailing_newline(&Cli::command().render_help().to_string())
+}
+
+/// The long help `gitserious help [<command>]` prints.
+fn detailed_help(command: Option<&str>) -> Result<String, clap::Error> {
+    let mut root = Cli::command();
+    root.build();
+    let Some(name) = command else {
+        return Ok(trailing_newline(&root.render_long_help().to_string()));
+    };
+    if let Some(subcommand) = root.find_subcommand_mut(name) {
+        return Ok(trailing_newline(&subcommand.render_long_help().to_string()));
+    }
+    let names: Vec<_> = root
+        .get_subcommands()
+        .map(clap::Command::get_name)
+        .collect();
+    Err(clap::Error::raw(
+        ErrorKind::InvalidValue,
+        format!(
+            "there is no command '{name}'\n\n  [possible commands: {}]\n",
+            names.join(", ")
+        ),
+    ))
+}
+
+fn trailing_newline(text: &str) -> String {
+    format!("{}\n", text.trim_end())
+}
+
+fn write_help(stdout: &mut (impl Write + ?Sized), text: &str, no_pager: bool) -> ExitCode {
+    if !no_pager && std::io::stdout().is_terminal() && page(text).is_ok() {
+        return ExitCode::SUCCESS;
+    }
+    write_all(stdout, text)
+}
+
+fn page(text: &str) -> std::io::Result<()> {
+    let pager = std::env::var("PAGER").unwrap_or_default();
+    let mut words = pager.split_whitespace();
+    let mut command = process::Command::new(words.next().unwrap_or("less"));
+    command.args(words).stdin(Stdio::piped());
+    // Git's default: exit on one screen of text and leave it in scrollback.
+    if std::env::var_os("LESS").is_none() {
+        command.env("LESS", "FRX");
+    }
+    let mut child = command.spawn()?;
+    if let Some(mut input) = child.stdin.take() {
+        // Quitting the pager early closes the pipe, which is not an error.
+        let _ = input.write_all(text.as_bytes());
+    }
+    child.wait()?;
+    Ok(())
+}
+
+fn write_all(stdout: &mut (impl Write + ?Sized), text: &str) -> ExitCode {
+    if stdout.write_all(text.as_bytes()).is_ok() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn write_clap_error(
+    stdout: &mut (impl Write + ?Sized),
+    stderr: &mut (impl Write + ?Sized),
+    error: &clap::Error,
+) -> ExitCode {
+    let result = if error.use_stderr() {
+        write!(stderr, "{error}")
+    } else {
+        write!(stdout, "{error}")
+    };
+    if result.is_ok() {
+        exit_code(error.exit_code())
+    } else {
+        ExitCode::FAILURE
     }
 }
 
@@ -385,52 +508,19 @@ impl CommitWriter for UnsupportedCommitAdapter {
     }
 }
 
-/// Man-style presentation data for the unified Help surface.
+/// Help pages for the unified Help surface, each the text the CLI prints.
 #[must_use]
 pub fn interactive_help() -> Vec<HelpPage> {
-    let commands = [
-        ("Overview", Cli::command()),
-        (
-            "Config",
-            Cli::command()
-                .find_subcommand("config")
-                .cloned()
-                .unwrap_or_else(Cli::command),
-        ),
-        (
-            "Commit",
-            Cli::command()
-                .find_subcommand("commit")
-                .cloned()
-                .unwrap_or_else(Cli::command),
-        ),
-        (
-            "Init",
-            Cli::command()
-                .find_subcommand("init")
-                .cloned()
-                .unwrap_or_else(Cli::command),
-        ),
-    ];
-    let descriptions = [
-        "Bare gitserious opens Home. Commit previews Git changes before authoring a durable message. Config configures repository policy and your taxonomy library.",
-        "Bare gitserious config opens Config. Project owns the complete taxonomies in gitserious.toml. Library owns taxonomies. Esc validates and saves Library edits. Copies, reorders, and confirmed deletions save immediately. Project changes use review and Apply.",
-        "gitserious commit authors directly from persisted project policy, starting from the project default taxonomy. Only Git's staged index is committed. Stage changes with Git before using Start commit in the shell.",
-        "gitserious init writes gitserious.toml with complete copies of your Library's default taxonomies. An existing gitserious.toml is never rewritten.",
-    ];
-    let examples = [
-        "gitserious\ngitserious --help",
-        "gitserious config",
-        "git add src/\ngitserious commit",
-        "gitserious init",
-    ];
-    let mut pages: Vec<_> = commands.into_iter().enumerate().map(|(index, (title, mut command))| {
-        if index > 0 { command = command.bin_name(format!("gitserious {}", title.to_lowercase())); }
-        HelpPage {
+    let mut pages = vec![HelpPage {
+        title: "Overview".into(),
+        text: concise_help(),
+    }];
+    for (title, command) in [("Init", "init"), ("Config", "config"), ("Commit", "commit")] {
+        pages.push(HelpPage {
             title: title.into(),
-            text: format!("NAME\n    gitserious — {title}\n\nSYNOPSIS AND OPTIONS\n{}\nDESCRIPTION\n{}\n\nEXAMPLES\n{}\n\nEXIT STATUS\n    0: success or shell exit. Nonzero: an operational error or cancelled direct commit.\n", command.render_long_help(), descriptions[index], examples[index]),
-        }
-    }).collect();
+            text: detailed_help(Some(command)).unwrap_or_else(|error| error.to_string()),
+        });
+    }
     pages.push(HelpPage { title: "Keyboard Navigation".into(), text: "NAME\n    gitserious — keyboard navigation\n\nDESCRIPTION\n    Tab / Shift+Tab: switch to the next or previous section from any overview, including Config's Project and Library.\n    Esc: close an overlay, go back, or return to Home from an overview.\n    Enter: open the selected item or start a staged commit.\n    /: contextual commands. ?: contextual help. q: quit at overview level.\n\nCONFIG\n    Menu: Up/Down selects Project or Library; Left/Right moves focus between Menu and its widgets.\n    Library: n creates, e edits, f forks, and d deletes a taxonomy.\n    Library NAV: Enter opens or closes a node; arrows move rows or panel focus.\n    Library EDIT: Enter and Up/Down move fields; Esc validates and saves. Correct inline errors before leaving EDIT.\n    Tab, navigation clicks, and quit cannot leave Library EDIT. Esc removes a new item only while it still equals its initial blank values.\n    Library copies, reorders, and confirmed deletions save immediately. A taxonomy needs a type before it can be included in a project.\n    Project: Ctrl+S reviews changes; Enter applies from Review.\n\nCOMMIT\n    Overview: r refreshes; o shows the full Git result; Left/Right controls directories.\n    Picker: Tab / Shift+Tab selects taxonomy; Up/Down selects type; Enter composes.\n    Composer: Ctrl+S validates and reviews; Esc returns through discard protection.\n    Review: Enter submits; Esc returns to editing.\n\nHELP\n    Left/Right selects pages; Up/Down and Page Up/Page Down scroll.\n".into() });
     pages
 }
