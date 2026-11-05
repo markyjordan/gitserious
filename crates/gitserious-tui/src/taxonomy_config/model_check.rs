@@ -3,7 +3,8 @@
 //! Seeds cover blank creation, forks, existing fields, conditional policy, limits and copies.
 //! Every transition checks modal editing, direct persistence, deletion confirmation, saved
 //! eligibility badges, the new taxonomy row that ends the Library, name locking, field limits,
-//! inline messages and copy independence.
+//! inline messages and copy independence. Blank new nodes may cancel under any policy,
+//! but every text field (including hidden conditional text) and child list must be empty.
 //! At most one taxonomy root is expanded, while type expansion can be remembered independently.
 //! The existing breadth-first runner deduplicates snapshots and reports shortest counterexamples.
 //! Mouse, resize, write failures and the embedded shell are covered by interaction tests.
@@ -921,7 +922,7 @@ fn removals_go_through_their_dialog(
         return Ok(());
     }
     if let Mode::Edit { node, .. } = &before.taxonomies.mode
-        && old.untouched_blank(node)
+        && old.blank_creation(node)
         && matches!(
             input,
             Event::Key(KeyEvent {

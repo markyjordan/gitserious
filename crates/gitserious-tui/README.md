@@ -158,8 +158,11 @@ that field is invalid. Browsing has no mode badge.
 Missing descriptions, invalid or duplicate normalized
 names, and incomplete conditional policies keep EDIT open, focus the first
 invalid field, and show inline errors. Tab, navigation clicks, and quit cannot
-leave EDIT. Esc removes a new item without writing only when all its contents
-still equal the initial blank values. A partly completed item must be corrected.
+leave EDIT. The Esc hint is cancel for a new item with no text or child entries, even
+after changing its policy. Typing changes the hint to save; deleting every
+text field back to empty restores cancel. Hidden condition and rationale
+text also prevent cancellation. Esc removes a blank new item without writing;
+a partly completed item must be corrected. Existing records always use save.
 
 Names such as `Team Changes` save as `team-changes`. Name and Condition accept
 80 graphemes; Description and Rationale accept 100. Loaded content beyond those

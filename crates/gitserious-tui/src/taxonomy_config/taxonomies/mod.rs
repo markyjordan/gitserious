@@ -472,7 +472,7 @@ impl TaxonomiesView {
         let length = text.graphemes(true).count();
         let next = match key.code {
             KeyCode::Esc => {
-                if library.untouched_blank(node) {
+                if library.blank_creation(node) {
                     let landing = library
                         .edit(node, DraftEdit::Remove)
                         .map_err(|refusal| refusal_sentence(refusal, None))?;
@@ -740,7 +740,14 @@ impl TaxonomiesView {
                 hints.extend([
                     ("enter", "next field"),
                     ("←/→", if policy { "policy" } else { "cursor" }),
-                    ("esc", "save"),
+                    (
+                        "esc",
+                        if library.is_some_and(|library| library.blank_creation(node.id())) {
+                            "cancel"
+                        } else {
+                            "save"
+                        },
+                    ),
                 ]);
             } else if !built_in && matches!(node, NodeRef::Property { .. }) {
                 hints.extend([
