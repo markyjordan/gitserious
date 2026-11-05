@@ -163,9 +163,10 @@ pub(crate) fn render_footer(
     let right_width = u16::try_from(right.width()).unwrap_or(u16::MAX);
     let left_width = area.width.saturating_sub(right_width.saturating_add(2));
     let mut visible = left.to_vec();
-    // Keep the action hints readable on compact terminals. Arrow controls
-    // are also documented in contextual Help and can be omitted from a crowded footer.
-    for key in ["↑/↓", "←/→"] {
+    // Keep the action hints readable on compact terminals. Paging and arrow
+    // controls are also documented in contextual Help and can be omitted from a
+    // crowded footer, paging first because the arrows reach the same lines.
+    for key in ["pgup/pgdn", "↑/↓", "←/→"] {
         if footer_hints(&visible).width() <= usize::from(left_width) {
             break;
         }
