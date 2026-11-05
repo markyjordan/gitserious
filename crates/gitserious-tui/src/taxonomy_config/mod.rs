@@ -2393,7 +2393,7 @@ mod tests {
             assert!(
                 screen[usize::from(height) - 1]
                     .trim_start()
-                    .starts_with("enter open")
+                    .starts_with("←/→ focus  ↑/↓ move  enter open")
             );
             if height == 40 {
                 assert!(text.contains("Types        11"));
@@ -2421,7 +2421,7 @@ mod tests {
             assert!(
                 screen[usize::from(height) - 1]
                     .trim_start()
-                    .starts_with("enter open")
+                    .starts_with("←/→ focus  ↑/↓ move  enter open")
             );
         }
         Ok(())
@@ -3075,7 +3075,11 @@ mod tests {
                     assert!(footer.starts_with("  EDIT "));
                     assert_eq!(buffer[(1, 39)].bg, theme().pending);
                 } else {
-                    assert!(footer.trim_start().starts_with("enter open"));
+                    assert!(
+                        footer
+                            .trim_start()
+                            .starts_with("←/→ focus  ↑/↓ move  enter open")
+                    );
                     assert!(!footer.contains("NAV"));
                     assert_eq!(buffer[(1, 39)].bg, theme().band);
                 }
@@ -3093,7 +3097,11 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(87, 36))?;
         terminal.draw(|frame| state.render(frame))?;
         let footer = footer_text(&row_text(&terminal, 0, 35, 87));
-        assert!(footer.trim_start().starts_with("enter open"));
+        assert!(
+            footer
+                .trim_start()
+                .starts_with("←/→ focus  ↑/↓ move  enter open")
+        );
         assert!(
             footer
                 .trim_end()
@@ -3185,7 +3193,7 @@ mod tests {
                                     .starts_with("  EDIT   enter next field  ←/→ cursor  esc save")
                             );
                         } else {
-                            assert!(!footer.contains(" NAV ") && footer.contains("← menu"));
+                            assert!(!footer.contains(" NAV ") && footer.contains("←/→ focus"));
                             if width >= 87 {
                                 assert!(
                                     footer.contains("e edit") && footer.contains("d delete"),
@@ -3225,13 +3233,13 @@ mod tests {
                 };
                 let mut end = 0;
                 for hint in [
+                    "←/→ focus",
+                    "↑/↓ move",
                     enter,
                     "f fork",
                     "n new",
                     "e edit",
                     "d delete",
-                    "↑/↓ move",
-                    "← menu",
                 ] {
                     let at = footer
                         .find(hint)
@@ -3245,7 +3253,11 @@ mod tests {
                         .status_line(state.library(), embedded, width - 2);
                     assert_eq!(line.width(), usize::from(width - 2));
                     let compact = footer_text(&line.to_string());
-                    assert!(compact.contains("↑/↓ move  ← menu"), "{compact}");
+                    assert!(
+                        compact.trim_start().starts_with("←/→ focus  ↑/↓ move"),
+                        "{compact}"
+                    );
+                    assert!(!compact.contains("menu"), "{compact}");
                     assert!(compact.contains(enter), "{compact}");
                     assert!(!compact.contains('…'), "{compact}");
                 }
@@ -3502,7 +3514,11 @@ mod tests {
             assert!(state.home_overlay.is_none());
             terminal.draw(|frame| state.render(frame))?;
             let footer = row_text(&terminal, 0, height - 1, width);
-            assert!(footer.trim_start().starts_with("enter open"));
+            assert!(
+                footer
+                    .trim_start()
+                    .starts_with("←/→ focus  ↑/↓ move  enter open")
+            );
             if width >= 100 {
                 assert!(footer.trim_end().ends_with("q quit"));
             }
@@ -4159,6 +4175,10 @@ mod tests {
                     assert_eq!(line.width(), usize::from(width - 2));
                     let footer = footer_text(&line.to_string());
                     assert!(
+                        footer.trim_start().starts_with("←/→ focus  ↑/↓ move"),
+                        "{footer}"
+                    );
+                    assert!(
                         footer.contains("e edit  c copy property") && footer.contains("d delete"),
                         "{footer}"
                     );
@@ -4185,16 +4205,12 @@ mod tests {
                     terminal.draw(|frame| state.render(frame))?;
                     let footer = row_text(&terminal, 0, 39, width);
                     assert!(
-                        !footer.contains(" NAV ") && footer.contains("← menu"),
+                        !footer.contains(" NAV ") && footer.contains("←/→ focus"),
                         "{footer}"
                     );
                     assert!(footer.contains("d delete"), "{footer}");
                     assert!(!footer.contains('…'), "{footer}");
-                    assert_eq!(
-                        footer.contains("to other types"),
-                        width == 140 || (width == 87 && !embedded),
-                        "{footer}"
-                    );
+                    assert_eq!(footer.contains("to other types"), width == 140, "{footer}");
                     assert!(!footer.contains("? help"), "{footer}");
                     assert!(footer.starts_with(' ') && footer.ends_with(' '));
                     press(&mut state, &workspace, &[KeyCode::Char('e')]);
@@ -4218,7 +4234,7 @@ mod tests {
             assert!(!screen.contains("130/100"), "{screen}");
             let footer = row_text(&terminal, 0, height - 1, width);
             assert!(
-                !footer.contains(" NAV ") && footer.contains("← menu"),
+                !footer.contains(" NAV ") && footer.contains("←/→ focus"),
                 "{footer}"
             );
             assert!(!footer.contains("←/→ policy"), "{footer}");

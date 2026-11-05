@@ -139,7 +139,9 @@ the Inspector. `f` forks a taxonomy, `n` creates one, `e` opens EDIT, and `d`
 asks for deletion confirmation. Expanded custom taxonomies and types include
 add rows for types and properties. A custom property's `c` opens a picker for
 copying it to other types in the same taxonomy. Alt+Up and Alt+Down reorder a
-type or property. The `/` palette lists the available Library actions.
+type or property. Browsing footers lead with `←/→ focus`, `↑/↓ move`, then
+the selected row’s Enter action and other actions. The `/` palette lists the
+available Library actions.
 
 Config pop-ups use the Bone ground and text, a double orange border, and
 plain orange key hints with dim labels. Copy and command selections use a

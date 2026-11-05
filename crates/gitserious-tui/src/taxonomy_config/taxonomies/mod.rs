@@ -714,7 +714,11 @@ impl TaxonomiesView {
         } else {
             Span::raw("")
         }];
-        let mut hints = Vec::new();
+        let mut hints = if editing {
+            Vec::new()
+        } else {
+            vec![("←/→", "focus"), ("↑/↓", "move")]
+        };
         let mut trailing = if editing {
             Vec::new()
         } else {
@@ -776,9 +780,6 @@ impl TaxonomiesView {
                 hints.push(("enter", "add"));
             }
         }
-        if !editing {
-            hints.extend([("↑/↓", "move"), ("←", "menu")]);
-        }
         let width = usize::from(width);
         let line = |hints: &[(&str, &str)], trailing: &[(&str, &str)], padded: bool| {
             let mut left = chip.clone();
@@ -831,7 +832,7 @@ impl TaxonomiesView {
             candidate = line(&hints, &trailing, false);
         }
         let optional: &[&str] = if property_actions {
-            &["↑/↓"]
+            &[]
         } else {
             &["d", "n", "f", "e"]
         };
