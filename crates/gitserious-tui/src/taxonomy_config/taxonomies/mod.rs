@@ -919,11 +919,13 @@ fn hint_spans(hints: &[(&str, &str)], padded: bool) -> Vec<Span<'static>> {
         .collect()
 }
 
-/// A policy as plain text: required reads bright and the rest dim.
+/// Plain policy words distinguish obligations from relaxed guidance.
 const fn policy_style(policy: Policy) -> Style {
     match policy {
-        Policy::Required => Style::new().fg(theme().text),
-        Policy::Recommended | Policy::Conditional | Policy::Optional => DIM,
+        Policy::Required => Style::new().fg(theme().blocks),
+        Policy::Conditional => Style::new().fg(theme().pending),
+        Policy::Recommended => Style::new().fg(theme().done),
+        Policy::Optional => DIM,
     }
 }
 

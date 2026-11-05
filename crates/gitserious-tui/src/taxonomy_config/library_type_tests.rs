@@ -152,10 +152,11 @@ fn a_built_in_type_lists_its_properties_without_a_heading_and_pages_to_the_fork_
                 assert_ne!(cell.fg, DIM);
                 assert!(!cell.modifier.contains(Modifier::BOLD));
             }
-            let style = if policy == "required" {
-                theme().text
-            } else {
-                DIM
+            let style = match policy {
+                "required" => theme().blocks,
+                "conditional" => theme().pending,
+                "recommended" => theme().done,
+                _ => DIM,
             };
             for cell in row.cells(policy)? {
                 assert_eq!(cell.fg, style);
@@ -226,10 +227,10 @@ fn a_custom_type_shows_each_policy_in_the_outline_style() -> Result {
                 .ok_or(format!("no {key} row"))
         };
         for cell in row("intent")?.cells("required")? {
-            assert_eq!(cell.fg, theme().text);
+            assert_eq!(cell.fg, theme().blocks);
         }
         for cell in row("constraints")?.cells("conditional")? {
-            assert_eq!(cell.fg, DIM);
+            assert_eq!(cell.fg, theme().pending);
         }
         let text = rows.iter().map(|row| row.text.as_str()).collect::<String>();
         assert!(!text.contains("fork"), "{text}");

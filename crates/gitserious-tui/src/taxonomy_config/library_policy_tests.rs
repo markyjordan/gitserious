@@ -95,8 +95,13 @@ fn on_intent() -> Result<(super::tests::Workspace, State)> {
     Ok((workspace, state))
 }
 
-fn is_red(color: Color) -> bool {
-    matches!(color, Color::Red | Color::LightRed) || color == theme().blocks
+fn policy_color(word: &str) -> Color {
+    match word {
+        "required" => theme().blocks,
+        "conditional" => theme().pending,
+        "recommended" => theme().done,
+        _ => theme().dim,
+    }
 }
 
 #[test]
@@ -113,15 +118,15 @@ fn policy_words_are_plain_text_and_a_selected_required_row_reads() -> Result {
         }
         let conditional = outline_row(&state, buffer, "constraints ")?;
         for cell in conditional.cells("conditional")? {
-            assert_eq!((cell.fg, cell.bg), (DIM, theme().ground));
+            assert_eq!((cell.fg, cell.bg), (theme().pending, theme().ground));
         }
 
-        // Off the cursor, required is bright at normal weight and the rest dim.
+        // Off the cursor, required uses coral without introducing a chip.
         press(&mut state, &workspace, &[KeyCode::Down]);
         let terminal = draw(&mut state, size)?;
         let buffer = terminal.backend().buffer();
         for cell in outline_row(&state, buffer, "intent ")?.cells("required")? {
-            assert_eq!((cell.fg, cell.bg), (theme().text, theme().ground));
+            assert_eq!((cell.fg, cell.bg), (theme().blocks, theme().ground));
             assert!(!cell.modifier.contains(Modifier::BOLD));
         }
 
@@ -131,14 +136,21 @@ fn policy_words_are_plain_text_and_a_selected_required_row_reads() -> Result {
         let terminal = draw(&mut state, size)?;
         let buffer = terminal.backend().buffer();
         for cell in outline_row(&state, buffer, "intent ")?.cells("required")? {
-            assert_eq!((cell.fg, cell.bg), (theme().text, theme().band));
+            assert_eq!((cell.fg, cell.bg), (theme().blocks, theme().band));
         }
         for row in rows(buffer, buffer.area) {
             for policy in POLICIES {
                 for (start, _) in row.text.match_indices(policy) {
                     let x = u16::try_from(row.text[..start].chars().count())?;
-                    assert!(!is_red(buffer[(x, row.y)].fg), "{policy} in {:?}", row.text);
-                    assert!(!is_red(buffer[(x, row.y)].bg), "{policy} in {:?}", row.text);
+                    assert_eq!(
+                        buffer[(x, row.y)].fg,
+                        policy_color(policy),
+                        "{policy} in {:?}",
+                        row.text
+                    );
+                    assert!(
+                        matches!(buffer[(x, row.y)].bg, bg if bg == theme().ground || bg == theme().band)
+                    );
                 }
             }
         }
@@ -170,7 +182,7 @@ fn browsing_a_property_leads_with_its_policy_and_names_it_only_in_the_heading() 
             .ok_or("Policy")?;
         assert_eq!(policy.text.trim_end(), " Policy       conditional");
         for cell in policy.cells("conditional")? {
-            assert_eq!(cell.fg, theme().text);
+            assert_eq!(cell.fg, theme().pending);
         }
         assert!(
             rows.iter()
@@ -186,7 +198,7 @@ fn browsing_a_property_leads_with_its_policy_and_names_it_only_in_the_heading() 
             }
         }
 
-        // A required property's policy reads as bright as any other value.
+        // Required retains coral in the property Inspector.
         press(&mut state, &workspace, &[KeyCode::Up]);
         let terminal = draw(&mut state, size)?;
         let buffer = terminal.backend().buffer();
@@ -197,7 +209,7 @@ fn browsing_a_property_leads_with_its_policy_and_names_it_only_in_the_heading() 
             .find(|row| row.text.starts_with(" Policy "))
             .ok_or("Policy")?;
         for cell in policy.cells("required")? {
-            assert_eq!((cell.fg, cell.bg), (theme().text, theme().ground));
+            assert_eq!((cell.fg, cell.bg), (theme().blocks, theme().ground));
         }
     }
     Ok(())
@@ -249,7 +261,7 @@ fn edit_lists_every_policy_with_the_current_one_bold_and_underlined() -> Result 
             for cell in row.cells(word)? {
                 assert_eq!(cell.bg, theme().ground);
                 let current = word == "conditional";
-                assert_eq!(cell.fg, if current { theme().text } else { DIM });
+                assert_eq!(cell.fg, policy_color(word));
                 assert_eq!(
                     cell.modifier
                         .contains(Modifier::BOLD | Modifier::UNDERLINED),
