@@ -17,7 +17,9 @@ fn fixture() -> Result<(TaxonomiesView, LibraryDraft)> {
 
 fn draw(view: &mut TaxonomiesView, library: &LibraryDraft, height: u16) -> Result<Buffer> {
     let mut terminal = Terminal::new(TestBackend::new(70, height))?;
-    terminal.draw(|frame| view.render(frame, frame.area(), Some(library), true, false))?;
+    terminal.draw(|frame| {
+        view.render(frame, frame.area(), 0, Some(library), true, false);
+    })?;
     Ok(terminal.backend().buffer().clone())
 }
 
@@ -45,11 +47,30 @@ fn one_root(view: &TaxonomiesView, library: &LibraryDraft, expected: &NodeId) {
     assert_eq!(open, [expected]);
 }
 
+/// The row of the buffer that is a dim rule from edge to edge, if any.
+fn rule_row(buffer: &Buffer) -> Option<u16> {
+    (0..buffer.area.height).find(|&y| {
+        (0..buffer.area.width)
+            .all(|x| buffer[(x, y)].symbol() == "─" && buffer[(x, y)].fg == theme().dim)
+    })
+}
+
+fn text_in(buffer: &Buffer, area: Rect) -> String {
+    (area.y..area.bottom())
+        .map(|y| {
+            (area.x..area.right())
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
-fn outline_heading_matches_without_a_library_and_fits_beside_scroll_counts() -> Result {
+fn outline_counts_rows_below_in_its_last_row_without_a_box() -> Result {
     for width in [50, 71, 124] {
         let (mut view, library) = fixture()?;
-        let mut terminal = Terminal::new(TestBackend::new(width, 14))?;
+        let mut terminal = Terminal::new(TestBackend::new(width, 10))?;
         for loaded in [false, true] {
             if loaded {
                 open(&mut view, &library, "conventional")?;
@@ -58,24 +79,39 @@ fn outline_heading_matches_without_a_library_and_fits_beside_scroll_counts() -> 
                 }
             }
             terminal.draw(|frame| {
-                view.render(frame, frame.area(), loaded.then_some(&library), true, false);
+                view.render(
+                    frame,
+                    frame.area(),
+                    0,
+                    loaded.then_some(&library),
+                    true,
+                    false,
+                );
             })?;
-            let row = |y| {
-                (0..width)
-                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
-                    .collect::<String>()
-            };
-            assert!(row(0).starts_with("┌ Commit Message Taxonomies ─"));
+            let buffer = terminal.backend().buffer();
+            let screen = text_in(buffer, buffer.area);
+            assert!(!screen.contains("Commit Message Taxonomies"), "{screen}");
+            assert!(!screen.contains(['┌', '┐', '┘']), "{screen}");
             if loaded {
-                assert!(view.outline_offset > 0);
-                assert!(row(0).contains(&format!(" ↑ {} more ", view.outline_offset)));
+                let outline = view.outline_area;
                 let below = outline::rows(&library, &view.expanded).len()
                     - view.outline_offset
-                    - usize::from(view.outline_area.height);
+                    - usize::from(outline.height);
                 assert!(below > 0);
-                assert!(row(6).contains(&format!(" ↓ {below} more ")));
+                let last = Rect::new(outline.x, outline.bottom(), outline.width, 1);
+                let more = format!("↓ {below} more");
+                assert!(
+                    text_in(buffer, last).ends_with(&format!("{more} ")),
+                    "{screen}"
+                );
+                let at = last.right() - 2;
+                assert_eq!(buffer[(at, last.y)].symbol(), "e");
+                assert_eq!(buffer[(at, last.y)].fg, theme().dim);
             } else {
-                assert!(row(1).contains("Taxonomy library unavailable."));
+                assert!(
+                    screen.starts_with(" Taxonomy library unavailable."),
+                    "{screen}"
+                );
             }
         }
     }
@@ -223,16 +259,31 @@ fn switching_between_built_in_and_custom_roots_remembers_multiple_open_types() -
 }
 
 #[test]
-fn bordered_panels_split_evenly_and_round_up_for_taxonomies() -> Result {
+fn a_rule_parts_the_outline_and_inspector_sixty_forty_or_below_a_short_outline() -> Result {
     let (mut view, library) = fixture()?;
-    for height in [36, 37, 14, 15, 35, 36] {
-        let buffer = draw(&mut view, &library, height)?;
-        let outline = height.div_ceil(2);
-        assert_eq!(view.outline_area.height + 2, outline);
-        assert_eq!(buffer[(0, outline - 1)].symbol(), "└");
-        assert_eq!(buffer[(0, outline)].symbol(), "┌");
-        assert_eq!(buffer[(0, height - 1)].symbol(), "└");
-        assert_eq!(outline - (height - outline), height % 2);
+    // From 24 rows a blank row pads the top and the bottom. The outline and the rule take 60%
+    // of the rest; three collapsed taxonomies take fewer rows than that.
+    for (height, short, long) in [
+        (36, 4, 15),
+        (24, 4, 13),
+        (23, 3, 12),
+        (15, 3, 8),
+        (14, 3, 7),
+    ] {
+        for (expanded, rule) in [(false, short), (true, long)] {
+            let conventional = library.find_path(&["conventional"]).ok_or("conventional")?;
+            if view.expanded.contains(&conventional) != expanded {
+                view.select(conventional);
+                press(&mut view, &library, KeyCode::Enter);
+            }
+            let buffer = draw(&mut view, &library, height)?;
+            assert_eq!(rule_row(&buffer), Some(rule), "{height} rows");
+            assert!(buffer[(1, rule + 1)].symbol() != " ", "{height} rows");
+            let screen = text_in(&buffer, buffer.area);
+            assert!(screen.contains("Taxonomy conventional"), "{screen}");
+            // The tree draws └ and │ too, but never the other corners of a box.
+            assert!(!screen.contains(['┌', '┐', '┘']), "{screen}");
+        }
     }
     Ok(())
 }
@@ -255,19 +306,12 @@ fn focused_fields_and_their_errors_remain_visible_in_short_inspectors() -> Resul
         view.open(property.clone(), field, &library);
         for height in [14, 15, 36, 14] {
             let mut terminal = Terminal::new(TestBackend::new(51, height))?;
-            terminal.draw(|frame| view.render(frame, frame.area(), Some(&library), true, false))?;
+            terminal.draw(|frame| {
+                view.render(frame, frame.area(), 0, Some(&library), true, false);
+            })?;
             let buffer = terminal.backend().buffer();
-            let inspector = buffer
-                .content
-                .chunks(51)
-                .skip(usize::from(height.div_ceil(2)))
-                .map(|row| {
-                    row.iter()
-                        .map(ratatui::buffer::Cell::symbol)
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let below = rule_row(buffer).ok_or("missing the rule")? + 1;
+            let inspector = text_in(buffer, Rect::new(0, below, 51, buffer.area.height - below));
             assert!(inspector.contains(label), "{inspector}");
             assert!(inspector.contains(problem), "{inspector}");
             assert!(inspector.contains("▲"), "{inspector}");

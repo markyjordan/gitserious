@@ -5,12 +5,12 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::Paragraph;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::super::hanging_wrap;
-use super::{BAND, CUSTOM_STYLE, Chips, DIM, KEY_STYLE, READ_ONLY_STYLE, fit, policy_style};
-use crate::theme::{ACCENT, AMBER, block_title, focus_frame_style};
+use super::{BAND, CUSTOM_STYLE, Chips, DIM, KEY_STYLE, READ_ONLY_STYLE, fit, panes, policy_style};
+use crate::theme::ACCENT;
 
 /// Labels and the values beside them start in these columns.
 const LABEL_WIDTH: usize = 13;
@@ -34,33 +34,26 @@ struct Focused {
     cursor: Option<usize>,
 }
 
-/// Describes `node` in words under a header with its chip, scrolled down by `offset` rows. The
-/// focused field never sits below the view, and while it is edited it stays in view with its
-/// problems; browsing can scroll through the remaining details.
+/// Describes `node` in words under a header with its chip, scrolled down by `offset` rows, and
+/// returns how many rows it shows. The focused field never sits below the view, and while it is
+/// edited it stays in view with its problems; browsing can scroll through the remaining
+/// details. When they overflow, the last row counts the rows below.
 pub(super) fn render(
     frame: &mut Frame<'_>,
     area: Rect,
     chips: &Chips<'_>,
     node: NodeRef<'_>,
     focus: Option<Focus>,
-    active: bool,
     offset: &mut u16,
-) {
+) -> u16 {
     let editing = focus.is_some_and(|focus| focus.cursor.is_some());
-    let frame_style = if active && editing {
-        Style::new().fg(AMBER)
-    } else {
-        focus_frame_style(active)
-    };
-    let block = Block::bordered()
-        .border_style(frame_style)
-        .title_style(frame_style)
-        .title(block_title("Inspector"));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    let width = usize::from(inner.width).saturating_sub(2);
-    let (lines, focused) = describe(chips, node, focus, width, inner.height > 10);
+    let width = usize::from(area.width).saturating_sub(2);
+    let (lines, focused) = describe(chips, node, focus, width);
     let total = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+    let inner = Rect {
+        height: panes::shown(lines.len(), area.height),
+        ..area
+    };
     if let Some(Focused { view, cursor, .. }) = &focused {
         let (start, end) = (
             u16::try_from(view.start).unwrap_or(u16::MAX),
@@ -83,6 +76,11 @@ pub(super) fn render(
         }
     }
     *offset = (*offset).min(total.saturating_sub(inner.height));
+    panes::render_more_below(
+        frame,
+        area,
+        usize::from(total.saturating_sub(offset.saturating_add(inner.height))),
+    );
     let lines = lines
         .into_iter()
         .enumerate()
@@ -102,6 +100,7 @@ pub(super) fn render(
         })
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines).scroll((*offset, 0)), inner);
+    inner.height
 }
 
 /// The lines and the rows the focused field takes.
@@ -110,14 +109,10 @@ fn describe(
     node: NodeRef<'_>,
     focus: Option<Focus>,
     width: usize,
-    roomy: bool,
 ) -> (Vec<Line<'static>>, Option<Focused>) {
     let library = chips.library;
     let chip = chips.of(node.id());
     let mut lines = Vec::new();
-    if roomy {
-        lines.push(Line::default());
-    }
     let (kind, name) = match node {
         NodeRef::Taxonomy(taxonomy) => ("Taxonomy", taxonomy.name()),
         NodeRef::Type { commit_type, .. } => ("Type", commit_type.name()),
@@ -444,8 +439,7 @@ mod tests {
                     }),
                 ] {
                     let expanded = BTreeSet::new();
-                    let (lines, _) =
-                        describe(&Chips::new(&library, &expanded), node, focus, width, true);
+                    let (lines, _) = describe(&Chips::new(&library, &expanded), node, focus, width);
                     let text = lines
                         .iter()
                         .map(ToString::to_string)

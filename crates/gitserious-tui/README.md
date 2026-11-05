@@ -122,8 +122,11 @@ changed on disk after Project opened. Browsing Library preserves pending Project
 edits. A Library action asks you to apply or discard those Project edits before
 proceeding. Commit authoring uses `gitserious.toml` as last applied.
 
-Library has a taxonomy outline and an Inspector. Enter opens or closes a node,
-Up and Down select rows, and Page Up and Page Down scroll Inspector details.
+Library has a taxonomy outline and an Inspector. Under 100 columns the
+Inspector sits below the outline; from 100 columns it sits beside it. Enter
+opens or closes a node, Up and Down select rows, and Page Up and Page Down page
+through Inspector details. A pane with more rows than fit counts the rest in
+its last row.
 Built-in taxonomies show their origin in the outline and read-only status in
 the Inspector. `f` forks a taxonomy, `n` creates one, `e` opens EDIT, and `d`
 asks for deletion confirmation. Expanded custom taxonomies and types include

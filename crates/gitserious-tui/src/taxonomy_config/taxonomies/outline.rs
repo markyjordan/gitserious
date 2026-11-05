@@ -5,13 +5,11 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use super::summary_scroll::{SummaryScroll, Target};
-use super::{
-    BAND, CUSTOM_STYLE, Chip, Chips, DIM, OUTLINE_TITLE, READ_ONLY_STYLE, fit, policy_style,
-};
-use crate::theme::{ACCENT, block_title, focus_frame_style, frame_style};
+use super::{BAND, CUSTOM_STYLE, Chip, Chips, DIM, READ_ONLY_STYLE, fit, panes, policy_style};
+use crate::theme::{ACCENT, frame_style};
 
 pub(super) const ADD_TYPE: &str = "+ add type";
 pub(super) const ADD_PROPERTY: &str = "+ add property";
@@ -143,6 +141,7 @@ pub(super) fn resolve(rows: &[Row<'_>], cursor: Option<&RowKey>, library: &Libra
 }
 
 /// Draws the rows, each with its chip, and returns the area they fill, for mouse hit-testing.
+/// When they overflow, the last row counts the rows below.
 #[expect(
     clippy::too_many_arguments,
     reason = "the outline draws from the view's state and the Library's derived rows and chips"
@@ -159,11 +158,10 @@ pub(super) fn render(
     summary_scroll: &mut SummaryScroll,
     animation_viewport: Option<Rect>,
 ) -> Rect {
-    let mut block = Block::bordered()
-        .border_style(focus_frame_style(focused))
-        .title_style(focus_frame_style(focused))
-        .title(block_title(OUTLINE_TITLE));
-    let inner = block.inner(area);
+    let inner = Rect {
+        height: panes::shown(rows.len(), area.height),
+        ..area
+    };
     let height = usize::from(inner.height);
     if selected < *offset {
         *offset = selected;
@@ -171,14 +169,7 @@ pub(super) fn render(
         *offset = selected + 1 - height;
     }
     *offset = (*offset).min(rows.len().saturating_sub(height));
-    let below = rows.len().saturating_sub(*offset + height);
-    if *offset > 0 {
-        block = block.title_top(Line::styled(format!(" ↑ {} more ", *offset), DIM).right_aligned());
-    }
-    if below > 0 {
-        block = block.title_bottom(Line::styled(format!(" ↓ {below} more "), DIM).right_aligned());
-    }
-    frame.render_widget(block, area);
+    panes::render_more_below(frame, area, rows.len().saturating_sub(*offset + height));
     let width = usize::from(inner.width).saturating_sub(1);
     let mut target = None;
     let lines = rows

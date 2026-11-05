@@ -292,6 +292,13 @@ enum Screen {
 const RAIL_WIDTH: u16 = 13;
 /// Where the content starts, right of the rail and its rule.
 const CONTENT_X: u16 = RAIL_WIDTH + 1;
+/// Terminals this tall pad the content with a blank row above and below.
+const PADDED_HEIGHT: u16 = 24;
+
+/// The blank rows above and below the rail and the Library on a `terminal` this size.
+fn content_padding(terminal: Rect) -> u16 {
+    u16::from(terminal.height >= PADDED_HEIGHT)
+}
 
 #[derive(Clone, Debug)]
 struct SettingsDraft {
@@ -1454,7 +1461,8 @@ impl State {
         let home = matches!(self.screen, Screen::Home);
         let focused = home && self.home_focus == HomeFocus::Menu;
         let pending = self.scope_dirty(ConfigurationDestination::Project);
-        for (category, y) in Category::ALL.into_iter().zip(area.y + 1..area.bottom()) {
+        let top = area.y + content_padding(frame.area());
+        for (category, y) in Category::ALL.into_iter().zip(top..area.bottom()) {
             let row = Rect::new(area.x, y, area.width, 1);
             frame.render_widget(
                 category.rail_row(
@@ -1711,17 +1719,18 @@ impl State {
                 .as_ref()
                 .and_then(ConfigurationSession::project_draft);
             self.project_taxonomies
-                .render(frame, area, draft, focused, animate);
+                .render(frame, area, 0, draft, focused, animate);
         } else {
-            let [header, outline] = Layout::vertical([
-                Constraint::Length(library_header::HEIGHT),
-                Constraint::Min(0),
-            ])
-            .areas(area);
-            library_header::render(frame, header, &self.library_path, self.home.as_deref());
             let library = self.global.as_ref().and_then(ConfigurationSession::library);
-            self.taxonomies
-                .render(frame, outline, library, focused, animate);
+            let header = self.taxonomies.render(
+                frame,
+                area,
+                library_header::HEIGHT,
+                library,
+                focused,
+                animate,
+            );
+            library_header::render(frame, header, &self.library_path, self.home.as_deref());
         }
     }
 
@@ -1908,8 +1917,27 @@ mod tests {
     use crate::theme::ACCENT;
 
     const LIBRARY_PATH: &str = "/home/tester/.config/gitserious/config.toml";
-    /// The Library outline's top border, below the page header.
+    /// The Library outline's first row from 24 rows, below the top padding and the page header.
     const OUTLINE_TOP: u16 = 4;
+
+    /// The Library outline's first row on a terminal `height` rows tall.
+    fn outline_top(height: u16) -> u16 {
+        if height < 24 {
+            OUTLINE_TOP - 1
+        } else {
+            OUTLINE_TOP
+        }
+    }
+
+    /// The row of the Library's dim rule between the outline and the Inspector, when they are
+    /// stacked.
+    fn rule_row(terminal: &Terminal<TestBackend>) -> Option<u16> {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height).find(|&y| {
+            (CONTENT_X..buffer.area.width)
+                .all(|x| buffer[(x, y)].symbol() == "─" && buffer[(x, y)].fg == theme().dim)
+        })
+    }
 
     pub(super) struct Workspace {
         pub(super) global: RefCell<ConfigurationSession>,
@@ -2291,19 +2319,13 @@ mod tests {
             terminal.draw(|frame| state.render(frame))?;
             let screen = rows(&terminal);
             assert_eq!(screen[0].chars().nth(usize::from(RAIL_WIDTH)), Some('│'));
+            let top = outline_top(height);
             assert!(
-                row_text(&terminal, CONTENT_X, OUTLINE_TOP, width - CONTENT_X)
-                    .starts_with("┌ Commit Message Taxonomies ─")
+                row_text(&terminal, CONTENT_X, top, width - CONTENT_X)
+                    .starts_with("▌▸ conventional")
             );
             let buffer = terminal.backend().buffer();
-            assert_eq!(
-                buffer[(CONTENT_X, OUTLINE_TOP)].fg,
-                Color::Rgb(80, 160, 255)
-            );
-            assert_eq!(
-                buffer[(CONTENT_X + 1, OUTLINE_TOP + 1)].fg,
-                Color::Rgb(80, 160, 255)
-            );
+            assert_eq!(buffer[(CONTENT_X, top)].fg, Color::Rgb(80, 160, 255));
             assert_eq!(buffer[(1, height - 1)].bg, Color::Rgb(80, 160, 255));
             for label in [" built-in ", " ◇ read-only "] {
                 let mut count = 0;
@@ -2321,7 +2343,7 @@ mod tests {
                 assert!(count > 0, "missing {label}");
             }
 
-            assert!(screen[2].starts_with(" 2  Library  │"));
+            assert!(screen[usize::from(top) - 2].starts_with(" 2  Library  │"));
             let outline = |name: &str| {
                 screen
                     .iter()
@@ -2330,11 +2352,12 @@ mod tests {
                     .unwrap_or_default()
             };
             assert!(outline("conventional").contains("│▌▸ conventional"));
-            assert!(outline("conventional").trim_end().ends_with("built-in  │"));
-            assert!(outline("infra-ops").trim_end().ends_with("built-in  │"));
-            assert!(outline("original").trim_end().ends_with("custom  │"));
+            assert!(outline("conventional").trim_end().ends_with("built-in"));
+            assert!(outline("infra-ops").trim_end().ends_with("built-in"));
+            assert!(outline("original").trim_end().ends_with("custom"));
             let text = screen.join("\n");
-            assert!(text.contains("┌ Inspector ─"));
+            let rule = rule_row(&terminal).ok_or("missing the rule above the Inspector")?;
+            assert!(screen[usize::from(rule) + 1].contains("│ Taxonomy conventional "));
             assert!(text.contains("Taxonomy conventional"));
             assert!(text.contains("Version      1"));
             assert!(
@@ -2486,8 +2509,8 @@ mod tests {
             screen
                 .lines()
                 .find(|row| row.contains("│▌├─ ▸ feat "))
-                .and_then(|row| row.rsplit('│').nth(1))
-                .map(str::trim_end),
+                .and_then(|row| row.split_once('│'))
+                .map(|(_, content)| content.trim_end()),
             Some("▌├─ ▸ feat      intent · decision · constraints")
         );
         assert!(screen.contains("│ ├─ ▸ fix       cause · decision · constraints"));
@@ -2501,8 +2524,8 @@ mod tests {
             screen
                 .lines()
                 .find(|row| row.contains("│▌├─ ▾ feat "))
-                .and_then(|row| row.rsplit('│').nth(1))
-                .map(str::trim_end),
+                .and_then(|row| row.split_once('│'))
+                .map(|(_, content)| content.trim_end()),
             Some("▌├─ ▾ feat")
         );
         for _ in 0..3 {
@@ -2559,7 +2582,7 @@ mod tests {
     }
 
     #[test]
-    fn outline_counts_hidden_rows_on_its_borders_and_takes_clicks_at_the_minimum_size()
+    fn outline_counts_hidden_rows_in_its_last_row_and_takes_clicks_at_the_minimum_size()
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = Workspace::new();
         let mut state = State::new(&workspace);
@@ -2568,38 +2591,31 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
         let screen = rows(&terminal);
-        let bottom = screen
-            .iter()
-            .position(|row| row.contains(" more ┘"))
-            .ok_or("missing the hidden-rows count")?;
-        let top = usize::from(OUTLINE_TOP);
-        let visible = bottom - top - 1;
-        assert!(screen[bottom].contains(&format!("↓ {} more", 14 - visible)));
-        assert!(!screen[top].contains("more"));
+        let top = outline_top(MINIMUM_HEIGHT);
+        let last = usize::from(rule_row(&terminal).ok_or("missing the rule")? - 1);
+        let visible = last - usize::from(top);
+        assert!(
+            screen[last].ends_with(&format!("↓ {} more ", 14 - visible)),
+            "{}",
+            screen[last]
+        );
+        assert!(!screen[usize::from(top)].contains("more"));
         for _ in 0..20 {
             state.handle_event(key(KeyCode::Down), &workspace);
         }
         terminal.draw(|frame| state.render(frame))?;
         let screen = rows(&terminal);
-        assert!(screen[top].contains(&format!("↑ {} more", 14 - visible)));
-        assert!(screen[bottom - 1].contains("│▌▸ infra-ops"));
+        assert!(!screen[last].contains("more"), "{}", screen[last]);
+        assert!(screen[last - 1].contains("│▌▸ infra-ops"));
         assert!(screen.join("\n").contains("Taxonomy infra-ops"));
 
-        let first = row_text(
-            &terminal,
-            CONTENT_X + 1,
-            OUTLINE_TOP + 1,
-            MINIMUM_WIDTH - CONTENT_X - 2,
-        );
+        let first = row_text(&terminal, CONTENT_X + 1, top, MINIMUM_WIDTH - CONTENT_X - 2);
         let name = first
             .split(['▸', '▾'])
             .nth(1)
             .and_then(|row| row.split_whitespace().next())
             .ok_or("missing first row")?;
-        state.handle_event(
-            click(Rect::new(CONTENT_X + 1, OUTLINE_TOP + 1, 1, 1)),
-            &workspace,
-        );
+        state.handle_event(click(Rect::new(CONTENT_X + 1, top, 1, 1)), &workspace);
         assert_eq!(
             state.taxonomies.observe(state.library()).cursor_path,
             ["conventional", name]
@@ -2630,7 +2646,7 @@ mod tests {
             )
         );
         assert_eq!(row_text(&terminal, CONTENT_X, 3, width).trim(), "");
-        assert!(row_text(&terminal, CONTENT_X, OUTLINE_TOP, width).starts_with("┌"));
+        assert!(row_text(&terminal, CONTENT_X, OUTLINE_TOP, width).starts_with("▌▸ conventional"));
 
         let buffer = terminal.backend().buffer();
         let library = &buffer[(CONTENT_X + 1, 1)];
@@ -2645,6 +2661,177 @@ mod tests {
         Ok(())
     }
 
+    /// The built-ins and three custom taxonomies, so conventional with fix open overflows the
+    /// outline at 87x40.
+    fn crowded_workspace() -> Result<Workspace, Box<dyn std::error::Error>> {
+        let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
+        for name in ["team-changes", "draft-ideas", "release-notes"] {
+            fork_as(&mut session, "research", name)?;
+        }
+        let global = session
+            .library()
+            .and_then(|library| library.build().ok())
+            .ok_or("the forks build")?;
+        let workspace = Workspace::new();
+        *workspace.global.borrow_mut() = ConfigurationSession::open_global(global);
+        Ok(workspace)
+    }
+
+    fn text_in(terminal: &Terminal<TestBackend>, area: Rect) -> Vec<String> {
+        (area.y..area.bottom())
+            .map(|y| row_text(terminal, area.x, y, area.width))
+            .collect()
+    }
+
+    #[test]
+    fn under_100_columns_a_rule_parts_the_outline_from_the_inspector_below_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = crowded_workspace()?;
+        let mut state = State::new(&workspace);
+        press(
+            &mut state,
+            &workspace,
+            &[
+                KeyCode::Char('2'),
+                KeyCode::Enter,
+                KeyCode::Down,
+                KeyCode::Down,
+                KeyCode::Enter,
+            ],
+        );
+        assert_eq!(cursor(&state), ["conventional", "fix"]);
+        let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let screen = rows(&terminal);
+        for (y, row) in screen.iter().enumerate().take(39) {
+            let content = &row[row
+                .char_indices()
+                .nth(usize::from(CONTENT_X))
+                .map_or(0, |(at, _)| at)..];
+            assert!(!content.contains(['┌', '┐', '┘']), "row {y}: {row}");
+        }
+        assert_eq!(
+            screen[38].trim_end(),
+            " ".repeat(13) + "│",
+            "bottom padding"
+        );
+        // Below the header are 34 rows; the outline and the rule take 60% of them, 20.
+        let rule = OUTLINE_TOP + 19;
+        assert_eq!(rule_row(&terminal), Some(rule));
+        assert!(screen[usize::from(rule) + 1].contains("│ Type fix "));
+        // Twenty rows: eighteen show, and the last row counts the two forks below.
+        let last = usize::from(rule) - 1;
+        assert!(
+            screen[last - 1].contains("▸ team-changes "),
+            "{}",
+            screen[last - 1]
+        );
+        assert!(screen[last].ends_with(" ↓ 2 more "), "{}", screen[last]);
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(85, rule - 1)].fg, theme().dim);
+
+        press(&mut state, &workspace, &[KeyCode::Enter]);
+        terminal.draw(|frame| state.render(frame))?;
+        let screen = rows(&terminal);
+        // Seventeen rows fit, so the rule sits right below them.
+        assert_eq!(rule_row(&terminal), Some(OUTLINE_TOP + 17));
+        assert!(screen[usize::from(OUTLINE_TOP) + 16].contains("▸ release-notes "));
+        assert!(!screen.join("\n").contains("more"));
+        Ok(())
+    }
+
+    #[test]
+    fn from_100_columns_the_inspector_sits_beside_an_outline_of_half_the_content_up_to_64()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (width, outline) in [(100, 43), (140, 63), (160, 64)] {
+            let workspace = crowded_workspace()?;
+            let mut state = State::new(&workspace);
+            state.handle_event(key(KeyCode::Char('2')), &workspace);
+            let mut terminal = Terminal::new(TestBackend::new(width, 30))?;
+            terminal.draw(|frame| state.render(frame))?;
+            let rule = CONTENT_X + outline;
+            let buffer = terminal.backend().buffer();
+            for y in 0..29 {
+                assert_eq!(buffer[(rule, y)].symbol(), "│", "{width} columns, row {y}");
+                assert_eq!(buffer[(rule, y)].fg, theme().dim);
+            }
+            assert_eq!(rule_row(&terminal), None);
+            let header = row_text(&terminal, CONTENT_X, 1, outline);
+            assert!(header.starts_with(" Library "), "{header}");
+            assert!(header.ends_with(" saves as you go "), "{header}");
+            assert!(
+                row_text(&terminal, CONTENT_X, OUTLINE_TOP, outline).starts_with("▌▸ conventional")
+            );
+            let inspector = row_text(&terminal, rule + 1, 1, width - rule - 1);
+            assert!(
+                inspector.starts_with(" Taxonomy conventional "),
+                "{inspector}"
+            );
+            assert!(inspector.trim_end().ends_with("◇ read-only"), "{inspector}");
+            assert_eq!(
+                row_text(&terminal, rule + 1, 0, width - rule - 1).trim(),
+                ""
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn page_keys_page_the_inspector_by_its_visible_rows_and_count_the_rest()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        press(
+            &mut state,
+            &workspace,
+            &[
+                KeyCode::Char('2'),
+                KeyCode::Enter,
+                KeyCode::Down,
+                KeyCode::Enter,
+                KeyCode::Down,
+                KeyCode::Down,
+                KeyCode::Down,
+            ],
+        );
+        assert_eq!(cursor(&state), ["conventional", "feat", "constraints"]);
+        // The same width on a tall terminal shows every line of the Inspector.
+        let mut tall = Terminal::new(TestBackend::new(MINIMUM_WIDTH, 60))?;
+        tall.draw(|frame| state.render(frame))?;
+        let area = state.taxonomies.observe(state.library()).inspector_area;
+        let full = text_in(&tall, area);
+        let total = full
+            .iter()
+            .rposition(|line| !line.trim().is_empty())
+            .ok_or("Inspector")?
+            + 1;
+
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let area = state.taxonomies.observe(state.library()).inspector_area;
+        let page = usize::from(area.height);
+        assert!(total > 2 * page, "{total} lines in pages of {page}");
+        let more = Rect::new(area.x, area.bottom(), area.width, 1);
+        let mut offset = 0;
+        loop {
+            assert_eq!(text_in(&terminal, area), full[offset..offset + page]);
+            let below = total.saturating_sub(offset + page);
+            let counted = text_in(&terminal, more).concat();
+            if below == 0 {
+                assert_eq!(counted.trim(), "");
+                break;
+            }
+            assert!(counted.ends_with(&format!(" ↓ {below} more ")), "{counted}");
+            state.handle_event(key(KeyCode::PageDown), &workspace);
+            terminal.draw(|frame| state.render(frame))?;
+            offset = (offset + page).min(total - page);
+        }
+        state.handle_event(key(KeyCode::PageUp), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(text_in(&terminal, area), full[offset - page..offset]);
+        Ok(())
+    }
+
     #[test]
     fn a_long_library_path_keeps_its_end_inside_the_content()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -2656,10 +2843,10 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
         let room = usize::from(MINIMUM_WIDTH - CONTENT_X - 2);
-        let file = row_text(&terminal, CONTENT_X, 2, MINIMUM_WIDTH - CONTENT_X);
+        let file = row_text(&terminal, CONTENT_X, 1, MINIMUM_WIDTH - CONTENT_X);
         assert_eq!(file, format!(" …{} ", &path[path.len() - (room - 1)..]));
-        assert_eq!(row_text(&terminal, 0, 2, RAIL_WIDTH + 1), " 2  Library  │");
-        let title = row_text(&terminal, CONTENT_X, 1, MINIMUM_WIDTH - CONTENT_X);
+        assert_eq!(row_text(&terminal, 0, 1, RAIL_WIDTH + 1), " 2  Library  │");
+        let title = row_text(&terminal, CONTENT_X, 0, MINIMUM_WIDTH - CONTENT_X);
         assert!(title.ends_with(" saves as you go "), "{title}");
         Ok(())
     }
@@ -2687,14 +2874,23 @@ mod tests {
                 );
                 assert_eq!(buffer[(RAIL_WIDTH, y)].symbol(), "│", "{width}x{height}");
             }
-            assert_eq!(buffer[(CONTENT_X, OUTLINE_TOP)].symbol(), "┌");
-            assert_eq!(row_text(&terminal, 0, 1, RAIL_WIDTH), " 1  Project  ");
-            assert_eq!(row_text(&terminal, 0, 2, RAIL_WIDTH), " 2  Library  ");
+            // From 24 rows the rail and the Library header start below a blank row.
+            let [project, library] = [0, 1].map(|row| row + u16::from(height >= 24));
+            assert_eq!(row_text(&terminal, 0, project, RAIL_WIDTH), " 1  Project  ");
+            assert_eq!(row_text(&terminal, 0, library, RAIL_WIDTH), " 2  Library  ");
+            assert!(
+                row_text(&terminal, CONTENT_X, project, width - CONTENT_X).starts_with(" Library "),
+                "{width}x{height}"
+            );
+            if project > 0 {
+                let padding = row_text(&terminal, 0, 0, width);
+                assert!(padding.chars().all(|c| c == ' ' || c == '│'), "{padding}");
+            }
             for x in 0..RAIL_WIDTH {
-                let project = &buffer[(x, 1)];
+                let project = &buffer[(x, project)];
                 assert!(!project.modifier.contains(Modifier::UNDERLINED));
                 assert_ne!(project.bg, theme().cursor);
-                let library = &buffer[(x, 2)];
+                let library = &buffer[(x, library)];
                 assert_ne!(
                     library.bg,
                     theme().cursor,
@@ -2706,25 +2902,25 @@ mod tests {
                     "Library underlined from its number to its label, at {x}"
                 );
             }
-            assert_eq!(buffer[(1, 1)].fg, theme().dim);
+            assert_eq!(buffer[(1, project)].fg, theme().dim);
             assert_eq!(
-                (buffer[(1, 2)].fg, buffer[(4, 2)].fg),
+                (buffer[(1, library)].fg, buffer[(4, library)].fg),
                 (theme().text, theme().text)
             );
-            assert!(buffer[(4, 2)].modifier.contains(Modifier::BOLD));
+            assert!(buffer[(4, library)].modifier.contains(Modifier::BOLD));
 
             state.handle_event(key(KeyCode::Left), &workspace);
             assert_eq!(state.home_focus, HomeFocus::Menu);
             terminal.draw(|frame| state.render(frame))?;
             let buffer = terminal.backend().buffer();
             for x in 0..RAIL_WIDTH {
-                let cell = &buffer[(x, 2)];
+                let cell = &buffer[(x, library)];
                 assert_eq!(
                     (cell.fg, cell.bg),
                     (theme().ground, theme().cursor),
                     "at {x}"
                 );
-                assert_ne!(buffer[(x, 1)].bg, theme().cursor);
+                assert_ne!(buffer[(x, project)].bg, theme().cursor);
             }
         }
         Ok(())
@@ -3482,7 +3678,7 @@ mod tests {
         state.handle_event(key(KeyCode::Down), &workspace);
         assert_eq!(state.category, Category::Taxonomies);
         terminal.draw(|frame| state.render(frame))?;
-        assert!(text(&terminal).contains("Inspector"));
+        assert!(text(&terminal).contains("Taxonomy conventional"));
         assert!(state.scope_dirty(ConfigurationDestination::Project));
         assert_eq!(workspace.saves.get(), 0);
         state.handle_event(key(KeyCode::Char('e')), &workspace);
@@ -3542,7 +3738,7 @@ mod tests {
             .into_iter()
             .find(|row| row.contains("▌▾ team"))
             .ok_or("team row")?;
-        assert!(team.trim_end().ends_with("custom  │"));
+        assert!(team.contains("custom  │ "), "{team}");
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(matches!(
             state.taxonomies.observe(state.library()).mode,
@@ -3574,7 +3770,8 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
         let rendered = text(&terminal);
-        assert!(rendered.contains("Taxonomies"));
+        assert!(rendered.contains("saves as you go"));
+        assert!(rule_row(&terminal).is_some());
         assert!(rendered.contains("Taxonomy library unavailable."));
         assert!(footer_text(&rendered).contains("/ commands"));
         assert!(rendered.contains("Global load failed."));
@@ -3765,7 +3962,7 @@ mod tests {
     }
 
     #[test]
-    fn property_navigation_keeps_policy_and_frames_follow_nav_and_edit()
+    fn property_navigation_keeps_policy_and_the_rule_dim_in_nav_and_edit()
     -> Result<(), Box<dyn std::error::Error>> {
         use gitserious_app::Policy;
         for embedded in [false, true] {
@@ -3800,18 +3997,8 @@ mod tests {
                     "{footer}"
                 );
                 assert!(!footer.contains("policy"));
-                let inspector_y = (0..height)
-                    .find(|y| {
-                        row_text(&terminal, CONTENT_X, *y, width - CONTENT_X)
-                            .starts_with("┌ Inspector")
-                    })
-                    .ok_or("Inspector")?;
-                let frames = |terminal: &Terminal<TestBackend>, outline, inspector| {
-                    let buffer = terminal.backend().buffer();
-                    assert_eq!(buffer[(CONTENT_X, OUTLINE_TOP)].fg, outline);
-                    assert_eq!(buffer[(CONTENT_X, inspector_y)].fg, inspector);
-                };
-                frames(&terminal, ACCENT, ACCENT);
+                let rule = rule_row(&terminal);
+                assert!(rule.is_some());
                 assert_eq!(
                     state.taxonomies.observe(state.library()).inspector_offset,
                     0
@@ -3832,18 +4019,15 @@ mod tests {
                     reached.insert(policy(&state)?.label());
                     press(&mut state, &workspace, &[KeyCode::Right]);
                     terminal.draw(|frame| state.render(frame))?;
-                    frames(&terminal, ACCENT, crate::theme::AMBER);
+                    assert_eq!(rule_row(&terminal), rule);
                 }
                 assert_eq!(reached.len(), 4);
                 press(&mut state, &workspace, &[KeyCode::Esc]);
                 terminal.draw(|frame| state.render(frame))?;
-                frames(&terminal, ACCENT, ACCENT);
+                assert_eq!(rule_row(&terminal), rule);
                 state.home_focus = HomeFocus::Menu;
                 terminal.draw(|frame| state.render(frame))?;
-                let inactive = crate::theme::focus_frame_style(false)
-                    .fg
-                    .ok_or("inactive color")?;
-                frames(&terminal, inactive, inactive);
+                assert_eq!(rule_row(&terminal), rule);
             }
         }
         Ok(())
@@ -3934,13 +4118,7 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| state.render(frame))?;
             let screen = rows(&terminal).join("\n");
-            // At the minimum size the Library header leaves the Inspector no room for the
-            // description's row.
-            assert_eq!(
-                screen.contains("130/100"),
-                height > MINIMUM_HEIGHT,
-                "{screen}"
-            );
+            assert!(screen.contains("130/100"), "{screen}");
             let footer = row_text(&terminal, 0, height - 1, width);
             assert!(footer.starts_with("  NAV   ←/→ focus"), "{footer}");
             assert!(!footer.contains("←/→ policy"), "{footer}");

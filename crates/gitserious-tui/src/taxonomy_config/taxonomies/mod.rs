@@ -14,17 +14,17 @@ use gitserious_app::{
 };
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::Paragraph;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::naming::{problem_sentence, refusal_sentence, single_line};
 use super::{ShellKeys, contains};
 use crate::theme::{
-    ACCENT, AMBER, JET_BLACK, block_title, focus_frame_style, footer_hints, footer_key_style,
-    footer_label_style, navigation_key_style,
+    ACCENT, AMBER, JET_BLACK, footer_hints, footer_key_style, footer_label_style,
+    navigation_key_style,
 };
 use outline::Row;
 pub(super) use outline::RowKey;
@@ -33,11 +33,11 @@ mod inspector;
 #[cfg(test)]
 mod layout_tests;
 mod outline;
+mod panes;
 mod picker;
 mod summary_scroll;
 mod text_layout;
 
-const OUTLINE_TITLE: &str = "Commit Message Taxonomies";
 const DIM: Style = Style::new().fg(Color::Gray);
 const KEY_STYLE: Style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
 const READ_ONLY_STYLE: Style = Style::new().fg(Color::Black).bg(Color::Rgb(211, 211, 211));
@@ -47,7 +47,6 @@ const EDIT_CHIP: Style = Style::new()
     .fg(JET_BLACK)
     .bg(AMBER)
     .add_modifier(Modifier::BOLD);
-const INSPECTOR_PAGE: u16 = 8;
 
 /// A node's change or problem status in the outline and Inspector.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -119,6 +118,9 @@ pub(super) struct TaxonomiesView {
     outline_offset: usize,
     inspector_offset: u16,
     outline_area: Rect,
+    /// The Inspector's rows of text, without the row that counts the rows below; pgup and pgdn
+    /// page by its height.
+    inspector_area: Rect,
     summary_scroll: summary_scroll::SummaryScroll,
 }
 
@@ -163,6 +165,10 @@ pub(super) enum Nav {
 }
 
 impl TaxonomiesView {
+    fn inspector_page(&self) -> u16 {
+        self.inspector_area.height.max(1)
+    }
+
     pub(super) fn select(&mut self, node: NodeId) {
         self.set_cursor(RowKey::Node(node));
     }
@@ -291,10 +297,10 @@ impl TaxonomiesView {
             KeyCode::Left => return Nav::Sidebar,
             KeyCode::Right => return Nav::Handled,
             KeyCode::PageUp => {
-                self.inspector_offset = self.inspector_offset.saturating_sub(INSPECTOR_PAGE);
+                self.inspector_offset = self.inspector_offset.saturating_sub(self.inspector_page());
             }
             KeyCode::PageDown => {
-                self.inspector_offset = self.inspector_offset.saturating_add(INSPECTOR_PAGE);
+                self.inspector_offset = self.inspector_offset.saturating_add(self.inspector_page());
             }
             _ => return Nav::Unhandled,
         }
@@ -498,11 +504,11 @@ impl TaxonomiesView {
         }
         let (range, insert) = match key.code {
             KeyCode::PageUp => {
-                self.inspector_offset = self.inspector_offset.saturating_sub(INSPECTOR_PAGE);
+                self.inspector_offset = self.inspector_offset.saturating_sub(self.inspector_page());
                 return Ok(());
             }
             KeyCode::PageDown => {
-                self.inspector_offset = self.inspector_offset.saturating_add(INSPECTOR_PAGE);
+                self.inspector_offset = self.inspector_offset.saturating_add(self.inspector_page());
                 return Ok(());
             }
             KeyCode::Left | KeyCode::Right if *field == DraftField::Policy => {
@@ -594,39 +600,37 @@ impl TaxonomiesView {
         true
     }
 
-    /// Splits both bordered panels equally, giving an odd extra row to Taxonomies.
+    /// Places the outline and the Inspector by terminal width, with a dim rule between them,
+    /// and returns the `lead` rows it leaves above the outline for a header.
     pub(super) fn render(
         &mut self,
         frame: &mut Frame<'_>,
         area: Rect,
+        lead: u16,
         library: Option<&LibraryDraft>,
         focused: bool,
         animate: bool,
-    ) {
-        let outline_height = area.height.div_ceil(2);
-        let [outline_area, inspector_area] =
-            Layout::vertical([Constraint::Length(outline_height), Constraint::Min(0)]).areas(area);
-        let Some(library) = library else {
+    ) -> Rect {
+        let rows = library.map(|library| outline::rows(library, &self.expanded));
+        let panes = panes::Panes::new(area, frame.area(), lead, rows.as_ref().map_or(1, Vec::len));
+        panes.render_rule(frame);
+        self.inspector_area = Rect::default();
+        let (Some(library), Some(rows)) = (library, rows) else {
             self.summary_scroll.reset();
             self.outline_area = Rect::default();
-            let block = Block::bordered()
-                .border_style(focus_frame_style(focused))
-                .title(block_title(OUTLINE_TITLE));
             frame.render_widget(
                 Paragraph::new("Taxonomy library unavailable."),
-                block.inner(outline_area),
+                panes.outline.inner(Margin::new(1, 0)),
             );
-            frame.render_widget(block, outline_area);
-            return;
+            return panes.lead;
         };
-        let rows = outline::rows(library, &self.expanded);
         let selected = outline::resolve(&rows, self.cursor.as_ref(), library);
         let outline_focused = focused;
         let animate = animate && self.navigating();
         let chips = Chips::new(library, &self.expanded);
         self.outline_area = outline::render(
             frame,
-            outline_area,
+            panes.outline,
             &rows,
             &self.expanded,
             &chips,
@@ -650,15 +654,18 @@ impl TaxonomiesView {
                 }),
                 _ => None,
             };
-            inspector::render(
+            let shown = inspector::render(
                 frame,
-                inspector_area,
+                panes.inspector,
                 &chips,
                 node,
                 focus,
-                focused,
                 &mut self.inspector_offset,
             );
+            self.inspector_area = Rect {
+                height: shown,
+                ..panes.inspector
+            };
         }
         if let Mode::CopyTo {
             property,
@@ -668,6 +675,7 @@ impl TaxonomiesView {
         {
             picker::render(frame, area, library, property, *cursor, chosen);
         }
+        panes.lead
     }
 
     pub(super) fn status_line(
@@ -800,6 +808,7 @@ impl TaxonomiesView {
         });
         Observation {
             outline_area: self.outline_area,
+            inspector_area: self.inspector_area,
             visible,
             cursor: self.cursor.clone(),
             cursor_path: library
@@ -830,6 +839,7 @@ fn splice(text: &str, range: Range<usize>, insert: &str) -> (String, usize) {
 #[derive(Debug)]
 pub(super) struct Observation {
     pub(super) outline_area: Rect,
+    pub(super) inspector_area: Rect,
     pub(super) visible: Vec<Option<NodeId>>,
     pub(super) cursor: Option<RowKey>,
     pub(super) cursor_path: Vec<String>,

@@ -1320,7 +1320,7 @@ mod tests {
         assert!(text.contains("tab nav bar  / commands  q quit"));
         shell.handle_event(key(KeyCode::Down), &services, &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert!(rendered(&terminal).contains("Taxonomies"));
+        assert!(rendered(&terminal).contains("saves as you go"));
         shell.handle_event(key(KeyCode::BackTab), &services, &[]);
         assert_eq!(shell.section, Section::Commit);
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
@@ -1329,45 +1329,69 @@ mod tests {
         shell.handle_event(key(KeyCode::BackTab), &services, &[]);
         assert_eq!(shell.section, Section::Config);
         terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert!(rendered(&terminal).contains("Taxonomies"));
+        assert!(rendered(&terminal).contains("saves as you go"));
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.section, Section::Home);
         Ok(())
     }
 
     #[test]
-    fn embedded_config_splits_the_bordered_panels_equally_below_the_library_header()
+    fn embedded_config_places_the_inspector_below_or_beside_the_library_by_width()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
         shell.handle_event(key(KeyCode::Char('2')), &services, &[]);
         let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
+        // Content starts right of the 13-column rail and its rule.
+        let content = 14;
         for (width, height) in [
             (87, 40),
             (87, 41),
             (MINIMUM_WIDTH, MINIMUM_HEIGHT),
-            (87, 39),
+            (87, 23),
+            (100, 30),
             (87, 40),
         ] {
             terminal.backend_mut().resize(width, height);
             terminal.resize(Rect::new(0, 0, width, height))?;
             terminal.draw(|frame| shell.render(frame, &[]))?;
             let buffer = terminal.backend().buffer();
-            // The shell header, then the Library's padding, title, file, and blank rows.
-            let top = 1 + 4;
-            let panels = height - 1 - top;
-            let outline = panels.div_ceil(2);
-            let inspector_y = top + outline;
-            let x = (0..width)
-                .find(|x| buffer[(*x, top)].symbol() == "┌")
-                .ok_or("outline border")?;
-            assert_eq!(buffer[(x, inspector_y - 1)].symbol(), "└");
-            assert_eq!(buffer[(x, inspector_y)].symbol(), "┌");
-            assert_eq!(buffer[(x, height - 2)].symbol(), "└");
-            assert_eq!(outline - (height - 1 - inspector_y), panels % 2);
-            if height == 40 {
-                assert_eq!(outline, 17);
-                assert_eq!(height - 1 - inspector_y, 17);
+            let text = |x: u16, y: u16, end: u16| {
+                (x..end)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            };
+            let dim = |x: u16, y: u16, symbol: &str| {
+                buffer[(x, y)].symbol() == symbol && buffer[(x, y)].fg == theme().dim
+            };
+            // The shell header, a blank row from 24 rows, then the Library's title and file
+            // level with the rail, and a blank row.
+            let title = 1 + u16::from(height >= 24);
+            assert_eq!(text(0, title, 13), " 1  Project  ", "{width}x{height}");
+            let top = title + 3;
+            assert!(text(content, title, width).starts_with(" Library "));
+            assert!(text(content, top, width).starts_with("▌▸ conventional"));
+            for y in 1..height - 1 {
+                let row = text(content, y, width);
+                assert!(
+                    !row.contains(['┌', '┐', '└', '┘']),
+                    "{width}x{height}: {row}"
+                );
+            }
+            if width < 100 {
+                // Three collapsed taxonomies, then the rule across the content.
+                let rule = top + 3;
+                assert!(
+                    (content..width).all(|x| dim(x, rule, "─")),
+                    "{width}x{height}"
+                );
+                assert!(text(content, rule + 1, width).starts_with(" Taxonomy conventional "));
+            } else {
+                // The outline column takes half the content and the Inspector starts at the top.
+                let rule = content + (width - content) / 2;
+                assert!((1..height - 1).all(|y| dim(rule, y, "│")));
+                assert!(text(content, title, rule).ends_with(" saves as you go "));
+                assert!(text(rule + 1, title, width).starts_with(" Taxonomy conventional "));
             }
             assert_eq!(buffer[(1, height - 1)].symbol(), " ");
             assert_eq!(buffer[(2, height - 1)].symbol(), "N");
