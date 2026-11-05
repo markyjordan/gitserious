@@ -69,7 +69,6 @@ pub fn initialize_project<L, S>(
     locator: &L,
     store: &S,
     global: &GlobalConfiguration,
-    taxonomy: Option<&TaxonomyId>,
     start: &Path,
 ) -> Result<InitOutcome, InitializeProjectError<L::Error, S::Error>>
 where
@@ -86,8 +85,8 @@ where
             .map_err(InitializeProjectError::Store)?;
         (InitStatus::AlreadyInitialized, stored.configuration)
     } else {
-        let configuration = initial_project_configuration(global, taxonomy)
-            .map_err(InitializeProjectError::Configuration)?;
+        let configuration =
+            initial_project_configuration(global).map_err(InitializeProjectError::Configuration)?;
         store
             .ensure_local_state(&root)
             .map_err(InitializeProjectError::Store)?;
@@ -113,18 +112,13 @@ where
     })
 }
 
-/// Copies the Library's default environment, plus `requested`, into a new project.
+/// Copies the Library's default environment into a new project.
 pub fn initial_project_configuration(
     global: &GlobalConfiguration,
-    requested: Option<&TaxonomyId>,
 ) -> Result<ProjectConfiguration, ConfigurationError> {
     let catalog = global.catalog()?;
-    let default = requested.unwrap_or_else(|| global.default_taxonomy());
-    let mut ids = global.available_taxonomies().to_vec();
-    if !ids.contains(default) {
-        ids.push(default.clone());
-    }
-    let taxonomies = ids
+    let taxonomies = global
+        .available_taxonomies()
         .iter()
         .map(|id| {
             catalog
@@ -133,5 +127,5 @@ pub fn initial_project_configuration(
                 .ok_or_else(|| ConfigurationError::UnknownTaxonomy(id.clone()))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    ProjectConfiguration::new(1, default.clone(), taxonomies)
+    ProjectConfiguration::new(1, global.default_taxonomy().clone(), taxonomies)
 }

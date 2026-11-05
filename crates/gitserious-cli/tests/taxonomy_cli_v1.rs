@@ -58,14 +58,10 @@ impl ProjectConfigurationStore for Project {
         _: ProjectRevision,
         _: &ProjectConfiguration,
     ) -> Result<ProjectRevision, Self::Error> {
-        unreachable!("config list and show never write")
+        unreachable!("rejected arguments never write")
     }
     fn ensure_local_state(&self, _: &RepositoryRoot) -> Result<(), Self::Error> {
         Ok(())
-    }
-
-    fn is_invalid_document(_: &Self::Error) -> bool {
-        false
     }
 }
 
@@ -89,26 +85,17 @@ fn run(arguments: &[&str]) -> (ExitCode, String, String) {
 }
 
 #[test]
-fn list_and_show_are_taxonomy_only() {
-    let (exit, stdout, stderr) = run(&["gitserious", "config", "list"]);
-    assert_eq!(exit, ExitCode::SUCCESS);
-    assert!(stderr.is_empty());
-    assert!(stdout.contains("conventional"));
-    assert!(stdout.contains("research"));
-    assert!(!stdout.contains("ml-research"));
-
-    let (exit, stdout, _) = run(&["gitserious", "config", "show", "research"]);
-    assert_eq!(exit, ExitCode::SUCCESS);
-    assert!(stdout.starts_with("research\n"));
-}
-
-#[test]
 fn legacy_template_flags_and_commands_are_rejected() {
     let (exit, _, stderr) = run(&["gitserious", "commit", "--template", "default"]);
     assert_ne!(exit, ExitCode::SUCCESS);
     assert!(stderr.contains("unexpected argument '--template'"));
 
-    let (exit, _, stderr) = run(&["gitserious", "config", "fork", "anything"]);
-    assert_ne!(exit, ExitCode::SUCCESS);
-    assert!(stderr.contains("unrecognized subcommand 'fork'"));
+    for subcommand in ["fork", "list", "show", "verify"] {
+        let (exit, _, stderr) = run(&["gitserious", "config", subcommand]);
+        assert_eq!(exit, ExitCode::from(2));
+        assert!(
+            stderr.contains(&format!("unexpected argument '{subcommand}'")),
+            "{stderr}"
+        );
+    }
 }

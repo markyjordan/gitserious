@@ -5,20 +5,15 @@ use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand};
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
     ConfigurationEditor, GlobalConfigurationStore, HelpPage, InitOutcome, InitStatus,
-    InteractiveEntry, InteractiveUi, ProjectConfigurationStore, ProjectVerification,
-    RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryStatusReader,
-    TaxonomyOrigin, VerifyProjectError, create_commit_with_taxonomy, edit_configuration,
-    fingerprint_project_configuration, fingerprint_taxonomy, initialize_project, run_interactive,
-    verify_project_configuration,
+    InteractiveEntry, InteractiveUi, ProjectConfigurationStore, RepositoryInitializer,
+    RepositoryLocator, RepositoryRoot, RepositoryStatusReader, create_commit_with_taxonomy,
+    edit_configuration, initialize_project, run_interactive,
 };
-use gitserious_core::{
-    CommitMessage, CommitTypeDefinition, CommitTypeId, PropertyRequirement, Taxonomy, TaxonomyId,
-    VersionedTaxonomy,
-};
+use gitserious_core::{CommitMessage, CommitTypeDefinition, VersionedTaxonomy};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -36,51 +31,11 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Author and create a durable commit from the staged index.
-    Commit {
-        /// Select a taxonomy for this commit without changing project policy.
-        #[arg(long, value_name = "TAXONOMY")]
-        taxonomy: Option<TaxonomyId>,
-        /// Select a commit type without opening the terminal picker.
-        #[arg(long = "type", value_name = "COMMIT TYPE")]
-        commit_type: Option<CommitTypeId>,
-    },
+    Commit,
     /// Initialize repository-local gitserious policy.
-    Init {
-        /// Select an installed taxonomy for fresh project policy.
-        #[arg(long, value_name = "TAXONOMY")]
-        taxonomy: Option<TaxonomyId>,
-    },
-    /// Inspect or interactively configure taxonomy policy.
-    Config {
-        #[command(subcommand)]
-        action: Option<ConfigAction>,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-enum ConfigAction {
-    /// List every installed taxonomy.
-    List,
-    /// Show one complete taxonomy.
-    Show {
-        /// Taxonomy identifier.
-        taxonomy: TaxonomyId,
-    },
-    /// Check gitserious.toml without writing anything or reading the Library.
-    Verify {
-        /// Verify the repository's gitserious.toml.
-        #[arg(long, required = true)]
-        project: bool,
-        /// Print a sentence for people or a JSON report for automation.
-        #[arg(long, value_enum, default_value_t = ReportFormat::Human)]
-        format: ReportFormat,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-enum ReportFormat {
-    Human,
-    Json,
+    Init,
+    /// Interactively configure taxonomy policy.
+    Config,
 }
 
 type InteractiveAdapters<'a> = (
@@ -282,9 +237,7 @@ where
     };
     let entry = match &cli.command {
         None => Some(InteractiveEntry::Home),
-        Some(Command::Config { action: None }) if adapters.interactive.is_some() => {
-            Some(InteractiveEntry::Config)
-        }
+        Some(Command::Config) if adapters.interactive.is_some() => Some(InteractiveEntry::Config),
         _ => None,
     };
     if let Some(entry) = entry {
@@ -320,17 +273,12 @@ where
         return ExitCode::SUCCESS;
     };
     match command {
-        Command::Commit {
-            taxonomy,
-            commit_type,
-        } => match create_commit_with_taxonomy(
+        Command::Commit => match create_commit_with_taxonomy(
             locator,
             store,
             adapters.author,
             adapters.writer,
             start,
-            taxonomy.as_ref(),
-            commit_type.as_ref(),
         ) {
             Ok(CommitOutcome::Created(output)) => write_commit_output(stdout, stderr, &output),
             Ok(CommitOutcome::Cancelled) => {
@@ -339,17 +287,17 @@ where
             }
             Err(error) => operational_error(stderr, error),
         },
-        Command::Init { taxonomy } => {
+        Command::Init => {
             let global = match global.load() {
                 Ok(value) => value,
                 Err(error) => return operational_error(stderr, error),
             };
-            match initialize_project(locator, store, &global, taxonomy.as_ref(), start) {
+            match initialize_project(locator, store, &global, start) {
                 Ok(outcome) => write_init_outcome(stdout, &outcome),
                 Err(error) => operational_error(stderr, error),
             }
         }
-        Command::Config { action: None } => {
+        Command::Config => {
             let Some(editor) = adapters.configuration_editor else {
                 return operational_error(stderr, "configuration editor is not configured");
             };
@@ -358,107 +306,7 @@ where
                 Err(error) => operational_error(stderr, error),
             }
         }
-        Command::Config {
-            action: Some(action),
-        } => {
-            let library = || {
-                let global = global.load().map_err(|error| error.to_string())?;
-                let catalog = global.catalog().map_err(|error| error.to_string())?;
-                Ok::<_, String>((global, catalog))
-            };
-            match action {
-                ConfigAction::Verify { format, .. } => {
-                    let result = verify_project_configuration(locator, store, start);
-                    match format {
-                        ReportFormat::Human => write_verification(stdout, stderr, result),
-                        ReportFormat::Json => write_verification_report(stdout, &result),
-                    }
-                }
-                ConfigAction::List => {
-                    let (global, catalog) = match library() {
-                        Ok(value) => value,
-                        Err(error) => return operational_error(stderr, error),
-                    };
-                    for taxonomy in catalog.taxonomies() {
-                        let origin = catalog
-                            .origin(taxonomy.id())
-                            .map_or("unknown", TaxonomyOrigin::as_str);
-                        let default = if taxonomy.id() == global.default_taxonomy() {
-                            " default"
-                        } else {
-                            ""
-                        };
-                        let available = if global.available_taxonomies().contains(taxonomy.id()) {
-                            " available"
-                        } else {
-                            ""
-                        };
-                        if writeln!(
-                            stdout,
-                            "{}\t{}\tv{}{}{}",
-                            taxonomy.id(),
-                            origin,
-                            taxonomy.version(),
-                            default,
-                            available
-                        )
-                        .is_err()
-                        {
-                            return ExitCode::FAILURE;
-                        }
-                    }
-                    ExitCode::SUCCESS
-                }
-                ConfigAction::Show { taxonomy } => match library() {
-                    Err(error) => operational_error(stderr, error),
-                    Ok((_, catalog)) => match catalog.find(&taxonomy) {
-                        Some(taxonomy) => {
-                            if write!(stdout, "{}", render_taxonomy(taxonomy)).is_ok() {
-                                ExitCode::SUCCESS
-                            } else {
-                                ExitCode::FAILURE
-                            }
-                        }
-                        None => operational_error(
-                            stderr,
-                            format!("taxonomy \"{taxonomy}\" is not installed"),
-                        ),
-                    },
-                },
-            }
-        }
     }
-}
-
-fn render_taxonomy(taxonomy: &Taxonomy) -> String {
-    let mut output = format!(
-        "{}\nv{}\n{}\n",
-        taxonomy.id(),
-        taxonomy.version(),
-        taxonomy.description()
-    );
-    if let Some(source) = taxonomy.derived_from() {
-        output.push_str(&format!("forked from {}\n", source.versioned()));
-    }
-    for definition in taxonomy.commit_types() {
-        output.push_str(&format!(
-            "\n{}\t{}\n",
-            definition.id(),
-            definition.description()
-        ));
-        for property in definition.properties() {
-            let requirement = match property.requirement() {
-                PropertyRequirement::Required => "required".to_owned(),
-                PropertyRequirement::Recommended => "recommended".to_owned(),
-                PropertyRequirement::Optional => "optional".to_owned(),
-                PropertyRequirement::Conditional(condition) => {
-                    format!("conditional:{}", condition.id())
-                }
-            };
-            output.push_str(&format!("  {}\t{requirement}\n", property.key()));
-        }
-    }
-    output
 }
 
 fn write_commit_output(
@@ -490,144 +338,6 @@ fn write_init_outcome(output: &mut (impl Write + ?Sized), outcome: &InitOutcome)
     } else {
         ExitCode::FAILURE
     }
-}
-
-/// `config verify` exits 0 when valid, 1 when invalid or absent, and 3 when the file cannot be read.
-const VERIFY_ENVIRONMENT_ERROR: u8 = 3;
-
-fn write_verification<L: Display, S: Display>(
-    stdout: &mut (impl Write + ?Sized),
-    stderr: &mut (impl Write + ?Sized),
-    result: Result<ProjectVerification, VerifyProjectError<L, S>>,
-) -> ExitCode {
-    match result {
-        Ok(ProjectVerification::Valid(configuration)) => {
-            let taxonomies = configuration
-                .taxonomies()
-                .iter()
-                .map(|taxonomy| taxonomy.versioned().to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            if writeln!(
-                stdout,
-                "gitserious.toml is valid.\ndefault: {}\ntaxonomies: {taxonomies}",
-                configuration.default_taxonomy()
-            )
-            .is_ok()
-            {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::FAILURE
-            }
-        }
-        Ok(ProjectVerification::NotInitialized) => operational_error(
-            stderr,
-            "gitserious is not initialized; gitserious.toml is missing",
-        ),
-        Ok(ProjectVerification::Invalid(message)) => operational_error(stderr, message),
-        Err(error) => {
-            let _ = writeln!(stderr, "error: {error}");
-            ExitCode::from(VERIFY_ENVIRONMENT_ERROR)
-        }
-    }
-}
-
-/// The version of the JSON shape `config verify --format json` prints.
-const VERIFY_REPORT_VERSION: u16 = 1;
-
-/// Prints the machine-readable report; the exit codes match the human format.
-fn write_verification_report<L: Display, S: Display>(
-    stdout: &mut (impl Write + ?Sized),
-    result: &Result<ProjectVerification, VerifyProjectError<L, S>>,
-) -> ExitCode {
-    let (exit, valid, project, diagnostic) = match result {
-        Ok(ProjectVerification::Valid(configuration)) => {
-            (ExitCode::SUCCESS, true, Some(configuration), None)
-        }
-        Ok(ProjectVerification::NotInitialized) => (
-            ExitCode::FAILURE,
-            false,
-            None,
-            Some((
-                "not-initialized",
-                "gitserious is not initialized; gitserious.toml is missing".to_owned(),
-            )),
-        ),
-        Ok(ProjectVerification::Invalid(message)) => (
-            ExitCode::FAILURE,
-            false,
-            None,
-            Some(("invalid-configuration", message.clone())),
-        ),
-        Err(error) => (
-            ExitCode::from(VERIFY_ENVIRONMENT_ERROR),
-            false,
-            None,
-            Some(("unreadable", error.to_string())),
-        ),
-    };
-    let mut report =
-        format!("{{\n  \"report_version\": {VERIFY_REPORT_VERSION},\n  \"valid\": {valid},\n");
-    match project {
-        Some(configuration) => {
-            let taxonomies = configuration
-                .taxonomies()
-                .iter()
-                .map(|taxonomy| {
-                    format!(
-                        "    {{ \"id\": {}, \"version\": {}, \"fingerprint\": {} }}",
-                        json_string(taxonomy.id().as_str()),
-                        taxonomy.version(),
-                        json_string(&fingerprint_taxonomy(taxonomy).to_string()),
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(",\n");
-            report.push_str(&format!(
-                "  \"project_config_version\": {},\n  \"default_taxonomy\": {},\n  \"configuration_fingerprint\": {},\n  \"taxonomies\": [\n{taxonomies}\n  ],\n",
-                configuration.version(),
-                json_string(configuration.default_taxonomy().as_str()),
-                json_string(&fingerprint_project_configuration(configuration).to_string()),
-            ));
-        }
-        None => report.push_str(
-            "  \"project_config_version\": null,\n  \"default_taxonomy\": null,\n  \"configuration_fingerprint\": null,\n  \"taxonomies\": [],\n",
-        ),
-    }
-    match diagnostic {
-        Some((code, message)) => report.push_str(&format!(
-            "  \"diagnostics\": [\n    {{ \"code\": {}, \"message\": {} }}\n  ]\n}}\n",
-            json_string(code),
-            json_string(&message),
-        )),
-        None => report.push_str("  \"diagnostics\": []\n}\n"),
-    }
-    if write!(stdout, "{report}").is_ok() {
-        exit
-    } else {
-        ExitCode::FAILURE
-    }
-}
-
-/// Quotes `value` as a JSON string.
-fn json_string(value: &str) -> String {
-    let mut quoted = String::with_capacity(value.len() + 2);
-    quoted.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => quoted.push_str("\\\""),
-            '\\' => quoted.push_str("\\\\"),
-            '\n' => quoted.push_str("\\n"),
-            '\r' => quoted.push_str("\\r"),
-            '\t' => quoted.push_str("\\t"),
-            control if u32::from(control) < 0x20 => {
-                quoted.push_str(&format!("\\u{:04x}", u32::from(control)));
-            }
-            other => quoted.push(other),
-        }
-    }
-    quoted.push('"');
-    quoted
 }
 
 fn operational_error(output: &mut (impl Write + ?Sized), error: impl Display) -> ExitCode {
@@ -704,15 +414,15 @@ pub fn interactive_help() -> Vec<HelpPage> {
     ];
     let descriptions = [
         "Bare gitserious opens Home. Commit previews Git changes before authoring a durable message. Config configures repository policy and your taxonomy library.",
-        "Bare gitserious config opens Config. Project owns the complete taxonomies in gitserious.toml. Library owns taxonomies. Esc validates and saves Library edits. Copies, reorders, and confirmed deletions save immediately. Project changes use review and Apply. config verify --project checks gitserious.toml without writing or reading the Library; it exits 0 when valid, 1 when invalid or missing, 2 for usage errors, and 3 when the file cannot be read.",
-        "gitserious commit authors directly from persisted project policy. --taxonomy chooses an available taxonomy for this commit; --type preselects a type. Only Git's staged index is committed. Stage changes with Git before using Start commit in the shell.",
-        "gitserious init writes gitserious.toml with complete copies of your Library's default taxonomies. --taxonomy sets the project default. An existing gitserious.toml is never rewritten.",
+        "Bare gitserious config opens Config. Project owns the complete taxonomies in gitserious.toml. Library owns taxonomies. Esc validates and saves Library edits. Copies, reorders, and confirmed deletions save immediately. Project changes use review and Apply.",
+        "gitserious commit authors directly from persisted project policy, starting from the project default taxonomy. Only Git's staged index is committed. Stage changes with Git before using Start commit in the shell.",
+        "gitserious init writes gitserious.toml with complete copies of your Library's default taxonomies. An existing gitserious.toml is never rewritten.",
     ];
     let examples = [
         "gitserious\ngitserious --help",
-        "gitserious config\ngitserious config list\ngitserious config show conventional\ngitserious config verify --project",
-        "git add src/\ngitserious commit\ngitserious commit --taxonomy conventional --type feat",
-        "gitserious init\ngitserious init --taxonomy research",
+        "gitserious config",
+        "git add src/\ngitserious commit",
+        "gitserious init",
     ];
     let mut pages: Vec<_> = commands.into_iter().enumerate().map(|(index, (title, mut command))| {
         if index > 0 { command = command.bin_name(format!("gitserious {}", title.to_lowercase())); }

@@ -2206,9 +2206,8 @@ mod tests {
             .find(&TaxonomyId::new("team")?)
             .cloned()
             .ok_or("the fork is in the catalog")?;
-        let research = initial_project_configuration(&GlobalConfiguration::default(), None)?
-            .taxonomies()[1]
-            .clone();
+        let research =
+            initial_project_configuration(&GlobalConfiguration::default())?.taxonomies()[1].clone();
         let project = ProjectConfiguration::new(1, team.id().clone(), vec![team, research])?;
         state.project = Some(ConfigurationSession::open_project(
             root,

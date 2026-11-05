@@ -159,9 +159,8 @@ compact and wide terminals.
 
 ## Commit authoring
 
-`gitserious commit --taxonomy <TAXONOMY>` selects one taxonomy from
-`gitserious.toml` for that commit. `--type` preselects a type within it. With no
-taxonomy option, authoring starts from the project default. Picker tabs support Tab/Shift+Tab to switch forward/backward and
+`gitserious commit` starts authoring from the default taxonomy in
+`gitserious.toml`. Picker tabs support Tab/Shift+Tab to switch forward/backward and
 show taxonomy identities and never mutate project policy.
 
 The composer retains the established schema-document interaction: immutable

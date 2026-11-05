@@ -14,7 +14,7 @@ use gitserious_core::TaxonomyId;
 
 fn built_in_project() -> LibraryDraft {
     LibraryDraft::from_project(
-        initial_project_configuration(&GlobalConfiguration::default(), None)
+        initial_project_configuration(&GlobalConfiguration::default())
             .expect("built-ins form a project"),
     )
 }
@@ -88,7 +88,7 @@ fn forks_and_new_taxonomies_join_the_project_once_they_have_a_type() -> Result<(
 
 #[test]
 fn review_names_added_changed_and_removed_taxonomies() -> Result<(), Box<dyn Error>> {
-    let configuration = initial_project_configuration(&GlobalConfiguration::default(), None)?;
+    let configuration = initial_project_configuration(&GlobalConfiguration::default())?;
     let mut session = ConfigurationSession::open_project(
         RepositoryRoot::new(std::env::temp_dir())?,
         Some(StoredProject {

@@ -42,7 +42,7 @@ fn with_team() -> GlobalConfiguration {
 }
 
 fn built_in_project() -> ProjectConfiguration {
-    initial_project_configuration(&GlobalConfiguration::default(), None)
+    initial_project_configuration(&GlobalConfiguration::default())
         .expect("built-ins form a project")
 }
 
@@ -194,10 +194,6 @@ impl ProjectConfigurationStore for Project {
     fn ensure_local_state(&self, _: &RepositoryRoot) -> Result<(), Self::Error> {
         Ok(())
     }
-
-    fn is_invalid_document(_: &Self::Error) -> bool {
-        false
-    }
 }
 
 struct Script<F>(F);
@@ -323,7 +319,7 @@ fn first_save_creates_and_later_saves_replace_the_opened_revision() -> Result<()
         Ok(())
     })?;
 
-    let initial = initial_project_configuration(&library, None)?;
+    let initial = initial_project_configuration(&library)?;
     let writes = project.writes.borrow();
     assert_eq!(writes.len(), 2);
     assert_eq!(writes[0], Write::Create(initial));

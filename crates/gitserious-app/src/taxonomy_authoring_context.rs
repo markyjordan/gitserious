@@ -42,7 +42,7 @@ impl CommitTaxonomy {
     }
 }
 
-/// Available project taxonomies and the initial CLI/project selection.
+/// Available project taxonomies and the one authoring starts from.
 #[derive(Clone, Debug)]
 pub struct CommitAuthoringContext {
     taxonomies: Vec<CommitTaxonomy>,
@@ -92,7 +92,7 @@ impl CommitAuthoringContext {
         &self.taxonomies
     }
 
-    /// Returns the explicit CLI selection or pinned project default.
+    /// Returns the taxonomy authoring starts from.
     #[must_use]
     pub fn initial_taxonomy(&self) -> &CommitTaxonomy {
         &self.taxonomies[self.initial]

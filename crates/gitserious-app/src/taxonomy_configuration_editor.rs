@@ -204,7 +204,7 @@ impl ConfigurationSession {
             return Err("project is already initialized".into());
         }
         project.draft = Some(LibraryDraft::from_project(
-            initial_project_configuration(library, None).map_err(|error| error.to_string())?,
+            initial_project_configuration(library).map_err(|error| error.to_string())?,
         ));
         Ok(())
     }

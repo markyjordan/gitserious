@@ -63,9 +63,7 @@ diagnostic that names the defect.
 
 ### Configuration user experience
 
-Bare `gitserious config` opens the configuration TUI. Taxonomy-focused
-`config list`, `config show`, and `config verify --project` remain available for
-noninteractive inspection.
+Bare `gitserious config` opens the configuration TUI.
 
 Support browse, create, edit, fork, select, and delete where applicable.
 Provide forms for taxonomy types, property descriptions and ordering, requirement
@@ -81,9 +79,8 @@ changes, and failed saves preserve stored configuration.
 
 ### Commit user experience and interfaces
 
-Add `gitserious commit --taxonomy <id>` alongside the existing `--type` option.
-Without an explicit taxonomy, begin with the pinned project default. Resolve
-`--type` only within the selected taxonomy; do not search other taxonomies for a
+Begin `gitserious commit` with the pinned project default taxonomy. Resolve a
+type only within the selected taxonomy; do not search other taxonomies for a
 matching identifier.
 
 Carry the selected taxonomy identity with the authored draft through validation,

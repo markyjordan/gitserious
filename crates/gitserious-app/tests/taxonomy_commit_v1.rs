@@ -53,10 +53,6 @@ impl ProjectConfigurationStore for Store {
     fn ensure_local_state(&self, _: &RepositoryRoot) -> Result<(), Self::Error> {
         unreachable!("commit never writes local state")
     }
-
-    fn is_invalid_document(_: &Self::Error) -> bool {
-        false
-    }
 }
 
 struct Author;
@@ -130,8 +126,6 @@ fn commit_uses_only_the_embedded_project_taxonomy() -> Result<(), Box<dyn Error>
         &Author,
         &writer,
         Path::new("."),
-        None,
-        None,
     )?;
     let message = writer.0.borrow();
     let message = message.as_ref().ok_or("writer was not called")?;

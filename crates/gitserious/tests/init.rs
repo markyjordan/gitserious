@@ -89,7 +89,7 @@ fn repeat_init_never_rewrites_and_invalid_projects_are_not_regenerated()
     let authored = format!("# reviewed\n{}", fs::read_to_string(&config)?);
     fs::write(&config, &authored)?;
 
-    let repeated = home.run(repository.path(), &["init", "--taxonomy", "research"])?;
+    let repeated = home.run(repository.path(), &["init"])?;
     assert!(repeated.status.success());
     assert!(stdout(&repeated).starts_with("gitserious is already initialized in "));
     assert!(stdout(&repeated).ends_with(" (conventional-v1).\n"));
@@ -129,14 +129,22 @@ fn linked_worktrees_resolve_their_own_project_files() -> Result<(), Box<dyn Erro
         ],
     )?;
     home.init(primary.path())?;
-    let research = home.run(&linked, &["init", "--taxonomy", "research"])?;
-    assert!(research.status.success(), "{}", stderr(&research));
+    home.init(&linked)?;
+    let linked_config = linked.join("gitserious.toml");
+    let conventional = fs::read_to_string(&linked_config)?;
+    fs::write(
+        &linked_config,
+        conventional.replace(
+            "default-taxonomy = \"conventional\"",
+            "default-taxonomy = \"research\"",
+        ),
+    )?;
 
-    let primary_commit = home.run(primary.path(), &["commit", "--type", "symptom"])?;
-    let linked_commit = home.run(&linked, &["commit", "--type", "feat"])?;
+    let primary_init = home.run(primary.path(), &["init"])?;
+    let linked_init = home.run(&linked, &["init"])?;
 
-    assert!(stderr(&primary_commit).contains("commit type \"symptom\" is unavailable"));
-    assert!(stderr(&linked_commit).contains("commit type \"feat\" is unavailable"));
+    assert!(stdout(&primary_init).ends_with(" (conventional-v1).\n"));
+    assert!(stdout(&linked_init).ends_with(" (research-v1).\n"));
     Ok(())
 }
 

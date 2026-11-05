@@ -132,16 +132,11 @@ impl ProjectConfigurationStore for Project {
     fn ensure_local_state(&self, _: &RepositoryRoot) -> Result<(), Self::Error> {
         Ok(())
     }
-
-    fn is_invalid_document(_: &Self::Error) -> bool {
-        false
-    }
 }
 
 pub fn initialized_state() -> Result<ProjectConfiguration, Box<dyn Error>> {
     Ok(initial_project_configuration(
         &GlobalConfiguration::default(),
-        None,
     )?)
 }
 
