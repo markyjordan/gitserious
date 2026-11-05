@@ -23,6 +23,7 @@ use gitserious_core::{CommitMessage, CommitTypeDefinition, VersionedTaxonomy};
     version,
     about = "Create durable commit-message policy for Git repositories",
     disable_colored_help = true,
+    max_term_width = 100,
     disable_help_flag = true,
     disable_help_subcommand = true,
     after_help = "Use `gitserious help` for more details.",
@@ -51,10 +52,6 @@ enum Command {
     /// projects. The Library's default taxonomy becomes the project default.
     ///
     /// An existing `gitserious.toml` is never rewritten.
-    #[command(
-        verbatim_doc_comment,
-        about = "Initialize repository-local gitserious policy"
-    )]
     Init,
     /// Interactively configure taxonomy policy.
     ///
@@ -65,10 +62,6 @@ enum Command {
     /// Library edits save when you press Esc. Copies, reorders, and confirmed
     /// deletions save at once. Project changes save only after you review and
     /// apply them.
-    #[command(
-        verbatim_doc_comment,
-        about = "Interactively configure taxonomy policy"
-    )]
     Config,
     /// Author and create a durable commit from the staged index.
     ///
@@ -77,10 +70,6 @@ enum Command {
     /// before gitserious passes it to `git commit`.
     ///
     /// Only staged changes are committed. Stage them with `git add` first.
-    #[command(
-        verbatim_doc_comment,
-        about = "Author and create a durable commit from the staged index"
-    )]
     Commit,
     /// Display documentation for a command
     Help {
