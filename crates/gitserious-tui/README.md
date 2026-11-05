@@ -130,7 +130,8 @@ as wide as it is tall. Otherwise it sits below the outline, including at 87x40
 and 125x51. Enter
 opens or closes a node, Up and Down select rows, and Page Up and Page Down page
 through Inspector details. A pane with more rows than fit counts the rest in
-its last row.
+its last row. A type's browsing Inspector separates property guidance entries
+with one blank row; each property's name and policy share the heading line.
 Valid taxonomy rows align their type count before their version (`11 types  v1`);
 narrow rows drop the count before the version.
 Built-in taxonomies show their origin in the outline and read-only status in
