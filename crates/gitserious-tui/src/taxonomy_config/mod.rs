@@ -586,7 +586,7 @@ impl State {
                         *library = candidate;
                     }
                     if immediate_change {
-                        self.status = Some(Notice::info("Saved.".into()));
+                        self.status = None;
                         if !self.scope_dirty(ConfigurationDestination::Project) {
                             self.replace_session(
                                 ConfigurationDestination::Project,
