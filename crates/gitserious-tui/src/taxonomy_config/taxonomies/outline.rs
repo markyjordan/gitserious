@@ -312,7 +312,7 @@ const fn branch(last: bool) -> &'static str {
 }
 
 /// A project owns every taxonomy it holds, so its rows say so instead of naming a Library origin.
-pub(super) const fn origin_label(library: &LibraryDraft, origin: TaxonomyOrigin) -> &'static str {
+const fn origin_label(library: &LibraryDraft, origin: TaxonomyOrigin) -> &'static str {
     if library.is_project() {
         "project"
     } else {
@@ -384,7 +384,7 @@ fn taxonomy_status(
 ) -> Vec<Span<'static>> {
     let fits = |spans: &[Span<'static>]| Line::from(spans.to_vec()).width() < room;
     if let Some(chip) = chip {
-        let invalid = vec![Span::styled(chip.label(), Style::new().fg(theme().blocks))];
+        let invalid = vec![chip.span()];
         return if fits(&invalid) { invalid } else { Vec::new() };
     }
     let style = if selected { TEXT } else { DIM };

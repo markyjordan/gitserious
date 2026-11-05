@@ -1068,7 +1068,7 @@ fn saved_eligibility_badges(
         .as_ref()
         .and_then(|id| library.node(id))
         .is_some_and(|node| node.taxonomy().origin() == gitserious_app::TaxonomyOrigin::BuiltIn);
-    if after.frame.contains(" ◇ read-only ") != built_in {
+    if after.frame.contains("◇ read-only") != built_in {
         return Err("The Inspector read-only badge disagrees with the selected node.".into());
     }
     if let Some(NodeRef::Property { taxonomy, .. }) =

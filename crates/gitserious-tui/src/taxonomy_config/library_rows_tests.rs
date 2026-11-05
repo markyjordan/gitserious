@@ -7,7 +7,7 @@ use ratatui::buffer::Cell;
 use super::tests::Workspace;
 use super::*;
 
-type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub(super) type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const DIM: Color = Color::Gray;
 const SIZES: [(u16, u16); 2] = [(87, 40), (100, 30)];
@@ -15,7 +15,7 @@ const SIZES: [(u16, u16); 2] = [(87, 40), (100, 30)];
 /// Keys that take focus from the outline, and how to tell that they did.
 type FocusAway = (&'static [KeyCode], fn(&State) -> bool);
 
-fn press(state: &mut State, workspace: &Workspace, keys: &[KeyCode]) {
+pub(super) fn press(state: &mut State, workspace: &Workspace, keys: &[KeyCode]) {
     for &code in keys {
         assert!(!state.handle_event(
             Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
@@ -26,7 +26,7 @@ fn press(state: &mut State, workspace: &Workspace, keys: &[KeyCode]) {
 
 /// The Library with the built-ins, the custom `team`, and `draft-ideas`, saved with no types,
 /// with conventional open under the cursor.
-fn fixture() -> Result<(Workspace, State)> {
+pub(super) fn fixture() -> Result<(Workspace, State)> {
     let workspace = super::copy_tests::team()?;
     let mut state = State::new(&workspace);
     press(
@@ -46,7 +46,7 @@ fn fixture() -> Result<(Workspace, State)> {
     Ok((workspace, state))
 }
 
-fn select(state: &mut State, path: &[&str]) -> Result {
+pub(super) fn select(state: &mut State, path: &[&str]) -> Result {
     let id = state
         .library()
         .and_then(|library| library.find_path(path))
