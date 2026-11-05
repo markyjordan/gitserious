@@ -198,7 +198,7 @@ fn built_in_summaries_use_the_full_unbadged_width() -> Result {
         let line = (inner.x..inner.right())
             .map(|x| initial[(x, y)].symbol())
             .collect::<String>();
-        let prefix = "▌├─ ▸ provision  ";
+        let prefix = " ├─ ▸ provision  ";
         assert!(line.starts_with(prefix), "{line}");
         let area = Rect::new(
             inner.x + u16::try_from(prefix.chars().count())?,
@@ -215,6 +215,9 @@ fn built_in_summaries_use_the_full_unbadged_width() -> Result {
         state.advance(HOLD, true);
         let moved = draw(&mut state, &mut terminal)?;
         assert_ne!(initial, moved);
+        // The scrolling keys stay on the focused cursor bar.
+        let key = &moved[(area.x, y)];
+        assert_eq!((key.fg, key.bg), (theme().ground, theme().cursor));
         outside_unchanged(&initial, &moved, area);
     }
     Ok(())

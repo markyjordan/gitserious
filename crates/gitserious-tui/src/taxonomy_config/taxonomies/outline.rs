@@ -8,12 +8,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::summary_scroll::{SummaryScroll, Target};
-use super::{BAND, CUSTOM_STYLE, Chip, Chips, DIM, READ_ONLY_STYLE, fit, panes, policy_style};
-use crate::theme::{ACCENT, frame_style};
+use super::{Chip, Chips, DIM, fit, panes, policy_style};
+use crate::theme::{frame_style, theme};
 
 pub(super) const ADD_TYPE: &str = "+ add type";
 pub(super) const ADD_PROPERTY: &str = "+ add property";
-const ADD_STYLE: Style = Style::new().fg(ACCENT);
+const NEW_TAXONOMY: &str = "+ new taxonomy";
+const TEXT: Style = Style::new().fg(Color::White);
 
 /// What a row stands for. The add rows are not drafts, so they name the node they add to.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -21,6 +22,7 @@ pub(in super::super) enum RowKey {
     Node(NodeId),
     AddType(NodeId),
     AddProperty(NodeId),
+    NewTaxonomy,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -28,6 +30,8 @@ pub(super) enum Row<'a> {
     Node(NodeRef<'a>),
     AddType(&'a TaxonomyNode),
     AddProperty(&'a TaxonomyNode, &'a TypeNode),
+    /// The Library's last row, which creates a blank taxonomy.
+    NewTaxonomy,
 }
 
 impl<'a> Row<'a> {
@@ -36,41 +40,43 @@ impl<'a> Row<'a> {
             Self::Node(node) => RowKey::Node(node.id().clone()),
             Self::AddType(taxonomy) => RowKey::AddType(taxonomy.id().clone()),
             Self::AddProperty(_, commit_type) => RowKey::AddProperty(commit_type.id().clone()),
+            Self::NewTaxonomy => RowKey::NewTaxonomy,
         }
     }
 
-    /// The row's node, or for an add row the node it adds to.
-    pub(super) const fn node(self) -> NodeRef<'a> {
+    /// The row's node, or for an add row the node it adds to. The new taxonomy row has none.
+    pub(super) const fn node(self) -> Option<NodeRef<'a>> {
         match self {
-            Self::Node(node) => node,
-            Self::AddType(taxonomy) => NodeRef::Taxonomy(taxonomy),
-            Self::AddProperty(taxonomy, commit_type) => NodeRef::Type {
+            Self::Node(node) => Some(node),
+            Self::AddType(taxonomy) => Some(NodeRef::Taxonomy(taxonomy)),
+            Self::AddProperty(taxonomy, commit_type) => Some(NodeRef::Type {
                 taxonomy,
                 commit_type,
-            },
+            }),
+            Self::NewTaxonomy => None,
         }
     }
 
     /// Names from the taxonomy down to this row; an add row ends with its label.
     #[cfg(test)]
     pub(super) fn names(self) -> Vec<String> {
-        let mut names = self
+        let mut names: Vec<String> = self
             .node()
-            .names()
-            .into_iter()
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
+            .map(|node| node.names().into_iter().map(str::to_owned).collect())
+            .unwrap_or_default();
         match self {
             Self::Node(_) => {}
             Self::AddType(_) => names.push(ADD_TYPE.into()),
             Self::AddProperty(..) => names.push(ADD_PROPERTY.into()),
+            Self::NewTaxonomy => names.push(NEW_TAXONOMY.into()),
         }
         names
     }
 }
 
 /// Visible rows in display order: every taxonomy, the types of each expanded taxonomy, and the
-/// properties of each expanded type. A custom taxonomy or type ends with its add row.
+/// properties of each expanded type. A custom taxonomy or type ends with its add row, and the
+/// Library ends with its new taxonomy row.
 pub(super) fn rows<'a>(library: &'a LibraryDraft, expanded: &BTreeSet<NodeId>) -> Vec<Row<'a>> {
     let mut rows = Vec::new();
     for taxonomy in library.taxonomies() {
@@ -101,6 +107,9 @@ pub(super) fn rows<'a>(library: &'a LibraryDraft, expanded: &BTreeSet<NodeId>) -
             rows.push(Row::AddType(taxonomy));
         }
     }
+    if !library.is_project() {
+        rows.push(Row::NewTaxonomy);
+    }
     rows
 }
 
@@ -125,9 +134,10 @@ pub(super) fn resolve(rows: &[Row<'_>], cursor: Option<&RowKey>, library: &Libra
     if let Some(index) = rows.iter().position(|row| &row.key() == cursor) {
         return index;
     }
-    let mut id = Some(match cursor {
-        RowKey::Node(id) | RowKey::AddType(id) | RowKey::AddProperty(id) => id.clone(),
-    });
+    let mut id = match cursor {
+        RowKey::Node(id) | RowKey::AddType(id) | RowKey::AddProperty(id) => Some(id.clone()),
+        RowKey::NewTaxonomy => None,
+    };
     while let Some(current) = id {
         if let Some(index) = rows
             .iter()
@@ -140,8 +150,21 @@ pub(super) fn resolve(rows: &[Row<'_>], cursor: Option<&RowKey>, library: &Libra
     0
 }
 
-/// Draws the rows, each with its chip, and returns the area they fill, for mouse hit-testing.
-/// When they overflow, the last row counts the rows below.
+/// The cursor row's style: a bone bar with ground-coloured bold text while the outline has
+/// focus, else a raised row that keeps each word's colour.
+fn cursor_style(focused: bool) -> Style {
+    if focused {
+        Style::new()
+            .fg(theme().ground)
+            .bg(theme().cursor)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().bg(theme().band)
+    }
+}
+
+/// Draws the rows and returns the area they fill, for mouse hit-testing. When they overflow,
+/// the last row counts the rows below.
 #[expect(
     clippy::too_many_arguments,
     reason = "the outline draws from the view's state and the Library's derived rows and chips"
@@ -171,6 +194,8 @@ pub(super) fn render(
     *offset = (*offset).min(rows.len().saturating_sub(height));
     panes::render_more_below(frame, area, rows.len().saturating_sub(*offset + height));
     let width = usize::from(inner.width).saturating_sub(1);
+    let columns = Columns::new(chips.library);
+    let cursor = cursor_style(focused);
     let mut target = None;
     let lines = rows
         .iter()
@@ -178,30 +203,43 @@ pub(super) fn render(
         .skip(*offset)
         .take(height)
         .map(|(index, &row)| {
-            let open = has_children(row) && expanded.contains(row.node().id());
-            let chip = match row {
-                Row::Node(node) => chips.of(node.id()),
-                Row::AddType(_) | Row::AddProperty(..) => None,
-            };
-            if index == selected
-                && let Some(viewport) = animation_viewport
-            {
-                let row_area = Rect::new(
-                    inner.x,
-                    inner.y + u16::try_from(index - *offset).unwrap_or(0),
-                    inner.width.saturating_sub(1),
-                    1,
-                );
-                target = summary_target(row, open, chip, row_area, viewport);
+            let open =
+                has_children(row) && row.node().is_some_and(|node| expanded.contains(node.id()));
+            let line = row_line(row, open, chips, &columns, index == selected, width);
+            if index != selected {
+                return line;
             }
-            row_line(
-                row,
-                open,
-                chip,
-                chips.library,
-                index == selected,
-                focused,
-                width,
+            let row_area = Rect::new(
+                inner.x,
+                inner.y + u16::try_from(index - *offset).unwrap_or(0),
+                inner.width,
+                1,
+            );
+            frame.buffer_mut().set_style(row_area, cursor);
+            if let Some(viewport) = animation_viewport {
+                let summary_style = if focused { cursor } else { cursor.patch(DIM) };
+                target = summary_target(
+                    row,
+                    open,
+                    Rect {
+                        width: inner.width.saturating_sub(1),
+                        ..row_area
+                    },
+                    viewport,
+                    summary_style,
+                );
+            }
+            if !focused {
+                return line;
+            }
+            Line::from(
+                line.spans
+                    .into_iter()
+                    .map(|span| {
+                        let style = span.style.patch(cursor);
+                        span.style(style)
+                    })
+                    .collect::<Vec<_>>(),
             )
         })
         .collect::<Vec<_>>();
@@ -210,12 +248,45 @@ pub(super) fn render(
     inner
 }
 
+/// Widths that line up the taxonomy rows' origins, versions, and type counts across the Library.
+struct Columns {
+    name: usize,
+    origin: usize,
+    version: usize,
+    count: usize,
+}
+
+impl Columns {
+    fn new(library: &LibraryDraft) -> Self {
+        let taxonomies = library.taxonomies();
+        let widest = |width: &dyn Fn(&TaxonomyNode) -> usize| {
+            taxonomies.iter().map(width).max().unwrap_or(0)
+        };
+        Self {
+            name: widest(&|taxonomy| Span::raw(taxonomy.name()).width()),
+            origin: widest(&|taxonomy| origin_label(library, taxonomy.origin()).len()),
+            version: widest(&|taxonomy| version(library, taxonomy).len()),
+            count: widest(&|taxonomy| taxonomy.types().len().to_string().len()),
+        }
+    }
+}
+
+fn version(library: &LibraryDraft, taxonomy: &TaxonomyNode) -> String {
+    library
+        .version(taxonomy.id())
+        .map_or_else(String::new, |version| format!("v{version}"))
+}
+
 /// Pads `name` to the widest of `names` plus two spaces.
 fn column<'a>(name: &str, names: impl Iterator<Item = &'a str>) -> String {
     let width = names.map(|name| Span::raw(name).width()).max().unwrap_or(0) + 2;
+    pad(name, width)
+}
+
+fn pad(text: &str, width: usize) -> String {
     format!(
-        "{name}{}",
-        " ".repeat(width.saturating_sub(Span::raw(name).width()))
+        "{text}{}",
+        " ".repeat(width.saturating_sub(Span::raw(text).width()))
     )
 }
 
@@ -261,9 +332,9 @@ fn property_branch(taxonomy: &TaxonomyNode, commit_type: &TypeNode, last: bool) 
 fn summary_target(
     row: Row<'_>,
     open: bool,
-    chip: Option<Chip>,
     row_area: Rect,
     viewport: Rect,
+    style: Style,
 ) -> Option<Target> {
     let Row::Node(NodeRef::Type {
         taxonomy,
@@ -279,12 +350,9 @@ fn summary_target(
         commit_type.name(),
         taxonomy.types().iter().map(TypeNode::name),
     );
-    let prefix = format!("▌{}▸ {name}", branch(last_type(taxonomy, commit_type)));
+    let prefix = format!(" {}▸ {name}", branch(last_type(taxonomy, commit_type)));
     let prefix_width = Span::raw(&prefix).width();
-    let badge_width = chip.map_or(0, |chip| chip.span().width());
-    let room = usize::from(row_area.width)
-        .saturating_sub(badge_width + usize::from(badge_width > 0))
-        .saturating_sub(prefix_width);
+    let room = usize::from(row_area.width).saturating_sub(prefix_width);
     let summary = summary(commit_type);
     if room == 0 || Span::raw(&summary).width() <= room {
         return None;
@@ -293,7 +361,6 @@ fn summary_target(
         node: commit_type.id().clone(),
         prefix,
         summary,
-        chip,
         viewport,
         area: Rect::new(
             row_area.x + u16::try_from(prefix_width).ok()?,
@@ -301,70 +368,118 @@ fn summary_target(
             u16::try_from(room).ok()?,
             1,
         ),
-        style: BAND.patch(DIM),
+        style,
     })
 }
 
-/// One row. A taxonomy without a chip shows where it lives instead.
+/// A taxonomy row's right side: its version and type count, or that it is invalid. Narrow
+/// rows drop the count, then the version, before the name gives way.
+fn taxonomy_status(
+    library: &LibraryDraft,
+    taxonomy: &TaxonomyNode,
+    chip: Option<Chip>,
+    columns: &Columns,
+    selected: bool,
+    room: usize,
+) -> Vec<Span<'static>> {
+    let fits = |spans: &[Span<'static>]| Line::from(spans.to_vec()).width() < room;
+    if let Some(chip) = chip {
+        let invalid = vec![Span::styled(chip.label(), Style::new().fg(theme().blocks))];
+        return if fits(&invalid) { invalid } else { Vec::new() };
+    }
+    let style = if selected { TEXT } else { DIM };
+    let count = taxonomy.types().len();
+    let version = Span::styled(
+        format!(
+            "{:>width$}",
+            version(library, taxonomy),
+            width = columns.version
+        ),
+        style,
+    );
+    let full = vec![
+        version.clone(),
+        Span::raw("  "),
+        Span::styled(
+            format!(
+                "{count:>width$} {}",
+                if count == 1 { "type " } else { "types" },
+                width = columns.count
+            ),
+            style,
+        ),
+    ];
+    [full, vec![version]]
+        .into_iter()
+        .find(|spans| fits(spans))
+        .unwrap_or_default()
+}
+
+/// One row: a taxonomy names its origin and status, a closed type its property keys, and a
+/// property its policy.
 fn row_line(
     row: Row<'_>,
     open: bool,
-    chip: Option<Chip>,
-    library: &LibraryDraft,
+    chips: &Chips<'_>,
+    columns: &Columns,
     selected: bool,
-    focused: bool,
     width: usize,
 ) -> Line<'static> {
-    let bar = match (selected, focused) {
-        (false, _) => Span::raw(" "),
-        (true, true) => Span::styled("▌", Style::default().fg(ACCENT)),
-        (true, false) => Span::styled("▌", frame_style()),
-    };
-    let name_style = if selected {
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::White)
-    };
+    let gutter = Span::raw(" ");
     let marker = Span::styled(if open { "▾ " } else { "▸ " }, frame_style());
     let (left, right) = match row {
+        Row::NewTaxonomy => (vec![gutter, Span::styled(NEW_TAXONOMY, DIM)], Vec::new()),
         Row::AddType(_) => (
             vec![
-                bar,
+                gutter,
                 Span::styled(branch(true), frame_style()),
-                Span::styled(ADD_TYPE, ADD_STYLE),
+                Span::styled(ADD_TYPE, DIM),
             ],
             Vec::new(),
         ),
         Row::AddProperty(taxonomy, commit_type) => (
             vec![
-                bar,
+                gutter,
                 Span::styled(property_branch(taxonomy, commit_type, true), frame_style()),
-                Span::styled(ADD_PROPERTY, ADD_STYLE),
+                Span::styled(ADD_PROPERTY, DIM),
             ],
             Vec::new(),
         ),
-        Row::Node(NodeRef::Taxonomy(taxonomy)) => (
-            vec![
-                bar,
-                marker,
-                Span::styled(taxonomy.name().to_owned(), name_style),
-            ],
-            vec![chip.map_or_else(
-                || {
-                    Span::styled(
-                        format!(" {} ", origin_label(library, taxonomy.origin())),
-                        if taxonomy.origin() == gitserious_app::TaxonomyOrigin::BuiltIn {
-                            READ_ONLY_STYLE
-                        } else {
-                            CUSTOM_STYLE
-                        },
+        Row::Node(NodeRef::Taxonomy(taxonomy)) => {
+            let bold = TEXT.add_modifier(Modifier::BOLD);
+            // The design sets the origin three columns past the widest name. A name too long
+            // for the row gives way before its origin does.
+            let name_width = (columns.name + 2).min(width.saturating_sub(4 + columns.origin));
+            let mut left = vec![gutter, marker];
+            left.extend(
+                fit(
+                    vec![Span::styled(taxonomy.name().to_owned(), bold)],
+                    Vec::new(),
+                    name_width,
+                )
+                .spans,
+            );
+            left.push(Span::styled(
+                format!(
+                    " {}",
+                    pad(
+                        origin_label(chips.library, taxonomy.origin()),
+                        columns.origin
                     )
-                },
-                Chip::span,
-            )],
-        ),
+                ),
+                bold,
+            ));
+            let room = width.saturating_sub(Line::from(left.clone()).width());
+            let right = taxonomy_status(
+                chips.library,
+                taxonomy,
+                chips.of(taxonomy.id()),
+                columns,
+                selected,
+                room,
+            );
+            (left, right)
+        }
         Row::Node(NodeRef::Type {
             taxonomy,
             commit_type,
@@ -374,15 +489,15 @@ fn row_line(
                 taxonomy.types().iter().map(TypeNode::name),
             );
             let mut left = vec![
-                bar,
+                gutter,
                 Span::styled(branch(last_type(taxonomy, commit_type)), frame_style()),
                 marker,
-                Span::styled(name, name_style),
+                Span::styled(name, TEXT),
             ];
             if !open {
                 left.push(Span::styled(summary(commit_type), DIM));
             }
-            (left, chip.map(Chip::span).into_iter().collect())
+            (left, Vec::new())
         }
         Row::Node(NodeRef::Property {
             taxonomy,
@@ -400,17 +515,16 @@ fn row_line(
             );
             (
                 vec![
-                    bar,
+                    gutter,
                     Span::styled(property_branch(taxonomy, commit_type, last), frame_style()),
-                    Span::styled(name, name_style),
+                    Span::styled(name, TEXT),
                     Span::styled(property.policy().label(), policy_style(property.policy())),
                 ],
-                chip.map(Chip::span).into_iter().collect(),
+                Vec::new(),
             )
         }
     };
-    let line = fit(left, right, width);
-    if selected { line.style(BAND) } else { line }
+    fit(left, right, width)
 }
 
 #[cfg(test)]

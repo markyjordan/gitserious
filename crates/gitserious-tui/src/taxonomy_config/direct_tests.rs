@@ -2,6 +2,7 @@ use crate::library_lookup::LibraryLookup;
 use std::cell::Cell;
 
 use gitserious_app::{DraftField, GlobalConfiguration};
+use ratatui::layout::Position;
 use ratatui::{Terminal, backend::TestBackend};
 
 use super::taxonomies::{Mode, RowKey};
@@ -84,7 +85,7 @@ fn select(state: &mut State, path: &[&str]) -> Result<NodeId> {
 fn add_row(state: &mut State, store: &dyn ConfigurationWorkspace, row: RowKey) -> Result {
     let parent = match &row {
         RowKey::AddType(parent) | RowKey::AddProperty(parent) => parent,
-        RowKey::Node(_) => return Err("expected add row".into()),
+        RowKey::Node(_) | RowKey::NewTaxonomy => return Err("expected add row".into()),
     };
     state.taxonomies.select(parent.clone());
     if !state
@@ -287,18 +288,32 @@ fn zero_type_entry_reopens_unlocks_until_eligible_and_stays_locked_after_last_ty
         for width in [MINIMUM_WIDTH, 87, 140] {
             let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
             terminal.draw(|frame| state.render(frame))?;
+            let outline = state.taxonomies.observe(state.library()).outline_area;
+            let buffer = terminal.backend().buffer();
             let mut count = 0;
             for y in 0..40 {
                 let row = (0..width)
-                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .map(|x| buffer[(x, y)].symbol())
                     .collect::<String>();
-                if let Some(start) = row.find(" ▲ invalid ") {
-                    assert!(!row.contains(" custom "), "{row}");
-                    let x = row[..start].chars().count();
-                    for dx in 0.." ▲ invalid ".chars().count() {
-                        let cell = &terminal.backend().buffer()[(u16::try_from(x + dx)?, y)];
-                        assert_eq!(cell.fg, Color::Red);
-                        assert_eq!(cell.bg, Color::Rgb(56, 18, 18));
+                if let Some(start) = row.find("▲ invalid") {
+                    let x = u16::try_from(row[..start].chars().count())?;
+                    if outline.contains(Position::new(x, y)) {
+                        // The outline keeps the origin beside the status, on the focused cursor.
+                        let entry = row
+                            .chars()
+                            .skip(usize::from(outline.x))
+                            .take(usize::from(outline.width))
+                            .collect::<String>();
+                        assert!(entry.contains(" work-in-progress "), "{row}");
+                        assert!(entry.contains(" custom "), "{row}");
+                        let cell = &buffer[(x, y)];
+                        assert_eq!((cell.fg, cell.bg), (theme().ground, theme().cursor));
+                    } else {
+                        for dx in 0.." ▲ invalid ".chars().count() {
+                            let cell = &buffer[(x - 1 + u16::try_from(dx)?, y)];
+                            assert_eq!(cell.fg, Color::Red);
+                            assert_eq!(cell.bg, Color::Rgb(56, 18, 18));
+                        }
                     }
                     count += 1;
                 }
@@ -387,7 +402,11 @@ fn conditional_fields_are_required_and_type_and_property_never_show_invalid_chip
     for (width, height) in [(66, 18), (87, 40), (140, 48)] {
         let text = frame(&mut state, width, height)?;
         assert!(!text.contains("▲ invalid"));
-        assert!(!text.contains("+ new") && !text.contains("~ modified"));
+        assert_eq!(
+            text.matches("+ new").count(),
+            text.matches("+ new taxonomy").count()
+        );
+        assert!(!text.contains("~ modified"));
         assert!(super::tests::footer_text(&text).contains("esc save"));
         assert!(!text.contains("ctrl+s"));
     }

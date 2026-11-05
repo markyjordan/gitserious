@@ -2,7 +2,8 @@
 //!
 //! Seeds cover blank creation, forks, existing fields, conditional policy, limits and copies.
 //! Every transition checks modal editing, direct persistence, deletion confirmation, saved
-//! eligibility badges, name locking, field limits, inline messages and copy independence.
+//! eligibility badges, the new taxonomy row that ends the Library, name locking, field limits,
+//! inline messages and copy independence.
 //! At most one taxonomy root is expanded, while type expansion can be remembered independently.
 //! The existing breadth-first runner deduplicates snapshots and reports shortest counterexamples.
 //! Mouse, resize, write failures and the embedded shell are covered by interaction tests.
@@ -983,13 +984,7 @@ fn saved_eligibility_badges(
     if after.category != Category::Taxonomies || after.dialog_hints.is_some() {
         return Ok(());
     }
-    for obsolete in [
-        "unapplied",
-        "+ new",
-        "~ modified",
-        "ctrl+s",
-        "review changes",
-    ] {
+    for obsolete in ["unapplied", "~ modified", "ctrl+s", "review changes"] {
         if after.frame.contains(obsolete) {
             return Err(format!("Library shows {obsolete:?}."));
         }
@@ -1014,6 +1009,14 @@ fn saved_eligibility_badges(
                 "The outline origin badge disagrees with its node: {row:?}"
             ));
         }
+        let new_taxonomy = row.trim() == "+ new taxonomy";
+        if row.contains("+ new") != new_taxonomy
+            || (new_taxonomy && (id.is_some() || index + 1 != after.taxonomies.visible.len()))
+        {
+            return Err(format!(
+                "Only the Library's last row creates a taxonomy: {row:?}"
+            ));
+        }
         let invalid = id.as_ref().is_some_and(|id| {
             matches!(library.node(id), Some(NodeRef::Taxonomy(_)))
                 && library
@@ -1023,6 +1026,22 @@ fn saved_eligibility_badges(
         if row.contains("▲ invalid") != invalid {
             return Err(format!("Saved eligibility disagrees with row {row:?}."));
         }
+    }
+    let new_rows = rows.iter().filter(|row| row.contains("+ new")).count();
+    let shown = after
+        .taxonomies
+        .visible
+        .iter()
+        .enumerate()
+        .filter(|(index, id)| {
+            id.is_none()
+                && rows
+                    .get(usize::from(area.y) + index)
+                    .is_some_and(|row| row.contains("+ new taxonomy"))
+        })
+        .count();
+    if new_rows != shown {
+        return Err("\"+ new\" shows outside the outline's new taxonomy row.".into());
     }
     let footer = after.footer();
     if [

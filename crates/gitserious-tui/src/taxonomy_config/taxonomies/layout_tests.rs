@@ -262,13 +262,13 @@ fn switching_between_built_in_and_custom_roots_remembers_multiple_open_types() -
 fn a_rule_parts_the_outline_and_inspector_sixty_forty_or_below_a_short_outline() -> Result {
     let (mut view, library) = fixture()?;
     // From 24 rows a blank row pads the top and the bottom. The outline and the rule take 60%
-    // of the rest; three collapsed taxonomies take fewer rows than that.
+    // of the rest; three collapsed taxonomies and the new taxonomy row take fewer rows than that.
     for (height, short, long) in [
-        (36, 4, 15),
-        (24, 4, 13),
-        (23, 3, 12),
-        (15, 3, 8),
-        (14, 3, 7),
+        (36, 5, 16),
+        (24, 5, 13),
+        (23, 4, 12),
+        (15, 4, 8),
+        (14, 4, 7),
     ] {
         for (expanded, rule) in [(false, short), (true, long)] {
             let conventional = library.find_path(&["conventional"]).ok_or("conventional")?;

@@ -36,6 +36,8 @@ mod home_overlay;
 mod library_copy;
 mod library_header;
 #[cfg(test)]
+mod library_rows_tests;
+#[cfg(test)]
 mod model_check;
 mod naming;
 #[cfg(test)]
@@ -1196,6 +1198,18 @@ impl State {
             self.status = Some(Notice::error(self.library_error()));
             return;
         }
+        // Only creating applies on the new taxonomy row, which selects no node.
+        if !matches!(action, PendingAction::Library(LibraryAction::Create))
+            && self
+                .library()
+                .is_some_and(|library| self.taxonomies.selected(library).is_none())
+        {
+            self.status = Some(Notice::error(naming::refusal_sentence(
+                EditRefusal::NotApplicable,
+                None,
+            )));
+            return;
+        }
         if matches!(
             action,
             PendingAction::Library(LibraryAction::Edit | LibraryAction::Copy)
@@ -1911,6 +1925,7 @@ mod tests {
     };
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::layout::Position;
 
     use super::naming::problem_sentence;
     use super::*;
@@ -2322,12 +2337,12 @@ mod tests {
             let top = outline_top(height);
             assert!(
                 row_text(&terminal, CONTENT_X, top, width - CONTENT_X)
-                    .starts_with("▌▸ conventional")
+                    .starts_with(" ▸ conventional")
             );
             let buffer = terminal.backend().buffer();
-            assert_eq!(buffer[(CONTENT_X, top)].fg, Color::Rgb(80, 160, 255));
+            assert_eq!(buffer[(CONTENT_X, top)].bg, theme().cursor);
             assert_eq!(buffer[(1, height - 1)].bg, Color::Rgb(80, 160, 255));
-            for label in [" built-in ", " ◇ read-only "] {
+            for label in [" ◇ read-only "] {
                 let mut count = 0;
                 for (y, line) in screen.iter().enumerate() {
                     for (start, _) in line.match_indices(label) {
@@ -2351,10 +2366,16 @@ mod tests {
                     .cloned()
                     .unwrap_or_default()
             };
-            assert!(outline("conventional").contains("│▌▸ conventional"));
-            assert!(outline("conventional").trim_end().ends_with("built-in"));
-            assert!(outline("infra-ops").trim_end().ends_with("built-in"));
-            assert!(outline("original").trim_end().ends_with("custom"));
+            assert!(outline("conventional").contains("│ ▸ conventional   built-in "));
+            assert!(
+                outline("conventional")
+                    .trim_end()
+                    .ends_with(" v1  11 types")
+            );
+            assert!(outline("infra-ops").contains(" infra-ops      built-in "));
+            assert!(outline("infra-ops").trim_end().ends_with(" v1  10 types"));
+            assert!(outline("original").contains(" original       custom "));
+            assert!(outline("original").trim_end().ends_with(" v3   1 type"));
             let text = screen.join("\n");
             let rule = rule_row(&terminal).ok_or("missing the rule above the Inspector")?;
             assert!(screen[usize::from(rule) + 1].contains("│ Taxonomy conventional "));
@@ -2383,7 +2404,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_chips_keep_exact_colors_on_selected_rows_and_in_the_inspector()
+    fn custom_origin_is_a_plain_word_in_the_outline_and_a_chip_in_the_inspector()
     -> Result<(), Box<dyn std::error::Error>> {
         for embedded in [false, true] {
             for width in [MINIMUM_WIDTH, 87, 140] {
@@ -2397,22 +2418,37 @@ mod tests {
                         select_taxonomy(&mut state, 3);
                     }
                     terminal.draw(|frame| state.render(frame))?;
+                    let outline = state.taxonomies.observe(state.library()).outline_area;
                     let buffer = terminal.backend().buffer();
-                    let mut count = 0;
+                    let (mut words, mut chips) = (0, 0);
                     for (y, row) in rows(&terminal).iter().enumerate() {
                         for (start, _) in row.match_indices(" custom ") {
-                            let x = row[..start].chars().count();
+                            let x = u16::try_from(row[..start].chars().count())?;
+                            let y = u16::try_from(y)?;
+                            if outline.contains(Position::new(x, y)) {
+                                // The selected row is the focused cursor bar.
+                                let (fg, bg) = if selected {
+                                    (theme().ground, theme().cursor)
+                                } else {
+                                    (Color::White, JET_BLACK)
+                                };
+                                let cell = &buffer[(x + 1, y)];
+                                assert_eq!((cell.fg, cell.bg), (fg, bg));
+                                assert!(cell.modifier.contains(Modifier::BOLD));
+                                words += 1;
+                                continue;
+                            }
                             for (dx, character) in " custom ".chars().enumerate() {
-                                let cell = &buffer[(u16::try_from(x + dx)?, u16::try_from(y)?)];
+                                let cell = &buffer[(x + u16::try_from(dx)?, y)];
                                 assert_eq!(cell.symbol(), character.to_string());
                                 assert_eq!(cell.fg, Color::Black);
                                 assert_eq!(cell.bg, Color::Rgb(144, 238, 144));
                                 assert_eq!(cell.modifier, Modifier::empty());
                             }
-                            count += 1;
+                            chips += 1;
                         }
                     }
-                    assert_eq!(count, if selected { 2 } else { 1 });
+                    assert_eq!((words, chips), (1, usize::from(selected)));
                 }
             }
         }
@@ -2465,7 +2501,16 @@ mod tests {
                         1
                     );
                     let buffer = terminal.backend().buffer();
-                    for label in [" built-in ", " ◇ read-only "] {
+                    // The outline names a built-in origin as a word, never as a chip.
+                    for (y, line) in screen.iter().enumerate() {
+                        for (start, _) in line.match_indices(" built-in ") {
+                            let x = u16::try_from(line[..start].chars().count() + 1)?;
+                            let cell = &buffer[(x, u16::try_from(y)?)];
+                            assert_ne!(cell.bg, Color::Rgb(211, 211, 211));
+                            assert!(cell.modifier.contains(Modifier::BOLD));
+                        }
+                    }
+                    for label in [" ◇ read-only "] {
                         for (y, line) in screen.iter().enumerate() {
                             for (start, _) in line.match_indices(label) {
                                 let x = line[..start].chars().count();
@@ -2504,14 +2549,14 @@ mod tests {
         press(&mut state, KeyCode::Char('2'))?;
         press(&mut state, KeyCode::Enter)?;
         let screen = press(&mut state, KeyCode::Down)?;
-        assert!(screen.contains("│▌├─ ▸ feat      intent · decision · constraints"));
+        assert!(screen.contains("│ ├─ ▸ feat      intent · decision · constraints"));
         assert_eq!(
             screen
                 .lines()
-                .find(|row| row.contains("│▌├─ ▸ feat "))
+                .find(|row| row.contains("│ ├─ ▸ feat "))
                 .and_then(|row| row.split_once('│'))
                 .map(|(_, content)| content.trim_end()),
-            Some("▌├─ ▸ feat      intent · decision · constraints")
+            Some(" ├─ ▸ feat      intent · decision · constraints")
         );
         assert!(screen.contains("│ ├─ ▸ fix       cause · decision · constraints"));
         assert!(screen.contains("Type feat"));
@@ -2523,16 +2568,16 @@ mod tests {
         assert_eq!(
             screen
                 .lines()
-                .find(|row| row.contains("│▌├─ ▾ feat "))
+                .find(|row| row.contains("│ ├─ ▾ feat "))
                 .and_then(|row| row.split_once('│'))
                 .map(|(_, content)| content.trim_end()),
-            Some("▌├─ ▾ feat")
+            Some(" ├─ ▾ feat")
         );
         for _ in 0..3 {
             press(&mut state, KeyCode::Down)?;
         }
         let screen = press(&mut state, KeyCode::Enter)?;
-        assert!(screen.contains("│▌│  └─ constraints  conditional"));
+        assert!(screen.contains("│ │  └─ constraints  conditional"));
         assert!(screen.contains("│ │  ├─ intent       required"));
         assert!(screen.contains("│ └─ ▸ revert"));
         assert!(screen.contains("Property constraints"));
@@ -2595,7 +2640,7 @@ mod tests {
         let last = usize::from(rule_row(&terminal).ok_or("missing the rule")? - 1);
         let visible = last - usize::from(top);
         assert!(
-            screen[last].ends_with(&format!("↓ {} more ", 14 - visible)),
+            screen[last].ends_with(&format!("↓ {} more ", 15 - visible)),
             "{}",
             screen[last]
         );
@@ -2606,8 +2651,11 @@ mod tests {
         terminal.draw(|frame| state.render(frame))?;
         let screen = rows(&terminal);
         assert!(!screen[last].contains("more"), "{}", screen[last]);
-        assert!(screen[last - 1].contains("│▌▸ infra-ops"));
-        assert!(screen.join("\n").contains("Taxonomy infra-ops"));
+        assert!(screen[last - 1].contains("│ + new taxonomy"));
+        assert!(screen[last - 2].contains("│ ▸ infra-ops"));
+        state.handle_event(key(KeyCode::Up), &workspace);
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(rows(&terminal).join("\n").contains("Taxonomy infra-ops"));
 
         let first = row_text(&terminal, CONTENT_X + 1, top, MINIMUM_WIDTH - CONTENT_X - 2);
         let name = first
@@ -2646,7 +2694,7 @@ mod tests {
             )
         );
         assert_eq!(row_text(&terminal, CONTENT_X, 3, width).trim(), "");
-        assert!(row_text(&terminal, CONTENT_X, OUTLINE_TOP, width).starts_with("▌▸ conventional"));
+        assert!(row_text(&terminal, CONTENT_X, OUTLINE_TOP, width).starts_with(" ▸ conventional"));
 
         let buffer = terminal.backend().buffer();
         let library = &buffer[(CONTENT_X + 1, 1)];
@@ -2719,23 +2767,25 @@ mod tests {
         let rule = OUTLINE_TOP + 19;
         assert_eq!(rule_row(&terminal), Some(rule));
         assert!(screen[usize::from(rule) + 1].contains("│ Type fix "));
-        // Twenty rows: eighteen show, and the last row counts the two forks below.
+        // Twenty-one rows: eighteen show, and the last row counts the two forks and the new
+        // taxonomy row below.
         let last = usize::from(rule) - 1;
         assert!(
             screen[last - 1].contains("▸ team-changes "),
             "{}",
             screen[last - 1]
         );
-        assert!(screen[last].ends_with(" ↓ 2 more "), "{}", screen[last]);
+        assert!(screen[last].ends_with(" ↓ 3 more "), "{}", screen[last]);
         let buffer = terminal.backend().buffer();
         assert_eq!(buffer[(85, rule - 1)].fg, theme().dim);
 
         press(&mut state, &workspace, &[KeyCode::Enter]);
         terminal.draw(|frame| state.render(frame))?;
         let screen = rows(&terminal);
-        // Seventeen rows fit, so the rule sits right below them.
-        assert_eq!(rule_row(&terminal), Some(OUTLINE_TOP + 17));
+        // Eighteen rows fit, so the rule sits right below them.
+        assert_eq!(rule_row(&terminal), Some(OUTLINE_TOP + 18));
         assert!(screen[usize::from(OUTLINE_TOP) + 16].contains("▸ release-notes "));
+        assert!(screen[usize::from(OUTLINE_TOP) + 17].contains("│ + new taxonomy "));
         assert!(!screen.join("\n").contains("more"));
         Ok(())
     }
@@ -2760,7 +2810,7 @@ mod tests {
             assert!(header.starts_with(" Library "), "{header}");
             assert!(header.ends_with(" saves as you go "), "{header}");
             assert!(
-                row_text(&terminal, CONTENT_X, OUTLINE_TOP, outline).starts_with("▌▸ conventional")
+                row_text(&terminal, CONTENT_X, OUTLINE_TOP, outline).starts_with(" ▸ conventional")
             );
             let inspector = row_text(&terminal, rule + 1, 1, width - rule - 1);
             assert!(
@@ -3219,7 +3269,8 @@ mod tests {
                     assert_eq!(buffer[(mode_width + 1, y)].bg, theme().band);
                     let badge = format!(" {label} ");
                     assert!(!footer.contains(&badge));
-                    assert!(!text(&terminal).contains(&badge));
+                    let screen = text(&terminal).replace(" + new taxonomy", "");
+                    assert!(!screen.contains(&badge));
                     for x in [0, width - 1] {
                         assert_eq!(buffer[(x, y)].symbol(), " ");
                         assert_eq!(buffer[(x, y)].bg, theme().band);
@@ -3736,9 +3787,10 @@ mod tests {
         assert!(text(&terminal).contains("Forked from  conventional-v1"));
         let team = rows(&terminal)
             .into_iter()
-            .find(|row| row.contains("▌▾ team"))
+            .find(|row| row.contains("▾ team "))
             .ok_or("team row")?;
-        assert!(team.contains("custom  │ "), "{team}");
+        assert!(team.contains(" custom "), "{team}");
+        assert!(team.contains(" v1  11 types │ "), "{team}");
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(matches!(
             state.taxonomies.observe(state.library()).mode,
@@ -4242,7 +4294,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
         terminal.draw(|frame| state.render(frame))?;
         let screen = rows(&terminal).join("\n");
-        assert!(screen.contains("│▌│  └─ + add property"), "{screen}");
+        assert!(screen.contains("│ │  └─ + add property"), "{screen}");
         assert!(screen.contains("│ └─ + add type"), "{screen}");
         let footer = row_text(&terminal, 0, 39, 87);
         assert!(footer.contains("enter add"), "{footer}");
