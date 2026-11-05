@@ -248,7 +248,7 @@ pub(super) fn render(
     inner
 }
 
-/// Widths that line up the taxonomy rows' origins, versions, and type counts across the Library.
+/// Widths that line up the taxonomy rows' origins, type counts, and versions across the Library.
 struct Columns {
     name: usize,
     origin: usize,
@@ -372,7 +372,7 @@ fn summary_target(
     })
 }
 
-/// A taxonomy row's right side: its version and type count, or that it is invalid. Narrow
+/// A taxonomy row's right side: its type count and version, or that it is invalid. Narrow
 /// rows drop the count, then the version, before the name gives way.
 fn taxonomy_status(
     library: &LibraryDraft,
@@ -398,8 +398,6 @@ fn taxonomy_status(
         style,
     );
     let full = vec![
-        version.clone(),
-        Span::raw("  "),
         Span::styled(
             format!(
                 "{count:>width$} {}",
@@ -408,6 +406,8 @@ fn taxonomy_status(
             ),
             style,
         ),
+        Span::raw("  "),
+        version.clone(),
     ];
     [full, vec![version]]
         .into_iter()
