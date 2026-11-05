@@ -113,9 +113,12 @@ fn short_help_flag_prints_the_concise_help_and_names_both_help_flags() -> Result
 }
 
 #[test]
-fn long_help_flag_prints_what_the_help_command_prints() -> Result<(), Box<dyn Error>> {
-    for command in COMMANDS {
-        assert_eq!(full(command)?, detailed(command)?, "{command:?}");
+fn redirected_long_help_flag_prints_the_root_concise_help_and_each_command_long_help()
+-> Result<(), Box<dyn Error>> {
+    assert_eq!(full(None)?, concise(None)?);
+    assert_ne!(full(None)?, detailed(None)?);
+    for command in COMMANDS.into_iter().flatten() {
+        assert_eq!(full(Some(command))?, detailed(Some(command))?, "{command}");
     }
     Ok(())
 }

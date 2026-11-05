@@ -17,10 +17,14 @@ use crate::{
 const POLICY_FILE: &str = "gitserious.toml";
 
 /// Starting view for the unified terminal interface.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InteractiveEntry {
     Home,
     Config,
+    /// Help, on the page of the named command, or the overview for none.
+    Help {
+        command: Option<String>,
+    },
 }
 
 /// A run of help text; `strong` marks a heading or a command or flag name.
