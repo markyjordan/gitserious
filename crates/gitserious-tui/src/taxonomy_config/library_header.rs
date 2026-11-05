@@ -24,10 +24,6 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, path: &Path, home: Optio
         )),
         title,
     );
-    frame.render_widget(
-        Paragraph::new(Span::styled("saves as you go", dim)).right_aligned(),
-        title,
-    );
     let shown = keep_end(&home_relative(path, home), usize::from(file.width));
     frame.render_widget(Paragraph::new(Span::styled(shown, dim)), file);
 }

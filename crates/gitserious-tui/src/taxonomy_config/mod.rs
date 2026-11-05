@@ -2700,38 +2700,43 @@ mod tests {
     #[test]
     fn the_library_opens_under_a_header_naming_its_file_from_home()
     -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        state.home = Some(PathBuf::from("/home/tester"));
-        state.handle_event(key(KeyCode::Char('2')), &workspace);
-        let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
-        terminal.draw(|frame| state.render(frame))?;
-        let width = 87 - CONTENT_X;
-        assert_eq!(row_text(&terminal, 0, 1, RAIL_WIDTH), " 1  Project  ");
-        let title = row_text(&terminal, CONTENT_X, 1, width);
-        assert!(title.starts_with(" Library "), "{title}");
-        assert!(title.ends_with(" saves as you go "), "{title}");
-        let file = row_text(&terminal, CONTENT_X, 2, width);
-        assert_eq!(
-            file.trim_end(),
-            format!(
-                " ~{}.config/gitserious/config.toml",
-                std::path::MAIN_SEPARATOR
-            )
-        );
-        assert_eq!(row_text(&terminal, CONTENT_X, 3, width).trim(), "");
-        assert!(row_text(&terminal, CONTENT_X, OUTLINE_TOP, width).starts_with(" ▸ conventional"));
+        for (terminal_width, terminal_height) in [(87, 40), (125, 51)] {
+            let workspace = Workspace::new();
+            let mut state = State::new(&workspace);
+            state.home = Some(PathBuf::from("/home/tester"));
+            state.handle_event(key(KeyCode::Char('2')), &workspace);
+            let mut terminal = Terminal::new(TestBackend::new(terminal_width, terminal_height))?;
+            terminal.draw(|frame| state.render(frame))?;
+            let width = terminal_width - CONTENT_X;
+            assert_eq!(row_text(&terminal, 0, 1, RAIL_WIDTH), " 1  Project  ");
+            let title = row_text(&terminal, CONTENT_X, 1, width);
+            assert!(title.starts_with(" Library "), "{title}");
+            assert_eq!(title.trim(), "Library");
+            let file = row_text(&terminal, CONTENT_X, 2, width);
+            assert_eq!(
+                file.trim_end(),
+                format!(
+                    " ~{}.config/gitserious/config.toml",
+                    std::path::MAIN_SEPARATOR
+                )
+            );
+            assert_eq!(row_text(&terminal, CONTENT_X, 3, width).trim(), "");
+            assert!(
+                row_text(&terminal, CONTENT_X, OUTLINE_TOP, width).starts_with(" ▸ conventional")
+            );
 
-        let buffer = terminal.backend().buffer();
-        let library = &buffer[(CONTENT_X + 1, 1)];
-        assert_eq!(library.fg, theme().text);
-        assert!(library.modifier.contains(Modifier::BOLD));
-        assert_eq!(buffer[(87 - 2, 1)].fg, theme().dim);
-        assert_eq!(buffer[(CONTENT_X + 1, 2)].fg, theme().dim);
+            let buffer = terminal.backend().buffer();
+            let library = &buffer[(CONTENT_X + 1, 1)];
+            assert_eq!(library.fg, theme().text);
+            assert!(library.modifier.contains(Modifier::BOLD));
+            assert_eq!(buffer[(terminal_width - 2, 1)].symbol(), " ");
+            assert_eq!(buffer[(CONTENT_X + 1, 2)].fg, theme().dim);
 
-        state.handle_event(key(KeyCode::Char('1')), &workspace);
-        terminal.draw(|frame| state.render(frame))?;
-        assert!(!rows(&terminal).join("\n").contains("saves as you go"));
+            assert!(!rows(&terminal).join("\n").contains("saves as you go"));
+            state.handle_event(key(KeyCode::Char('1')), &workspace);
+            terminal.draw(|frame| state.render(frame))?;
+            assert!(!rows(&terminal).join("\n").contains("saves as you go"));
+        }
         Ok(())
     }
 
@@ -2839,7 +2844,7 @@ mod tests {
             assert_eq!(rule_row(&terminal), None);
             let header = row_text(&terminal, CONTENT_X, 1, outline);
             assert!(header.starts_with(" Library "), "{header}");
-            assert!(header.ends_with(" saves as you go "), "{header}");
+            assert_eq!(header.trim(), "Library");
             assert!(
                 row_text(&terminal, CONTENT_X, OUTLINE_TOP, outline).starts_with(" ▸ conventional")
             );
@@ -2930,7 +2935,7 @@ mod tests {
         assert_eq!(file, format!(" …{} ", &path[path.len() - (room - 1)..]));
         assert_eq!(row_text(&terminal, 0, 1, RAIL_WIDTH + 1), " 2  Library  │");
         let title = row_text(&terminal, CONTENT_X, 0, MINIMUM_WIDTH - CONTENT_X);
-        assert!(title.ends_with(" saves as you go "), "{title}");
+        assert_eq!(title.trim(), "Library");
         Ok(())
     }
 
@@ -3858,7 +3863,8 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| state.render(frame))?;
         let rendered = text(&terminal);
-        assert!(rendered.contains("saves as you go"));
+        assert!(!rendered.contains("saves as you go"));
+        assert!(rendered.contains("config.toml"));
         assert!(rule_row(&terminal).is_some());
         assert!(rendered.contains("Taxonomy library unavailable."));
         assert!(footer_text(&rendered).contains("/ commands"));
