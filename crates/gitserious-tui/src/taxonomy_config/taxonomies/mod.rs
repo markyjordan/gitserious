@@ -23,8 +23,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use super::naming::{problem_sentence, refusal_sentence, single_line};
 use super::{ShellKeys, contains};
 use crate::theme::{
-    ACCENT, AMBER, JET_BLACK, footer_hints, footer_key_style, footer_label_style,
-    navigation_key_style,
+    AMBER, JET_BLACK, footer_hints, footer_key_style, footer_label_style, navigation_key_style,
+    theme,
 };
 use outline::Row;
 pub(super) use outline::RowKey;
@@ -39,9 +39,7 @@ mod summary_scroll;
 mod text_layout;
 
 const DIM: Style = Style::new().fg(Color::Gray);
-const KEY_STYLE: Style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
-const READ_ONLY_STYLE: Style = Style::new().fg(Color::Black).bg(Color::Rgb(211, 211, 211));
-const CUSTOM_STYLE: Style = Style::new().fg(Color::Black).bg(Color::Rgb(144, 238, 144));
+const KEY_STYLE: Style = Style::new().fg(theme().text).add_modifier(Modifier::BOLD);
 pub(super) const BAND: Style = Style::new().bg(Color::Rgb(40, 40, 40));
 const EDIT_CHIP: Style = Style::new()
     .fg(JET_BLACK)
@@ -102,10 +100,7 @@ impl Chip {
     }
 
     fn span(self) -> Span<'static> {
-        Span::styled(
-            format!(" {} ", self.label()),
-            Style::new().fg(Color::Red).bg(Color::Rgb(56, 18, 18)),
-        )
+        Span::styled(self.label(), Style::new().fg(theme().blocks))
     }
 }
 
@@ -883,13 +878,12 @@ fn hint_spans(hints: &[(&str, &str)], padded: bool) -> Vec<Span<'static>> {
         .collect()
 }
 
+/// A policy as plain text: required reads bright and the rest dim.
 const fn policy_style(policy: Policy) -> Style {
-    Style::new().fg(match policy {
-        Policy::Required => Color::Red,
-        Policy::Recommended => Color::White,
-        Policy::Conditional => Color::Cyan,
-        Policy::Optional => Color::DarkGray,
-    })
+    match policy {
+        Policy::Required => Style::new().fg(theme().text),
+        Policy::Recommended | Policy::Conditional | Policy::Optional => DIM,
+    }
 }
 
 /// `left` then `right` flush to the end of `width` columns, cutting `left` short with `…` when

@@ -36,6 +36,8 @@ mod home_overlay;
 mod library_copy;
 mod library_header;
 #[cfg(test)]
+mod library_policy_tests;
+#[cfg(test)]
 mod library_rows_tests;
 #[cfg(test)]
 mod model_check;
@@ -2342,21 +2344,18 @@ mod tests {
             let buffer = terminal.backend().buffer();
             assert_eq!(buffer[(CONTENT_X, top)].bg, theme().cursor);
             assert_eq!(buffer[(1, height - 1)].bg, Color::Rgb(80, 160, 255));
-            for label in [" ◇ read-only "] {
-                let mut count = 0;
-                for (y, line) in screen.iter().enumerate() {
-                    for (start, _) in line.match_indices(label) {
-                        let x = line[..start].chars().count();
-                        for dx in 0..label.chars().count() {
-                            let cell = &buffer[(u16::try_from(x + dx)?, u16::try_from(y)?)];
-                            assert_eq!(cell.fg, Color::Black);
-                            assert_eq!(cell.bg, Color::Rgb(211, 211, 211));
-                        }
-                        count += 1;
+            let mut badges = 0;
+            for (y, line) in screen.iter().enumerate() {
+                for (start, _) in line.match_indices("◇ read-only") {
+                    let x = line[..start].chars().count();
+                    for dx in 0.."◇ read-only".chars().count() {
+                        let cell = &buffer[(u16::try_from(x + dx)?, u16::try_from(y)?)];
+                        assert_eq!((cell.fg, cell.bg), (Color::Gray, JET_BLACK));
                     }
+                    badges += 1;
                 }
-                assert!(count > 0, "missing {label}");
             }
+            assert_eq!(badges, 1);
 
             assert!(screen[usize::from(top) - 2].starts_with(" 2  Library  │"));
             let outline = |name: &str| {
@@ -2387,8 +2386,21 @@ mod tests {
             );
             if height == 40 {
                 assert!(text.contains("Types        11"));
-                assert!(text.contains("f fork to customize · built-ins are read-only"));
-                assert!(text.contains("n new blank taxonomy"));
+                // The fork hint ends the Inspector: its key bold, its label dim.
+                let area = state.taxonomies.observe(state.library()).inspector_area;
+                let inspector = text_in(&terminal, area);
+                let last = inspector
+                    .iter()
+                    .rposition(|line| !line.trim().is_empty())
+                    .ok_or("Inspector")?;
+                assert_eq!(inspector[last].trim(), "f fork to customize");
+                assert!(!text.contains("new blank taxonomy"));
+                let y = area.y + u16::try_from(last)?;
+                let x = area.x + u16::try_from(inspector[last].find('f').ok_or("hint")?)?;
+                let key = &buffer[(x, y)];
+                assert_eq!(key.fg, theme().text);
+                assert!(key.modifier.contains(Modifier::BOLD));
+                assert_eq!(buffer[(x + 2, y)].fg, Color::Gray);
             }
 
             select_taxonomy(&mut state, 3);
@@ -2404,7 +2416,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_origin_is_a_plain_word_in_the_outline_and_a_chip_in_the_inspector()
+    fn custom_origin_is_a_plain_word_in_the_outline_and_no_badge_in_the_inspector()
     -> Result<(), Box<dyn std::error::Error>> {
         for embedded in [false, true] {
             for width in [MINIMUM_WIDTH, 87, 140] {
@@ -2420,35 +2432,33 @@ mod tests {
                     terminal.draw(|frame| state.render(frame))?;
                     let outline = state.taxonomies.observe(state.library()).outline_area;
                     let buffer = terminal.backend().buffer();
-                    let (mut words, mut chips) = (0, 0);
+                    let mut words = 0;
                     for (y, row) in rows(&terminal).iter().enumerate() {
                         for (start, _) in row.match_indices(" custom ") {
                             let x = u16::try_from(row[..start].chars().count())?;
                             let y = u16::try_from(y)?;
-                            if outline.contains(Position::new(x, y)) {
-                                // The selected row is the focused cursor bar.
-                                let (fg, bg) = if selected {
-                                    (theme().ground, theme().cursor)
-                                } else {
-                                    (Color::White, JET_BLACK)
-                                };
-                                let cell = &buffer[(x + 1, y)];
-                                assert_eq!((cell.fg, cell.bg), (fg, bg));
-                                assert!(cell.modifier.contains(Modifier::BOLD));
-                                words += 1;
-                                continue;
-                            }
-                            for (dx, character) in " custom ".chars().enumerate() {
-                                let cell = &buffer[(x + u16::try_from(dx)?, y)];
-                                assert_eq!(cell.symbol(), character.to_string());
-                                assert_eq!(cell.fg, Color::Black);
-                                assert_eq!(cell.bg, Color::Rgb(144, 238, 144));
-                                assert_eq!(cell.modifier, Modifier::empty());
-                            }
-                            chips += 1;
+                            assert!(outline.contains(Position::new(x, y)), "{row}");
+                            // The selected row is the focused cursor bar.
+                            let (fg, bg) = if selected {
+                                (theme().ground, theme().cursor)
+                            } else {
+                                (Color::White, JET_BLACK)
+                            };
+                            let cell = &buffer[(x + 1, y)];
+                            assert_eq!((cell.fg, cell.bg), (fg, bg));
+                            assert!(cell.modifier.contains(Modifier::BOLD));
+                            words += 1;
                         }
                     }
-                    assert_eq!((words, chips), (1, usize::from(selected)));
+                    assert_eq!(words, 1);
+                    if selected {
+                        let area = state.taxonomies.observe(state.library()).inspector_area;
+                        let heading = text_in(&terminal, area)
+                            .into_iter()
+                            .next()
+                            .ok_or("Inspector")?;
+                        assert_eq!(heading.trim(), "Taxonomy original");
+                    }
                 }
             }
         }
@@ -2496,7 +2506,7 @@ mod tests {
                     assert_eq!(
                         screen
                             .iter()
-                            .filter(|row| row.contains(" ◇ read-only "))
+                            .filter(|row| row.contains("◇ read-only"))
                             .count(),
                         1
                     );
@@ -2510,17 +2520,15 @@ mod tests {
                             assert!(cell.modifier.contains(Modifier::BOLD));
                         }
                     }
-                    for label in [" ◇ read-only "] {
-                        for (y, line) in screen.iter().enumerate() {
-                            for (start, _) in line.match_indices(label) {
-                                let x = line[..start].chars().count();
-                                for (dx, character) in label.chars().enumerate() {
-                                    let cell = &buffer[(u16::try_from(x + dx)?, u16::try_from(y)?)];
-                                    assert_eq!(cell.symbol(), character.to_string());
-                                    assert_eq!(cell.fg, Color::Black);
-                                    assert_eq!(cell.bg, Color::Rgb(211, 211, 211));
-                                    assert_eq!(cell.modifier, Modifier::empty());
-                                }
+                    // The Inspector's badge is plain dim text, right-aligned on its heading.
+                    for (y, line) in screen.iter().enumerate() {
+                        for (start, _) in line.match_indices("◇ read-only") {
+                            assert!(line.trim_end().ends_with("◇ read-only"), "{line}");
+                            let x = line[..start].chars().count();
+                            for dx in 0.."◇ read-only".chars().count() {
+                                let cell = &buffer[(u16::try_from(x + dx)?, u16::try_from(y)?)];
+                                assert_eq!((cell.fg, cell.bg), (Color::Gray, JET_BLACK));
+                                assert_eq!(cell.modifier, Modifier::empty());
                             }
                         }
                     }
@@ -2582,15 +2590,16 @@ mod tests {
         assert!(screen.contains("│ └─ ▸ revert"));
         assert!(screen.contains("Property constraints"));
         assert!(screen.contains("in conventional › feat"));
-        assert!(screen.contains("Policy       required recommended conditional optional"));
+        assert!(screen.contains("Policy       conditional"));
         assert!(screen.contains("Condition    non-obvious-requirements"));
         assert!(screen.contains("Rationale    Required when"));
         assert!(screen.contains(" NAV "));
+        // Browsing shows the policy as plain dim text.
         let buffer = terminal.backend().buffer();
         let (policy_x, policy_y) = (0..40)
             .find_map(|y| {
                 row_text(&terminal, 0, y, 87)
-                    .find("conditional optional")
+                    .find("Policy       conditional")
                     .map(|x| (x, y))
             })
             .ok_or("missing policy row")?;
@@ -2598,10 +2607,9 @@ mod tests {
             row_text(&terminal, 0, policy_y, 87)[..policy_x]
                 .chars()
                 .count(),
-        )?;
-        assert_eq!(buffer[(policy_x, policy_y)].fg, Color::Cyan);
-        assert_eq!(buffer[(policy_x, policy_y)].bg, Color::Rgb(60, 60, 60));
-        assert_eq!(buffer[(policy_x - 2, policy_y)].fg, Color::Gray);
+        )? + 13;
+        assert_eq!(buffer[(policy_x, policy_y)].fg, Color::White);
+        assert_eq!(buffer[(policy_x, policy_y)].bg, JET_BLACK);
 
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
@@ -2838,13 +2846,15 @@ mod tests {
                 KeyCode::Char('2'),
                 KeyCode::Enter,
                 KeyCode::Down,
+                KeyCode::Down,
                 KeyCode::Enter,
                 KeyCode::Down,
                 KeyCode::Down,
                 KeyCode::Down,
             ],
         );
-        assert_eq!(cursor(&state), ["conventional", "feat", "constraints"]);
+        // The longest built-in property Inspector, so it spans more than two pages.
+        assert_eq!(cursor(&state), ["conventional", "fix", "constraints"]);
         // The same width on a tall terminal shows every line of the Inspector.
         let mut tall = Terminal::new(TestBackend::new(MINIMUM_WIDTH, 60))?;
         tall.draw(|frame| state.render(frame))?;

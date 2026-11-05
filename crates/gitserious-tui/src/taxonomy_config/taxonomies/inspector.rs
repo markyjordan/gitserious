@@ -9,8 +9,8 @@ use ratatui::widgets::Paragraph;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::super::hanging_wrap;
-use super::{BAND, CUSTOM_STYLE, Chips, DIM, KEY_STYLE, READ_ONLY_STYLE, fit, panes, policy_style};
-use crate::theme::ACCENT;
+use super::{BAND, Chips, DIM, KEY_STYLE, fit, panes};
+use crate::theme::{ACCENT, theme};
 
 /// Labels and the values beside them start in these columns.
 const LABEL_WIDTH: usize = 13;
@@ -34,7 +34,7 @@ struct Focused {
     cursor: Option<usize>,
 }
 
-/// Describes `node` in words under a header with its chip, scrolled down by `offset` rows, and
+/// Describes `node` in words under a header with its badge, scrolled down by `offset` rows, and
 /// returns how many rows it shows. The focused field never sits below the view, and while it is
 /// edited it stays in view with its problems; browsing can scroll through the remaining
 /// details. When they overflow, the last row counts the rows below.
@@ -103,7 +103,9 @@ pub(super) fn render(
     inner.height
 }
 
-/// The lines and the rows the focused field takes.
+/// The lines and the rows the focused field takes. A focus means EDIT: the property lays out
+/// every field to edit in turn, where browsing leads with its policy and drops the name the
+/// heading already shows.
 fn describe(
     chips: &Chips<'_>,
     node: NodeRef<'_>,
@@ -112,6 +114,8 @@ fn describe(
 ) -> (Vec<Line<'static>>, Option<Focused>) {
     let library = chips.library;
     let chip = chips.of(node.id());
+    let editing = focus.is_some();
+    let built_in = node.taxonomy().origin() == TaxonomyOrigin::BuiltIn;
     let mut lines = Vec::new();
     let (kind, name) = match node {
         NodeRef::Taxonomy(taxonomy) => ("Taxonomy", taxonomy.name()),
@@ -127,19 +131,10 @@ fn describe(
                 .add_modifier(Modifier::BOLD),
         ),
     ];
-    let badge = match (chip, node) {
-        _ if node.taxonomy().origin() == TaxonomyOrigin::BuiltIn => {
-            vec![Span::styled(" ◇ read-only ", READ_ONLY_STYLE)]
-        }
-        (Some(chip), _) => vec![chip.span()],
-        (None, NodeRef::Taxonomy(taxonomy)) => vec![Span::styled(
-            format!(
-                " {} ",
-                super::outline::origin_label(library, taxonomy.origin())
-            ),
-            CUSTOM_STYLE,
-        )],
-        (None, _) => Vec::new(),
+    let badge = match chip {
+        _ if built_in => vec![Span::styled("◇ read-only", DIM)],
+        Some(chip) => vec![chip.span()],
+        None => Vec::new(),
     };
     lines.push(fit(heading, badge, width));
     match node {
@@ -172,7 +167,7 @@ fn describe(
         let problems = chips.sentences(&ProblemSite::Field(id.clone(), field));
         if field == DraftField::Policy {
             if let NodeRef::Property { property, .. } = node {
-                lines.extend(policy_lines(property.policy(), width));
+                lines.extend(policy_lines(property.policy(), editing, width));
             }
         } else {
             let text = library.text(id, field).unwrap_or_default();
@@ -220,14 +215,19 @@ fn describe(
             fact(&mut lines, "Version", &version);
             show(&mut lines, DraftField::Description);
             fact(&mut lines, "Types", &taxonomy.types().len().to_string());
-            if chip.is_some() {
-                lines.extend(problem_lines(
-                    "Add a type before this taxonomy can be included in a project.",
-                    width,
-                ));
-            }
             if let Some(source) = taxonomy.derived_from() {
                 fact(&mut lines, "Forked from", &source.versioned().to_string());
+            }
+            if chip.is_some() {
+                let sentence = "Add a type before this taxonomy can be included in a project."
+                    .graphemes(true)
+                    .collect::<Vec<_>>();
+                lines.push(Line::default());
+                lines.extend(
+                    wrap(&sentence, width.max(1))
+                        .into_iter()
+                        .map(|(start, end)| Line::styled(sentence[start..end].concat(), PROBLEM)),
+                );
             }
         }
         NodeRef::Type { commit_type, .. } => {
@@ -240,21 +240,30 @@ fn describe(
             );
         }
         NodeRef::Property { property, .. } => {
-            show(&mut lines, DraftField::Name);
-            show(&mut lines, DraftField::Description);
-            show(&mut lines, DraftField::Policy);
-            if property.policy() == Policy::Conditional {
-                show(&mut lines, DraftField::Condition);
-                show(&mut lines, DraftField::Rationale);
+            let conditional = property.policy() == Policy::Conditional;
+            if editing {
+                show(&mut lines, DraftField::Name);
+                show(&mut lines, DraftField::Description);
+                show(&mut lines, DraftField::Policy);
+                if conditional {
+                    show(&mut lines, DraftField::Condition);
+                    show(&mut lines, DraftField::Rationale);
+                }
+            } else {
+                show(&mut lines, DraftField::Policy);
+                if conditional {
+                    show(&mut lines, DraftField::Condition);
+                }
+                show(&mut lines, DraftField::Description);
+                if conditional {
+                    show(&mut lines, DraftField::Rationale);
+                }
             }
         }
     }
-    if let NodeRef::Taxonomy(taxonomy) = node {
+    if built_in && !matches!(node, NodeRef::Property { .. }) {
         lines.push(Line::default());
-        if taxonomy.origin() == TaxonomyOrigin::BuiltIn {
-            lines.push(hint("f", "fork to customize · built-ins are read-only"));
-        }
-        lines.push(hint("n", "new blank taxonomy"));
+        lines.push(hint("f", "fork to customize"));
     }
     (lines, focused)
 }
@@ -365,18 +374,23 @@ pub(super) fn value_width(width: usize, limit: Option<usize>) -> usize {
 
 use super::text_layout::wrap;
 
-/// Every policy in order, the current one highlighted, wrapping within the value column.
-fn policy_lines(current: Policy, width: usize) -> Vec<Line<'static>> {
-    let column = width.saturating_sub(LABEL_WIDTH);
-    let mut lines = Vec::new();
+/// The current policy as plain text, or in EDIT every policy in order with the current one bold
+/// and underlined, wrapping within the value column.
+fn policy_lines(current: Policy, editing: bool, width: usize) -> Vec<Line<'static>> {
     let mut spans = vec![Span::styled(
         format!("{:<LABEL_WIDTH$}", DraftField::Policy.label()),
         DIM,
     )];
+    if !editing {
+        spans.push(Span::raw(current.label()));
+        return vec![Line::from(spans)];
+    }
+    let column = width.saturating_sub(LABEL_WIDTH);
+    let mut lines = Vec::new();
     let mut used = 0;
     for policy in Policy::ORDER {
         let label = policy.label();
-        if used > 0 && used + 1 + label.len() > column {
+        if used > 0 && used + 2 + label.len() > column {
             lines.push(Line::from(std::mem::replace(
                 &mut spans,
                 vec![Span::raw(" ".repeat(LABEL_WIDTH))],
@@ -384,15 +398,15 @@ fn policy_lines(current: Policy, width: usize) -> Vec<Line<'static>> {
             used = 0;
         }
         if used > 0 {
-            spans.push(Span::raw(" "));
-            used += 1;
+            spans.push(Span::raw("  "));
+            used += 2;
         }
         spans.push(if policy == current {
             Span::styled(
                 label,
-                policy_style(policy)
-                    .bg(Color::Rgb(60, 60, 60))
-                    .add_modifier(Modifier::BOLD),
+                Style::new()
+                    .fg(theme().text)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
             )
         } else {
             Span::styled(label, DIM)
