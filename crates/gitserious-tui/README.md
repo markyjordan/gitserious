@@ -165,7 +165,8 @@ Names such as `Team Changes` save as `team-changes`. Name and Condition accept
 80 graphemes; Description and Rationale accept 100. Loaded content beyond those
 limits remains intact and may shrink. Edited descriptions and rationales are
 trimmed, while unchanged loaded prose is preserved. A no-op edit performs no
-write or version increment.
+write or version increment. Successful Library saves remain quiet; write
+failures still report an actionable error and preserve the edit for retry.
 
 A taxonomy may be saved without types. It shows `▲ invalid`, and the Inspector
 explains: "Add a type before this taxonomy can be included in a project."

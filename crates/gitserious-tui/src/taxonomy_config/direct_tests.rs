@@ -252,6 +252,13 @@ fn partial_fields_and_duplicate_names_stay_in_edit_with_inline_errors() -> Resul
     assert_eq!(before.expanded, after.expanded);
     assert_eq!(before.outline_offset, after.outline_offset);
     assert_eq!(after.cursor_path, ["team", "new-kind"]);
+    assert!(
+        state.status.is_none(),
+        "successful Library save stays quiet"
+    );
+    for (width, height) in [(87, 40), (125, 51)] {
+        assert!(!frame(&mut state, width, height)?.contains("Saved."));
+    }
     let saved = stored(&store)?;
     assert_eq!(saved.custom_taxonomies()[0].version().get(), 2);
     assert_eq!(
@@ -274,6 +281,13 @@ fn zero_type_entry_reopens_unlocks_until_eligible_and_stays_locked_after_last_ty
     press(&mut state, &store, KeyCode::Enter);
     paste(&mut state, &store, "Purpose");
     press(&mut state, &store, KeyCode::Esc);
+    assert!(
+        state.status.is_none(),
+        "successful Library save stays quiet"
+    );
+    for (width, height) in [(87, 40), (125, 51)] {
+        assert!(!frame(&mut state, width, height)?.contains("Saved."));
+    }
     let saved = stored(&store)?;
     let record = saved
         .custom_taxonomies()
@@ -339,6 +353,13 @@ fn zero_type_entry_reopens_unlocks_until_eligible_and_stays_locked_after_last_ty
         "unsaved child changed saved eligibility"
     );
     press(&mut state, &store, KeyCode::Esc);
+    assert!(
+        state.status.is_none(),
+        "successful Library save stays quiet"
+    );
+    for (width, height) in [(87, 40), (125, 51)] {
+        assert!(!frame(&mut state, width, height)?.contains("Saved."));
+    }
     let saved = stored(&store)?;
     let record = saved
         .custom_taxonomies()
@@ -355,6 +376,13 @@ fn zero_type_entry_reopens_unlocks_until_eligible_and_stays_locked_after_last_ty
     assert!(!frame(&mut state, 87, 40)?.contains("▲ invalid"));
     press(&mut state, &store, KeyCode::Char('d'));
     press(&mut state, &store, KeyCode::Char('y'));
+    assert!(
+        state.status.is_none(),
+        "successful Library save stays quiet"
+    );
+    for (width, height) in [(87, 40), (125, 51)] {
+        assert!(!frame(&mut state, width, height)?.contains("Saved."));
+    }
     let saved = stored(&store)?;
     let record = saved
         .custom_taxonomies()
@@ -413,6 +441,13 @@ fn conditional_fields_are_required_and_type_and_property_never_show_invalid_chip
     }
     paste(&mut state, &store, "Explain risky changes");
     press(&mut state, &store, KeyCode::Esc);
+    assert!(
+        state.status.is_none(),
+        "successful Library save stays quiet"
+    );
+    for (width, height) in [(87, 40), (125, 51)] {
+        assert!(!frame(&mut state, width, height)?.contains("Saved."));
+    }
     let saved = stored(&store)?;
     assert_eq!(saved.custom_taxonomies()[0].version().get(), 2);
     assert_eq!(store.inner.saves(), 1);
@@ -437,6 +472,7 @@ fn failed_edit_keeps_fields_and_retry_saves_once_without_changing_identity() -> 
     );
     assert_eq!(stored(&store)?, original);
     assert!(error(&state)?.contains("/config/config.toml: disk full"));
+    assert!(frame(&mut state, 87, 40)?.contains("disk full"));
     store.fail.set(false);
     press(&mut state, &store, KeyCode::Esc);
     assert_eq!(
@@ -446,6 +482,11 @@ fn failed_edit_keeps_fields_and_retry_saves_once_without_changing_identity() -> 
         Some(id)
     );
     assert_eq!(store.inner.saves(), 1);
+    assert!(
+        state.status.is_none(),
+        "retry clears the old error without a success notice"
+    );
+    assert!(!frame(&mut state, 125, 51)?.contains("Saved."));
     Ok(())
 }
 
@@ -488,6 +529,8 @@ fn copy_reorder_and_delete_rollback_on_failure_and_persist_on_retry() -> Result 
         store.fail.set(false);
         assert!(!state.handle_event(event, &store));
         assert_ne!(stored(&store)?, original, "{operation}");
+        assert!(state.status.is_none(), "{operation} retry must be quiet");
+        assert!(!frame(&mut state, 87, 40)?.contains("Saved."));
         assert!(!state.scope_dirty(ConfigurationDestination::Global));
         assert_eq!(stored(&store)?.custom_taxonomies()[0].version().get(), 2);
     }
