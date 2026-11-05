@@ -78,8 +78,10 @@ rejected commit retains its reviewed message and composer; Enter resumes review.
 before discarding a retained review. Direct `gitserious commit` still opens
 authoring immediately and exits with the existing Git result.
 
-Help supplies Overview, Init, Config, Commit, and Keyboard Navigation pages;
-the first four are the CLI's help text. Left/Right changes pages and
+Help supplies Overview, Init, Config, and Commit pages. Each opens with the
+command it mirrors, `gitserious --help` or `gitserious help <command>`, then
+shows what that command prints, wrapped to the pane. Headings and command and
+flag names are bold; descriptions are dim. Left/Right changes pages and
 Up/Down/Page Up/Page Down scrolls.
 
 ## Configuration
