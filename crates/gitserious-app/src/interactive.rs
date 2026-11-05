@@ -37,20 +37,20 @@ pub type HelpLine = Vec<HelpSpan>;
 #[derive(Clone)]
 pub struct HelpPage {
     pub title: String,
-    /// The command line whose output the page shows.
-    pub invocation: String,
+    /// The command whose help the page shows; the overview documents none.
+    pub command: Option<String>,
     render: Arc<dyn Fn(u16) -> Vec<HelpLine> + Send + Sync>,
 }
 
 impl HelpPage {
     pub fn new(
         title: impl Into<String>,
-        invocation: impl Into<String>,
+        command: Option<&str>,
         render: impl Fn(u16) -> Vec<HelpLine> + Send + Sync + 'static,
     ) -> Self {
         Self {
             title: title.into(),
-            invocation: invocation.into(),
+            command: command.map(str::to_owned),
             render: Arc::new(render),
         }
     }
@@ -67,7 +67,7 @@ impl Debug for HelpPage {
         formatter
             .debug_struct("HelpPage")
             .field("title", &self.title)
-            .field("invocation", &self.invocation)
+            .field("command", &self.command)
             .finish_non_exhaustive()
     }
 }

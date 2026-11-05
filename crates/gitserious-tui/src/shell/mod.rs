@@ -1254,11 +1254,20 @@ mod tests {
     /// The four shell pages, with `overview` numbered lines on the first.
     fn pages(overview: usize) -> Vec<HelpPage> {
         vec![
-            HelpPage::new("Overview", "gitserious --help", move |_| numbered(overview)),
-            HelpPage::new("Init", "gitserious help init", |_| numbered(1)),
-            HelpPage::new("Config", "gitserious help config", |_| numbered(1)),
-            HelpPage::new("Commit", "gitserious help commit", |_| numbered(1)),
+            HelpPage::new("Overview", None, move |_| numbered(overview)),
+            HelpPage::new("Init", Some("init"), |_| numbered(1)),
+            HelpPage::new("Config", Some("config"), |_| numbered(1)),
+            HelpPage::new("Commit", Some("commit"), |_| numbered(1)),
         ]
+    }
+
+    /// The first content row, right of the sidebar's rule.
+    fn top(terminal: &Terminal<TestBackend>) -> Option<String> {
+        rendered(terminal)
+            .lines()
+            .nth(2)
+            .and_then(|row| row.split('│').nth(1))
+            .map(|content| content.trim().to_owned())
     }
 
     fn footer(terminal: &Terminal<TestBackend>) -> String {
@@ -1518,15 +1527,15 @@ mod tests {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Home, &services);
         let help = vec![
-            HelpPage::new("Overview", "gitserious --help", |_| numbered(100)),
-            HelpPage::new("Config", "gitserious help config", |_| numbered(1)),
+            HelpPage::new("Overview", None, |_| numbered(100)),
+            HelpPage::new("Config", Some("config"), |_| numbered(1)),
         ];
         shell.handle_event(key(KeyCode::BackTab), &services, &help);
         assert_eq!(shell.section, Section::Help);
         shell.handle_event(key(KeyCode::Down), &services, &help);
         let mut terminal = Terminal::new(TestBackend::new(66, 18))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
-        assert!(rendered(&terminal).contains("$ gitserious help config"));
+        assert_eq!(top(&terminal).as_deref(), Some("gitserious help: config"));
         shell.handle_event(key(KeyCode::Tab), &services, &help);
         assert_eq!(shell.section, Section::Home, "tab wraps from Help to Home");
         shell.handle_event(key(KeyCode::Char('/')), &services, &help);
@@ -1548,12 +1557,14 @@ mod tests {
     }
 
     #[test]
-    fn help_opens_with_its_invocation_and_bolds_only_headings_and_names()
+    fn the_overview_opens_on_its_help_and_bolds_only_headings_and_names()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Home, &services);
-        let help = vec![HelpPage::new("Overview", "gitserious --help", |_| {
+        let help = vec![HelpPage::new("Overview", None, |_| {
             vec![
+                vec![span("Create durable commit-message policy", false)],
+                vec![],
                 vec![
                     span("Usage:", true),
                     span(" ", false),
@@ -1575,7 +1586,8 @@ mod tests {
 
         let text = rendered(&terminal);
         assert!(!text.contains("┌ Help"), "{text}");
-        let (x, y) = position(&terminal, "$ gitserious --help").ok_or("missing invocation")?;
+        assert!(!text.contains("gitserious help:"), "{text}");
+        let (x, y) = position(&terminal, "Create durable").ok_or("missing description")?;
         assert_eq!(y, 2, "one blank row under the header");
         let buffer = terminal.backend().buffer();
         assert_eq!(
@@ -1584,14 +1596,7 @@ mod tests {
             "one column right of the rule"
         );
         assert_eq!(buffer[(x - 1, y)].symbol(), " ");
-        let (usage_x, usage_y) = position(&terminal, "Usage:").ok_or("missing usage")?;
-        assert_eq!(
-            (usage_x, usage_y),
-            (x, y + 2),
-            "one blank row, then the help"
-        );
-        assert_eq!(buffer[(x, y)].fg, theme().dim);
-        assert_eq!(buffer[(x + 2, y)].fg, theme().text);
+        assert_eq!(position(&terminal, "Usage:"), Some((x, y + 2)));
         for needle in ["Usage:", "gitserious [", "Options:", "-h, --help"] {
             let (x, y) = position(&terminal, needle).ok_or(needle)?;
             assert!(buffer[(x, y)].modifier.contains(Modifier::BOLD), "{needle}");
@@ -1604,6 +1609,42 @@ mod tests {
                 "{needle}"
             );
             assert_eq!(buffer[(x, y)].fg, color, "{needle}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn command_pages_open_with_their_help_command_and_no_prompt()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let services = Services;
+        let mut shell = Shell::new(InteractiveEntry::Home, &services);
+        let help = pages(1);
+        shell.handle_event(key(KeyCode::BackTab), &services, &help);
+        let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
+        for (digit, command) in [
+            ('1', None),
+            ('2', Some("init")),
+            ('3', Some("config")),
+            ('4', Some("commit")),
+        ] {
+            shell.handle_event(key(KeyCode::Char(digit)), &services, &help);
+            terminal.draw(|frame| shell.render(frame, &help))?;
+            let text = rendered(&terminal);
+            assert!(!text.contains("$ "), "{text}");
+            let Some(command) = command else {
+                assert_eq!(top(&terminal).as_deref(), Some("line 1"), "{text}");
+                continue;
+            };
+
+            let header = format!("gitserious help: {command}");
+            assert_eq!(top(&terminal).as_deref(), Some(header.as_str()), "{text}");
+            let (x, y) = position(&terminal, &header).ok_or("missing header")?;
+            assert_eq!(position(&terminal, "line 1"), Some((x, y + 2)), "{text}");
+            let buffer = terminal.backend().buffer();
+            for (column, color) in [(x, theme().dim), (x + 17, theme().text)] {
+                assert_eq!(buffer[(column, y)].fg, color, "{header} at {column}");
+                assert!(!buffer[(column, y)].modifier.contains(Modifier::BOLD));
+            }
         }
         Ok(())
     }
@@ -1645,13 +1686,13 @@ mod tests {
         };
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Home, &services);
-        let help = vec![HelpPage::new("Overview", "gitserious --help", listing)];
+        let help = vec![HelpPage::new("Overview", None, listing)];
         shell.handle_event(key(KeyCode::BackTab), &services, &help);
         let mut terminal = Terminal::new(TestBackend::new(66, 18))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
 
         let text = rendered(&terminal);
-        let (left, _) = position(&terminal, "$ ").ok_or("missing invocation")?;
+        let (left, _) = position(&terminal, "  commit  Author").ok_or("missing listing")?;
         let rows: Vec<String> = text
             .lines()
             .map(|row| row.chars().skip(usize::from(left)).collect())
@@ -1709,10 +1750,7 @@ mod tests {
             assert_eq!(buffer[(rule, y)].symbol(), "│", "row {y}");
             assert_eq!(buffer[(rule, y)].fg, theme().dim, "row {y}");
         }
-        assert_eq!(
-            position(&terminal, "$ gitserious --help"),
-            Some((rule + 2, 2))
-        );
+        assert_eq!(position(&terminal, "line 1"), Some((rule + 2, 2)));
 
         for x in 0..rule {
             let cell = &buffer[(x, 2)];
@@ -1741,21 +1779,18 @@ mod tests {
         shell.handle_event(key(KeyCode::BackTab), &services, &help);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
-        let invocation = |terminal: &Terminal<TestBackend>| {
-            rendered(terminal)
-                .lines()
-                .nth(2)
-                .and_then(|row| row.split("$ ").nth(1))
-                .map(|command| command.trim().to_owned())
-        };
-        assert_eq!(invocation(&terminal).as_deref(), Some("gitserious --help"));
+        assert_eq!(top(&terminal).as_deref(), Some("line 1"));
 
         for code in [KeyCode::Right, KeyCode::Down, KeyCode::Down, KeyCode::Left] {
             shell.handle_event(key(code), &services, &help);
         }
         terminal.draw(|frame| shell.render(frame, &help))?;
         let scrolled = rendered(&terminal);
-        assert_eq!(invocation(&terminal), None, "reading scrolled the page");
+        assert_eq!(
+            top(&terminal).as_deref(),
+            Some("line 3"),
+            "reading scrolled the page"
+        );
         shell.handle_event(key(KeyCode::Up), &services, &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert_eq!(
@@ -1766,46 +1801,34 @@ mod tests {
 
         shell.handle_event(key(KeyCode::Down), &services, &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
-        assert_eq!(
-            invocation(&terminal).as_deref(),
-            Some("gitserious help init")
-        );
+        assert_eq!(top(&terminal).as_deref(), Some("gitserious help: init"));
         shell.handle_event(key(KeyCode::Up), &services, &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert_eq!(
-            invocation(&terminal).as_deref(),
-            Some("gitserious --help"),
+            top(&terminal).as_deref(),
+            Some("line 1"),
             "a new page starts at its top"
         );
 
         shell.handle_event(key(KeyCode::Char('3')), &services, &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
-        assert_eq!(
-            invocation(&terminal).as_deref(),
-            Some("gitserious help config")
-        );
+        assert_eq!(top(&terminal).as_deref(), Some("gitserious help: config"));
         shell.handle_event(key(KeyCode::Char('5')), &services, &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
-        assert_eq!(
-            invocation(&terminal).as_deref(),
-            Some("gitserious help config")
-        );
+        assert_eq!(top(&terminal).as_deref(), Some("gitserious help: config"));
 
         shell.handle_event(key(KeyCode::Right), &services, &help);
         let (x, y) = position(&terminal, "4  Commit").ok_or("missing Commit")?;
         shell.handle_event(click(Rect::new(x, y, 1, 1)), &services, &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
-        assert_eq!(
-            invocation(&terminal).as_deref(),
-            Some("gitserious help commit")
-        );
+        assert_eq!(top(&terminal).as_deref(), Some("gitserious help: commit"));
         assert!(footer(&terminal).contains("→ read  ↑↓ pages  1-4 jump"));
         assert_eq!(terminal.backend().buffer()[(x, y)].bg, theme().text);
         shell.handle_event(key(KeyCode::Down), &services, &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert_eq!(
-            invocation(&terminal).as_deref(),
-            Some("gitserious help commit"),
+            top(&terminal).as_deref(),
+            Some("gitserious help: commit"),
             "the last page stays chosen"
         );
         Ok(())
@@ -1819,29 +1842,23 @@ mod tests {
         shell.handle_event(key(KeyCode::BackTab), &services, &help);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
-        let (_, top) = position(&terminal, "$ gitserious --help").ok_or("missing invocation")?;
         // The numbered line at the top of the content, if any.
         let mut press = |code| -> Result<Option<u16>, Box<dyn std::error::Error>> {
             shell.handle_event(key(code), &services, &help);
             terminal.draw(|frame| shell.render(frame, &help))?;
-            Ok(rendered(&terminal)
-                .lines()
-                .nth(usize::from(top))
-                .and_then(|row| row.split("line ").nth(1))
-                .and_then(|number| number.trim().parse().ok()))
+            Ok(top(&terminal)
+                .as_deref()
+                .and_then(|row| row.strip_prefix("line "))
+                .and_then(|number| number.parse().ok()))
         };
 
-        assert_eq!(
-            press(KeyCode::Right)?,
-            None,
-            "the invocation still tops the page"
-        );
-        assert_eq!(press(KeyCode::Down)?, None, "the blank row under it");
-        assert_eq!(press(KeyCode::Down)?, Some(1));
+        assert_eq!(press(KeyCode::Right)?, Some(1), "reading starts at the top");
+        assert_eq!(press(KeyCode::Down)?, Some(2));
         // 30 rows less the header, the row under it, and the footer.
-        assert_eq!(press(KeyCode::PageDown)?, Some(1 + 27));
-        assert_eq!(press(KeyCode::PageUp)?, Some(1));
-        assert_eq!(press(KeyCode::Up)?, None);
+        assert_eq!(press(KeyCode::PageDown)?, Some(2 + 27));
+        assert_eq!(press(KeyCode::PageUp)?, Some(2));
+        assert_eq!(press(KeyCode::Up)?, Some(1));
+        assert_eq!(press(KeyCode::Up)?, Some(1), "the top stops scrolling");
 
         let buffer = terminal.backend().buffer();
         let (x, y) = position(&terminal, "1  Overview").ok_or("missing Overview")?;
@@ -1882,7 +1899,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert!(!rendered(&terminal).contains("line 40"));
-        let (left, _) = position(&terminal, "$ ").ok_or("missing invocation")?;
+        let (left, _) = position(&terminal, "line 1").ok_or("missing first line")?;
         assert!(footer(&terminal).contains("→ read  ↑↓ pages  1-4 jump"));
 
         shell.handle_event(key(KeyCode::Right), &services, &help);
@@ -1928,7 +1945,7 @@ mod tests {
         }
         assert_eq!(shell.section, Section::Help);
         terminal.draw(|frame| shell.render(frame, &help))?;
-        assert!(rendered(&terminal).contains("$ gitserious help config"));
+        assert_eq!(top(&terminal).as_deref(), Some("gitserious help: config"));
         assert!(footer(&terminal).contains("→ read  ↑↓ pages  1-4 jump"));
         let (x, y) = position(&terminal, "3  Config").ok_or("missing Config")?;
         assert_eq!(terminal.backend().buffer()[(x, y)].bg, theme().text);

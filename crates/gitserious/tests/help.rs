@@ -5,6 +5,13 @@ use gitserious_app::{HelpPage, HelpSpan};
 use gitserious_cli::interactive_help;
 
 const DOCUMENTED: [&str; 3] = ["init", "config", "commit"];
+const COMMANDS: [Option<&str>; 5] = [
+    None,
+    Some("init"),
+    Some("config"),
+    Some("commit"),
+    Some("help"),
+];
 const COLUMNS: usize = 100;
 
 /// Every stream of the child is a pipe, so clap takes the terminal width from `COLUMNS`.
@@ -35,6 +42,38 @@ fn detailed(command: Option<&str>) -> Result<String, Box<dyn Error>> {
     )
 }
 
+/// A command, `None` for the root, and one help it prints.
+type Printed = (Option<&'static str>, String);
+
+/// The concise help both flags print and the detailed help, for every command.
+fn every_help() -> Result<Vec<Printed>, Box<dyn Error>> {
+    let mut helps = Vec::new();
+    for command in COMMANDS {
+        for flag in ["-h", "--help"] {
+            helps.push((command, concise(command, flag)?));
+        }
+        helps.push((command, detailed(command)?));
+    }
+    Ok(helps)
+}
+
+/// Each heading with the lines below it, up to the next line at column 0.
+fn sections(help: &str) -> Vec<(&str, Vec<&str>)> {
+    let mut sections: Vec<(&str, Vec<&str>)> = Vec::new();
+    let mut open = false;
+    for line in help.lines() {
+        if line.ends_with(':') && !line.starts_with(' ') {
+            sections.push((line, Vec::new()));
+            open = true;
+        } else if !line.is_empty() && !line.starts_with(' ') {
+            open = false;
+        } else if let Some((_, body)) = sections.last_mut().filter(|_| open) {
+            body.push(line);
+        }
+    }
+    sections
+}
+
 fn command_lines(help: &str) -> impl Iterator<Item = &str> {
     help.split("Commands:\n")
         .nth(1)
@@ -51,13 +90,7 @@ fn command_names(help: &str) -> Vec<&str> {
 
 #[test]
 fn short_and_long_help_flags_print_the_same_concise_help() -> Result<(), Box<dyn Error>> {
-    for command in [
-        None,
-        Some("init"),
-        Some("config"),
-        Some("commit"),
-        Some("help"),
-    ] {
+    for command in COMMANDS {
         let short = concise(command, "-h")?;
 
         assert_eq!(short, concise(command, "--help")?, "{command:?}");
@@ -69,6 +102,67 @@ fn short_and_long_help_flags_print_the_same_concise_help() -> Result<(), Box<dyn
             }),
             "{short}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn every_usage_line_shows_options() -> Result<(), Box<dyn Error>> {
+    for (command, help) in every_help()? {
+        let expected = match command {
+            None => "Usage: gitserious [OPTIONS] [COMMAND]".to_owned(),
+            Some("help") => "Usage: gitserious help [OPTIONS] [COMMAND]".to_owned(),
+            Some(command) => format!("Usage: gitserious {command} [OPTIONS]"),
+        };
+        let usage: Vec<_> = help
+            .lines()
+            .filter(|line| line.starts_with("Usage:"))
+            .collect();
+
+        assert_eq!(usage, [expected], "{help}");
+    }
+    Ok(())
+}
+
+#[test]
+fn help_flag_is_listed_only_under_global_options() -> Result<(), Box<dyn Error>> {
+    for (command, help) in every_help()? {
+        let flags = |heading: &str| -> Vec<String> {
+            sections(&help)
+                .into_iter()
+                .filter(|(name, _)| *name == heading)
+                .flat_map(|(_, body)| body)
+                .filter(|line| line.trim_start().starts_with('-'))
+                .filter_map(|line| line.trim().split("  ").next())
+                .map(str::to_owned)
+                .collect()
+        };
+
+        assert_eq!(flags("Global options:"), ["-h, --help"], "{help}");
+        let options = flags("Options:");
+        assert!(
+            !options
+                .iter()
+                .flat_map(|flag| flag.split(", "))
+                .any(|name| name == "-h" || name == "--help"),
+            "{help}"
+        );
+        if command.is_none() {
+            assert_eq!(options, ["-V, --version"], "{help}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn every_heading_lists_something() -> Result<(), Box<dyn Error>> {
+    for (_, help) in every_help()? {
+        for (heading, body) in sections(&help) {
+            assert!(
+                body.first().is_some_and(|line| !line.trim().is_empty()),
+                "{heading:?} is empty: {help}"
+            );
+        }
     }
     Ok(())
 }
@@ -122,7 +216,8 @@ fn root_detailed_help_lists_the_help_command_and_points_to_command_help()
 }
 
 #[test]
-fn command_help_opens_with_the_description_then_usage_and_options() -> Result<(), Box<dyn Error>> {
+fn command_help_opens_with_the_description_then_usage_and_global_options()
+-> Result<(), Box<dyn Error>> {
     for command in DOCUMENTED {
         let help = detailed(Some(command))?;
         let (description, sections) = help.split_once("\n\nUsage: ").unwrap_or_default();
@@ -134,7 +229,12 @@ fn command_help_opens_with_the_description_then_usage_and_options() -> Result<()
                 .all(|line| !line.ends_with(':') && line.trim() == line),
             "{command}: {help}"
         );
-        assert!(sections.starts_with(&format!("gitserious {command}\n\nOptions:\n")));
+        assert!(
+            sections.starts_with(&format!(
+                "gitserious {command} [OPTIONS]\n\nGlobal options:\n"
+            )),
+            "{command}: {help}"
+        );
         assert!(!help.contains("Arguments:"), "{command}: {help}");
         assert!(!help.contains("gitserious help"), "{command}: {help}");
         for heading in ["Examples", "NAME", "SYNOPSIS", "DESCRIPTION", "EXIT STATUS"] {
@@ -154,6 +254,7 @@ fn command_help_puts_each_description_below_its_flag_with_blank_lines_between()
         help.contains("\nArguments:\n  [COMMAND]\n          "),
         "{help}"
     );
+    let options = options.replace("\n\nGlobal options:\n", "\n\n");
     let entries: Vec<_> = options.trim_end().split("\n\n").collect();
     assert_eq!(entries.len(), 2, "{help}");
     for entry in entries {
@@ -220,31 +321,34 @@ fn page_text(page: &HelpPage, width: u16) -> String {
 }
 
 #[test]
-fn each_help_page_shows_what_its_invocation_prints_at_the_same_width() -> Result<(), Box<dyn Error>>
-{
+fn each_help_page_shows_what_its_help_command_prints_at_the_same_width()
+-> Result<(), Box<dyn Error>> {
     let pages = interactive_help();
     let shown: Vec<_> = pages
         .iter()
-        .map(|page| (page.title.as_str(), page.invocation.as_str()))
+        .map(|page| (page.title.as_str(), page.command.as_deref()))
         .collect();
 
     assert_eq!(
         shown,
         [
-            ("Overview", "gitserious --help"),
-            ("Init", "gitserious help init"),
-            ("Config", "gitserious help config"),
-            ("Commit", "gitserious help commit"),
+            ("Overview", None),
+            ("Init", Some("init")),
+            ("Config", Some("config")),
+            ("Commit", Some("commit")),
         ]
     );
     for page in &pages {
-        let arguments: Vec<_> = page.invocation.split(' ').skip(1).collect();
+        let arguments = match page.command.as_deref() {
+            None => vec!["--help"],
+            Some(command) => vec!["help", command],
+        };
         for width in [50, 80, 120] {
             assert_eq!(
                 page_text(page, width),
                 succeed_at(usize::from(width), &arguments)?,
                 "{} at {width}",
-                page.invocation
+                page.title
             );
         }
     }
@@ -261,14 +365,14 @@ fn help_pages_mark_headings_and_names_strong_and_leave_descriptions_plain() {
             .map(|span| span.text.as_str())
             .collect();
 
-        for name in ["Usage:", "Options:", "-h", "--help"] {
-            assert!(strong.contains(&name), "{}: {strong:?}", page.invocation);
+        for name in ["Usage:", "Global options:", "-h", "--help"] {
+            assert!(strong.contains(&name), "{}: {strong:?}", page.title);
         }
         assert!(
             spans.iter().any(|span| !span.strong
                 && span.text.trim() == "Display the concise help for this command"),
             "{}: {spans:?}",
-            page.invocation
+            page.title
         );
     }
 }

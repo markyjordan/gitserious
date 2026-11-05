@@ -8,7 +8,7 @@ use std::process::{self, ExitCode, Stdio};
 use clap::builder::StyledStr;
 use clap::builder::styling::{Style, Styles};
 use clap::error::ErrorKind;
-use clap::{ArgAction, CommandFactory, Parser, Subcommand};
+use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
 use gitserious_app::{
     CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
     ConfigurationEditor, GlobalConfigurationStore, HelpLine, HelpPage, HelpSpan, InitOutcome,
@@ -40,7 +40,8 @@ struct Cli {
         long,
         global = true,
         action = ArgAction::HelpShort,
-        help = "Display the concise help for this command"
+        help = "Display the concise help for this command",
+        help_heading = "Global options"
     )]
     help: Option<bool>,
     #[command(subcommand)]
@@ -266,7 +267,10 @@ where
     Out: Write + ?Sized,
     Err: Write + ?Sized,
 {
-    let cli = match Cli::try_parse_from(arguments) {
+    let cli = match root()
+        .try_get_matches_from(arguments)
+        .and_then(|matches| Cli::from_arg_matches(&matches))
+    {
         Ok(cli) => cli,
         Err(error) => return write_clap_error(stdout, stderr, &error),
     };
@@ -279,7 +283,7 @@ where
         if entry == InteractiveEntry::Home
             && (!std::io::stdin().is_terminal() || !std::io::stdout().is_terminal())
         {
-            return write_all(stdout, &printed(&concise_help(Cli::command())));
+            return write_all(stdout, &printed(&concise_help(root())));
         }
         let Some((ui, status, initializer)) = adapters.interactive else {
             return operational_error(stderr, "interactive shell is not configured");
@@ -337,12 +341,46 @@ where
                 Err(error) => operational_error(stderr, error),
             }
         }
-        Command::Help { no_pager, command } => {
-            match detailed_help(Cli::command(), command.as_deref()) {
-                Ok(help) => write_help(stdout, &printed(&help), no_pager),
-                Err(error) => write_clap_error(stdout, stderr, &error),
-            }
-        }
+        Command::Help { no_pager, command } => match detailed_help(root(), command.as_deref()) {
+            Ok(help) => write_help(stdout, &printed(&help), no_pager),
+            Err(error) => write_clap_error(stdout, stderr, &error),
+        },
+    }
+}
+
+/// The command line as the CLI parses and prints it.
+fn root() -> clap::Command {
+    with_options_usage(Cli::command())
+}
+
+/// `root` with `[OPTIONS]` in every command's usage, built for rendering.
+fn with_options_usage(mut root: clap::Command) -> clap::Command {
+    root.build();
+    add_options_tag(&mut root);
+    root
+}
+
+/// Clap leaves `[OPTIONS]` out of a usage whose only options are help and version, so this
+/// overrides such a usage with clap's own, the tag inserted after the command's name.
+fn add_options_tag(command: &mut clap::Command) {
+    for subcommand in command.get_subcommands_mut() {
+        add_options_tag(subcommand);
+    }
+    let usage = command.render_usage().ansi().to_string();
+    let styles = command.get_styles();
+    let (title, literal, placeholder) = (
+        styles.get_usage(),
+        styles.get_literal(),
+        styles.get_placeholder(),
+    );
+    let name = command.get_bin_name().unwrap_or_default();
+    let prefix = format!("{title}Usage:{title:#} {literal}{name}{literal:#}");
+    let tag = format!("{placeholder}[OPTIONS]{placeholder:#}");
+    if let Some(rest) = usage.strip_prefix(&prefix)
+        && !rest.starts_with(&format!(" {tag}"))
+    {
+        let usage = format!("{literal}{name}{literal:#} {tag}{rest}");
+        *command = std::mem::take(command).override_usage(StyledStr::from(usage));
     }
 }
 
@@ -504,23 +542,20 @@ impl CommitWriter for UnsupportedCommitAdapter {
     }
 }
 
-/// Help pages for the unified Help surface, each showing what its invocation prints.
+/// Help pages for the unified Help surface: what `--help` prints, then what
+/// `help <command>` prints for each command.
 #[must_use]
 pub fn interactive_help() -> Vec<HelpPage> {
-    let mut pages = vec![HelpPage::new("Overview", "gitserious --help", |width| {
+    let mut pages = vec![HelpPage::new("Overview", None, |width| {
         help_lines(&concise_help(styled_root(width)))
     })];
     for (title, command) in [("Init", "init"), ("Config", "config"), ("Commit", "commit")] {
-        pages.push(HelpPage::new(
-            title,
-            format!("gitserious help {command}"),
-            move |width| {
-                help_lines(
-                    &detailed_help(styled_root(width), Some(command))
-                        .unwrap_or_else(|error| error.render()),
-                )
-            },
-        ));
+        pages.push(HelpPage::new(title, Some(command), move |width| {
+            help_lines(
+                &detailed_help(styled_root(width), Some(command))
+                    .unwrap_or_else(|error| error.render()),
+            )
+        }));
     }
     pages
 }
@@ -529,9 +564,11 @@ pub fn interactive_help() -> Vec<HelpPage> {
 fn styled_root(width: u16) -> clap::Command {
     const BOLD: Style = Style::new().bold();
     // An explicit width bypasses `max_term_width`, so apply the CLI's cap here.
-    Cli::command()
-        .term_width(usize::from(width).min(HELP_WIDTH))
-        .styles(Styles::plain().header(BOLD).usage(BOLD).literal(BOLD))
+    with_options_usage(
+        Cli::command()
+            .term_width(usize::from(width).min(HELP_WIDTH))
+            .styles(Styles::plain().header(BOLD).usage(BOLD).literal(BOLD)),
+    )
 }
 
 /// Splits rendered help into lines of spans that are strong while SGR bold is on.
@@ -613,6 +650,31 @@ mod tests {
             text: text.into(),
             strong,
         }
+    }
+
+    #[test]
+    fn usage_shows_options_once_with_or_without_a_real_option() {
+        let mut root = with_options_usage(
+            clap::Command::new("tool")
+                .arg(
+                    clap::Arg::new("flag")
+                        .long("flag")
+                        .action(ArgAction::SetTrue),
+                )
+                .subcommand(clap::Command::new("sub").arg(clap::Arg::new("path"))),
+        );
+
+        assert_eq!(
+            root.render_usage().to_string(),
+            "Usage: tool [OPTIONS] [COMMAND]"
+        );
+        let sub = root
+            .find_subcommand_mut("sub")
+            .map(clap::Command::render_usage);
+        assert_eq!(
+            sub.map(|usage| usage.to_string()).as_deref(),
+            Some("Usage: tool sub [OPTIONS] [path]")
+        );
     }
 
     #[test]

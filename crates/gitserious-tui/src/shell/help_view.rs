@@ -160,13 +160,19 @@ impl HelpView {
             return;
         };
         let strong = text.add_modifier(Modifier::BOLD);
-        let mut lines = vec![
-            Line::from(vec![
-                Span::styled("$ ", dim),
-                Span::styled(page.invocation.as_str(), text),
-            ]),
-            Line::default(),
-        ];
+        let mut lines: Vec<Line<'_>> = page
+            .command
+            .iter()
+            .flat_map(|command| {
+                [
+                    Line::from(vec![
+                        Span::styled("gitserious help: ", dim),
+                        Span::styled(command.as_str(), text),
+                    ]),
+                    Line::default(),
+                ]
+            })
+            .collect();
         lines.extend(page.lines(area.width).into_iter().map(|line| {
             // Prose at column 0 reads in the text color; indented descriptions recede.
             let plain = if line.first().is_some_and(|span| span.text.starts_with(' ')) {
