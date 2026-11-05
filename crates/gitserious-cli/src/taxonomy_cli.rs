@@ -542,23 +542,20 @@ impl CommitWriter for UnsupportedCommitAdapter {
     }
 }
 
-/// Help pages for the unified Help surface, each showing what its invocation prints.
+/// Help pages for the unified Help surface: what `--help` prints, then what
+/// `help <command>` prints for each command.
 #[must_use]
 pub fn interactive_help() -> Vec<HelpPage> {
-    let mut pages = vec![HelpPage::new("Overview", "gitserious --help", |width| {
+    let mut pages = vec![HelpPage::new("Overview", None, |width| {
         help_lines(&concise_help(styled_root(width)))
     })];
     for (title, command) in [("Init", "init"), ("Config", "config"), ("Commit", "commit")] {
-        pages.push(HelpPage::new(
-            title,
-            format!("gitserious help {command}"),
-            move |width| {
-                help_lines(
-                    &detailed_help(styled_root(width), Some(command))
-                        .unwrap_or_else(|error| error.render()),
-                )
-            },
-        ));
+        pages.push(HelpPage::new(title, Some(command), move |width| {
+            help_lines(
+                &detailed_help(styled_root(width), Some(command))
+                    .unwrap_or_else(|error| error.render()),
+            )
+        }));
     }
     pages
 }

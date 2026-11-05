@@ -321,31 +321,34 @@ fn page_text(page: &HelpPage, width: u16) -> String {
 }
 
 #[test]
-fn each_help_page_shows_what_its_invocation_prints_at_the_same_width() -> Result<(), Box<dyn Error>>
-{
+fn each_help_page_shows_what_its_help_command_prints_at_the_same_width()
+-> Result<(), Box<dyn Error>> {
     let pages = interactive_help();
     let shown: Vec<_> = pages
         .iter()
-        .map(|page| (page.title.as_str(), page.invocation.as_str()))
+        .map(|page| (page.title.as_str(), page.command.as_deref()))
         .collect();
 
     assert_eq!(
         shown,
         [
-            ("Overview", "gitserious --help"),
-            ("Init", "gitserious help init"),
-            ("Config", "gitserious help config"),
-            ("Commit", "gitserious help commit"),
+            ("Overview", None),
+            ("Init", Some("init")),
+            ("Config", Some("config")),
+            ("Commit", Some("commit")),
         ]
     );
     for page in &pages {
-        let arguments: Vec<_> = page.invocation.split(' ').skip(1).collect();
+        let arguments = match page.command.as_deref() {
+            None => vec!["--help"],
+            Some(command) => vec!["help", command],
+        };
         for width in [50, 80, 120] {
             assert_eq!(
                 page_text(page, width),
                 succeed_at(usize::from(width), &arguments)?,
                 "{} at {width}",
-                page.invocation
+                page.title
             );
         }
     }
@@ -363,13 +366,13 @@ fn help_pages_mark_headings_and_names_strong_and_leave_descriptions_plain() {
             .collect();
 
         for name in ["Usage:", "Global options:", "-h", "--help"] {
-            assert!(strong.contains(&name), "{}: {strong:?}", page.invocation);
+            assert!(strong.contains(&name), "{}: {strong:?}", page.title);
         }
         assert!(
             spans.iter().any(|span| !span.strong
                 && span.text.trim() == "Display the concise help for this command"),
             "{}: {spans:?}",
-            page.invocation
+            page.title
         );
     }
 }
