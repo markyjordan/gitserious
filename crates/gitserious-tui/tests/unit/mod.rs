@@ -1566,11 +1566,28 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
 #[test]
 fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
 -> Result<(), Box<dyn Error>> {
-    let assert_bone_dialog = |buffer: &Buffer, width, height| -> Result<(), Box<dyn Error>> {
+    let assert_bone_dialog = |buffer: &Buffer,
+                              width,
+                              height,
+                              buttons: &[ratatui::layout::Rect]|
+     -> Result<(), Box<dyn Error>> {
         let (x, y) = find_symbol(buffer, width, height, "╔").ok_or("modal border")?;
         for row in y..y + 9 {
             for column in x..x + 58 {
-                assert_eq!(buffer[(column, row)].bg, theme().ground);
+                let chip = buttons
+                    .iter()
+                    .any(|area| area.contains((column, row).into()));
+                assert_eq!(
+                    buffer[(column, row)].bg,
+                    if chip {
+                        theme().pending
+                    } else {
+                        theme().ground
+                    }
+                );
+                if chip {
+                    assert_eq!(buffer[(column, row)].fg, theme().ground);
+                }
             }
         }
         assert_eq!(buffer[(x, y)].fg, theme().pending);
@@ -1590,17 +1607,17 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
     assert!(text.contains("enter/esc/n keep editing"));
     assert!(text.contains("review and submit"));
     let buffer = rendered_buffer(&mut review, 100, 24)?;
-    assert_bone_dialog(&buffer, 100, 24)?;
-    let top_left = find_symbol(&buffer, 100, 24, "╔").ok_or("missing popup frame")?;
-    assert_eq!(buffer[(top_left.0 + 57, top_left.1)].symbol(), "╗");
-    assert_eq!(buffer[(top_left.0, top_left.1 + 8)].symbol(), "╚");
-    assert_eq!(buffer[(top_left.0 + 57, top_left.1 + 8)].symbol(), "╝");
     let buttons = review
         .discard_dialog
         .buttons
         .ok_or("missing button hitboxes")?;
+    assert_bone_dialog(&buffer, 100, 24, &[buttons.confirm, buttons.keep])?;
+    let top_left = find_symbol(&buffer, 100, 24, "╔").ok_or("missing popup frame")?;
+    assert_eq!(buffer[(top_left.0 + 57, top_left.1)].symbol(), "╗");
+    assert_eq!(buffer[(top_left.0, top_left.1 + 8)].symbol(), "╚");
+    assert_eq!(buffer[(top_left.0 + 57, top_left.1 + 8)].symbol(), "╝");
     for area in [buttons.confirm, buttons.keep] {
-        assert!((area.x..area.right()).all(|x| buffer[(x, area.y)].bg == theme().ground));
+        assert!((area.x..area.right()).all(|x| buffer[(x, area.y)].bg == theme().pending));
     }
     assert!(review.handle_event(left_click(0, 0)).is_none());
     assert_eq!(review.stage, Stage::Confirm);
@@ -1658,7 +1675,11 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
     press(&mut small_confirmation, KeyCode::Esc);
     let buffer = rendered_buffer(&mut small_confirmation, 59, 24)?;
     assert!(small_confirmation.too_small);
-    assert_bone_dialog(&buffer, 59, 24)?;
+    let buttons = small_confirmation
+        .discard_dialog
+        .buttons
+        .ok_or("small dialog buttons")?;
+    assert_bone_dialog(&buffer, 59, 24, &[buttons.confirm, buttons.keep])?;
     assert!(find_ascii(&buffer, 59, 24, "Discard this draft?").is_some());
     assert!(find_ascii(&buffer, 59, 24, "y discard").is_some());
     assert!(find_ascii(&buffer, 59, 24, "enter/esc/n keep editing").is_some());

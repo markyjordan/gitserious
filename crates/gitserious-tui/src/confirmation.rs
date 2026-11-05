@@ -1,10 +1,11 @@
 use ratatui::Frame;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::text::Line;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 
-use crate::theme::{centered_rect, popup_block, popup_heading_style, popup_hints};
+use crate::theme::{centered_rect, popup_block, popup_heading_style, theme};
 
 /// What a confirmation's choice does.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -216,14 +217,14 @@ impl ConfirmDialog {
         let mut confirm = None;
         let mut keep = None;
         let mut alternate = None;
-        for ((choice, _label), area) in question
-            .choices
-            .iter()
-            .zip(&labels)
-            .zip(areas.iter().step_by(2))
-        {
+        for (choice, area) in question.choices.iter().zip(areas.iter().step_by(2)) {
             frame.render_widget(
-                Paragraph::new(popup_hints(&[(choice.hint, choice.label)])).centered(),
+                Paragraph::new(Line::from(vec![
+                    Span::styled(choice.hint, Style::new().add_modifier(Modifier::BOLD)),
+                    Span::raw(format!(" {}", choice.label)),
+                ]))
+                .centered()
+                .style(Style::new().fg(theme().ground).bg(theme().pending)),
                 *area,
             );
             match choice.answer {
@@ -279,7 +280,7 @@ mod tests {
     fn shared_dialog_renders_clickable_buttons_and_resolves_shortcuts()
     -> Result<(), Box<dyn std::error::Error>> {
         let discard = question("Discard Property", "Discard property changes?", DISCARD);
-        for (width, height) in [(60, 18), (120, 30)] {
+        for (width, height) in [(60, 18), (87, 40), (125, 51), (120, 30)] {
             let mut dialog = ConfirmDialog::default();
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| {
@@ -291,10 +292,8 @@ mod tests {
             for area in [buttons.confirm, buttons.keep] {
                 assert!(area.right() <= width && area.bottom() <= height);
                 for x in area.x..area.right() {
-                    assert_eq!(terminal.backend().buffer()[(x, area.y)].bg, theme().ground);
-                    assert!(
-                        matches!(terminal.backend().buffer()[(x, area.y)].fg, fg if fg == theme().pending || fg == theme().dim || fg == theme().text)
-                    );
+                    let cell = &terminal.backend().buffer()[(x, area.y)];
+                    assert_eq!((cell.fg, cell.bg), (theme().ground, theme().pending));
                 }
             }
             assert_eq!(
