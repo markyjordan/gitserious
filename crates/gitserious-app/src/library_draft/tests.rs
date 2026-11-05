@@ -722,3 +722,32 @@ fn zero_types_save_at_one_and_first_type_finalizes_the_name() -> TestResult {
     assert!(!draft.fields(&node).contains(&DraftField::Name));
     Ok(())
 }
+
+#[test]
+fn a_blank_new_property_can_cancel_under_any_policy_but_never_with_text() -> TestResult {
+    let mut library = LibraryDraft::from_configuration(team()?);
+    let parent = library.find_path(&["team", "release"]).ok_or("type")?;
+    let node = library.edit(&parent, DraftEdit::AddProperty)?;
+    for policy in Policy::ORDER {
+        library.edit(&node, DraftEdit::Policy(policy))?;
+        assert!(library.blank_creation(&node), "{policy:?}");
+        for field in [
+            DraftField::Name,
+            DraftField::Description,
+            DraftField::Condition,
+            DraftField::Rationale,
+        ] {
+            library.edit(&node, DraftEdit::Text(field, "x"))?;
+            assert!(!library.blank_creation(&node), "{policy:?} {field:?}");
+            library.edit(&node, DraftEdit::Text(field, ""))?;
+            assert!(library.blank_creation(&node));
+        }
+    }
+    let existing = library
+        .find_path(&["team", "release", "summary"])
+        .ok_or("property")?;
+    library.edit(&existing, DraftEdit::Text(DraftField::Name, ""))?;
+    library.edit(&existing, DraftEdit::Text(DraftField::Description, ""))?;
+    assert!(!library.blank_creation(&existing));
+    Ok(())
+}

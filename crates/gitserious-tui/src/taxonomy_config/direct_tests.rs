@@ -177,40 +177,104 @@ fn error(state: &State) -> Result<&str> {
 }
 
 #[test]
-fn blank_creation_cancels_only_at_its_initial_values() -> Result {
-    let (store, mut state) = fixture()?;
-    let original = stored(&store)?;
-    press(&mut state, &store, KeyCode::Char('n'));
-    paste(&mut state, &store, "x");
-    press(&mut state, &store, KeyCode::Backspace);
-    press(&mut state, &store, KeyCode::Esc);
-    assert!(state.taxonomies.navigating());
-    assert_eq!(stored(&store)?, original);
-    assert_eq!(store.inner.saves(), 0);
+fn blank_creation_cancels_for_every_policy_and_the_footer_tracks_all_text() -> Result {
+    use gitserious_app::Policy;
 
-    let taxonomy = select(&mut state, &["team"])?;
-    add_row(&mut state, &store, RowKey::AddType(taxonomy))?;
-    press(&mut state, &store, KeyCode::Enter);
-    press(&mut state, &store, KeyCode::Esc);
-    assert!(state.taxonomies.navigating());
-    assert_eq!(store.inner.saves(), 0);
-
-    let commit_type = select(&mut state, &["team", "feat"])?;
-    add_row(&mut state, &store, RowKey::AddProperty(commit_type))?;
-    press(&mut state, &store, KeyCode::Enter);
-    press(&mut state, &store, KeyCode::Enter);
-    press(&mut state, &store, KeyCode::Enter);
-    press(&mut state, &store, KeyCode::Right);
-    press(&mut state, &store, KeyCode::Esc);
-    assert!(matches!(
-        state.taxonomies.observe(state.library()).mode,
-        Mode::Edit {
-            field: DraftField::Name,
-            ..
+    for (kind, policy) in [("taxonomy", Policy::Required), ("type", Policy::Required)]
+        .into_iter()
+        .chain(Policy::ORDER.into_iter().map(|policy| ("property", policy)))
+    {
+        let (store, mut state) = fixture()?;
+        let original = stored(&store)?;
+        match kind {
+            "taxonomy" => press(&mut state, &store, KeyCode::Char('n')),
+            "type" => {
+                let parent = select(&mut state, &["team"])?;
+                add_row(&mut state, &store, RowKey::AddType(parent))?;
+                press(&mut state, &store, KeyCode::Enter);
+            }
+            _ => {
+                let parent = select(&mut state, &["team", "feat"])?;
+                add_row(&mut state, &store, RowKey::AddProperty(parent))?;
+                press(&mut state, &store, KeyCode::Enter);
+                press(&mut state, &store, KeyCode::Enter);
+                press(&mut state, &store, KeyCode::Enter);
+                for candidate in Policy::ORDER {
+                    if candidate == policy {
+                        break;
+                    }
+                    press(&mut state, &store, KeyCode::Right);
+                }
+                // Enter wraps to Name except for conditional's two additional text fields.
+                press(&mut state, &store, KeyCode::Enter);
+                if policy == Policy::Conditional {
+                    press(&mut state, &store, KeyCode::Enter);
+                    press(&mut state, &store, KeyCode::Enter);
+                }
+            }
         }
-    ));
-    assert!(validation_error(&state)?.contains("Property name is required"));
-    assert_eq!(stored(&store)?, original);
+        let node = match &state.taxonomies.observe(state.library()).mode {
+            Mode::Edit { node, .. } => node.clone(),
+            _ => return Err("new item did not enter EDIT".into()),
+        };
+        let fields = state.library().ok_or("Library")?.fields(&node).to_vec();
+        for &field in &fields {
+            if field != DraftField::Policy {
+                for size in [(87, 40), (125, 51), (100, 30)] {
+                    assert!(
+                        super::tests::footer_text(&frame(&mut state, size.0, size.1)?)
+                            .contains("esc cancel")
+                    );
+                }
+                paste(&mut state, &store, "x");
+                assert!(
+                    super::tests::footer_text(&frame(&mut state, 87, 40)?).contains("esc save")
+                );
+                // A non-empty incomplete item must validate, not disappear on Esc.
+                press(&mut state, &store, KeyCode::Esc);
+                assert!(state.taxonomies.editing());
+                // Esc can focus another invalid field; return to the field containing x.
+                for _ in 0..fields.len() {
+                    if matches!(state.taxonomies.observe(state.library()).mode, Mode::Edit { field: current, .. } if current == field)
+                    {
+                        break;
+                    }
+                    press(&mut state, &store, KeyCode::Enter);
+                }
+                assert!(
+                    matches!(state.taxonomies.observe(state.library()).mode, Mode::Edit { field: current, .. } if current == field)
+                );
+                press(&mut state, &store, KeyCode::Backspace);
+            }
+            press(&mut state, &store, KeyCode::Enter);
+        }
+        assert!(super::tests::footer_text(&frame(&mut state, 125, 51)?).contains("esc cancel"));
+        press(&mut state, &store, KeyCode::Esc);
+        assert!(state.taxonomies.navigating(), "{kind} {policy:?}");
+        assert_eq!(stored(&store)?, original);
+        assert_eq!(store.inner.saves(), 0);
+    }
+    Ok(())
+}
+
+#[test]
+fn clearing_an_existing_property_never_turns_save_into_cancel() -> Result {
+    let (store, mut state) = fixture()?;
+    let node = select(&mut state, &["team", "feat", "intent"])?;
+    press(&mut state, &store, KeyCode::Char('e'));
+    replace(&mut state, &store, "")?;
+    press(&mut state, &store, KeyCode::Enter);
+    replace(&mut state, &store, "")?;
+    assert!(super::tests::footer_text(&frame(&mut state, 87, 40)?).contains("esc save"));
+    press(&mut state, &store, KeyCode::Esc);
+    assert!(state.taxonomies.editing());
+    assert!(
+        state
+            .library()
+            .and_then(|library| library.node(&node))
+            .is_some()
+    );
+    assert_eq!(store.inner.saves(), 0);
     Ok(())
 }
 

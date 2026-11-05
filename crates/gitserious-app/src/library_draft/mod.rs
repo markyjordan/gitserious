@@ -782,9 +782,10 @@ impl LibraryDraft {
         self.records().iter().find(|record| record.id() == name)
     }
 
-    /// Whether a new node still contains exactly the blank values it was created with.
+    /// Whether a new node has no text or children and can be cancelled without saving.
+    /// A policy selection alone does not keep a blank new property in creation.
     #[must_use]
-    pub fn untouched_blank(&self, id: &NodeId) -> bool {
+    pub fn blank_creation(&self, id: &NodeId) -> bool {
         match self.node(id) {
             Some(NodeRef::Taxonomy(node)) => {
                 node.saved_name.is_none()
@@ -805,7 +806,6 @@ impl LibraryDraft {
                 node.baseline.is_none()
                     && node.name.is_empty()
                     && node.description.is_empty()
-                    && node.policy == Policy::Required
                     && node.condition.is_empty()
                     && node.rationale.is_empty()
             }
