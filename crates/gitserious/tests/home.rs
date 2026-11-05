@@ -16,10 +16,7 @@ fn bare_non_terminal_invocation_prints_concise_help_without_creating_project_fil
     let directory = tempfile::TempDir::new()?;
     let output = gitserious(directory.path(), &[])?;
     assert!(output.status.success());
-    assert_eq!(
-        output.stdout,
-        gitserious(directory.path(), &["--help"])?.stdout
-    );
+    assert_eq!(output.stdout, gitserious(directory.path(), &["-h"])?.stdout);
     assert!(!directory.path().join("gitserious.toml").exists());
     assert!(!directory.path().join("gitserious.lock").exists());
     Ok(())
@@ -28,17 +25,21 @@ fn bare_non_terminal_invocation_prints_concise_help_without_creating_project_fil
 #[test]
 fn help_never_pages_when_stdout_is_not_a_terminal() -> Result<(), Box<dyn Error>> {
     let directory = tempfile::TempDir::new()?;
-    for command in [&[][..], &["commit"][..]] {
-        let paged = gitserious(directory.path(), &[&["help"][..], command].concat())?;
-        let direct = gitserious(
-            directory.path(),
-            &[&["help", "--no-pager"][..], command].concat(),
-        )?;
-        assert!(paged.status.success(), "{command:?}");
-        assert!(paged.stderr.is_empty(), "{command:?}");
-        assert!(!paged.stdout.is_empty(), "{command:?}");
-        assert_eq!(paged.stdout, direct.stdout, "{command:?}");
-        assert!(!paged.stdout.contains(&0x1b), "{command:?}");
+    for arguments in [
+        &["-h"][..],
+        &["commit", "-h"][..],
+        &["--help"][..],
+        &["commit", "--help"][..],
+        &["help"][..],
+        &["help", "commit"][..],
+    ] {
+        let output = gitserious(directory.path(), arguments)?;
+        let stdout = String::from_utf8(output.stdout)?;
+        assert!(output.status.success(), "{arguments:?}");
+        assert!(output.stderr.is_empty(), "{arguments:?}");
+        assert!(stdout.starts_with(char::is_alphabetic), "{arguments:?}");
+        assert!(!stdout.contains("paged:"), "{arguments:?}: {stdout}");
+        assert!(!stdout.contains('\x1b'), "{arguments:?}");
     }
     Ok(())
 }

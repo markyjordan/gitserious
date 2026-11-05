@@ -31,27 +31,27 @@ fn succeed_at(columns: usize, arguments: &[&str]) -> Result<String, Box<dyn Erro
     Ok(String::from_utf8(output.stdout)?)
 }
 
-fn concise(command: Option<&str>, flag: &str) -> Result<String, Box<dyn Error>> {
-    succeed_at(COLUMNS, &[command.as_slice(), &[flag]].concat())
+fn concise(command: Option<&str>) -> Result<String, Box<dyn Error>> {
+    succeed_at(COLUMNS, &[command.as_slice(), &["-h"]].concat())
+}
+
+fn full(command: Option<&str>) -> Result<String, Box<dyn Error>> {
+    succeed_at(COLUMNS, &[command.as_slice(), &["--help"]].concat())
 }
 
 fn detailed(command: Option<&str>) -> Result<String, Box<dyn Error>> {
-    succeed_at(
-        COLUMNS,
-        &[&["help", "--no-pager"][..], command.as_slice()].concat(),
-    )
+    succeed_at(COLUMNS, &[&["help"][..], command.as_slice()].concat())
 }
 
 /// A command, `None` for the root, and one help it prints.
 type Printed = (Option<&'static str>, String);
 
-/// The concise help both flags print and the detailed help, for every command.
+/// What `-h`, `--help`, and `help` print, for every command.
 fn every_help() -> Result<Vec<Printed>, Box<dyn Error>> {
     let mut helps = Vec::new();
     for command in COMMANDS {
-        for flag in ["-h", "--help"] {
-            helps.push((command, concise(command, flag)?));
-        }
+        helps.push((command, concise(command)?));
+        helps.push((command, full(command)?));
         helps.push((command, detailed(command)?));
     }
     Ok(helps)
@@ -89,20 +89,47 @@ fn command_names(help: &str) -> Vec<&str> {
 }
 
 #[test]
-fn short_and_long_help_flags_print_the_same_concise_help() -> Result<(), Box<dyn Error>> {
+fn short_help_flag_prints_the_concise_help_and_names_both_help_flags() -> Result<(), Box<dyn Error>>
+{
     for command in COMMANDS {
-        let short = concise(command, "-h")?;
+        let help = concise(command)?;
+        let entries: Vec<_> = help.lines().map(str::trim).collect();
 
-        assert_eq!(short, concise(command, "--help")?, "{command:?}");
-        assert!(
-            short.lines().any(|line| {
-                let line = line.trim();
-                line.starts_with("-h, --help ")
-                    && line.ends_with(" Display the concise help for this command")
-            }),
-            "{short}"
-        );
+        assert_ne!(help, detailed(command)?, "{command:?}");
+        for (flag, description) in [
+            ("-h", "Display the concise help for this command"),
+            ("--help", "Display the full documentation for this command"),
+        ] {
+            assert!(
+                entries
+                    .iter()
+                    .any(|line| line.starts_with(&format!("{flag} "))
+                        && line.ends_with(&format!(" {description}"))),
+                "{help}"
+            );
+        }
     }
+    Ok(())
+}
+
+#[test]
+fn long_help_flag_prints_what_the_help_command_prints() -> Result<(), Box<dyn Error>> {
+    for command in COMMANDS {
+        assert_eq!(full(command)?, detailed(command)?, "{command:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn the_help_command_takes_no_pager_option() -> Result<(), Box<dyn Error>> {
+    let output = run(COLUMNS, &["help", "--no-pager"])?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)?.contains("'--no-pager'"),
+        "usage error"
+    );
     Ok(())
 }
 
@@ -125,7 +152,7 @@ fn every_usage_line_shows_options() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn help_flag_is_listed_only_under_global_options() -> Result<(), Box<dyn Error>> {
+fn help_flags_are_listed_apart_only_under_global_options() -> Result<(), Box<dyn Error>> {
     for (command, help) in every_help()? {
         let flags = |heading: &str| -> Vec<String> {
             sections(&help)
@@ -138,17 +165,12 @@ fn help_flag_is_listed_only_under_global_options() -> Result<(), Box<dyn Error>>
                 .collect()
         };
 
-        assert_eq!(flags("Global options:"), ["-h, --help"], "{help}");
+        assert_eq!(flags("Global options:"), ["-h", "--help"], "{help}");
         let options = flags("Options:");
-        assert!(
-            !options
-                .iter()
-                .flat_map(|flag| flag.split(", "))
-                .any(|name| name == "-h" || name == "--help"),
-            "{help}"
-        );
         if command.is_none() {
             assert_eq!(options, ["-V, --version"], "{help}");
+        } else {
+            assert!(options.is_empty(), "{help}");
         }
     }
     Ok(())
@@ -168,12 +190,10 @@ fn every_heading_lists_something() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn long_help_flag_does_not_print_the_detailed_help() -> Result<(), Box<dyn Error>> {
-    assert_ne!(concise(None, "--help")?, detailed(None)?);
+fn command_concise_help_does_not_point_to_the_help_command() -> Result<(), Box<dyn Error>> {
     for command in DOCUMENTED {
-        let help = concise(Some(command), "--help")?;
+        let help = concise(Some(command))?;
 
-        assert_ne!(help, detailed(Some(command))?, "{command}");
         assert!(!help.contains("gitserious help"), "{help}");
     }
     Ok(())
@@ -181,7 +201,7 @@ fn long_help_flag_does_not_print_the_detailed_help() -> Result<(), Box<dyn Error
 
 #[test]
 fn root_concise_help_points_to_the_help_command() -> Result<(), Box<dyn Error>> {
-    let help = concise(None, "--help")?;
+    let help = concise(None)?;
 
     assert!(
         help.ends_with("\n\nUse `gitserious help` for more details.\n"),
@@ -248,13 +268,12 @@ fn command_help_opens_with_the_description_then_usage_and_global_options()
 fn command_help_puts_each_description_below_its_flag_with_blank_lines_between()
 -> Result<(), Box<dyn Error>> {
     let help = detailed(Some("help"))?;
-    let options = help.split_once("\nOptions:\n").unwrap_or_default().1;
+    let options = help.split_once("\nGlobal options:\n").unwrap_or_default().1;
 
     assert!(
         help.contains("\nArguments:\n  [COMMAND]\n          "),
         "{help}"
     );
-    let options = options.replace("\n\nGlobal options:\n", "\n\n");
     let entries: Vec<_> = options.trim_end().split("\n\n").collect();
     assert_eq!(entries.len(), 2, "{help}");
     for entry in entries {
@@ -273,7 +292,7 @@ fn help_wraps_each_paragraph_to_the_terminal_width_up_to_100_columns() -> Result
     let paragraph = "Commit starts from the project default taxonomy in `gitserious.toml`. \
                      You choose a type, write its properties, and review the exact message \
                      before gitserious passes it to `git commit`.";
-    let arguments = ["help", "--no-pager", "commit"];
+    let arguments = ["help", "commit"];
     let wide = succeed_at(100, &arguments)?;
 
     assert_eq!(succeed_at(200, &arguments)?, wide);
@@ -297,7 +316,7 @@ fn help_wraps_each_paragraph_to_the_terminal_width_up_to_100_columns() -> Result
 #[test]
 fn help_for_an_unknown_command_is_a_usage_error_naming_the_valid_ones() -> Result<(), Box<dyn Error>>
 {
-    let output = run(COLUMNS, &["help", "--no-pager", "nope"])?;
+    let output = run(COLUMNS, &["help", "nope"])?;
     let stderr = String::from_utf8(output.stderr)?;
 
     assert_eq!(output.status.code(), Some(2));
@@ -340,7 +359,7 @@ fn each_help_page_shows_what_its_help_command_prints_at_the_same_width()
     );
     for page in &pages {
         let arguments = match page.command.as_deref() {
-            None => vec!["--help"],
+            None => vec!["-h"],
             Some(command) => vec!["help", command],
         };
         for width in [50, 80, 120] {
@@ -368,11 +387,17 @@ fn help_pages_mark_headings_and_names_strong_and_leave_descriptions_plain() {
         for name in ["Usage:", "Global options:", "-h", "--help"] {
             assert!(strong.contains(&name), "{}: {strong:?}", page.title);
         }
-        assert!(
-            spans.iter().any(|span| !span.strong
-                && span.text.trim() == "Display the concise help for this command"),
-            "{}: {spans:?}",
-            page.title
-        );
+        for description in [
+            "Display the concise help for this command",
+            "Display the full documentation for this command",
+        ] {
+            assert!(
+                spans
+                    .iter()
+                    .any(|span| !span.strong && span.text.trim() == description),
+                "{}: {spans:?}",
+                page.title
+            );
+        }
     }
 }

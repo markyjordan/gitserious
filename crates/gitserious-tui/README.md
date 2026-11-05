@@ -79,7 +79,7 @@ before discarding a retained review. Direct `gitserious commit` still opens
 authoring immediately and exits with the existing Git result.
 
 Help lists its Overview, Init, Config, and Commit pages in a numbered sidebar
-beside the chosen page. The Overview shows what `gitserious --help` prints.
+beside the chosen page. The Overview shows what `gitserious -h` prints.
 Each command page opens with `gitserious help: <command>` and shows what
 `gitserious help <command>` prints. Pages wrap to the pane. Headings and command and flag names are bold;
 descriptions are dim. Help opens in the sidebar on the page chosen last. There,
