@@ -2706,8 +2706,11 @@ mod tests {
             let width = terminal_width - CONTENT_X;
             assert_eq!(row_text(&terminal, 0, 1, RAIL_WIDTH), " 1  Project  ");
             let title = row_text(&terminal, CONTENT_X, 1, width);
-            assert!(title.starts_with(" Library "), "{title}");
-            assert_eq!(title.trim(), "Library");
+            assert!(
+                title.starts_with(" Commit message taxonomy library "),
+                "{title}"
+            );
+            assert_eq!(title.trim(), "Commit message taxonomy library");
             let file = row_text(&terminal, CONTENT_X, 2, width);
             assert_eq!(
                 file.trim_end(),
@@ -2839,8 +2842,11 @@ mod tests {
             }
             assert_eq!(rule_row(&terminal), None);
             let header = row_text(&terminal, CONTENT_X, 1, outline);
-            assert!(header.starts_with(" Library "), "{header}");
-            assert_eq!(header.trim(), "Library");
+            assert!(
+                header.starts_with(" Commit message taxonomy library "),
+                "{header}"
+            );
+            assert_eq!(header.trim(), "Commit message taxonomy library");
             assert!(
                 row_text(&terminal, CONTENT_X, OUTLINE_TOP, outline).starts_with(" ▸ conventional")
             );
@@ -2931,7 +2937,7 @@ mod tests {
         assert_eq!(file, format!(" …{} ", &path[path.len() - (room - 1)..]));
         assert_eq!(row_text(&terminal, 0, 1, RAIL_WIDTH + 1), " 2  Library  │");
         let title = row_text(&terminal, CONTENT_X, 0, MINIMUM_WIDTH - CONTENT_X);
-        assert_eq!(title.trim(), "Library");
+        assert_eq!(title.trim(), "Commit message taxonomy library");
         Ok(())
     }
 
@@ -2963,7 +2969,8 @@ mod tests {
             assert_eq!(row_text(&terminal, 0, project, RAIL_WIDTH), " 1  Project  ");
             assert_eq!(row_text(&terminal, 0, library, RAIL_WIDTH), " 2  Library  ");
             assert!(
-                row_text(&terminal, CONTENT_X, project, width - CONTENT_X).starts_with(" Library "),
+                row_text(&terminal, CONTENT_X, project, width - CONTENT_X)
+                    .starts_with(" Commit message taxonomy library "),
                 "{width}x{height}"
             );
             if project > 0 {

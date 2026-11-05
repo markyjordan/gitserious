@@ -124,7 +124,9 @@ proceeding. Commit authoring uses `gitserious.toml` as last applied.
 
 Config uses the shared Bone palette: ground behind content, band behind
 raised rows, text for values, dim for context, pending orange for EDIT, and
-blocks coral for validation. Library has a taxonomy outline and an Inspector. The Inspector sits beside the
+blocks coral for validation. The Library header reads "Commit message taxonomy
+library" above its configuration file path. Library has a taxonomy outline and
+an Inspector. The Inspector sits beside the
 outline when the terminal has at least 100 columns and is at least three times
 as wide as it is tall. Otherwise it sits below the outline, including at 87x40
 and 125x51. Enter
