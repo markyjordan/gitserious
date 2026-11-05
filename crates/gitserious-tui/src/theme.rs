@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Padding, Paragraph};
+use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
 pub(crate) const MINIMUM_WIDTH: u16 = 66;
 pub(crate) const MINIMUM_HEIGHT: u16 = 18;
@@ -42,6 +42,46 @@ pub(crate) const BONE: Theme = Theme {
 /// The active appearance.
 pub(crate) const fn theme() -> &'static Theme {
     &BONE
+}
+
+/// Bone modal surface with the pending accent calling attention to the question.
+pub(crate) fn popup_block() -> Block<'static> {
+    Block::bordered()
+        .border_type(BorderType::Double)
+        .border_style(Style::new().fg(theme().pending))
+        .style(Style::new().fg(theme().text).bg(theme().ground))
+}
+
+pub(crate) fn popup_heading_style() -> Style {
+    Style::new().fg(theme().text).add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn popup_selected_style() -> Style {
+    Style::new()
+        .fg(theme().ground)
+        .bg(theme().cursor)
+        .add_modifier(Modifier::BOLD)
+}
+
+/// Modal actions are plain text: orange keys and dim labels on the content ground.
+pub(crate) fn popup_hints(hints: &[(&str, &str)]) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (index, (key, action)) in hints.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(
+            (*key).to_owned(),
+            Style::new()
+                .fg(theme().pending)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            format!(" {action}"),
+            Style::new().fg(theme().dim),
+        ));
+    }
+    Line::from(spans)
 }
 
 pub(crate) fn block_title(title: &str) -> String {

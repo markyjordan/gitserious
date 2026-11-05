@@ -2,11 +2,11 @@ use crate::theme::theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
 
 use super::Category;
 use crate::theme::{
-    block_title, centered_rect, frame_style, navigation_key_style, section_heading_style,
+    block_title, centered_rect, popup_block, popup_heading_style, popup_hints, popup_selected_style,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -144,13 +144,6 @@ impl CommandPaletteState {
     }
 }
 
-fn popup_block() -> Block<'static> {
-    Block::bordered()
-        .border_type(BorderType::Double)
-        .border_style(frame_style())
-        .style(Style::default().bg(theme().ground))
-}
-
 fn render_palette(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -168,14 +161,14 @@ fn render_palette(
     let content_width = popup.width.saturating_sub(4);
     frame.render_widget(
         Paragraph::new("Commands")
-            .style(section_heading_style())
+            .style(popup_heading_style())
             .centered(),
         Rect::new(content_x, popup.y.saturating_add(1), content_width, 1),
     );
     frame.render_widget(
         Paragraph::new(format!("/{}▌", state.query)).block(
             Block::bordered()
-                .border_style(frame_style())
+                .border_style(Style::new().fg(theme().dim))
                 .title(block_title("Search")),
         ),
         Rect::new(
@@ -210,13 +203,18 @@ fn render_palette(
         list_state.select(Some(state.selected));
     }
     frame.render_stateful_widget(
-        List::new(rows).highlight_style(navigation_key_style()),
+        List::new(rows).highlight_style(popup_selected_style()),
         list_area,
         &mut list_state,
     );
     state.list_offset = list_state.offset();
     frame.render_widget(
-        Paragraph::new("[↑/↓] select  [enter] run  [esc] close").centered(),
+        Paragraph::new(popup_hints(&[
+            ("↑/↓", "select"),
+            ("enter", "run"),
+            ("esc", "close"),
+        ]))
+        .centered(),
         Rect::new(
             content_x,
             popup.bottom().saturating_sub(2),

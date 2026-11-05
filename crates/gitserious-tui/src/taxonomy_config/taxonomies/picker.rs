@@ -1,16 +1,13 @@
-use crate::theme::theme;
+use crate::theme::{
+    centered_rect, popup_block, popup_heading_style, popup_hints, popup_selected_style,
+};
 use std::collections::BTreeSet;
 
 use gitserious_app::{LibraryDraft, NodeId, NodeRef};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Margin, Rect};
-use ratatui::style::Style;
 use ratatui::text::Line;
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
-
-use crate::theme::{
-    centered_rect, frame_style, navigation_style, section_heading_style, selected_style,
-};
+use ratatui::widgets::{Clear, Paragraph};
 
 pub(super) const CHOICES: [(&str, &str); 3] =
     [("space", "toggle"), ("enter", "copy"), ("esc", "cancel")];
@@ -35,13 +32,7 @@ pub(super) fn render(
     let rows = u16::try_from(targets.len()).unwrap_or(u16::MAX);
     let popup = centered_rect(58, rows.saturating_add(10).min(area.height), area);
     frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Block::bordered()
-            .border_type(BorderType::Double)
-            .border_style(frame_style())
-            .style(Style::default().fg(theme().text).bg(theme().ground)),
-        popup,
-    );
+    frame.render_widget(popup_block(), popup);
     let [title, _, message, _, list, _, buttons] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
@@ -55,7 +46,7 @@ pub(super) fn render(
     frame.render_widget(
         Paragraph::new("Copy Property")
             .centered()
-            .style(section_heading_style()),
+            .style(popup_heading_style()),
         title,
     );
     frame.render_widget(
@@ -79,14 +70,14 @@ pub(super) fn render(
             };
             let line = Line::from(format!("[{mark}] {}", target.name()));
             if index == cursor {
-                line.style(selected_style(true))
+                line.style(popup_selected_style())
             } else {
                 line
             }
         })
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines), list);
-    let labels = CHOICES.map(|(key, label)| format!(" {key}: {label} "));
+    let labels = CHOICES.map(|(key, label)| format!(" {key} {label} "));
     let widths = labels
         .iter()
         .map(|label| u16::try_from(label.len()).unwrap_or(u16::MAX));
@@ -94,9 +85,9 @@ pub(super) fn render(
         .flex(Flex::Center)
         .spacing(1)
         .split(buttons);
-    for (label, area) in labels.iter().zip(areas.iter()) {
+    for ((key, label), area) in CHOICES.iter().zip(areas.iter()) {
         frame.render_widget(
-            Paragraph::new(label.as_str()).style(navigation_style()),
+            Paragraph::new(popup_hints(&[(key, label)])).centered(),
             *area,
         );
     }

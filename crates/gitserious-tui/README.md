@@ -138,6 +138,10 @@ add rows for types and properties. A custom property's `c` opens a picker for
 copying it to other types in the same taxonomy. Alt+Up and Alt+Down reorder a
 type or property. The `/` palette lists the available Library actions.
 
+Config pop-ups use the Bone ground and text, a double orange border, and
+plain orange key hints with dim labels. Copy and command selections use a
+bone cursor bar. Shared confirmation dialogs use the same treatment.
+
 Policy words use coral for required, orange for conditional, sage for
 recommended, and dim bone for optional. The selected outline row keeps its
 contrasting bone cursor bar; EDIT also marks the current policy in bold with

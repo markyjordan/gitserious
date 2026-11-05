@@ -1566,16 +1566,31 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
 #[test]
 fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
 -> Result<(), Box<dyn Error>> {
+    let assert_bone_dialog = |buffer: &Buffer, width, height| -> Result<(), Box<dyn Error>> {
+        let (x, y) = find_symbol(buffer, width, height, "╔").ok_or("modal border")?;
+        for row in y..y + 9 {
+            for column in x..x + 58 {
+                assert_eq!(buffer[(column, row)].bg, theme().ground);
+            }
+        }
+        assert_eq!(buffer[(x, y)].fg, theme().pending);
+        let (x, y) = find_ascii(buffer, width, height, "Discard Message").ok_or("title")?;
+        for column in x..x + 15 {
+            assert_eq!(buffer[(column, y)].fg, theme().text);
+            assert!(buffer[(column, y)].modifier.contains(Modifier::BOLD));
+        }
+        Ok(())
+    };
     let mut review = valid_feat_session();
     press(&mut review, KeyCode::Char('q'));
     let text = rendered(&mut review, 100, 24)?;
     assert!(text.contains("Discard Message"));
     assert!(text.contains("Discard this draft and cancel"));
-    assert!(text.contains("y: discard"));
-    assert!(text.contains("enter/esc/n: keep editing"));
+    assert!(text.contains("y discard"));
+    assert!(text.contains("enter/esc/n keep editing"));
     assert!(text.contains("review and submit"));
     let buffer = rendered_buffer(&mut review, 100, 24)?;
-    assert_bold_blue_heading(&buffer, 100, 24, "Discard Message")?;
+    assert_bone_dialog(&buffer, 100, 24)?;
     let top_left = find_symbol(&buffer, 100, 24, "╔").ok_or("missing popup frame")?;
     assert_eq!(buffer[(top_left.0 + 57, top_left.1)].symbol(), "╗");
     assert_eq!(buffer[(top_left.0, top_left.1 + 8)].symbol(), "╚");
@@ -1585,7 +1600,7 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
         .buttons
         .ok_or("missing button hitboxes")?;
     for area in [buttons.confirm, buttons.keep] {
-        assert!((area.x..area.right()).all(|x| buffer[(x, area.y)].bg == ACCENT));
+        assert!((area.x..area.right()).all(|x| buffer[(x, area.y)].bg == theme().ground));
     }
     assert!(review.handle_event(left_click(0, 0)).is_none());
     assert_eq!(review.stage, Stage::Confirm);
@@ -1617,7 +1632,6 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
         review.handle_event(left_click(buttons.confirm.x, buttons.confirm.y)),
         Some(CommitDraftAuthorOutcome::Cancelled)
     );
-    assert_black_canvas(&buffer);
 
     for (width, height) in [(59, 24), (100, 17), (60, 21)] {
         let mut too_small = AuthoringSession::new(built_in_commit_types(), Some(0));
@@ -1644,12 +1658,12 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
     press(&mut small_confirmation, KeyCode::Esc);
     let buffer = rendered_buffer(&mut small_confirmation, 59, 24)?;
     assert!(small_confirmation.too_small);
-    assert_bold_blue_heading(&buffer, 59, 24, "Discard Message")?;
+    assert_bone_dialog(&buffer, 59, 24)?;
     assert!(find_ascii(&buffer, 59, 24, "Discard this draft?").is_some());
-    assert!(find_ascii(&buffer, 59, 24, "y: discard").is_some());
-    assert!(find_ascii(&buffer, 59, 24, "enter/esc/n: keep editing").is_some());
+    assert!(find_ascii(&buffer, 59, 24, "y discard").is_some());
+    assert!(find_ascii(&buffer, 59, 24, "enter/esc/n keep editing").is_some());
     assert!(find_symbol(&buffer, 59, 24, "╔").is_some());
-    assert_black_canvas(&buffer);
+
     Ok(())
 }
 
