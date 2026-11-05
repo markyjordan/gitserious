@@ -224,7 +224,7 @@ impl TaxonomiesView {
 
     /// The selected row's node, or for an add row the node it adds to.
     pub(super) fn selected<'a>(&self, library: &'a LibraryDraft) -> Option<NodeRef<'a>> {
-        self.selected_row(library).map(Row::node)
+        self.selected_row(library).and_then(Row::node)
     }
 
     /// NAV keys: move, expand, collapse, scroll the Inspector, and the keys that change the
@@ -259,8 +259,9 @@ impl TaxonomiesView {
             return Nav::Unhandled;
         };
         let node = row.node();
-        let open = outline::has_children(row) && self.expanded.contains(node.id());
-        let custom = node.taxonomy().origin() == TaxonomyOrigin::Custom;
+        let open = outline::has_children(row)
+            && node.is_some_and(|node| self.expanded.contains(node.id()));
+        let custom = node.is_some_and(|node| node.taxonomy().origin() == TaxonomyOrigin::Custom);
         let plain = key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT;
         match key.code {
             KeyCode::Char('e') if plain => return Nav::Act(LibraryAction::Edit),
@@ -281,19 +282,22 @@ impl TaxonomiesView {
                     down: key.code == KeyCode::Down,
                 });
             }
-            KeyCode::Enter if !matches!(row, Row::Node(_)) => return Nav::Act(LibraryAction::Add),
             KeyCode::Up => self.set_cursor(rows[index.saturating_sub(1)].key()),
             KeyCode::Down => self.set_cursor(rows[(index + 1).min(rows.len() - 1)].key()),
-            KeyCode::Enter if outline::has_children(row) && !open => {
-                self.summary_scroll.reset();
-                self.expand(node.id(), library);
-                self.set_cursor(row.key());
-            }
-            KeyCode::Enter if open => {
-                self.summary_scroll.reset();
-                self.expanded.remove(node.id());
-                self.set_cursor(row.key());
-            }
+            KeyCode::Enter => match row {
+                Row::NewTaxonomy => return Nav::Act(LibraryAction::Create),
+                Row::AddType(_) | Row::AddProperty(..) => return Nav::Act(LibraryAction::Add),
+                Row::Node(node) if outline::has_children(row) => {
+                    self.summary_scroll.reset();
+                    if open {
+                        self.expanded.remove(node.id());
+                    } else {
+                        self.expand(node.id(), library);
+                    }
+                    self.set_cursor(row.key());
+                }
+                Row::Node(_) => return Nav::Unhandled,
+            },
             KeyCode::Left => return Nav::Sidebar,
             KeyCode::Right => return Nav::Handled,
             KeyCode::PageUp => {
@@ -318,17 +322,23 @@ impl TaxonomiesView {
         let row = self
             .selected_row(library)
             .ok_or_else(|| refused(EditRefusal::Missing))?;
-        let (key, node) = (row.key(), row.node().id().clone());
-        let (node, field) = match (action, key) {
+        // The new taxonomy row stands for no node, so only creating applies to it.
+        let selected = || {
+            row.node()
+                .map(|node| node.id().clone())
+                .ok_or_else(|| refused(EditRefusal::NotApplicable))
+        };
+        let (node, field) = match (action, row.key()) {
             (LibraryAction::Create, _) => (library.create_taxonomy(), DraftField::Name),
             (LibraryAction::Fork, _) => {
                 let taxonomy = library
-                    .node(&node)
+                    .node(&selected()?)
                     .map(|node| node.taxonomy().id().clone())
                     .ok_or_else(|| refused(EditRefusal::Missing))?;
                 (library.fork(&taxonomy).map_err(refused)?, DraftField::Name)
             }
             (LibraryAction::Edit, _) => {
+                let node = selected()?;
                 let field = *library
                     .fields(&node)
                     .first()
@@ -347,12 +357,13 @@ impl TaxonomiesView {
             ),
             (LibraryAction::Move { down }, _) => {
                 let moved = library
-                    .edit(&node, DraftEdit::Move { down })
+                    .edit(&selected()?, DraftEdit::Move { down })
                     .map_err(refused)?;
                 self.select(moved);
                 return Ok(());
             }
             (LibraryAction::Copy, _) => {
+                let node = selected()?;
                 if library.copy_targets(&node).is_empty() {
                     let taxonomy = library.node(&node).map(|node| node.taxonomy().name());
                     return Err(format!(
@@ -368,7 +379,7 @@ impl TaxonomiesView {
                 return Ok(());
             }
             (LibraryAction::CopyChosen, _) => return self.copy_chosen(library),
-            (LibraryAction::Add, RowKey::Node(_)) => {
+            (LibraryAction::Add, RowKey::Node(_) | RowKey::NewTaxonomy) => {
                 return Err(refused(EditRefusal::NotApplicable));
             }
         };
@@ -625,7 +636,8 @@ impl TaxonomiesView {
             return panes.lead;
         };
         let selected = outline::resolve(&rows, self.cursor.as_ref(), library);
-        let outline_focused = focused;
+        // EDIT and the copy picker hold focus away from the outline.
+        let outline_focused = focused && self.navigating();
         let animate = animate && self.navigating();
         let chips = Chips::new(library, &self.expanded);
         self.outline_area = outline::render(
@@ -640,8 +652,7 @@ impl TaxonomiesView {
             &mut self.summary_scroll,
             animate.then_some(area),
         );
-        if let Some(&row) = rows.get(selected) {
-            let node = row.node();
+        if let Some(node) = rows.get(selected).and_then(|row| row.node()) {
             let focus = match &self.mode {
                 Mode::Edit {
                     node: edited,
@@ -690,9 +701,9 @@ impl TaxonomiesView {
         let row = library.and_then(|library| self.selected_row(library));
         let editing = self.editing();
         let property_actions = !editing
-            && row.is_some_and(|row| {
-                matches!(row.node(), NodeRef::Property { .. })
-                    && row.node().taxonomy().origin() == TaxonomyOrigin::Custom
+            && row.and_then(Row::node).is_some_and(|node| {
+                matches!(node, NodeRef::Property { .. })
+                    && node.taxonomy().origin() == TaxonomyOrigin::Custom
             });
         let chip = vec![if editing {
             Span::styled(" EDIT ", EDIT_CHIP)
@@ -708,8 +719,11 @@ impl TaxonomiesView {
         if embedded && !editing {
             trailing.insert(0, ("tab", "nav bar"));
         }
-        if let Some(row) = row {
-            let node = row.node();
+        if matches!(row, Some(Row::NewTaxonomy)) {
+            hints.extend([("←/→", "focus"), ("↑/↓", "move"), ("enter", "new")]);
+        } else if let Some(row) = row
+            && let Some(node) = row.node()
+        {
             let built_in = node.taxonomy().origin() == TaxonomyOrigin::BuiltIn;
             if editing {
                 hints.extend([("enter", "next field"), ("esc", "save")]);
@@ -802,7 +816,7 @@ impl TaxonomiesView {
                 .take(usize::from(self.outline_area.height))
                 .map(|row| match row {
                     Row::Node(node) => Some(node.id().clone()),
-                    Row::AddType(_) | Row::AddProperty(..) => None,
+                    Row::AddType(_) | Row::AddProperty(..) | Row::NewTaxonomy => None,
                 })
                 .collect()
         });

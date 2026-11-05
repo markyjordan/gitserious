@@ -9,8 +9,6 @@ use ratatui::text::Span;
 use tachyonfx::{EffectTimer, Interpolation, fx};
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::Chip;
-
 const HOLD: Duration = Duration::from_secs(3);
 const STEP: Duration = Duration::from_millis(150);
 
@@ -19,7 +17,6 @@ pub(super) struct Target {
     pub(super) node: NodeId,
     pub(super) prefix: String,
     pub(super) summary: String,
-    pub(super) chip: Option<Chip>,
     pub(super) viewport: Rect,
     pub(super) area: Rect,
     pub(super) style: Style,
@@ -190,9 +187,8 @@ mod tests {
     fn target(summary: &str, width: u16) -> Target {
         Target {
             node: NodeId::Local(NonZeroU32::MIN),
-            prefix: "▌├─ ▸ type  ".into(),
+            prefix: " ├─ ▸ type  ".into(),
             summary: summary.into(),
-            chip: None,
             viewport: Rect::new(0, 0, 20, 4),
             area: Rect::new(4, 2, width, 1),
             style: Style::new().fg(Color::Gray).bg(Color::Blue),
@@ -407,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn changed_identity_content_badge_or_viewport_restarts_the_hold()
+    fn changed_identity_content_style_or_viewport_restarts_the_hold()
     -> Result<(), Box<dyn std::error::Error>> {
         let original = target("abcdefghijk", 4);
         let mut variants = Vec::new();
@@ -422,7 +418,7 @@ mod tests {
         changed.summary.push('z');
         variants.push(changed);
         let mut changed = original.clone();
-        changed.chip = Some(Chip::Invalid);
+        changed.style = changed.style.bg(Color::Red);
         variants.push(changed);
         let mut changed = original.clone();
         changed.area.width += 1;

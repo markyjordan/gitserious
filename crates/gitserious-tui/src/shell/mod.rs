@@ -1370,7 +1370,7 @@ mod tests {
             assert_eq!(text(0, title, 13), " 1  Project  ", "{width}x{height}");
             let top = title + 3;
             assert!(text(content, title, width).starts_with(" Library "));
-            assert!(text(content, top, width).starts_with("▌▸ conventional"));
+            assert!(text(content, top, width).starts_with(" ▸ conventional"));
             for y in 1..height - 1 {
                 let row = text(content, y, width);
                 assert!(
@@ -1379,8 +1379,9 @@ mod tests {
                 );
             }
             if width < 100 {
-                // Three collapsed taxonomies, then the rule across the content.
-                let rule = top + 3;
+                // Three collapsed taxonomies and the new taxonomy row, then the rule across the
+                // content.
+                let rule = top + 4;
                 assert!(
                     (content..width).all(|x| dim(x, rule, "─")),
                     "{width}x{height}"

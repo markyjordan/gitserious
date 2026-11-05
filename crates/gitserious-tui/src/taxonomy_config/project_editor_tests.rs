@@ -118,6 +118,10 @@ fn project_taxonomies_edit_without_the_library_and_apply_only_after_review() -> 
         !screen.contains(" custom "),
         "a project row named a Library origin"
     );
+    assert!(
+        !screen.contains("+ new taxonomy"),
+        "the project outline offered a Library row"
+    );
     let fix = select(&mut state, &workspace, &["conventional", "fix"])?;
 
     press(&mut state, &workspace, KeyCode::Char('e'));
