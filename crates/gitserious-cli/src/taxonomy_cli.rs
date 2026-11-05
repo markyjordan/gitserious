@@ -36,14 +36,20 @@ const HELP_WIDTH: usize = 100;
 )]
 struct Cli {
     #[arg(
-        short,
-        long,
+        short = 'h',
         global = true,
         action = ArgAction::HelpShort,
         help = "Display the concise help for this command",
         help_heading = "Global options"
     )]
-    help: Option<bool>,
+    concise: Option<bool>,
+    #[arg(
+        long = "help",
+        global = true,
+        help = "Display the full documentation for this command",
+        help_heading = "Global options"
+    )]
+    full: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -78,9 +84,6 @@ enum Command {
     Commit,
     /// Display documentation for a command
     Help {
-        /// Print the documentation directly instead of through a pager
-        #[arg(long)]
-        no_pager: bool,
         /// The command to document
         command: Option<String>,
     },
@@ -267,28 +270,12 @@ where
     Out: Write + ?Sized,
     Err: Write + ?Sized,
 {
-    let cli = match root()
-        .try_get_matches_from(arguments)
-        .and_then(|matches| Cli::from_arg_matches(&matches))
-    {
-        Ok(cli) => cli,
-        Err(error) => return write_clap_error(stdout, stderr, &error),
-    };
-    let entry = match &cli.command {
-        None => Some(InteractiveEntry::Home),
-        Some(Command::Config) if adapters.interactive.is_some() => Some(InteractiveEntry::Config),
-        _ => None,
-    };
-    if let Some(entry) = entry {
-        if entry == InteractiveEntry::Home
-            && (!std::io::stdin().is_terminal() || !std::io::stdout().is_terminal())
-        {
-            return write_all(stdout, &printed(&concise_help(root())));
-        }
-        let Some((ui, status, initializer)) = adapters.interactive else {
-            return operational_error(stderr, "interactive shell is not configured");
-        };
-        return match run_interactive(
+    let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let interactive = |entry| {
+        let (ui, status, initializer) = adapters
+            .interactive
+            .ok_or_else(|| "interactive shell is not configured".to_owned())?;
+        run_interactive(
             locator,
             store,
             global,
@@ -299,10 +286,37 @@ where
             ui,
             entry,
             &interactive_help(),
-        ) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => operational_error(stderr, error),
-        };
+        )
+    };
+    let matches = match root().try_get_matches_from(arguments) {
+        Ok(matches) => matches,
+        Err(error) if error.kind() == ErrorKind::DisplayHelp => {
+            let request = HelpRequest::Concise(printed(&error.render()));
+            return answer(route(request, terminal), stdout, stderr, interactive);
+        }
+        Err(error) => return write_clap_error(stdout, stderr, &error),
+    };
+    let cli = match Cli::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(error) => return write_clap_error(stdout, stderr, &error),
+    };
+    if cli.full {
+        let request = HelpRequest::Full(matches.subcommand_name().map(str::to_owned));
+        return answer(route(request, terminal), stdout, stderr, interactive);
+    }
+    let entry = match &cli.command {
+        None => Some(InteractiveEntry::Home),
+        Some(Command::Config) if adapters.interactive.is_some() => Some(InteractiveEntry::Config),
+        _ => None,
+    };
+    if let Some(entry) = entry {
+        if entry == InteractiveEntry::Home && !terminal {
+            return write_all(stdout, &printed(&concise_help(root())));
+        }
+        return interactive(entry).map_or_else(
+            |error| operational_error(stderr, error),
+            |()| ExitCode::SUCCESS,
+        );
     }
     let Some(command) = cli.command else {
         return ExitCode::SUCCESS;
@@ -341,16 +355,27 @@ where
                 Err(error) => operational_error(stderr, error),
             }
         }
-        Command::Help { no_pager, command } => match detailed_help(root(), command.as_deref()) {
-            Ok(help) => write_help(stdout, &printed(&help), no_pager),
-            Err(error) => write_clap_error(stdout, stderr, &error),
-        },
+        Command::Help { command } => answer(
+            route(HelpRequest::Topic(command), terminal),
+            stdout,
+            stderr,
+            interactive,
+        ),
     }
 }
 
-/// The command line as the CLI parses and prints it.
+/// The command line as the CLI parses and prints it, where `help` takes only a command's name.
 fn root() -> clap::Command {
-    with_options_usage(Cli::command())
+    let root = Cli::command();
+    let names: Vec<String> = root
+        .get_subcommands()
+        .map(|command| command.get_name().to_owned())
+        .collect();
+    with_options_usage(root.mut_subcommand("help", |help| {
+        help.mut_arg("command", |command| {
+            command.value_parser(names).hide_possible_values(true)
+        })
+    }))
 }
 
 /// `root` with `[OPTIONS]` in every command's usage, built for rendering.
@@ -384,43 +409,76 @@ fn add_options_tag(command: &mut clap::Command) {
     }
 }
 
-/// The concise help `-h` and `--help` print, rendered by `root`.
+/// The concise help `-h` prints, rendered by `root`.
 fn concise_help(mut root: clap::Command) -> StyledStr {
     root.render_help()
 }
 
 /// The long help `gitserious help [<command>]` prints, rendered by `root`.
-fn detailed_help(mut root: clap::Command, command: Option<&str>) -> Result<StyledStr, clap::Error> {
+fn detailed_help(mut root: clap::Command, command: Option<&str>) -> StyledStr {
     root.build();
-    let Some(name) = command else {
-        return Ok(root.render_long_help());
-    };
-    if let Some(subcommand) = root.find_subcommand_mut(name) {
-        return Ok(subcommand.render_long_help());
+    match command.and_then(|name| root.find_subcommand_mut(name)) {
+        Some(subcommand) => subcommand.render_long_help(),
+        None => root.render_long_help(),
     }
-    let names: Vec<_> = root
-        .get_subcommands()
-        .map(clap::Command::get_name)
-        .collect();
-    Err(clap::Error::raw(
-        ErrorKind::InvalidValue,
-        format!(
-            "there is no command '{name}'\n\n  [possible commands: {}]\n",
-            names.join(", ")
+}
+
+/// The help an invocation asks for; a `None` command is the root.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum HelpRequest {
+    /// `-h`, with the concise help clap rendered for the command it followed.
+    Concise(String),
+    /// `--help` after the root or a command.
+    Full(Option<String>),
+    /// `help [<command>]`, its command one that exists.
+    Topic(Option<String>),
+}
+
+/// How the CLI answers a help request.
+#[derive(Debug, Eq, PartialEq)]
+enum HelpOutcome {
+    /// Open the shell at Help, on the named command's page.
+    Tui(Option<String>),
+    /// Write the help through the pager.
+    Page(String),
+    /// Write the help to stdout.
+    Print(String),
+}
+
+/// Answers `request` for a session whose stdin and stdout are both `terminal`s or not.
+fn route(request: HelpRequest, terminal: bool) -> HelpOutcome {
+    match (request, terminal) {
+        (HelpRequest::Concise(text), true) => HelpOutcome::Page(text),
+        (HelpRequest::Concise(text), false) => HelpOutcome::Print(text),
+        (HelpRequest::Full(command) | HelpRequest::Topic(command), true) => {
+            HelpOutcome::Tui(command)
+        }
+        (HelpRequest::Full(None), false) => HelpOutcome::Print(printed(&concise_help(root()))),
+        (HelpRequest::Full(command) | HelpRequest::Topic(command), false) => {
+            HelpOutcome::Print(printed(&detailed_help(root(), command.as_deref())))
+        }
+    }
+}
+
+fn answer(
+    outcome: HelpOutcome,
+    stdout: &mut (impl Write + ?Sized),
+    stderr: &mut (impl Write + ?Sized),
+    interactive: impl FnOnce(InteractiveEntry) -> Result<(), String>,
+) -> ExitCode {
+    match outcome {
+        HelpOutcome::Tui(command) => interactive(InteractiveEntry::Help { command }).map_or_else(
+            |error| operational_error(stderr, error),
+            |()| ExitCode::SUCCESS,
         ),
-    ))
+        HelpOutcome::Page(text) if page(&text).is_ok() => ExitCode::SUCCESS,
+        HelpOutcome::Page(text) | HelpOutcome::Print(text) => write_all(stdout, &text),
+    }
 }
 
 /// Help as the CLI prints it: plain text ending in one newline.
 fn printed(help: &StyledStr) -> String {
     format!("{}\n", help.to_string().trim_end())
-}
-
-fn write_help(stdout: &mut (impl Write + ?Sized), text: &str, no_pager: bool) -> ExitCode {
-    if !no_pager && std::io::stdout().is_terminal() && page(text).is_ok() {
-        return ExitCode::SUCCESS;
-    }
-    write_all(stdout, text)
 }
 
 fn page(text: &str) -> std::io::Result<()> {
@@ -542,7 +600,7 @@ impl CommitWriter for UnsupportedCommitAdapter {
     }
 }
 
-/// Help pages for the unified Help surface: what `--help` prints, then what
+/// Help pages for the unified Help surface: what `-h` prints, then what
 /// `help <command>` prints for each command.
 #[must_use]
 pub fn interactive_help() -> Vec<HelpPage> {
@@ -551,10 +609,7 @@ pub fn interactive_help() -> Vec<HelpPage> {
     })];
     for (title, command) in [("Init", "init"), ("Config", "config"), ("Commit", "commit")] {
         pages.push(HelpPage::new(title, Some(command), move |width| {
-            help_lines(
-                &detailed_help(styled_root(width), Some(command))
-                    .unwrap_or_else(|error| error.render()),
-            )
+            help_lines(&detailed_help(styled_root(width), Some(command)))
         }));
     }
     pages
@@ -650,6 +705,48 @@ mod tests {
             text: text.into(),
             strong,
         }
+    }
+
+    #[test]
+    fn help_opens_the_shell_on_a_terminal_and_prints_when_redirected() {
+        let clap_rendered = "Usage: gitserious config [OPTIONS]\n".to_owned();
+        let concise = HelpOutcome::Print(printed(&concise_help(root())));
+        let long = |command| HelpOutcome::Print(printed(&detailed_help(root(), command)));
+        let named = |command: &str| Some(command.to_owned());
+        let table = [
+            (
+                HelpRequest::Concise(clap_rendered.clone()),
+                HelpOutcome::Page(clap_rendered.clone()),
+                HelpOutcome::Print(clap_rendered),
+            ),
+            (HelpRequest::Full(None), HelpOutcome::Tui(None), concise),
+            (
+                HelpRequest::Full(named("config")),
+                HelpOutcome::Tui(named("config")),
+                long(Some("config")),
+            ),
+            (
+                HelpRequest::Topic(named("config")),
+                HelpOutcome::Tui(named("config")),
+                long(Some("config")),
+            ),
+            (HelpRequest::Topic(None), HelpOutcome::Tui(None), long(None)),
+            (
+                HelpRequest::Topic(named("help")),
+                HelpOutcome::Tui(named("help")),
+                long(Some("help")),
+            ),
+        ];
+
+        for (request, terminal, redirected) in table {
+            assert_eq!(route(request.clone(), true), terminal, "{request:?}");
+            assert_eq!(route(request.clone(), false), redirected, "{request:?}");
+        }
+        assert_ne!(
+            route(HelpRequest::Full(None), false),
+            route(HelpRequest::Topic(None), false),
+            "redirected `--help` is concise and `help` is long"
+        );
     }
 
     #[test]

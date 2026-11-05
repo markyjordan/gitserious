@@ -34,6 +34,14 @@ pub(super) struct HelpView {
 }
 
 impl HelpView {
+    /// Help on `page`, in the sidebar.
+    pub(super) fn at(page: usize) -> Self {
+        Self {
+            page,
+            ..Self::default()
+        }
+    }
+
     /// Arriving at Help always starts in the sidebar, on the page left last.
     pub(super) fn enter(&mut self) {
         self.focus = HelpFocus::Pages;
