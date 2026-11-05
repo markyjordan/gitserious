@@ -416,7 +416,7 @@ fn policy_lines(current: Policy, editing: bool, width: usize) -> Vec<Line<'stati
         DIM,
     )];
     if !editing {
-        spans.push(Span::raw(current.label()));
+        spans.push(Span::styled(current.label(), policy_style(current)));
         return vec![Line::from(spans)];
     }
     let column = width.saturating_sub(LABEL_WIDTH);
@@ -438,12 +438,10 @@ fn policy_lines(current: Policy, editing: bool, width: usize) -> Vec<Line<'stati
         spans.push(if policy == current {
             Span::styled(
                 label,
-                Style::new()
-                    .fg(theme().text)
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                policy_style(policy).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
             )
         } else {
-            Span::styled(label, DIM)
+            Span::styled(label, policy_style(policy))
         });
         used += label.len();
     }

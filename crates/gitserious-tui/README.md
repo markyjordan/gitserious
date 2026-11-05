@@ -138,6 +138,11 @@ add rows for types and properties. A custom property's `c` opens a picker for
 copying it to other types in the same taxonomy. Alt+Up and Alt+Down reorder a
 type or property. The `/` palette lists the available Library actions.
 
+Policy words use coral for required, orange for conditional, sage for
+recommended, and dim bone for optional. The selected outline row keeps its
+contrasting bone cursor bar; EDIT also marks the current policy in bold with
+an underline.
+
 In EDIT, Enter advances through fields, Up and Down move between fields, and
 Left and Right move the text cursor or cycle property policy. Esc validates
 and saves the item. Amber gutters mark the selected node and focused field.

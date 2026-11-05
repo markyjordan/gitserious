@@ -2613,7 +2613,7 @@ mod tests {
         assert!(screen.contains("Condition    non-obvious-requirements"));
         assert!(screen.contains("Rationale    Required when"));
         assert!(!screen.contains(" NAV "));
-        // Browsing shows the policy as plain dim text.
+        // Browsing shows a conditional policy as plain orange text.
         let buffer = terminal.backend().buffer();
         let (policy_x, policy_y) = (0..40)
             .find_map(|y| {
@@ -2627,7 +2627,7 @@ mod tests {
                 .chars()
                 .count(),
         )? + 13;
-        assert_eq!(buffer[(policy_x, policy_y)].fg, theme().text);
+        assert_eq!(buffer[(policy_x, policy_y)].fg, theme().pending);
         assert_eq!(buffer[(policy_x, policy_y)].bg, theme().ground);
 
         state.handle_event(key(KeyCode::Char('e')), &workspace);
