@@ -15,14 +15,14 @@ use gitserious_app::{
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Margin, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::naming::{problem_sentence, refusal_sentence, single_line};
 use super::{ShellKeys, contains};
-use crate::theme::{AMBER, JET_BLACK, footer_hints, footer_key_style, footer_label_style, theme};
+use crate::theme::{footer_hints, footer_key_style, footer_label_style, theme};
 use outline::Row;
 pub(super) use outline::RowKey;
 
@@ -35,12 +35,12 @@ mod picker;
 mod summary_scroll;
 mod text_layout;
 
-const DIM: Style = Style::new().fg(Color::Gray);
+const DIM: Style = Style::new().fg(theme().dim);
 const KEY_STYLE: Style = Style::new().fg(theme().text).add_modifier(Modifier::BOLD);
-pub(super) const BAND: Style = Style::new().bg(Color::Rgb(40, 40, 40));
+pub(super) const BAND: Style = Style::new().bg(theme().band);
 const EDIT_CHIP: Style = Style::new()
-    .fg(JET_BLACK)
-    .bg(AMBER)
+    .fg(theme().ground)
+    .bg(theme().pending)
     .add_modifier(Modifier::BOLD);
 
 /// A node's change or problem status in the outline and Inspector.
@@ -651,7 +651,7 @@ impl TaxonomiesView {
             if y < self.outline_area.bottom() {
                 frame.buffer_mut()[(panes.outline.x, y)]
                     .set_symbol("▌")
-                    .set_fg(AMBER)
+                    .set_fg(theme().pending)
                     .set_bg(theme().band)
                     .set_style(Style::new().remove_modifier(Modifier::DIM));
             }
@@ -793,7 +793,7 @@ impl TaxonomiesView {
                 right.push(Span::styled(
                     format!("{used}/{limit}"),
                     if invalid {
-                        Style::new().fg(Color::Red)
+                        Style::new().fg(theme().blocks)
                     } else {
                         DIM
                     },

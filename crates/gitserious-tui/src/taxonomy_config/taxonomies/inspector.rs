@@ -3,19 +3,19 @@ use std::ops::Range;
 use gitserious_app::{DraftField, NodeRef, Policy, ProblemSite, PropertyNode, TaxonomyOrigin};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::super::hanging_wrap;
 use super::{BAND, Chips, DIM, KEY_STYLE, fit, panes, policy_style};
-use crate::theme::{AMBER, theme};
+use crate::theme::theme;
 
 /// Labels and the values beside them start in these columns.
 const LABEL_WIDTH: usize = 13;
 const CURSOR: Style = Style::new().add_modifier(Modifier::REVERSED);
-const PROBLEM: Style = Style::new().fg(Color::Red);
+const PROBLEM: Style = Style::new().fg(theme().blocks);
 const PLACEHOLDER: Style = DIM.add_modifier(Modifier::ITALIC);
 const PLACEHOLDER_TEXT: &str = "when does this apply?";
 
@@ -89,7 +89,7 @@ pub(super) fn render(
                 .as_ref()
                 .is_some_and(|focused| focused.band.contains(&index));
             let gutter = if band {
-                Span::styled("▌", Style::default().fg(AMBER))
+                Span::styled("▌", Style::default().fg(theme().pending))
             } else {
                 Span::raw(" ")
             };
@@ -127,12 +127,12 @@ fn describe(
         Span::styled(
             name.to_owned(),
             Style::default()
-                .fg(Color::White)
+                .fg(theme().text)
                 .add_modifier(Modifier::BOLD),
         ),
     ];
     let badge = match chip {
-        _ if editing => vec![Span::styled("EDIT", Style::new().fg(AMBER))],
+        _ if editing => vec![Span::styled("EDIT", Style::new().fg(theme().pending))],
         _ if built_in => vec![Span::styled("◇ read-only", DIM)],
         Some(chip) => vec![chip.span()],
         None => Vec::new(),

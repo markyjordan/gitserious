@@ -9,8 +9,6 @@ pub(crate) const MINIMUM_HEIGHT: u16 = 18;
 pub(crate) const JET_BLACK: Color = Color::Rgb(0, 0, 0);
 pub(crate) const ZEBRA_BACKGROUND: Color = Color::Rgb(16, 16, 16);
 pub(crate) const ACCENT: Color = Color::Rgb(80, 160, 255);
-/// Unapplied changes and EDIT.
-pub(crate) const AMBER: Color = Color::Rgb(255, 176, 0);
 
 /// One appearance: the semantic colors every redesigned screen draws with.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

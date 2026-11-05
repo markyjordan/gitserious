@@ -17,15 +17,16 @@ use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+#[cfg(test)]
+use ratatui::style::Color;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::theme::{
-    FOOTER_HEIGHT, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, SHELL_HINTS, block_title,
-    centered_rect, focus_frame_style, frame_style, navigation_key_style, normalize_background,
-    render_footer, render_footer_block, render_navigation_row, row_style, section_heading_style,
-    selected_style, theme,
+    FOOTER_HEIGHT, MINIMUM_HEIGHT, MINIMUM_WIDTH, SHELL_HINTS, block_title, centered_rect,
+    focus_frame_style, frame_style, navigation_key_style, render_footer, render_footer_block,
+    render_navigation_row, row_style, section_heading_style, selected_style, theme,
 };
 
 #[cfg(test)]
@@ -1370,7 +1371,7 @@ impl State {
     fn render_at(&mut self, frame: &mut Frame<'_>, area: Rect) {
         self.dialog.invalidate();
         frame.render_widget(
-            Block::default().style(Style::default().bg(JET_BLACK).fg(Color::White)),
+            Block::default().style(Style::default().bg(theme().ground).fg(theme().text)),
             area,
         );
         let terminal = frame.area();
@@ -1389,7 +1390,6 @@ impl State {
                     centered_rect(54, 3, area),
                 );
             }
-            normalize_background(frame, area);
             return;
         }
         let [main, footer] =
@@ -1478,7 +1478,6 @@ impl State {
             crate::theme::dim_region(frame, rail);
             crate::theme::dim_region(frame, rule);
         }
-        normalize_background(frame, area);
     }
 
     fn render_rail(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -1513,11 +1512,13 @@ impl State {
             None
         };
         let (message, style) = match (&self.status, load_error) {
-            (Some(Notice::Error(message)), _) => (message.clone(), Style::default().fg(Color::Red)),
-            (Some(Notice::Info(message)), _) => {
-                (message.clone(), Style::default().fg(Color::White))
+            (Some(Notice::Error(message)), _) => {
+                (message.clone(), Style::default().fg(theme().blocks))
             }
-            (None, Some(message)) => (sentence(&message), Style::default().fg(Color::Red)),
+            (Some(Notice::Info(message)), _) => {
+                (message.clone(), Style::default().fg(theme().text))
+            }
+            (None, Some(message)) => (sentence(&message), Style::default().fg(theme().blocks)),
             (None, None) => return,
         };
         let width = area.width.min(56);
@@ -1536,7 +1537,7 @@ impl State {
         frame.render_widget(
             Block::bordered()
                 .border_style(frame_style())
-                .style(Style::default().bg(JET_BLACK)),
+                .style(Style::default().bg(theme().ground)),
             popup,
         );
         frame.render_widget(
@@ -2364,7 +2365,7 @@ mod tests {
                     let x = line[..start].chars().count();
                     for dx in 0.."◇ read-only".chars().count() {
                         let cell = &buffer[(u16::try_from(x + dx)?, u16::try_from(y)?)];
-                        assert_eq!((cell.fg, cell.bg), (Color::Gray, JET_BLACK));
+                        assert_eq!((cell.fg, cell.bg), (theme().dim, theme().ground));
                     }
                     badges += 1;
                 }
@@ -2415,7 +2416,7 @@ mod tests {
                 let key = &buffer[(x, y)];
                 assert_eq!(key.fg, theme().text);
                 assert!(key.modifier.contains(Modifier::BOLD));
-                assert_eq!(buffer[(x + 2, y)].fg, Color::Gray);
+                assert_eq!(buffer[(x + 2, y)].fg, theme().dim);
             }
 
             select_taxonomy(&mut state, 3);
@@ -2458,7 +2459,7 @@ mod tests {
                             let (fg, bg) = if selected {
                                 (theme().ground, theme().cursor)
                             } else {
-                                (Color::White, JET_BLACK)
+                                (theme().text, theme().ground)
                             };
                             let cell = &buffer[(x + 1, y)];
                             assert_eq!((cell.fg, cell.bg), (fg, bg));
@@ -2543,7 +2544,7 @@ mod tests {
                             let x = line[..start].chars().count();
                             for dx in 0.."◇ read-only".chars().count() {
                                 let cell = &buffer[(u16::try_from(x + dx)?, u16::try_from(y)?)];
-                                assert_eq!((cell.fg, cell.bg), (Color::Gray, JET_BLACK));
+                                assert_eq!((cell.fg, cell.bg), (theme().dim, theme().ground));
                                 assert_eq!(cell.modifier, Modifier::empty());
                             }
                         }
@@ -2626,8 +2627,8 @@ mod tests {
                 .chars()
                 .count(),
         )? + 13;
-        assert_eq!(buffer[(policy_x, policy_y)].fg, Color::White);
-        assert_eq!(buffer[(policy_x, policy_y)].bg, JET_BLACK);
+        assert_eq!(buffer[(policy_x, policy_y)].fg, theme().text);
+        assert_eq!(buffer[(policy_x, policy_y)].bg, theme().ground);
 
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
@@ -3077,7 +3078,7 @@ mod tests {
                 assert_eq!(buffer[(width - 1, 39)].symbol(), " ");
                 if editing {
                     assert!(footer.starts_with("  EDIT "));
-                    assert_eq!(buffer[(1, 39)].bg, crate::theme::AMBER);
+                    assert_eq!(buffer[(1, 39)].bg, theme().pending);
                 } else {
                     assert!(footer.trim_start().starts_with("enter open"));
                     assert!(!footer.contains("NAV"));
@@ -3299,12 +3300,12 @@ mod tests {
                     }
                     let buffer = terminal.backend().buffer();
                     let mode_width = u16::try_from(mode.chars().count())?;
-                    let mode_background = crate::theme::AMBER;
+                    let mode_background = theme().pending;
                     assert!((1..=mode_width).all(|x| buffer[(x, y)].bg == mode_background));
                     for (index, symbol) in mode.chars().enumerate() {
                         let cell = &buffer[(1 + u16::try_from(index)?, y)];
                         assert_eq!(cell.symbol(), symbol.to_string());
-                        assert_eq!(cell.fg, JET_BLACK);
+                        assert_eq!(cell.fg, theme().ground);
                         assert_eq!(cell.modifier, Modifier::BOLD);
                     }
                     assert_eq!(buffer[(mode_width + 1, y)].bg, theme().band);
@@ -3711,12 +3712,12 @@ mod tests {
         state.status = Some(Notice::Error("Invalid selection".into()));
         terminal.draw(|frame| state.render(frame))?;
         assert_eq!(terminal.backend().buffer()[(RAIL_WIDTH, 25)].symbol(), "│");
-        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, Color::Red);
+        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().blocks);
         assert!(text(&terminal).contains("Invalid selection"));
 
         state.status = Some(Notice::Info("Configuration applied.".into()));
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, Color::White);
+        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().text);
         assert!(text(&terminal).contains("Configuration applied."));
         state.handle_event(key(KeyCode::Down), &workspace);
         terminal.draw(|frame| state.render(frame))?;
@@ -3733,11 +3734,11 @@ mod tests {
         state.project = None;
         state.project_error = "project load failed".into();
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, Color::Red);
+        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().blocks);
 
         state.status = Some(Notice::Info("Review pending".into()));
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, Color::White);
+        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().text);
         assert!(text(&terminal).contains("Review pending"));
 
         state.status = None;
@@ -3746,7 +3747,7 @@ mod tests {
         state.global = None;
         state.global_error = "global load failed".into();
         terminal.draw(|frame| state.render(frame))?;
-        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, Color::Red);
+        assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().blocks);
         assert!(text(&terminal).contains("Global load failed."));
         Ok(())
     }
