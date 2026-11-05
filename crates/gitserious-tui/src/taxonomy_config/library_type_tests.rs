@@ -7,7 +7,7 @@ use super::tests::Workspace;
 use super::*;
 
 const DIM: Color = Color::Gray;
-const SIZES: [(u16, u16); 2] = [(87, 40), (100, 30)];
+const SIZES: [(u16, u16); 3] = [(87, 40), (125, 51), (100, 30)];
 
 /// The fix type's properties as conventional defines them: key, policy, and description.
 const FIX: [(&str, &str, &str); 3] = [
@@ -108,7 +108,7 @@ fn continued<'a>(rows: &'a [Row], at: usize, indent: &str) -> impl Iterator<Item
 }
 
 #[test]
-fn a_built_in_type_lists_what_the_composer_asks_and_pages_to_the_fork_hint() -> Result {
+fn a_built_in_type_lists_its_properties_without_a_heading_and_pages_to_the_fork_hint() -> Result {
     for size in SIZES {
         let (workspace, mut state) = fixture()?;
         select(&mut state, &["conventional", "fix"])?;
@@ -136,13 +136,6 @@ fn a_built_in_type_lists_what_the_composer_asks_and_pages_to_the_fork_hint() -> 
         );
         let mut at = 3 + continued(&rows, 3, &" ".repeat(13)).count() + 1;
         assert_eq!(text(at), "");
-        at += 1;
-
-        assert_eq!(text(at), "The composer asks");
-        for cell in rows[at].cells("The composer asks")? {
-            assert_eq!(cell.fg, DIM);
-            assert!(cell.modifier.contains(Modifier::BOLD));
-        }
         for (key, policy, guidance) in FIX {
             at += 1;
             let row = &rows[at];
@@ -188,6 +181,11 @@ fn a_built_in_type_lists_what_the_composer_asks_and_pages_to_the_fork_hint() -> 
         assert_eq!(text(at + 1), "");
         assert_eq!(text(at + 2), "f fork to customize");
         assert!(rows[at + 3..].iter().all(|row| row.text.trim().is_empty()));
+        assert!(
+            !rows
+                .iter()
+                .any(|row| row.text.contains("The composer asks"))
+        );
         assert!(!rows.iter().any(|row| row.text.starts_with("Properties")));
         assert!(!rows.iter().any(|row| row.text.starts_with("Name ")));
     }
@@ -204,11 +202,16 @@ fn a_custom_type_shows_each_policy_in_the_outline_style() -> Result {
         let rows = every_row(&mut state, &workspace, size)?;
         assert!(rows[0].text.trim_end() == "Type feat", "{}", rows[0].text);
         assert_eq!(rows[1].text.trim_end(), "in team");
-        let asks = rows
+        assert!(
+            !rows
+                .iter()
+                .any(|row| row.text.contains("The composer asks"))
+        );
+        let first = rows
             .iter()
-            .position(|row| row.text.trim_end() == "The composer asks")
-            .ok_or("The composer asks")?;
-        let keys = rows[asks + 1..]
+            .position(|row| row.text.starts_with("intent "))
+            .ok_or("intent guidance")?;
+        let keys = rows[first..]
             .iter()
             .filter(|row| !row.text.starts_with(' '))
             .map(|row| row.text.split_whitespace().collect::<Vec<_>>())

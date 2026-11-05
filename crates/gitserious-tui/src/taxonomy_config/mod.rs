@@ -2585,7 +2585,8 @@ mod tests {
         assert!(screen.contains("│ ├─ ▸ fix       cause · decision · constraints"));
         assert!(screen.contains("Type feat"));
         assert!(screen.contains("in conventional"));
-        assert!(screen.contains("The composer asks"));
+        assert!(!screen.contains("The composer asks"));
+        assert!(screen.contains("required"));
         assert!(!screen.contains("Properties"));
         assert!(!screen.contains(" NAV "));
 
