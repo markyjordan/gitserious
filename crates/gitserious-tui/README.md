@@ -136,7 +136,11 @@ type or property. The `/` palette lists the available Library actions.
 
 In EDIT, Enter advances through fields, Up and Down move between fields, and
 Left and Right move the text cursor or cycle property policy. Esc validates
-and saves the item. Missing descriptions, invalid or duplicate normalized
+and saves the item. Amber gutters mark the selected node and focused field.
+The surrounding navigation dims, and EDIT appears in the Inspector and footer.
+The footer shows only the focused text field's character count, in red when
+that field is invalid. Browsing has no mode badge.
+Missing descriptions, invalid or duplicate normalized
 names, and incomplete conditional policies keep EDIT open, focus the first
 invalid field, and show inline errors. Tab, navigation clicks, and quit cannot
 leave EDIT. Esc removes a new item without writing only when all its contents

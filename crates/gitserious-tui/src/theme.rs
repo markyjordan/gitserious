@@ -201,6 +201,13 @@ pub(crate) fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
         .split(vertical[0])[0]
 }
 
+/// Mutes navigation while a field or dialog holds focus.
+pub(crate) fn dim_region(frame: &mut Frame<'_>, area: Rect) {
+    frame
+        .buffer_mut()
+        .set_style(area, Style::new().add_modifier(Modifier::DIM));
+}
+
 pub(crate) fn normalize_background(frame: &mut Frame<'_>, area: Rect) {
     for y in area.y..area.bottom() {
         for x in area.x..area.right() {

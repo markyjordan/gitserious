@@ -34,6 +34,8 @@ mod copy_tests;
 mod direct_tests;
 mod home_overlay;
 mod library_copy;
+#[cfg(test)]
+mod library_edit_tests;
 mod library_header;
 #[cfg(test)]
 mod library_policy_tests;
@@ -297,6 +299,7 @@ enum Screen {
 /// The Config rail's width at every terminal size, before the rule that ends it.
 const RAIL_WIDTH: u16 = 13;
 /// Where the content starts, right of the rail and its rule.
+#[cfg(test)]
 const CONTENT_X: u16 = RAIL_WIDTH + 1;
 /// Terminals this tall pad the content with a blank row above and below.
 const PADDED_HEIGHT: u16 = 24;
@@ -1471,6 +1474,10 @@ impl State {
         } else {
             self.render_notice(frame, body);
         }
+        if self.editor_view().editing() {
+            crate::theme::dim_region(frame, rail);
+            crate::theme::dim_region(frame, rule);
+        }
         normalize_background(frame, area);
     }
 
@@ -1749,6 +1756,9 @@ impl State {
                 animate,
             );
             library_header::render(frame, header, &self.library_path, self.home.as_deref());
+            if self.taxonomies.editing() {
+                crate::theme::dim_region(frame, header);
+            }
         }
     }
 
@@ -2130,6 +2140,8 @@ mod tests {
         }
         for key in [
             "←/→",
+            "←",
+            "q",
             "↑/↓",
             "enter",
             "esc",
@@ -2345,7 +2357,7 @@ mod tests {
             );
             let buffer = terminal.backend().buffer();
             assert_eq!(buffer[(CONTENT_X, top)].bg, theme().cursor);
-            assert_eq!(buffer[(1, height - 1)].bg, Color::Rgb(80, 160, 255));
+            assert_eq!(buffer[(1, height - 1)].bg, theme().band);
             let mut badges = 0;
             for (y, line) in screen.iter().enumerate() {
                 for (start, _) in line.match_indices("◇ read-only") {
@@ -2384,7 +2396,8 @@ mod tests {
             assert!(text.contains("Version      1"));
             assert!(
                 screen[usize::from(height) - 1]
-                    .starts_with("  NAV   ←/→ focus  ↑/↓ move  enter open")
+                    .trim_start()
+                    .starts_with("enter open")
             );
             if height == 40 {
                 assert!(text.contains("Types        11"));
@@ -2411,7 +2424,8 @@ mod tests {
             assert!(screen.join("\n").contains("Taxonomy original"));
             assert!(
                 screen[usize::from(height) - 1]
-                    .starts_with("  NAV   ←/→ focus  ↑/↓ move  enter open")
+                    .trim_start()
+                    .starts_with("enter open")
             );
         }
         Ok(())
@@ -2573,7 +2587,7 @@ mod tests {
         assert!(screen.contains("in conventional"));
         assert!(screen.contains("The composer asks"));
         assert!(!screen.contains("Properties"));
-        assert!(screen.contains(" NAV "));
+        assert!(!screen.contains(" NAV "));
 
         let screen = press(&mut state, KeyCode::Enter)?;
         assert_eq!(
@@ -2596,7 +2610,7 @@ mod tests {
         assert!(screen.contains("Policy       conditional"));
         assert!(screen.contains("Condition    non-obvious-requirements"));
         assert!(screen.contains("Rationale    Required when"));
-        assert!(screen.contains(" NAV "));
+        assert!(!screen.contains(" NAV "));
         // Browsing shows the policy as plain dim text.
         let buffer = terminal.backend().buffer();
         let (policy_x, policy_y) = (0..40)
@@ -3038,7 +3052,7 @@ mod tests {
     }
 
     #[test]
-    fn first_footer_command_chip_starts_one_column_inside_the_inspector_border()
+    fn footer_commands_start_at_the_left_and_keep_the_edit_badge()
     -> Result<(), Box<dyn std::error::Error>> {
         for width in [MINIMUM_WIDTH, 87, 140] {
             let (workspace, _) = custom_workspace()?;
@@ -3052,21 +3066,17 @@ mod tests {
                 }
                 terminal.draw(|frame| state.render(frame))?;
                 let buffer = terminal.backend().buffer();
-                let gap = &buffer[(CONTENT_X, 39)];
-                assert_eq!(gap.bg, theme().band);
-                assert!(!gap.modifier.contains(Modifier::BOLD));
-                let chip = &buffer[(CONTENT_X + 1, 39)];
-                assert_eq!((chip.fg, chip.bg), (theme().text, theme().band));
-                assert!(chip.modifier.contains(Modifier::BOLD));
+                let footer = row_text(&terminal, 0, 39, width);
                 assert_eq!(buffer[(0, 39)].bg, theme().band);
-                if width == 140 && !editing {
-                    assert_eq!(buffer[(width - 2, 39)].symbol(), "s");
-                    assert_eq!(buffer[(width - 1, 39)].symbol(), " ");
+                assert_eq!(buffer[(width - 1, 39)].symbol(), " ");
+                if editing {
+                    assert!(footer.starts_with("  EDIT "));
+                    assert_eq!(buffer[(1, 39)].bg, crate::theme::AMBER);
+                } else {
+                    assert!(footer.trim_start().starts_with("enter open"));
+                    assert!(!footer.contains("NAV"));
+                    assert_eq!(buffer[(1, 39)].bg, theme().band);
                 }
-                assert_eq!(
-                    buffer[(1, 39)].bg,
-                    if editing { crate::theme::AMBER } else { ACCENT }
-                );
             }
         }
         Ok(())
@@ -3080,9 +3090,13 @@ mod tests {
         state.handle_event(key(KeyCode::Char('2')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(87, 36))?;
         terminal.draw(|frame| state.render(frame))?;
-        let footer = row_text(&terminal, 0, 35, 87);
-        assert!(footer.starts_with("  NAV   ←/→ focus  ↑/↓ move  enter open"));
-        assert!(footer.trim_end().ends_with("tab nav bar  / commands"));
+        let footer = footer_text(&row_text(&terminal, 0, 35, 87));
+        assert!(footer.trim_start().starts_with("enter open"));
+        assert!(
+            footer
+                .trim_end()
+                .ends_with("tab nav bar  / commands  q quit")
+        );
         Ok(())
     }
 
@@ -3164,9 +3178,12 @@ mod tests {
                             assert!(!footer.contains(context), "{footer}");
                         }
                         if editing {
-                            assert!(footer.starts_with("  EDIT   enter next field  esc save"));
+                            assert!(
+                                footer
+                                    .starts_with("  EDIT   enter next field  ←/→ cursor  esc save")
+                            );
                         } else {
-                            assert!(footer.starts_with("  NAV   ←/→ focus"));
+                            assert!(!footer.contains(" NAV ") && footer.contains("← menu"));
                             if width >= 87 {
                                 assert!(
                                     footer.contains("e edit") && footer.contains("d delete"),
@@ -3206,13 +3223,13 @@ mod tests {
                 };
                 let mut end = 0;
                 for hint in [
-                    "←/→ focus",
-                    "↑/↓ move",
                     enter,
-                    "n new",
                     "f fork",
+                    "n new",
                     "e edit",
                     "d delete",
+                    "↑/↓ move",
+                    "← menu",
                 ] {
                     let at = footer
                         .find(hint)
@@ -3226,7 +3243,7 @@ mod tests {
                         .status_line(state.library(), embedded, width - 2);
                     assert_eq!(line.width(), usize::from(width - 2));
                     let compact = footer_text(&line.to_string());
-                    assert!(compact.contains("←/→ focus  ↑/↓ move"), "{compact}");
+                    assert!(compact.contains("↑/↓ move  ← menu"), "{compact}");
                     assert!(compact.contains(enter), "{compact}");
                     assert!(!compact.contains('…'), "{compact}");
                 }
@@ -3269,14 +3286,14 @@ mod tests {
                     terminal.draw(|frame| state.render(frame))?;
                     let y = height - 1;
                     let footer = row_text(&terminal, 0, y, width);
-                    let mode = if editing { " EDIT " } else { " NAV " };
-                    assert!(footer.starts_with(&format!(" {mode}  ")), "{footer}");
+                    let mode = if editing { " EDIT " } else { "" };
+                    assert!(footer.starts_with(&format!(" {mode}")), "{footer}");
                     if !editing {
                         assert!(footer.contains("enter open"), "{footer}");
                     }
                     let buffer = terminal.backend().buffer();
                     let mode_width = u16::try_from(mode.chars().count())?;
-                    let mode_background = if editing { crate::theme::AMBER } else { ACCENT };
+                    let mode_background = crate::theme::AMBER;
                     assert!((1..=mode_width).all(|x| buffer[(x, y)].bg == mode_background));
                     for (index, symbol) in mode.chars().enumerate() {
                         let cell = &buffer[(1 + u16::try_from(index)?, y)];
@@ -3350,7 +3367,7 @@ mod tests {
         state.home_focus = HomeFocus::Content;
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
-        assert!(row_text(&terminal, 0, 29, 100).contains("↑/↓ move  enter open  n new  f fork"));
+        assert!(footer_text(&row_text(&terminal, 0, 29, 100)).contains("enter open  f fork"));
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         terminal.draw(|frame| state.render(frame))?;
         assert!(text(&terminal).contains("Commands"));
@@ -3483,9 +3500,9 @@ mod tests {
             assert!(state.home_overlay.is_none());
             terminal.draw(|frame| state.render(frame))?;
             let footer = row_text(&terminal, 0, height - 1, width);
-            assert!(footer.starts_with("  NAV   ←/→ focus  ↑/↓ move  enter open"));
+            assert!(footer.trim_start().starts_with("enter open"));
             if width >= 100 {
-                assert!(footer.trim_end().ends_with("/ commands"));
+                assert!(footer.trim_end().ends_with("q quit"));
             }
             assert!(!footer.contains('…'));
             state.handle_event(key(KeyCode::Char('/')), &workspace);
@@ -4164,10 +4181,17 @@ mod tests {
                     press(&mut state, &workspace, &[KeyCode::Esc]);
                     terminal.draw(|frame| state.render(frame))?;
                     let footer = row_text(&terminal, 0, 39, width);
-                    assert!(footer.starts_with("  NAV   ←/→ focus"), "{footer}");
+                    assert!(
+                        !footer.contains(" NAV ") && footer.contains("← menu"),
+                        "{footer}"
+                    );
                     assert!(footer.contains("d delete"), "{footer}");
                     assert!(!footer.contains('…'), "{footer}");
-                    assert_eq!(footer.contains("to other types"), width == 140, "{footer}");
+                    assert_eq!(
+                        footer.contains("to other types"),
+                        width == 140 || (width == 87 && !embedded),
+                        "{footer}"
+                    );
                     assert!(!footer.contains("? help"), "{footer}");
                     assert!(footer.starts_with(' ') && footer.ends_with(' '));
                     press(&mut state, &workspace, &[KeyCode::Char('e')]);
@@ -4188,9 +4212,12 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| state.render(frame))?;
             let screen = rows(&terminal).join("\n");
-            assert!(screen.contains("130/100"), "{screen}");
+            assert!(!screen.contains("130/100"), "{screen}");
             let footer = row_text(&terminal, 0, height - 1, width);
-            assert!(footer.starts_with("  NAV   ←/→ focus"), "{footer}");
+            assert!(
+                !footer.contains(" NAV ") && footer.contains("← menu"),
+                "{footer}"
+            );
             assert!(!footer.contains("←/→ policy"), "{footer}");
             assert!(!footer.contains("enter open"), "{footer}");
             assert!(!footer.contains("enter close"), "{footer}");
@@ -4202,7 +4229,7 @@ mod tests {
             assert!(screen.contains("5/80"), "{screen}");
             let footer = row_text(&terminal, 0, height - 1, width);
             assert!(
-                footer.starts_with("  EDIT   enter next field  esc save"),
+                footer.starts_with("  EDIT   enter next field  ←/→ cursor  esc save"),
                 "{footer}"
             );
             assert!(!footer.contains("ctrl+s review"), "{footer}");
@@ -4255,7 +4282,7 @@ mod tests {
             press(&mut state, &workspace, &[KeyCode::Enter]);
             assert_eq!(field(&state), Some(DraftField::Rationale));
             terminal.draw(|frame| state.render(frame))?;
-            assert!(rows(&terminal).join("\n").contains("5/80"));
+            assert!(rows(&terminal).join("\n").contains("0/100"));
             press(&mut state, &workspace, &[KeyCode::Enter]);
             assert_eq!(field(&state), Some(DraftField::Name));
             press(&mut state, &workspace, &[KeyCode::Esc]);

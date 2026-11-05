@@ -234,7 +234,7 @@ fn enter_on_the_last_row_creates_a_taxonomy() -> Result {
             .collect::<Vec<_>>();
         let at = rows
             .iter()
-            .position(|row| row.starts_with(" ▾ Fresh ideas    custom"))
+            .position(|row| row.starts_with("▌▾ Fresh ideas    custom"))
             .ok_or_else(|| rows.join("\n"))?;
         assert_eq!(rows[at + 1], " └─ + add type");
         assert_eq!(rows[at + 2], " + new taxonomy");
