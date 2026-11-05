@@ -146,8 +146,9 @@ the selected row’s Enter action and other actions. The `/` palette lists the
 available Library actions.
 
 Config pop-ups use the Bone ground and text, a double orange border, and
-plain orange key hints with dim labels. Copy and command selections use a
-bone cursor bar. Shared confirmation dialogs use the same treatment.
+plain orange key hints with dim labels. Clickable confirmation actions use
+orange chips with dark text and bold keys. Copy and command selections use a
+bone cursor bar.
 
 Policy words use coral for required, orange for conditional, sage for
 recommended, and dim bone for optional. The selected outline row keeps its
