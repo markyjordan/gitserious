@@ -94,7 +94,7 @@ fn outline_counts_rows_below_in_its_last_row_without_a_box() -> Result {
             assert!(!screen.contains(['┌', '┐', '┘']), "{screen}");
             if loaded {
                 let outline = view.outline_area;
-                let below = outline::rows(&library, &view.expanded).len()
+                let below = outline::rows(&library, &view.expanded, false).len()
                     - view.outline_offset
                     - usize::from(outline.height);
                 assert!(below > 0);
@@ -137,7 +137,7 @@ fn opening_collapses_all_other_roots_and_normal_scrolling_keeps_selection_visibl
     assert!(view.expanded.contains(&child));
     open(&mut view, &library, "conventional")?;
     one_root(&view, &library, &first);
-    assert!(outline::rows(&library, &view.expanded).iter().any(|row| {
+    assert!(outline::rows(&library, &view.expanded, false).iter().any(|row| {
         matches!(row, Row::Node(NodeRef::Property { commit_type, .. }) if commit_type.id() == &child)
     }));
     for _ in 0..12 {
@@ -247,7 +247,7 @@ fn switching_between_built_in_and_custom_roots_remembers_multiple_open_types() -
                         .node(id)
                         .is_some_and(|node| node.taxonomy().id() == root)
                     {
-                        assert!(outline::rows(&library, &view.expanded).iter().any(|row| {
+                        assert!(outline::rows(&library, &view.expanded, false).iter().any(|row| {
                             matches!(row, Row::Node(NodeRef::Property { commit_type, .. }) if commit_type.id() == id)
                         }));
                     }

@@ -76,15 +76,19 @@ impl<'a> Row<'a> {
 
 /// Visible rows in display order: every taxonomy, the types of each expanded taxonomy, and the
 /// properties of each expanded type. A custom taxonomy or type ends with its add row, and the
-/// Library ends with its new taxonomy row.
-pub(super) fn rows<'a>(library: &'a LibraryDraft, expanded: &BTreeSet<NodeId>) -> Vec<Row<'a>> {
+/// Library ends with its new taxonomy row. Read-only views omit all creation rows.
+pub(super) fn rows<'a>(
+    library: &'a LibraryDraft,
+    expanded: &BTreeSet<NodeId>,
+    read_only: bool,
+) -> Vec<Row<'a>> {
     let mut rows = Vec::new();
     for taxonomy in library.taxonomies() {
         rows.push(Row::Node(NodeRef::Taxonomy(taxonomy)));
         if !expanded.contains(taxonomy.id()) {
             continue;
         }
-        let custom = taxonomy.origin() == TaxonomyOrigin::Custom;
+        let custom = !read_only && taxonomy.origin() == TaxonomyOrigin::Custom;
         for commit_type in taxonomy.types() {
             rows.push(Row::Node(NodeRef::Type {
                 taxonomy,
@@ -107,18 +111,18 @@ pub(super) fn rows<'a>(library: &'a LibraryDraft, expanded: &BTreeSet<NodeId>) -
             rows.push(Row::AddType(taxonomy));
         }
     }
-    if !library.is_project() {
+    if !read_only && !library.is_project() {
         rows.push(Row::NewTaxonomy);
     }
     rows
 }
 
-/// Whether the row opens: a custom taxonomy or type always does, to show its add row.
-pub(super) fn has_children(row: Row<'_>) -> bool {
+/// Whether the row opens. Editable custom nodes also open when empty to show their add row.
+pub(super) fn has_children(row: Row<'_>, read_only: bool) -> bool {
     let Row::Node(node) = row else {
         return false;
     };
-    let custom = node.taxonomy().origin() == TaxonomyOrigin::Custom;
+    let custom = !read_only && node.taxonomy().origin() == TaxonomyOrigin::Custom;
     match node {
         NodeRef::Taxonomy(taxonomy) => custom || !taxonomy.types().is_empty(),
         NodeRef::Type { commit_type, .. } => custom || !commit_type.properties().is_empty(),
@@ -203,8 +207,8 @@ pub(super) fn render(
         .skip(*offset)
         .take(height)
         .map(|(index, &row)| {
-            let open =
-                has_children(row) && row.node().is_some_and(|node| expanded.contains(node.id()));
+            let open = has_children(row, chips.read_only)
+                && row.node().is_some_and(|node| expanded.contains(node.id()));
             let line = row_line(row, open, chips, &columns, index == selected, width);
             if index != selected {
                 return line;
@@ -227,6 +231,7 @@ pub(super) fn render(
                     },
                     viewport,
                     summary_style,
+                    chips.read_only,
                 );
             }
             if !focused {
@@ -299,8 +304,8 @@ fn summary(commit_type: &TypeNode) -> String {
         .join(" · ")
 }
 
-fn last_type(taxonomy: &TaxonomyNode, commit_type: &TypeNode) -> bool {
-    taxonomy.origin() == TaxonomyOrigin::BuiltIn
+fn last_type(taxonomy: &TaxonomyNode, commit_type: &TypeNode, read_only: bool) -> bool {
+    (read_only || taxonomy.origin() == TaxonomyOrigin::BuiltIn)
         && taxonomy
             .types()
             .last()
@@ -320,8 +325,13 @@ const fn origin_label(library: &LibraryDraft, origin: TaxonomyOrigin) -> &'stati
     }
 }
 
-fn property_branch(taxonomy: &TaxonomyNode, commit_type: &TypeNode, last: bool) -> String {
-    let ancestor = if last_type(taxonomy, commit_type) {
+fn property_branch(
+    taxonomy: &TaxonomyNode,
+    commit_type: &TypeNode,
+    last: bool,
+    read_only: bool,
+) -> String {
+    let ancestor = if last_type(taxonomy, commit_type, read_only) {
         "   "
     } else {
         "│  "
@@ -335,6 +345,7 @@ fn summary_target(
     row_area: Rect,
     viewport: Rect,
     style: Style,
+    read_only: bool,
 ) -> Option<Target> {
     let Row::Node(NodeRef::Type {
         taxonomy,
@@ -350,7 +361,10 @@ fn summary_target(
         commit_type.name(),
         taxonomy.types().iter().map(TypeNode::name),
     );
-    let prefix = format!(" {}▸ {name}", branch(last_type(taxonomy, commit_type)));
+    let prefix = format!(
+        " {}▸ {name}",
+        branch(last_type(taxonomy, commit_type, read_only))
+    );
     let prefix_width = Span::raw(&prefix).width();
     let room = usize::from(row_area.width).saturating_sub(prefix_width);
     let summary = summary(commit_type);
@@ -426,7 +440,16 @@ fn row_line(
     width: usize,
 ) -> Line<'static> {
     let gutter = Span::raw(" ");
-    let marker = Span::styled(if open { "▾ " } else { "▸ " }, Style::new().fg(theme().dim));
+    let marker = Span::styled(
+        if chips.read_only && !has_children(row, true) {
+            "  "
+        } else if open {
+            "▾ "
+        } else {
+            "▸ "
+        },
+        Style::new().fg(theme().dim),
+    );
     let (left, right) = match row {
         Row::NewTaxonomy => (vec![gutter, Span::styled(NEW_TAXONOMY, DIM)], Vec::new()),
         Row::AddType(_) => (
@@ -441,7 +464,7 @@ fn row_line(
             vec![
                 gutter,
                 Span::styled(
-                    property_branch(taxonomy, commit_type, true),
+                    property_branch(taxonomy, commit_type, true, chips.read_only),
                     Style::new().fg(theme().dim),
                 ),
                 Span::styled(ADD_PROPERTY, DIM),
@@ -494,7 +517,7 @@ fn row_line(
             let mut left = vec![
                 gutter,
                 Span::styled(
-                    branch(last_type(taxonomy, commit_type)),
+                    branch(last_type(taxonomy, commit_type, chips.read_only)),
                     Style::new().fg(theme().dim),
                 ),
                 marker,
@@ -511,7 +534,7 @@ fn row_line(
             property,
         }) => {
             let siblings = commit_type.properties();
-            let last = taxonomy.origin() == TaxonomyOrigin::BuiltIn
+            let last = (chips.read_only || taxonomy.origin() == TaxonomyOrigin::BuiltIn)
                 && siblings
                     .last()
                     .is_some_and(|last| last.id() == property.id());
@@ -523,7 +546,7 @@ fn row_line(
                 vec![
                     gutter,
                     Span::styled(
-                        property_branch(taxonomy, commit_type, last),
+                        property_branch(taxonomy, commit_type, last, chips.read_only),
                         Style::new().fg(theme().dim),
                     ),
                     Span::styled(name, TEXT),

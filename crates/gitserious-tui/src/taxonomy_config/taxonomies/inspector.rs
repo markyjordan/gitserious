@@ -133,7 +133,7 @@ fn describe(
     ];
     let badge = match chip {
         _ if editing => vec![Span::styled("EDIT", Style::new().fg(theme().pending))],
-        _ if built_in => vec![Span::styled("◇ read-only", DIM)],
+        _ if chips.read_only || built_in => vec![Span::styled("◇ read-only", DIM)],
         Some(chip) => vec![chip.span()],
         None => Vec::new(),
     };
@@ -205,7 +205,7 @@ fn describe(
     };
     match node {
         NodeRef::Taxonomy(taxonomy) => {
-            if editable.contains(&DraftField::Name) {
+            if !chips.read_only && editable.contains(&DraftField::Name) {
                 show(&mut lines, DraftField::Name);
             }
             let version = library
@@ -265,7 +265,7 @@ fn describe(
             }
         }
     }
-    if built_in && !matches!(node, NodeRef::Property { .. }) {
+    if !chips.read_only && built_in && !matches!(node, NodeRef::Property { .. }) {
         lines.push(Line::default());
         lines.push(hint("f", "fork to customize"));
     }
@@ -470,7 +470,6 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         use super::{Chips, Focus, describe};
         use gitserious_app::{DraftField, GlobalConfiguration, LibraryDraft};
-        use std::collections::BTreeSet;
         let mut library = LibraryDraft::from_configuration(GlobalConfiguration::default());
         let source = library.find_path(&["conventional"]).ok_or("source")?;
         library.fork(&source)?;
@@ -487,8 +486,7 @@ mod tests {
                         cursor: Some(0),
                     }),
                 ] {
-                    let expanded = BTreeSet::new();
-                    let (lines, _) = describe(&Chips::new(&library, &expanded), node, focus, width);
+                    let (lines, _) = describe(&Chips::new(&library, false), node, focus, width);
                     let text = lines
                         .iter()
                         .map(ToString::to_string)
