@@ -1175,10 +1175,10 @@ mod tests {
         let text = rendered(&terminal);
         let row = text
             .lines()
-            .find(|row| row.contains("team-changes-v3"))
+            .find(|row| row.contains("team-changes"))
             .ok_or("missing Library taxonomy")?;
-        assert!(row.starts_with(" ○ –  team-changes-v3  custom"), "{row}");
-        assert!(row.trim_end().ends_with("3 types"));
+        assert!(row.starts_with(" ○ –  team-changes  custom"), "{row}");
+        assert!(row.trim_end().ends_with("3 types  v3"));
         for code in [
             KeyCode::Down,
             KeyCode::Down,
@@ -1221,7 +1221,7 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("✓ 3  infra-ops-v1"),
+            text.contains("✓ 3  infra-ops"),
             "the built-ins stay available"
         );
         Ok(())
