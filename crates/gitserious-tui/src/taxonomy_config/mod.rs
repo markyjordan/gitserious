@@ -49,6 +49,7 @@ mod model_check;
 mod naming;
 #[cfg(test)]
 mod project_editor_tests;
+mod project_overview;
 mod review;
 #[cfg(test)]
 mod summary_scroll_tests;
@@ -111,13 +112,17 @@ impl ConfigView {
         self.state.next_frame_in()
     }
 
-    /// Returns true when the configuration content requests that the shell quit.
+    /// Routes requests requiring the shell's application services.
     pub(crate) fn handle_event(
         &mut self,
         event: Event,
         workspace: &dyn ConfigurationWorkspace,
-    ) -> bool {
-        self.state.handle_event(event, workspace)
+    ) -> Option<ConfigRequest> {
+        if self.state.handle_event(event, workspace) {
+            Some(ConfigRequest::Quit)
+        } else {
+            self.state.shell_request.take()
+        }
     }
 
     /// Which keys the shell may take before Config sees them.
@@ -135,9 +140,22 @@ impl ConfigView {
         self.state.home_overlay.is_some() || self.state.editor_view().editing()
     }
 
+    /// Seed a pending standalone-adapter review to exercise the shell's discard boundary.
+    #[cfg(test)]
+    pub(crate) fn stage_legacy_project_review(&mut self) {
+        self.state
+            .request_project_action(PendingAction::InitializeProject);
+    }
+
     pub(crate) fn dirty(&self) -> bool {
         self.state.any_dirty() || self.state.settings.is_some()
     }
+}
+
+/// Actions the unified configuration view delegates to the shell.
+pub(crate) enum ConfigRequest {
+    Initialize,
+    Quit,
 }
 
 /// The keys the shell may take before Config sees them.
@@ -340,6 +358,7 @@ struct State {
     settings: Option<SettingsDraft>,
     too_small: bool,
     host_visible: bool,
+    shell_request: Option<ConfigRequest>,
     project_area: Rect,
     tab_areas: [Rect; 2],
     library_path: PathBuf,
@@ -375,6 +394,7 @@ impl State {
             settings: None,
             too_small: false,
             host_visible: true,
+            shell_request: None,
             project_area: Rect::default(),
             tab_areas: [Rect::default(); 2],
             library_path: workspace.library_path(),
@@ -666,6 +686,11 @@ impl State {
                     && self.project_view == ProjectView::Sections
                     && contains(self.project_area, mouse.column, mouse.row)
                 {
+                    if self.empty_project_overview() {
+                        self.home_focus = HomeFocus::Content;
+                        self.shell_request = Some(ConfigRequest::Initialize);
+                        return false;
+                    }
                     let index = usize::from(mouse.row.saturating_sub(self.project_area.y));
                     if let Some(section) = ProjectSection::ALL.get(index) {
                         self.home_focus = HomeFocus::Content;
@@ -780,6 +805,9 @@ impl State {
     ) -> bool {
         match command {
             HomeCommand::Configure => self.request_project_action(PendingAction::EditProject),
+            HomeCommand::Initialize if self.empty_project_overview() => {
+                self.shell_request = Some(ConfigRequest::Initialize);
+            }
             HomeCommand::Initialize => {
                 self.request_project_action(PendingAction::InitializeProject);
             }
@@ -812,6 +840,13 @@ impl State {
     }
 
     fn home_key(&mut self, key: KeyEvent, _workspace: &dyn ConfigurationWorkspace) -> bool {
+        if self.empty_project_overview()
+            && matches!(key.code, KeyCode::Enter | KeyCode::Char('i'))
+            && key.modifiers.is_empty()
+        {
+            self.shell_request = Some(ConfigRequest::Initialize);
+            return false;
+        }
         let editor = self.editor();
         if editor.is_some() && self.editor_view().editing() {
             if let Some((view, library)) = self.editor_parts_mut()
@@ -844,7 +879,10 @@ impl State {
         }
         match key.code {
             KeyCode::Char('/') if key.modifiers.is_empty() => {
-                self.home_overlay = Some(CommandPaletteState::default());
+                self.home_overlay = Some(CommandPaletteState {
+                    initialize_only: self.empty_project_overview(),
+                    ..CommandPaletteState::default()
+                });
             }
             KeyCode::Char(digit @ ('1' | '2')) if key.modifiers.is_empty() => {
                 let category = if digit == '1' {
@@ -1431,7 +1469,11 @@ impl State {
                 }
                 Screen::Home => {
                     self.render_project(frame, body);
-                    let hints = [("←/→", "focus"), ("↑/↓", "move")];
+                    let hints = if self.empty_project_overview() {
+                        [("enter", "initialize"), ("←/→", "focus")]
+                    } else {
+                        [("←/→", "focus"), ("↑/↓", "move")]
+                    };
                     if self.embedded {
                         render_footer(frame, footer, &hints, &SHELL_HINTS);
                         Vec::new()
@@ -1546,7 +1588,23 @@ impl State {
         );
     }
 
+    fn empty_project_overview(&self) -> bool {
+        self.embedded
+            && self.category == Category::Project
+            && self
+                .project
+                .as_ref()
+                .is_some_and(|session| session.persisted_project_config().is_none())
+    }
+
     fn render_project(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        if self.empty_project_overview()
+            && let Some(session) = &self.project
+        {
+            self.project_area =
+                project_overview::render_empty(frame, area, session, self.home.as_deref());
+            return;
+        }
         let columns = pane_columns(area);
         let focused = self.home_focus == HomeFocus::Content;
         let style = focus_frame_style(focused);
