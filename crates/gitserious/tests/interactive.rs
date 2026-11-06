@@ -1,3 +1,5 @@
+mod support;
+
 use std::cell::Cell;
 use std::convert::Infallible;
 use std::error::Error;
@@ -276,6 +278,7 @@ impl InteractiveUi for HomeUi<'_> {
 
         let head = fs::read(self.0.join(".git/HEAD")).map_err(|error| error.to_string())?;
         workspace.initialize(&built_ins()?)?;
+        support::assert_project_shape(self.0, &[]).map_err(|error| error.to_string())?;
         assert_eq!(
             fs::read(self.0.join(".git/HEAD")).map_err(|error| error.to_string())?,
             head,
@@ -297,6 +300,7 @@ impl InteractiveUi for HomeUi<'_> {
             workspace.initialize(&built_ins()?).is_err(),
             "an existing project is never rewritten"
         );
+        support::assert_project_shape(self.0, &[]).map_err(|error| error.to_string())?;
         assert_eq!(
             fs::read_to_string(self.0.join("gitserious.toml")).map_err(|error| error.to_string())?,
             written
@@ -414,6 +418,7 @@ impl InteractiveUi for PlainDirectoryUi<'_> {
     ) -> Result<(), String> {
         assert!(matches!(workspace.home(), HomeState::NoRepository { .. }));
         workspace.initialize(&built_ins()?)?;
+        support::assert_project_shape(self.0, &[]).map_err(|error| error.to_string())?;
         assert!(
             self.0.join(".git").is_dir(),
             "git init ran in the directory"

@@ -3,7 +3,7 @@ mod support;
 use std::error::Error;
 use std::fs;
 
-use support::{Home, git, repository, stderr, stdout};
+use support::{Home, assert_project_shape, git, repository, stderr, stdout};
 
 #[test]
 fn nested_first_run_creates_exact_version_control_artifacts() -> Result<(), Box<dyn Error>> {
@@ -28,7 +28,7 @@ fn nested_first_run_creates_exact_version_control_artifacts() -> Result<(), Box<
     let config = fs::read_to_string(repository.path().join("gitserious.toml"))?;
     assert!(config.starts_with("config-version = 1\ndefault-taxonomy = \"conventional\"\n"));
     assert_eq!(config.matches("\n[[taxonomies]]\n").count(), 3);
-    assert!(!repository.path().join("gitserious.lock").exists());
+    assert_project_shape(repository.path(), &["one"])?;
     assert_eq!(
         fs::read_to_string(repository.path().join(".gitserious/.gitignore"))?,
         "*\n"
@@ -86,6 +86,7 @@ fn repeat_init_never_rewrites_and_invalid_projects_are_not_regenerated()
     let home = Home::new()?;
     let config = repository.path().join("gitserious.toml");
     home.init(repository.path())?;
+    assert_project_shape(repository.path(), &[])?;
     let authored = format!("# reviewed\n{}", fs::read_to_string(&config)?);
     fs::write(&config, &authored)?;
 
@@ -94,6 +95,7 @@ fn repeat_init_never_rewrites_and_invalid_projects_are_not_regenerated()
     assert!(stdout(&repeated).starts_with("gitserious is already initialized in "));
     assert!(stdout(&repeated).ends_with(" (conventional-v1).\n"));
     assert_eq!(fs::read_to_string(&config)?, authored);
+    assert_project_shape(repository.path(), &[])?;
 
     let broken = authored.replace("[[taxonomies]]", "[[taxonomy]]");
     fs::write(&config, &broken)?;

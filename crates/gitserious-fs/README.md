@@ -39,3 +39,19 @@ ACLs.
 
 Repository-local storage is established separately from these global
 conventions.
+
+Initialization leaves this shape in a fresh repository:
+
+```text
+repository/
+├── .git/
+├── gitserious.toml
+└── .gitserious/
+    └── .gitignore
+```
+
+`gitserious.toml` contains the complete installed taxonomy definitions, so
+initialization needs no `gitserious.lock` in the root or local state directory.
+The same contract applies to `gitserious init` and the interactive initialization
+editor used by Home and Config > Project. Repeated initialization adds no files
+and preserves the existing policy and user-owned files.
