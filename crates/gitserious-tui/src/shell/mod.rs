@@ -21,7 +21,7 @@ use ratatui::{DefaultTerminal, Frame};
 
 use crate::author::{AuthoringCheckpoint, embedded_author};
 use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT};
-use crate::taxonomy_config::{ConfigView, ShellKeys};
+use crate::taxonomy_config::{ConfigRequest, ConfigView, ShellKeys};
 use crate::theme::{
     FOOTER_HEIGHT, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, SHELL_HINTS, block_title,
     centered_rect, command_hints, frame_style, navigation_key_style, normalize_background,
@@ -280,10 +280,7 @@ impl Shell {
             return self.handle_overlay(event, workspace);
         }
         if self.section == Section::Config && self.config.modal() {
-            if self.config.handle_event(event, workspace.configuration()) {
-                return self.execute(Action::Quit, workspace);
-            }
-            return None;
+            return self.config_event(event, workspace);
         }
         if let Event::Mouse(mouse) = &event
             && mouse.kind == MouseEventKind::Down(MouseButton::Left)
@@ -406,10 +403,27 @@ impl Shell {
                 }
             }
         }
-        if self.section == Section::Config
-            && self.config.handle_event(event, workspace.configuration())
-        {
-            return self.execute(Action::Quit, workspace);
+        if self.section == Section::Config {
+            return self.config_event(event, workspace);
+        }
+        None
+    }
+
+    fn config_event(
+        &mut self,
+        event: Event,
+        workspace: &dyn InteractiveWorkspace,
+    ) -> Option<Action> {
+        match self.config.handle_event(event, workspace.configuration()) {
+            Some(ConfigRequest::Quit) => return self.execute(Action::Quit, workspace),
+            Some(ConfigRequest::Initialize) => {
+                self.home = workspace.home();
+                if HomeAction::of(&self.home).is_some_and(HomeAction::initializes) {
+                    return self.execute(Action::Initialize, workspace);
+                }
+                self.config = ConfigView::new(workspace.configuration());
+            }
+            None => {}
         }
         None
     }
@@ -786,6 +800,8 @@ mod tests {
     use gitserious_core::TaxonomyVersion;
     use ratatui::{Terminal, backend::TestBackend};
 
+    mod project_overview_tests;
+
     struct Services;
     impl ConfigurationWorkspace for Services {
         fn load(
@@ -869,6 +885,39 @@ mod tests {
         }
     }
 
+    impl ConfigurationWorkspace for HomeWorkspace {
+        fn load(
+            &self,
+            destination: ConfigurationDestination,
+        ) -> Result<ConfigurationSession, String> {
+            if destination == ConfigurationDestination::Global {
+                return Services.load(destination);
+            }
+            let state = self.state.borrow();
+            let root = match &*state {
+                HomeState::Uninitialized { root } | HomeState::Initialized { root, .. } => {
+                    root.clone()
+                }
+                _ => return Err("No Git repository.".into()),
+            };
+            let stored =
+                self.created
+                    .borrow()
+                    .as_ref()
+                    .map(|configuration| gitserious_app::StoredProject {
+                        configuration: configuration.clone(),
+                        revision: gitserious_app::ProjectRevision::of_bytes(b"initialized"),
+                    });
+            Ok(ConfigurationSession::open_project(root, stored))
+        }
+        fn save(&self, _: &ConfigurationSession) -> Result<ConfigurationSession, String> {
+            Err("Project preview must never save.".into())
+        }
+        fn library_path(&self) -> std::path::PathBuf {
+            Services.library_path()
+        }
+    }
+
     impl InteractiveWorkspace for HomeWorkspace {
         fn home(&self) -> HomeState {
             self.state.borrow().clone()
@@ -890,7 +939,7 @@ mod tests {
             self.library.clone()
         }
         fn configuration(&self) -> &dyn ConfigurationWorkspace {
-            &Services
+            self
         }
         fn repository_status(&self) -> Result<RepositoryStatus, String> {
             Services.repository_status()
@@ -2074,7 +2123,7 @@ mod tests {
     fn config_drafts_survive_section_visits_and_quit_requires_confirmation() {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
-        shell.handle_event(key(KeyCode::Char('i')), &services, &[]);
+        shell.config.stage_legacy_project_review();
         assert!(shell.config.dirty());
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.config.shell_keys(), ShellKeys::Navigation);
@@ -2123,7 +2172,7 @@ mod tests {
     fn config_palette_quit_uses_one_shell_discard_confirmation() {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
-        shell.handle_event(key(KeyCode::Char('i')), &services, &[]);
+        shell.config.stage_legacy_project_review();
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         shell.handle_event(key(KeyCode::Char('/')), &services, &[]);
         shell.handle_event(Event::Paste("quit".into()), &services, &[]);
@@ -2141,7 +2190,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
-        shell.handle_event(key(KeyCode::Char('i')), &services, &[]);
+        shell.config.stage_legacy_project_review();
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         shell.handle_event(key(KeyCode::Char('q')), &services, &[]);
         assert!(matches!(shell.overlay, Some(Overlay::QuitConfirm)));
@@ -2301,7 +2350,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let original_header = shell.root_areas;
-        shell.handle_event(key(KeyCode::Char('i')), &services, &[]);
+        shell.config.stage_legacy_project_review();
         assert_eq!(shell.config.shell_keys(), ShellKeys::None);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert_eq!(shell.root_areas, original_header);

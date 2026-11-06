@@ -95,7 +95,13 @@ Up/Page Down by a screen, and Left returns to the sidebar.
 a Menu entry. Left and Right move focus between Menu and content. Clicking a
 Menu entry switches to it while browsing.
 
-Project shows the commit default, the project's own taxonomies, and
+In a Git repository without `gitserious.toml`, Project names the repository and
+its path, marks the missing file in coral, and offers **initialize gitserious**.
+Enter opens the same taxonomy selection editor as Home. Esc cancels without
+writing; the editor's Initialize row writes the chosen taxonomies. The footer
+shows `enter initialize` and `←/→ focus`.
+
+The standalone configuration adapter shows the commit default, the project's own taxonomies, and
 `gitserious.toml` status. Enter on its Taxonomies section opens the same outline
 and Inspector the Library uses, over the project's own definitions: create,
 fork, edit, and delete taxonomies, types, and properties, including the

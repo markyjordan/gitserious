@@ -92,6 +92,7 @@ fn commands(category: Category) -> &'static [HomeCommand] {
 #[derive(Debug, Default)]
 pub(super) struct CommandPaletteState {
     pub(super) query: String,
+    pub(super) initialize_only: bool,
     pub(super) selected: usize,
     pub(super) list_area: Rect,
     pub(super) list_offset: usize,
@@ -103,6 +104,10 @@ impl CommandPaletteState {
         commands(category)
             .iter()
             .copied()
+            .filter(|command| {
+                !self.initialize_only
+                    || !matches!(command, HomeCommand::Configure | HomeCommand::ReviewProject)
+            })
             .filter(|command| {
                 command
                     .label(category)

@@ -29,7 +29,7 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, path: &Path, home: Optio
 }
 
 /// `path` with a leading `home` written as `~`.
-fn home_relative(path: &Path, home: Option<&Path>) -> String {
+pub(super) fn home_relative(path: &Path, home: Option<&Path>) -> String {
     // A HOME of `/` would turn every absolute path into `~/...`.
     match home
         .filter(|home| home.parent().is_some())
@@ -41,7 +41,7 @@ fn home_relative(path: &Path, home: Option<&Path>) -> String {
 }
 
 /// The end of `text` that fits in `width` columns, led by `…` when the start is cut.
-fn keep_end(text: &str, width: usize) -> String {
+pub(super) fn keep_end(text: &str, width: usize) -> String {
     if Span::raw(text).width() <= width {
         return text.to_owned();
     }
