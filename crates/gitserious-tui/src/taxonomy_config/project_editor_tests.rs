@@ -113,7 +113,8 @@ fn project_taxonomies_edit_without_the_library_and_apply_only_after_review() -> 
         .iter()
         .map(ratatui::buffer::Cell::symbol)
         .collect::<String>();
-    assert!(screen.contains("conventional") && screen.contains(" project "));
+    assert!(screen.contains("conventional") && screen.contains(" default "));
+    assert!(!screen.contains(" project "));
     assert!(
         !screen.contains(" custom "),
         "a project row named a Library origin"
