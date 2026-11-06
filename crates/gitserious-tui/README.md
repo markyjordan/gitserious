@@ -105,7 +105,10 @@ shows `enter initialize` and `←/→ focus`.
 
 An initialized Project opens directly on the taxonomies stored in
 `gitserious.toml`, with the same outline, Inspector, responsive layout, policy
-colors, and property spacing as Library. The repository name and path appear
+colors, and property spacing as Library. Taxonomy names stay separate from
+`x types  vX` metadata. The configured default is labeled `default` in the
+ownership column, independent of the selected row or the order in the file.
+The repository name and path appear
 above the outline, with a sage file badge. Enter expands or collapses a taxonomy
 or type; Up and Down choose a row, and Page Up and Page Down scroll its Inspector.
 Left returns to the Menu. Project is read-only: there are no add rows, edit,
