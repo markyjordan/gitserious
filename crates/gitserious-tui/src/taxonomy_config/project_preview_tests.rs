@@ -98,7 +98,9 @@ fn installed_definitions_use_the_library_layout_even_without_a_readable_library(
             .find(|row| row.contains("▸ research"))
             .ok_or("missing default row")?;
         assert!(
-            local.contains(" project ") && local.contains("2 types  v3"),
+            !local.contains(" project ")
+                && !local.contains(" default ")
+                && local.contains("2 types  v3"),
             "{local}"
         );
         assert!(
