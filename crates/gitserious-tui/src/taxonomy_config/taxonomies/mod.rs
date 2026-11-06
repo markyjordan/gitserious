@@ -2,7 +2,8 @@
 //! describes the selected row and edits it in place. The view keeps only the cursor, the
 //! expanded nodes, scroll offsets, and NAV, EDIT with a text cursor, or the copy picker with its
 //! choices; every edit goes straight to the Library draft, and rows and field text come from it
-//! on every render and key.
+//! on every render and key. A read-only instance previews installed project definitions
+//! with the same layout, accepting navigation and showing only real nodes.
 
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -53,13 +54,15 @@ pub(super) enum Chip {
 pub(super) struct Chips<'a> {
     library: &'a LibraryDraft,
     problems: Vec<Problem>,
+    read_only: bool,
 }
 
 impl<'a> Chips<'a> {
-    fn new(library: &'a LibraryDraft, _expanded: &'a BTreeSet<NodeId>) -> Self {
+    fn new(library: &'a LibraryDraft, read_only: bool) -> Self {
         Self {
             library,
             problems: library.problems(),
+            read_only,
         }
     }
 
@@ -105,6 +108,7 @@ impl Chip {
 pub(super) struct TaxonomiesView {
     /// `None` until the user picks a row; the first row shows as selected.
     cursor: Option<RowKey>,
+    read_only: bool,
     expanded: BTreeSet<NodeId>,
     mode: Mode,
     outline_offset: usize,
@@ -157,6 +161,13 @@ pub(super) enum Nav {
 }
 
 impl TaxonomiesView {
+    pub(super) fn read_only() -> Self {
+        Self {
+            read_only: true,
+            ..Self::default()
+        }
+    }
+
     fn inspector_page(&self) -> u16 {
         self.inspector_area.height.max(1)
     }
@@ -209,7 +220,7 @@ impl TaxonomiesView {
     }
 
     fn selected_row<'a>(&self, library: &'a LibraryDraft) -> Option<Row<'a>> {
-        let rows = outline::rows(library, &self.expanded);
+        let rows = outline::rows(library, &self.expanded, self.read_only);
         let index = outline::resolve(&rows, self.cursor.as_ref(), library);
         rows.get(index).copied()
     }
@@ -222,6 +233,21 @@ impl TaxonomiesView {
     /// NAV keys: move, expand, collapse, scroll the Inspector, and the keys that change the
     /// Library, which come back as an action. The open picker takes every key.
     pub(super) fn key(&mut self, key: KeyEvent, library: &LibraryDraft) -> Nav {
+        if self.read_only
+            && (!key.modifiers.is_empty()
+                || !matches!(
+                    key.code,
+                    KeyCode::Up
+                        | KeyCode::Down
+                        | KeyCode::Enter
+                        | KeyCode::Left
+                        | KeyCode::Right
+                        | KeyCode::PageUp
+                        | KeyCode::PageDown
+                ))
+        {
+            return Nav::Unhandled;
+        }
         if let Mode::CopyTo {
             property,
             cursor,
@@ -245,13 +271,13 @@ impl TaxonomiesView {
             }
             return Nav::Handled;
         }
-        let rows = outline::rows(library, &self.expanded);
+        let rows = outline::rows(library, &self.expanded, self.read_only);
         let index = outline::resolve(&rows, self.cursor.as_ref(), library);
         let Some(&row) = rows.get(index) else {
             return Nav::Unhandled;
         };
         let node = row.node();
-        let open = outline::has_children(row)
+        let open = outline::has_children(row, self.read_only)
             && node.is_some_and(|node| self.expanded.contains(node.id()));
         let custom = node.is_some_and(|node| node.taxonomy().origin() == TaxonomyOrigin::Custom);
         let plain = key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT;
@@ -279,7 +305,7 @@ impl TaxonomiesView {
             KeyCode::Enter => match row {
                 Row::NewTaxonomy => return Nav::Act(LibraryAction::Create),
                 Row::AddType(_) | Row::AddProperty(..) => return Nav::Act(LibraryAction::Add),
-                Row::Node(node) if outline::has_children(row) => {
+                Row::Node(node) if outline::has_children(row, self.read_only) => {
                     self.summary_scroll.reset();
                     if open {
                         self.expanded.remove(node.id());
@@ -311,6 +337,9 @@ impl TaxonomiesView {
         library: &mut LibraryDraft,
     ) -> Result<(), String> {
         let refused = |refusal| refusal_sentence(refusal, None);
+        if self.read_only {
+            return Err(refused(EditRefusal::ReadOnly));
+        }
         let row = self
             .selected_row(library)
             .ok_or_else(|| refused(EditRefusal::Missing))?;
@@ -593,7 +622,7 @@ impl TaxonomiesView {
         if !contains(self.outline_area, x, y) {
             return false;
         }
-        let rows = outline::rows(library, &self.expanded);
+        let rows = outline::rows(library, &self.expanded, self.read_only);
         let index = self.outline_offset + usize::from(y - self.outline_area.y);
         let Some(row) = rows.get(index) else {
             return false;
@@ -614,7 +643,7 @@ impl TaxonomiesView {
         focused: bool,
         animate: bool,
     ) -> Rect {
-        let rows = library.map(|library| outline::rows(library, &self.expanded));
+        let rows = library.map(|library| outline::rows(library, &self.expanded, self.read_only));
         let panes = panes::Panes::new(area, frame.area(), lead, rows.as_ref().map_or(1, Vec::len));
         panes.render_rule(frame);
         self.inspector_area = Rect::default();
@@ -631,7 +660,7 @@ impl TaxonomiesView {
         // EDIT and the copy picker hold focus away from the outline.
         let outline_focused = focused && self.navigating();
         let animate = animate && self.navigating();
-        let chips = Chips::new(library, &self.expanded);
+        let chips = Chips::new(library, self.read_only);
         self.outline_area = outline::render(
             frame,
             panes.outline,
@@ -704,7 +733,8 @@ impl TaxonomiesView {
         }
         let row = library.and_then(|library| self.selected_row(library));
         let editing = self.editing();
-        let property_actions = !editing
+        let property_actions = !self.read_only
+            && !editing
             && row.and_then(Row::node).is_some_and(|node| {
                 matches!(node, NodeRef::Property { .. })
                     && node.taxonomy().origin() == TaxonomyOrigin::Custom
@@ -733,7 +763,15 @@ impl TaxonomiesView {
             && let Some(node) = row.node()
         {
             let built_in = node.taxonomy().origin() == TaxonomyOrigin::BuiltIn;
-            if editing {
+            if self.read_only {
+                if outline::has_children(row, true) {
+                    hints.push(if self.expanded.contains(node.id()) {
+                        ("enter", "close")
+                    } else {
+                        ("enter", "open")
+                    });
+                }
+            } else if editing {
                 let policy = matches!(
                     self.mode,
                     Mode::Edit {
@@ -760,7 +798,7 @@ impl TaxonomiesView {
                     ("d", "delete"),
                 ]);
             } else if matches!(row, Row::Node(_)) {
-                if outline::has_children(row) {
+                if outline::has_children(row, self.read_only) {
                     hints.push(if self.expanded.contains(node.id()) {
                         ("enter", "close")
                     } else {
@@ -854,7 +892,7 @@ impl TaxonomiesView {
     #[cfg(test)]
     pub(super) fn observe(&self, library: Option<&LibraryDraft>) -> Observation {
         let visible = library.map_or_else(Vec::new, |library| {
-            outline::rows(library, &self.expanded)
+            outline::rows(library, &self.expanded, self.read_only)
                 .into_iter()
                 .skip(self.outline_offset)
                 .take(usize::from(self.outline_area.height))

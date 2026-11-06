@@ -92,7 +92,7 @@ fn commands(category: Category) -> &'static [HomeCommand] {
 #[derive(Debug, Default)]
 pub(super) struct CommandPaletteState {
     pub(super) query: String,
-    pub(super) initialize_only: bool,
+    pub(super) project_preview: Option<bool>,
     pub(super) selected: usize,
     pub(super) list_area: Rect,
     pub(super) list_offset: usize,
@@ -104,9 +104,12 @@ impl CommandPaletteState {
         commands(category)
             .iter()
             .copied()
-            .filter(|command| {
-                !self.initialize_only
-                    || !matches!(command, HomeCommand::Configure | HomeCommand::ReviewProject)
+            .filter(|command| match self.project_preview {
+                Some(initialized) if category == Category::Project => {
+                    matches!(command, HomeCommand::SwitchTab | HomeCommand::Quit)
+                        || (!initialized && matches!(command, HomeCommand::Initialize))
+                }
+                _ => true,
             })
             .filter(|command| {
                 command

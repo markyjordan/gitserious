@@ -36,7 +36,7 @@ pub(super) fn render_empty(
     button
 }
 
-fn render_header(
+pub(super) fn render_header(
     frame: &mut Frame<'_>,
     area: Rect,
     session: &ConfigurationSession,
@@ -46,7 +46,11 @@ fn render_header(
         return;
     };
     let width = usize::from(area.width.saturating_sub(2));
-    let badge = "✗ gitserious.toml";
+    let (badge, color) = if session.persisted_project_config().is_some() {
+        ("✓ gitserious.toml", theme().done)
+    } else {
+        ("✗ gitserious.toml", theme().blocks)
+    };
     let name = root
         .file_name()
         .unwrap_or(root.as_os_str())
@@ -59,7 +63,7 @@ fn render_header(
             Style::new().fg(theme().text).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" ".repeat(gap)),
-        Span::styled(badge, Style::new().fg(theme().blocks)),
+        Span::styled(badge, Style::new().fg(color)),
     ]);
     frame.render_widget(
         Paragraph::new(title),

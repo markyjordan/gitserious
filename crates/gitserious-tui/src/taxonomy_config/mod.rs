@@ -50,6 +50,8 @@ mod naming;
 #[cfg(test)]
 mod project_editor_tests;
 mod project_overview;
+#[cfg(test)]
+mod project_preview_tests;
 mod review;
 #[cfg(test)]
 mod summary_scroll_tests;
@@ -97,6 +99,7 @@ impl ConfigView {
     pub(crate) fn new(workspace: &dyn ConfigurationWorkspace) -> Self {
         let mut state = State::new(workspace);
         state.embedded = true;
+        state.project_taxonomies = TaxonomiesView::read_only();
         Self { state }
     }
 
@@ -533,12 +536,21 @@ impl State {
             .flatten()
     }
 
-    /// The outline keys and rendering go to: the Library, or the project while its taxonomies
-    /// are open.
+    /// The active outline: Library, the shell's installed project preview, or the standalone
+    /// adapter's project editor while its taxonomies are open.
     fn editor(&self) -> Option<Editor> {
         match self.category {
             Category::Taxonomies => Some(Editor::Library),
-            Category::Project if self.project_view == ProjectView::Outline => Some(Editor::Project),
+            Category::Project
+                if (self.embedded
+                    && self
+                        .project
+                        .as_ref()
+                        .is_some_and(|session| session.persisted_project_config().is_some()))
+                    || (!self.embedded && self.project_view == ProjectView::Outline) =>
+            {
+                Some(Editor::Project)
+            }
             Category::Project => None,
         }
     }
@@ -684,6 +696,7 @@ impl State {
                 } else if matches!(self.screen, Screen::Home)
                     && self.category == Category::Project
                     && self.project_view == ProjectView::Sections
+                    && self.editor().is_none()
                     && contains(self.project_area, mouse.column, mouse.row)
                 {
                     if self.empty_project_overview() {
@@ -847,6 +860,19 @@ impl State {
             self.shell_request = Some(ConfigRequest::Initialize);
             return false;
         }
+        if self.embedded && self.category == Category::Project && key.code == KeyCode::Enter {
+            self.home_focus = HomeFocus::Content;
+        }
+        if self.embedded
+            && self.category == Category::Project
+            && (matches!(
+                key.code,
+                KeyCode::Char('i' | 'l' | 'e' | 'f' | 'n' | 'd' | 'c')
+            ) || (key.code == KeyCode::Char('s')
+                && key.modifiers.contains(KeyModifiers::CONTROL)))
+        {
+            return false;
+        }
         let editor = self.editor();
         if editor.is_some() && self.editor_view().editing() {
             if let Some((view, library)) = self.editor_parts_mut()
@@ -862,7 +888,7 @@ impl State {
         {
             match view.key(key, library) {
                 Nav::Handled => return false,
-                Nav::Sidebar if editor == Editor::Project => {
+                Nav::Sidebar if editor == Editor::Project && !self.embedded => {
                     self.project_view = ProjectView::Sections;
                     return false;
                 }
@@ -880,7 +906,7 @@ impl State {
         match key.code {
             KeyCode::Char('/') if key.modifiers.is_empty() => {
                 self.home_overlay = Some(CommandPaletteState {
-                    initialize_only: self.empty_project_overview(),
+                    project_preview: self.embedded.then(|| !self.empty_project_overview()),
                     ..CommandPaletteState::default()
                 });
             }
@@ -915,7 +941,7 @@ impl State {
             {
                 self.home_focus = HomeFocus::Menu;
             }
-            KeyCode::Up | KeyCode::Down if self.category == Category::Project => {
+            KeyCode::Up | KeyCode::Down if self.category == Category::Project && !self.embedded => {
                 let index = self.project_section.index();
                 let index = match key.code {
                     KeyCode::Up => index.saturating_sub(1),
@@ -924,13 +950,15 @@ impl State {
                 self.project_section = ProjectSection::ALL[index];
                 self.project_scroll = 0;
             }
-            KeyCode::PageUp if self.category == Category::Project => {
+            KeyCode::PageUp if self.category == Category::Project && !self.embedded => {
                 self.project_scroll = self.project_scroll.saturating_sub(8);
             }
-            KeyCode::PageDown if self.category == Category::Project => {
+            KeyCode::PageDown if self.category == Category::Project && !self.embedded => {
                 self.project_scroll = self.project_scroll.saturating_add(8);
             }
-            KeyCode::Enter if self.category == Category::Project => match self.project_section {
+            KeyCode::Enter if self.category == Category::Project && !self.embedded => match self
+                .project_section
+            {
                 ProjectSection::Commit => self.request_project_action(PendingAction::EditProject),
                 ProjectSection::Taxonomies => self.open_project_taxonomies(),
                 ProjectSection::Files => {}
@@ -1186,7 +1214,8 @@ impl State {
     fn request_editor_action(&mut self, editor: Editor, action: PendingAction) {
         match editor {
             Editor::Library => self.request_global_action(action),
-            Editor::Project => self.project_edit(action),
+            Editor::Project if !self.embedded => self.project_edit(action),
+            Editor::Project => {}
         }
     }
 
@@ -1797,8 +1826,23 @@ impl State {
                 .project
                 .as_ref()
                 .and_then(ConfigurationSession::project_draft);
-            self.project_taxonomies
-                .render(frame, area, 0, draft, focused, animate);
+            let header = self.project_taxonomies.render(
+                frame,
+                area,
+                if self.embedded {
+                    library_header::HEIGHT
+                } else {
+                    0
+                },
+                draft,
+                focused,
+                animate,
+            );
+            if self.embedded
+                && let Some(session) = &self.project
+            {
+                project_overview::render_header(frame, header, session, self.home.as_deref());
+            }
         } else {
             let library = self.global.as_ref().and_then(ConfigurationSession::library);
             let header = self.taxonomies.render(

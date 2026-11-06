@@ -59,7 +59,7 @@ under Configuration. From the Project or Library browser, Tab and Shift+Tab
 switch sections, Esc returns to Home, and `q` quits. Every other key, including `/` and `?`, reaches the
 configuration interface. Config selections and unapplied changes survive
 section visits. Library EDIT keeps focus inside Config until Esc validates and
-saves the item. Tab, root-row clicks, and quit cannot leave EDIT. Project edits
+saves the item. Tab, root-row clicks, and quit cannot leave EDIT. Standalone Project edits
 and retained Commit reviews keep their existing discard confirmation.
 
 The Commit overview shows repository/branch identity and directory trees for
@@ -101,32 +101,18 @@ Enter opens the same taxonomy selection editor as Home. Esc cancels without
 writing; the editor's Initialize row writes the chosen taxonomies. The footer
 shows `enter initialize` and `←/→ focus`.
 
-The standalone configuration adapter shows the commit default, the project's own taxonomies, and
-`gitserious.toml` status. Enter on its Taxonomies section opens the same outline
-and Inspector the Library uses, over the project's own definitions: create,
-fork, edit, and delete taxonomies, types, and properties, including the
-project's copy of a built-in such as `conventional`. These edits stay staged
-until Project review applies them, and the project default cannot be deleted.
-Left at the outline's root returns to the sections.
+An initialized Project opens directly on the taxonomies stored in
+`gitserious.toml`, with the same outline, Inspector, responsive layout, policy
+colors, and property spacing as Library. The repository name and path appear
+above the outline, with a sage file badge. Enter expands or collapses a taxonomy
+or type; Up and Down choose a row, and Page Up and Page Down scroll its Inspector.
+Left returns to the Menu. Project is read-only: there are no add rows, edit,
+fork, delete, import, export, reorder, or save commands. Its preview does not
+read definitions from Library and works when Library is unavailable.
 
-In the project outline, `i` lists the Library's taxonomies to copy into the
-project, each marked new, already in the project, or different from the
-project's copy. A new one is copied in; an identical one is left alone; a
-different one asks whether to replace the project's copy or add the Library's
-as `<name>-copy`. A copy is independent: later Library edits never reach the
-project. Only this action reads the Library.
-
-`l` copies the selected project taxonomy, as Apply would write it, to the
-Library, which saves it at once like any Library edit; the project is
-unchanged. A built-in name such as `conventional` is never shadowed: the
-Library gets `<name>-copy` instead. A different custom taxonomy of the same
-name asks whether to replace it or add the copy under a new name. It never reads the Library, so it works when the
-Library is missing or corrupt. An uninitialized repository offers `i` to review
-initialization, which copies the Library's default taxonomies. Ctrl+S opens
-Project review, and Enter applies `gitserious.toml`; Apply refuses if the file
-changed on disk after Project opened. Browsing Library preserves pending Project
-edits. A Library action asks you to apply or discard those Project edits before
-proceeding. Commit authoring uses `gitserious.toml` as last applied.
+The standalone `ConfigurationEditor` adapter retains its staged Project editing
+and review API for embedders. Its pending drafts still require Apply or Discard
+before leaving. The unified shell uses the read-only Project overview.
 
 Config uses the shared Bone palette: ground behind content, band behind
 raised rows, text for values, dim for context, pending orange for EDIT, and
