@@ -126,3 +126,37 @@ pub fn with_stale_fingerprint(lock: &str) -> Result<String, Box<dyn Error>> {
         &lock[start + 1..]
     ))
 }
+
+/// A fresh project adds only its policy and ignored local state beside Git and user files.
+pub fn assert_project_shape(directory: &Path, existing: &[&str]) -> Result<(), Box<dyn Error>> {
+    fn entries(
+        directory: &Path,
+    ) -> Result<std::collections::BTreeSet<std::ffi::OsString>, std::io::Error> {
+        std::fs::read_dir(directory)?
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect()
+    }
+    let expected = [".git", ".gitserious", "gitserious.toml"]
+        .into_iter()
+        .chain(existing.iter().copied())
+        .map(std::ffi::OsString::from)
+        .collect();
+    assert_eq!(
+        entries(directory)?,
+        expected,
+        "initialization must not generate a lock file or another root artifact"
+    );
+    assert!(directory.join("gitserious.toml").is_file());
+    assert_eq!(
+        entries(&directory.join(".gitserious"))?,
+        [std::ffi::OsString::from(".gitignore")]
+            .into_iter()
+            .collect(),
+        "fresh local state contains only its ignore rule"
+    );
+    assert_eq!(
+        std::fs::read_to_string(directory.join(".gitserious/.gitignore"))?,
+        "*\n"
+    );
+    Ok(())
+}
