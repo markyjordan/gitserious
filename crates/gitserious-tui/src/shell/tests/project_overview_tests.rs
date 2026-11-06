@@ -109,6 +109,7 @@ fn project_enter_opens_the_same_editor_as_home_and_cancel_writes_nothing()
                 "{width}x{height}: {row}"
             );
             assert!(!row.contains(&format!("{name}-v1")));
+            assert_eq!(row.contains(" default "), name == "infra-ops", "{row}");
         }
         assert!(
             !text.contains("conventional"),

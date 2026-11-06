@@ -269,7 +269,7 @@ impl Columns {
         };
         Self {
             name: widest(&|taxonomy| Span::raw(taxonomy.name()).width()),
-            origin: widest(&|taxonomy| origin_label(library, taxonomy.origin()).len()),
+            origin: widest(&|taxonomy| origin_label(library, taxonomy).len()),
             version: widest(&|taxonomy| version(library, taxonomy).len()),
             count: widest(&|taxonomy| taxonomy.types().len().to_string().len()),
         }
@@ -316,12 +316,16 @@ const fn branch(last: bool) -> &'static str {
     if last { "└─ " } else { "├─ " }
 }
 
-/// A project owns every taxonomy it holds, so its rows say so instead of naming a Library origin.
-const fn origin_label(library: &LibraryDraft, origin: TaxonomyOrigin) -> &'static str {
+/// Project rows identify the configured default in the existing ownership column.
+fn origin_label(library: &LibraryDraft, taxonomy: &TaxonomyNode) -> &'static str {
     if library.is_project() {
-        "project"
+        if library.default_taxonomy().as_str() == taxonomy.name() {
+            "default"
+        } else {
+            "project"
+        }
     } else {
-        origin.as_str()
+        taxonomy.origin().as_str()
     }
 }
 
@@ -488,10 +492,7 @@ fn row_line(
             left.push(Span::styled(
                 format!(
                     " {}",
-                    pad(
-                        origin_label(chips.library, taxonomy.origin()),
-                        columns.origin
-                    )
+                    pad(origin_label(chips.library, taxonomy), columns.origin)
                 ),
                 bold,
             ));

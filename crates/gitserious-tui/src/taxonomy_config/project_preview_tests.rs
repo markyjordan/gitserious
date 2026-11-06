@@ -35,10 +35,16 @@ fn fixture() -> Result<(Workspace, ConfigView)> {
             )?,
         ],
     )?;
+    // The configured default deliberately follows another installed taxonomy.
+    let research = gitserious_core::built_in_taxonomies()[1].clone();
     *workspace.project.borrow_mut() = ConfigurationSession::open_project(
         RepositoryRoot::new(std::env::temp_dir())?,
         Some(StoredProject {
-            configuration: ProjectConfiguration::new(1, taxonomy.id().clone(), vec![taxonomy])?,
+            configuration: ProjectConfiguration::new(
+                1,
+                research.id().clone(),
+                vec![taxonomy, research],
+            )?,
             revision: ProjectRevision::of_bytes(b"opened"),
         }),
     );
@@ -83,6 +89,29 @@ fn installed_definitions_use_the_library_layout_even_without_a_readable_library(
         let mut terminal = Terminal::new(TestBackend::new(width, height))?;
         let text = rendered(&mut view, &mut terminal)?;
         assert!(text.contains("local-team"), "{text}");
+        let local = text
+            .lines()
+            .find(|row| row.contains("▸ local-team"))
+            .ok_or("missing local row")?;
+        let default = text
+            .lines()
+            .find(|row| row.contains("▸ research"))
+            .ok_or("missing default row")?;
+        assert!(
+            local.contains(" project ") && local.contains("2 types  v3"),
+            "{local}"
+        );
+        assert!(
+            default.contains(" default ") && default.contains("10 types  v1"),
+            "{default}"
+        );
+        assert_eq!(
+            text.lines()
+                .filter(|row| row.contains("▸") && row.contains(" default "))
+                .count(),
+            1
+        );
+
         assert!(
             text.contains("Only the project's") && text.contains("definition."),
             "{text}"
@@ -108,6 +137,20 @@ fn installed_definitions_use_the_library_layout_even_without_a_readable_library(
         }
         assert!(!view.dirty());
     }
+    // Library has a different default and keeps its built-in/custom origin labels.
+    view.state.global = Some(workspace.global.borrow().clone());
+    press(&mut view, &workspace, KeyCode::Char('2'));
+    let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
+    let text = rendered(&mut view, &mut terminal)?;
+    assert!(
+        text.lines()
+            .any(|row| row.contains("▸ conventional") && row.contains("built-in"))
+    );
+    assert!(
+        !text
+            .lines()
+            .any(|row| row.contains("▸") && row.contains(" default "))
+    );
     assert_eq!(workspace.saves(), 0);
     Ok(())
 }
@@ -159,6 +202,11 @@ fn project_browsing_expands_real_nodes_and_never_offers_or_performs_mutations() 
     press(&mut view, &workspace, KeyCode::Down);
     let text = rendered(&mut view, &mut terminal)?;
     assert!(text.contains("Property reason"));
+    assert!(
+        text.lines()
+            .any(|row| row.contains("▸ research") && row.contains(" default ")),
+        "the configured default remains marked while another taxonomy's property is selected"
+    );
     press(&mut view, &workspace, KeyCode::Enter);
     assert!(
         view.handle_event(
