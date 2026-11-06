@@ -28,7 +28,9 @@ step its state allows:
 Home rereads the repository each time you return to it.
 
 `initialize <name>` lists the taxonomies the new `gitserious.toml` will hold.
-The built-ins start included, `conventional-v1` first; every Library
+Rows show the taxonomy name with its type count and version aligned at the right
+(`11 types  v1`), matching Library and Project. The built-ins start included,
+`conventional` first; every Library
 taxonomy with at least one type follows, excluded and tagged `custom`. If
 the Library cannot be read, the editor names the error and still offers the
 built-ins. The first included

@@ -48,7 +48,7 @@ fn an_uninitialized_project_matches_the_open_bone_overview()
 #[test]
 fn project_enter_opens_the_same_editor_as_home_and_cancel_writes_nothing()
 -> Result<(), Box<dyn std::error::Error>> {
-    for (width, height) in [(87, 40), (100, 30)] {
+    for (width, height) in [(87, 40), (100, 30), (125, 51), (66, 18)] {
         let workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
         let mut project = Shell::new(InteractiveEntry::Config, &workspace, &[]);
         let mut home = Shell::new(InteractiveEntry::Home, &workspace, &[]);
@@ -66,21 +66,55 @@ fn project_enter_opens_the_same_editor_as_home_and_cancel_writes_nothing()
         assert!(workspace.created.borrow().is_none());
         project.execute(Action::Select(Section::Config), &workspace);
         project.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        // Exclude conventional and make infra-ops the default; only those choices may
+        // appear in Project after the shell reloads the initialized configuration.
+        project.handle_event(key(KeyCode::Char(' ')), &workspace, &[]);
+        project.handle_event(key(KeyCode::Down), &workspace, &[]);
+        project.handle_event(key(KeyCode::Down), &workspace, &[]);
+        project.handle_event(key(KeyCode::Enter), &workspace, &[]);
         for _ in 0..3 {
             project.handle_event(key(KeyCode::Down), &workspace, &[]);
         }
         project.handle_event(key(KeyCode::Enter), &workspace, &[]);
         assert!(project.init_editor.is_none());
+        let configuration = workspace
+            .created
+            .borrow()
+            .clone()
+            .ok_or("not initialized")?;
+        assert_eq!(configuration.default_taxonomy().as_str(), "infra-ops");
         assert_eq!(
-            workspace
-                .created
-                .borrow()
-                .as_ref()
-                .ok_or("not initialized")?
+            configuration
                 .taxonomies()
-                .len(),
-            3
+                .iter()
+                .map(|taxonomy| taxonomy.versioned().to_string())
+                .collect::<Vec<_>>(),
+            ["infra-ops-v1", "research-v1"]
         );
+        project.execute(Action::Select(Section::Config), &workspace);
+        terminal.draw(|frame| project.render(frame, &[]))?;
+        let text = rendered(&terminal);
+        for name in ["infra-ops", "research"] {
+            let row = text
+                .lines()
+                .find(|row| row.contains(&format!("▸ {name}")))
+                .ok_or("installed row missing")?;
+            let row = row
+                .chars()
+                .skip(14)
+                .take_while(|character| *character != '│')
+                .collect::<String>();
+            assert!(
+                row.trim_end().ends_with("10 types  v1"),
+                "{width}x{height}: {row}"
+            );
+            assert!(!row.contains(&format!("{name}-v1")));
+        }
+        assert!(
+            !text.contains("conventional"),
+            "excluded taxonomy must stay absent"
+        );
+        assert!(!project.config.dirty());
     }
     Ok(())
 }

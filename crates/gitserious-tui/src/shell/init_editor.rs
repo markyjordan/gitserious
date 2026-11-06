@@ -248,6 +248,12 @@ impl InitEditor {
         let focus = self.cursor.min(self.rows.len().saturating_sub(1));
         let offset = (focus + 1).saturating_sub(visible);
         let default = self.default_row();
+        let version_width = self
+            .rows
+            .iter()
+            .map(|row| row.taxonomy.version().to_string().len() + 1)
+            .max()
+            .unwrap_or(0);
         let mut number = 0;
         for (index, row) in self.rows.iter().enumerate() {
             let selected = index == self.cursor;
@@ -266,13 +272,19 @@ impl InitEditor {
             };
             if (offset..offset + visible).contains(&index) {
                 let prefix = format!(" {mark} {label}  ");
-                let right = format!("{} types ", row.taxonomy.commit_types().len());
+                let count = row.taxonomy.commit_types().len();
+                let right = format!(
+                    "{count} {}  {:>version_width$} ",
+                    if count == 1 { "type " } else { "types" },
+                    format!("v{}", row.taxonomy.version())
+                );
                 // Each row keeps one line, so the window arithmetic above stays exact.
-                let budget = width.saturating_sub(prefix.len() + tag.len() + right.len() + 1);
+                let budget =
+                    width.saturating_sub(Span::raw(&prefix).width() + tag.len() + right.len() + 1);
                 let left = vec![
                     Span::raw(prefix),
                     Span::styled(
-                        truncate(&row.taxonomy.versioned().to_string(), budget),
+                        truncate(row.taxonomy.id().as_str(), budget),
                         if row.included { text } else { dim },
                     ),
                     Span::styled(tag, dim),
@@ -506,15 +518,15 @@ mod tests {
         let mut editor = InitEditor::new(built_in_taxonomies(), &[team_changes()?], false);
         let rows = screen(&editor, 87, 40)?;
         assert!(
-            rows[5].starts_with(" ✓ 1  conventional-v1  default"),
+            rows[5].starts_with(" ✓ 1  conventional  default"),
             "{}",
             rows[5]
         );
-        assert!(rows[5].ends_with("11 types "));
-        assert!(rows[6].starts_with(" ✓ 2  research-v1"));
-        assert!(rows[7].starts_with(" ✓ 3  infra-ops-v1"));
-        assert!(rows[8].starts_with(" ○ –  team-changes-v3  custom"));
-        assert!(rows[8].ends_with("3 types "));
+        assert!(rows[5].ends_with("11 types  v1 "));
+        assert!(rows[6].starts_with(" ✓ 2  research"));
+        assert!(rows[7].starts_with(" ✓ 3  infra-ops"));
+        assert!(rows[8].starts_with(" ○ –  team-changes  custom"));
+        assert!(rows[8].ends_with("3 types  v3 "));
         assert_eq!(
             initialize(&mut editor)?,
             ["conventional-v1", "research-v1", "infra-ops-v1"]
@@ -533,11 +545,11 @@ mod tests {
         alt(&mut editor, KeyCode::Up);
         let rows = screen(&editor, 87, 40)?;
         assert!(
-            rows[7].starts_with(" ✓ 3  team-changes-v3  custom"),
+            rows[7].starts_with(" ✓ 3  team-changes  custom"),
             "{}",
             rows[7]
         );
-        assert!(rows[8].starts_with(" ✓ 4  infra-ops-v1"));
+        assert!(rows[8].starts_with(" ✓ 4  infra-ops"));
 
         press(&mut editor, KeyCode::Up);
         press(&mut editor, KeyCode::Char(' '));
@@ -545,11 +557,11 @@ mod tests {
         press(&mut editor, KeyCode::Enter);
         let rows = screen(&editor, 87, 40)?;
         assert!(
-            rows[5].starts_with(" ✓ 1  team-changes-v3  default"),
+            rows[5].starts_with(" ✓ 1  team-changes  default"),
             "{}",
             rows[5]
         );
-        assert!(rows[7].starts_with(" ○ –  research-v1"));
+        assert!(rows[7].starts_with(" ○ –  research"));
         assert_eq!(
             initialize(&mut editor)?,
             ["team-changes-v3", "conventional-v1", "infra-ops-v1"]
@@ -581,7 +593,7 @@ mod tests {
             let rows = screen(&editor, width, height)?;
             let selected = rows
                 .iter()
-                .position(|row| row.contains("team-30-v1"))
+                .position(|row| row.starts_with(" ○ –  team-30"))
                 .ok_or("the selected row scrolled out of view")?;
             let initialize = rows
                 .iter()
@@ -594,7 +606,7 @@ mod tests {
                 "long names are cut to keep one line per row"
             );
             assert!(
-                !rows.iter().any(|row| row.contains("conventional-v1")),
+                !rows.iter().any(|row| row.contains("conventional")),
                 "the top scrolled away"
             );
             assert!(
@@ -605,7 +617,7 @@ mod tests {
         press(&mut editor, KeyCode::Down);
         let rows = screen(&editor, 87, 40)?;
         assert!(
-            rows.iter().any(|row| row.contains("team-30-v1")),
+            rows.iter().any(|row| row.starts_with(" ○ –  team-30")),
             "the last row stays above Initialize"
         );
         Ok(())
@@ -721,7 +733,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let mut editor = InitEditor::new(&built_in_taxonomies()[..1], &[], false);
         press(&mut editor, KeyCode::Char(' '));
-        assert!(screen(&editor, 87, 40)?[5].starts_with(" ✓ 1  conventional-v1"));
+        assert!(screen(&editor, 87, 40)?[5].starts_with(" ✓ 1  conventional"));
         assert!(matches!(
             press(&mut editor, KeyCode::Esc),
             EditorOutcome::Back
