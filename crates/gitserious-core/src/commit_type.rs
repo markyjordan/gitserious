@@ -4,10 +4,10 @@ use std::fmt::{self, Display, Formatter};
 
 use crate::{CommitTypeId, PropertyDefinition, PropertyKey, SchemaVersion};
 
-/// A versioned semantic schema for one open commit type.
+/// A semantic schema for one open commit type.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommitTypeDefinition {
-    schema_version: SchemaVersion,
+    schema_version: Option<SchemaVersion>,
     id: CommitTypeId,
     description: Box<str>,
     properties: Vec<PropertyDefinition>,
@@ -21,7 +21,7 @@ impl CommitTypeDefinition {
     /// Returns [`CommitTypeDefinitionError`] when the description is blank or
     /// a property key is repeated. An empty property set is intentional.
     pub fn new(
-        schema_version: SchemaVersion,
+        schema_version: Option<SchemaVersion>,
         id: CommitTypeId,
         description: impl Into<String>,
         properties: Vec<PropertyDefinition>,
@@ -47,10 +47,17 @@ impl CommitTypeDefinition {
         })
     }
 
-    /// Returns the semantic-schema version.
+    /// Returns the optional built-in semantic-schema version.
     #[must_use]
-    pub const fn schema_version(&self) -> SchemaVersion {
+    pub const fn schema_version(&self) -> Option<SchemaVersion> {
         self.schema_version
+    }
+
+    /// Removes release metadata when this definition joins a custom taxonomy.
+    #[must_use]
+    pub fn into_custom(mut self) -> Self {
+        self.schema_version = None;
+        self
     }
 
     /// Returns the open commit-type identifier.
@@ -77,7 +84,7 @@ impl CommitTypeDefinition {
         properties: Vec<PropertyDefinition>,
     ) -> Self {
         Self {
-            schema_version: SchemaVersion::V1,
+            schema_version: Some(SchemaVersion::V1),
             id,
             description: Box::from(description),
             properties,
@@ -133,13 +140,13 @@ mod tests {
     fn definitions_preserve_version_identity_description_and_property_order()
     -> Result<(), Box<dyn Error>> {
         let definition = CommitTypeDefinition::new(
-            SchemaVersion::new(2)?,
+            Some(SchemaVersion::new(2)?),
             CommitTypeId::new("custom-type")?,
             "A custom semantic contract.",
             vec![property("first")?, property("second")?],
         )?;
 
-        assert_eq!(definition.schema_version().get(), 2);
+        assert_eq!(definition.schema_version().map(SchemaVersion::get), Some(2));
         assert_eq!(definition.id().as_str(), "custom-type");
         assert_eq!(definition.description(), "A custom semantic contract.");
         assert_eq!(
@@ -158,7 +165,7 @@ mod tests {
     #[test]
     fn definitions_reject_blank_descriptions() -> Result<(), Box<dyn Error>> {
         let result = CommitTypeDefinition::new(
-            SchemaVersion::V1,
+            Some(SchemaVersion::V1),
             CommitTypeId::new("custom")?,
             " \n",
             vec![property("intent")?],
@@ -177,7 +184,7 @@ mod tests {
     #[test]
     fn definitions_allow_intentionally_empty_property_sets() -> Result<(), Box<dyn Error>> {
         let result = CommitTypeDefinition::new(
-            SchemaVersion::V1,
+            Some(SchemaVersion::V1),
             CommitTypeId::new("custom")?,
             "A custom contract.",
             Vec::new(),
@@ -192,7 +199,7 @@ mod tests {
     fn definitions_reject_duplicate_property_keys() -> Result<(), Box<dyn Error>> {
         let duplicate_key = PropertyKey::new("intent")?;
         let result = CommitTypeDefinition::new(
-            SchemaVersion::V1,
+            Some(SchemaVersion::V1),
             CommitTypeId::new("custom")?,
             "A custom contract.",
             vec![property("intent")?, property("intent")?],
@@ -216,13 +223,13 @@ mod tests {
     #[test]
     fn the_same_property_key_can_belong_to_distinct_commit_types() -> Result<(), Box<dyn Error>> {
         let first = CommitTypeDefinition::new(
-            SchemaVersion::V1,
+            Some(SchemaVersion::V1),
             CommitTypeId::new("first")?,
             "First contract.",
             vec![property("change")?],
         );
         let second = CommitTypeDefinition::new(
-            SchemaVersion::V1,
+            Some(SchemaVersion::V1),
             CommitTypeId::new("second")?,
             "Second contract.",
             vec![property("change")?],

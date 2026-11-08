@@ -143,7 +143,7 @@ fn project_taxonomies_edit_without_the_library_and_apply_only_after_review() -> 
         return Err(format!("expected review, got {:?}", state.screen).into());
     };
     let review = state.project.as_ref().ok_or("project")?.review()?.changes;
-    assert!(review.contains("  ~ conventional  v1 -> v2"), "{review}");
+    assert!(review.contains("  ~ conventional-v1"), "{review}");
     press(&mut state, &workspace, KeyCode::Enter);
     assert_eq!(workspace.saves(), 1);
     Ok(())
@@ -259,7 +259,7 @@ fn importing_copies_new_library_taxonomies_and_skips_identical_ones() -> Result 
         .iter()
         .map(ratatui::buffer::Cell::symbol)
         .collect::<String>();
-    assert!(screen.contains("Version"), "{screen}");
+    assert!(!screen.contains("Version"), "{screen}");
     assert!(screen.contains("Types"), "{screen}");
     press(&mut state, &workspace, KeyCode::Esc);
 

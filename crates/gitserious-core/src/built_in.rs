@@ -510,7 +510,7 @@ mod tests {
 
         assert_eq!(actual.len(), EXPECTED.len());
         for (definition, expected) in actual.iter().zip(EXPECTED) {
-            assert_eq!(definition.schema_version(), SchemaVersion::V1);
+            assert_eq!(definition.schema_version(), Some(SchemaVersion::V1));
             assert_eq!(definition.id().as_str(), expected.id);
             assert_eq!(definition.description(), expected.description);
             assert!(!definition.description().trim().is_empty());

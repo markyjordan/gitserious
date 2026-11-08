@@ -147,9 +147,6 @@ pub(super) fn problem_sentence(library: &LibraryDraft, problem: &Problem) -> Str
             "A conditional policy needs a rationale.".into()
         }
         ProblemKind::Blank => description_required(owner.0),
-        ProblemKind::VersionLimit => {
-            "Taxonomy version limit reached; fork this taxonomy to continue.".into()
-        }
         ProblemKind::Selection(error) => sentence(&error.to_string()),
         ProblemKind::NoTypes => "A project taxonomy needs at least one type.".into(),
         ProblemKind::WrongOwner => "This draft belongs to a different configuration.".into(),

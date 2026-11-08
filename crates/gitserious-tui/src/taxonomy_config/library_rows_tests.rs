@@ -146,7 +146,7 @@ fn taxonomy_rows_name_their_origin_type_count_and_version() -> Result {
                 " ▸ infra-ops      built-in ",
                 " 10 types  v1",
             ),
-            ("▸ team ", " ▸ team           custom   ", "  3 types  v1"),
+            ("▸ team ", " ▸ team           custom   ", "  3 types"),
             (
                 "▸ draft-ideas ",
                 " ▸ draft-ideas    custom   ",

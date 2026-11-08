@@ -34,8 +34,7 @@ impl CommitProvenance {
 mod tests {
     use crate::{
         CommitDraft, CommitSubject, CommitTypeDefinition, CommitTypeId, Description, Fingerprint,
-        SchemaVersion, Taxonomy, TaxonomyId, TaxonomyVersion,
-        validate_commit_draft_with_provenance,
+        SchemaVersion, Taxonomy, TaxonomyId, validate_commit_draft_with_provenance,
     };
 
     use super::CommitProvenance;
@@ -43,7 +42,7 @@ mod tests {
     #[test]
     fn rendering_emits_only_taxonomy_and_schema_trailers() {
         let definition = CommitTypeDefinition::new(
-            SchemaVersion::V1,
+            Some(SchemaVersion::V1),
             CommitTypeId::new("note").unwrap_or_else(|_| unreachable!()),
             "Record a note.",
             Vec::new(),
@@ -51,7 +50,7 @@ mod tests {
         .unwrap_or_else(|_| unreachable!());
         let taxonomy = Taxonomy::new(
             TaxonomyId::new("plain").unwrap_or_else(|_| unreachable!()),
-            TaxonomyVersion::V1,
+            None,
             Description::new("A plain taxonomy.").unwrap_or_else(|_| unreachable!()),
             None,
             vec![definition],
@@ -70,7 +69,7 @@ mod tests {
         )
         .into_message()
         .unwrap_or_else(|_| unreachable!());
-        assert!(message.as_str().contains("Gitserious-Taxonomy: plain-v1"));
+        assert!(message.as_str().contains("Gitserious-Taxonomy: plain\n"));
         assert!(message.as_str().contains("Gitserious-Schema: sha256:"));
         assert!(!message.as_str().contains("Gitserious-Template"));
         assert!(!message.as_str().contains("Gitserious-Typeset"));

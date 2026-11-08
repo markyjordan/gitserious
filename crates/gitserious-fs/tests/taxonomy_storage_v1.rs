@@ -53,11 +53,11 @@ fn retired_examples_load_without_writing_and_disappear_on_save() -> Result<(), B
     let id = TaxonomyId::new("team")?;
     let taxonomy = Taxonomy::new(
         id.clone(),
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         Description::new("Team policy")?,
         None,
         vec![CommitTypeDefinition::new(
-            SchemaVersion::V1,
+            Some(SchemaVersion::V1),
             CommitTypeId::new("deploy")?,
             "Deploy",
             vec![PropertyDefinition::new(
@@ -103,5 +103,105 @@ fn retired_examples_load_without_writing_and_disappear_on_save() -> Result<(), B
     assert!(!fs::read_to_string(&path)?.contains("example ="));
     fs::write(&path, clean.replace("key =", "unexpected = 'bad'\nkey ="))?;
     assert!(project_store.load(&root).is_err());
+    Ok(())
+}
+
+#[test]
+fn custom_versions_disappear_at_library_and_project_boundaries() -> Result<(), Box<dyn Error>> {
+    use gitserious_core::built_in_taxonomies;
+    let directory = tempfile::tempdir()?;
+    let paths = GlobalPaths::new(directory.path().join("library"));
+    fs::create_dir_all(paths.config().as_path())?;
+    let store = TomlGlobalConfigurationStore::new(paths.config().clone());
+    let custom = r#"
+[[taxonomies]]
+id = "team"
+version = 37
+description = "Team policy"
+created-on = "2001-02-03"
+modified-on = "2002-03-04"
+[taxonomies.derived-from]
+taxonomy = "other-team"
+version = 11
+[[taxonomies.commit-types]]
+id = "deploy"
+schema-version = 9
+description = "Deploy"
+[[taxonomies.commit-types.properties]]
+key = "checks"
+description = "Checks"
+[taxonomies.commit-types.properties.requirement]
+level = "required"
+"#;
+    let source = format!(
+        "config-version = 1\ndefault-taxonomy = 'team'\navailable-taxonomies = ['team']\n{custom}"
+    );
+    fs::write(store.path(), &source)?;
+    let global = store.load()?;
+    let record = &global.custom_taxonomies()[0];
+    assert_eq!(record.version(), None);
+    assert_eq!(record.commit_types()[0].schema_version(), None);
+    assert_eq!(
+        record
+            .derived_from()
+            .map(|source| source.reference().to_string()),
+        Some("other-team".into())
+    );
+    assert_eq!(
+        record.created_on().map(|date| date.to_string()),
+        Some("2001-02-03".into())
+    );
+    assert_eq!(fs::read_to_string(store.path())?, source);
+    store.compare_and_swap(&global, &global)?;
+    let written: toml::Value = toml::from_str(&fs::read_to_string(store.path())?)?;
+    let custom_wire = &written["taxonomies"][0];
+    assert!(custom_wire.get("version").is_none());
+    assert!(
+        custom_wire["commit-types"][0]
+            .get("schema-version")
+            .is_none()
+    );
+    assert!(custom_wire["derived-from"].get("version").is_none());
+    assert_eq!(written["config-version"].as_integer(), Some(1));
+
+    let root = RepositoryRoot::new(directory.path().join("project"))?;
+    fs::create_dir(root.as_path())?;
+    let policy = ProjectConfiguration::new(
+        1,
+        global.default_taxonomy().clone(),
+        vec![
+            record.usable().ok_or("usable")?,
+            built_in_taxonomies()[0].clone(),
+        ],
+    )?;
+    let project_store = TomlProjectStore;
+    project_store.create(&root, &policy)?;
+    let path = root.as_path().join("gitserious.toml");
+    let contents = fs::read_to_string(&path)?;
+    let wire: toml::Value = toml::from_str(&contents)?;
+    assert!(wire["taxonomies"][0].get("version").is_none());
+    assert!(
+        wire["taxonomies"][0]["commit-types"][0]
+            .get("schema-version")
+            .is_none()
+    );
+    assert_eq!(wire["taxonomies"][1]["version"].as_integer(), Some(1));
+    assert_eq!(
+        wire["taxonomies"][1]["commit-types"][0]["schema-version"].as_integer(),
+        Some(1)
+    );
+    let legacy_project = format!(
+        "config-version = 1\ndefault-taxonomy = 'team'\n{}",
+        custom
+            .replace("created-on = \"2001-02-03\"\n", "")
+            .replace("modified-on = \"2002-03-04\"\n", "")
+    );
+    fs::write(&path, legacy_project)?;
+    let loaded = project_store.load(&root)?.ok_or("project")?;
+    assert_eq!(loaded.configuration.taxonomies()[0].version(), None);
+    assert_eq!(
+        loaded.configuration.taxonomies()[0].commit_types()[0].schema_version(),
+        None
+    );
     Ok(())
 }

@@ -6,11 +6,11 @@ interface is the `gitserious` CLI.
 
 ## Taxonomy policy
 
-A taxonomy is the complete selectable authoring aggregate: identity, semantic
-version, description, optional fork lineage, ordered commit types, and each
-type's ordered durable properties. Built-ins are immutable. Custom taxonomies
-live only in the global user library. A fork is a version-one snapshot with
-informational source identity and version.
+A taxonomy is the complete selectable authoring aggregate: identity, description,
+optional fork lineage, ordered commit types, and each type's ordered durable
+properties. Built-ins are immutable and retain release versions. Custom
+taxonomies and their types are unversioned. Forks keep informational source
+identity and the source release only when it is built-in.
 
 Global configuration contains the default taxonomy, ordered available set, and
 custom library.

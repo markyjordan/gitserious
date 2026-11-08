@@ -112,7 +112,10 @@ impl GlobalConfiguration {
             version,
             default_taxonomy,
             available_taxonomies,
-            custom_taxonomies,
+            custom_taxonomies: custom_taxonomies
+                .into_iter()
+                .map(LibraryTaxonomy::into_custom)
+                .collect(),
         };
         candidate.validate()?;
         Ok(candidate)
@@ -215,6 +218,19 @@ impl ProjectConfiguration {
         default_taxonomy: TaxonomyId,
         taxonomies: Vec<Taxonomy>,
     ) -> Result<Self, ConfigurationError> {
+        let taxonomies = taxonomies
+            .into_iter()
+            .map(|taxonomy| {
+                if built_in_taxonomies()
+                    .iter()
+                    .any(|built_in| built_in.id() == taxonomy.id())
+                {
+                    taxonomy
+                } else {
+                    taxonomy.into_custom()
+                }
+            })
+            .collect::<Vec<_>>();
         if version != PROJECT_CONFIG_VERSION {
             return Err(ConfigurationError::UnsupportedProjectVersion(version));
         }
@@ -389,12 +405,16 @@ impl Error for ConfigurationError {}
 pub fn fingerprint_taxonomy(taxonomy: &Taxonomy) -> Fingerprint {
     let mut canonical = CanonicalHasher::new(b"gitserious.taxonomy.v1");
     canonical.text(taxonomy.id().as_str());
-    canonical.u16(taxonomy.version().get());
+    canonical.optional_version(
+        taxonomy
+            .version()
+            .map(gitserious_core::TaxonomyVersion::get),
+    );
     canonical.text(taxonomy.description().as_str());
     match taxonomy.derived_from() {
         Some(source) => {
             canonical.text(source.id().as_str());
-            canonical.u16(source.version().get());
+            canonical.optional_version(source.version().map(gitserious_core::TaxonomyVersion::get));
         }
         None => canonical.text("no-source"),
     }
@@ -406,7 +426,11 @@ pub fn fingerprint_taxonomy(taxonomy: &Taxonomy) -> Fingerprint {
 }
 
 fn fingerprint_commit_type(canonical: &mut CanonicalHasher, definition: &CommitTypeDefinition) {
-    canonical.u16(definition.schema_version().get());
+    canonical.optional_version(
+        definition
+            .schema_version()
+            .map(gitserious_core::SchemaVersion::get),
+    );
     canonical.text(definition.id().as_str());
     canonical.text(definition.description());
     canonical.usize(definition.properties().len());
@@ -450,6 +474,13 @@ impl CanonicalHasher {
         self.bytes(value.to_be_bytes());
     }
 
+    fn optional_version(&mut self, value: Option<u16>) {
+        match value {
+            Some(value) => self.u16(value),
+            None => self.text("unversioned"),
+        }
+    }
+
     fn usize(&mut self, value: usize) {
         self.bytes(u64::try_from(value).unwrap_or(u64::MAX).to_be_bytes());
     }
@@ -473,6 +504,45 @@ mod tests {
         for (taxonomy, expected) in built_in_taxonomies().iter().zip(expected) {
             assert_eq!(fingerprint_taxonomy(taxonomy).to_string(), expected);
         }
+    }
+
+    #[test]
+    fn custom_records_drop_release_metadata_and_keep_semantic_fingerprints()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use gitserious_core::{Description, TaxonomyVersion};
+        let source = &built_in_taxonomies()[0];
+        let id = TaxonomyId::new("team")?;
+        let custom = Taxonomy::new(
+            id.clone(),
+            Some(TaxonomyVersion::new(37)?),
+            source.description().clone(),
+            None,
+            source.commit_types().to_vec(),
+        )?;
+        let global =
+            GlobalConfiguration::new(1, id.clone(), vec![id.clone()], vec![custom.clone().into()])?;
+        let record = &global.custom_taxonomies()[0];
+        assert_eq!(record.version(), None);
+        assert!(
+            record
+                .commit_types()
+                .iter()
+                .all(|definition| definition.schema_version().is_none())
+        );
+        let policy = ProjectConfiguration::new(1, id.clone(), vec![custom, source.clone()])?;
+        assert_eq!(policy.taxonomies()[0].version(), None);
+        assert_eq!(policy.taxonomies()[1].version(), source.version());
+        let before = record.usable().ok_or("usable")?;
+        let after = Taxonomy::new(
+            id,
+            None,
+            Description::new("Changed purpose")?,
+            None,
+            before.commit_types().to_vec(),
+        )?;
+        assert_ne!(fingerprint_taxonomy(&before), fingerprint_taxonomy(&after));
+        assert_eq!(before.reference().to_string(), "team");
+        Ok(())
     }
 
     #[test]

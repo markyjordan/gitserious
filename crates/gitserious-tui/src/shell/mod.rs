@@ -891,7 +891,7 @@ mod tests {
             *self.state.borrow_mut() = HomeState::Initialized {
                 root: fresh_root(),
                 default: configuration.default_taxonomy().clone(),
-                version: TaxonomyVersion::V1,
+                version: Some(TaxonomyVersion::V1),
                 policy_untracked: true,
             };
             *self.created.borrow_mut() = Some(configuration.clone());
@@ -940,7 +940,7 @@ mod tests {
         let initialized = |policy_untracked| HomeState::Initialized {
             root: fresh_root(),
             default: gitserious_core::built_in_taxonomies()[0].id().clone(),
-            version: TaxonomyVersion::V1,
+            version: Some(TaxonomyVersion::V1),
             policy_untracked,
         };
         for (width, height) in [(87, 40), (100, 30)] {
@@ -1107,7 +1107,7 @@ mod tests {
             created
                 .taxonomies()
                 .iter()
-                .map(|taxonomy| taxonomy.versioned().to_string())
+                .map(|taxonomy| taxonomy.reference().to_string())
                 .collect::<Vec<_>>(),
             ["conventional-v1", "research-v1", "infra-ops-v1"]
         );
@@ -1124,7 +1124,7 @@ mod tests {
         let built_in = &gitserious_core::built_in_taxonomies()[0];
         let team = gitserious_core::Taxonomy::new(
             gitserious_core::TaxonomyId::new("team-changes")?,
-            TaxonomyVersion::new(3)?,
+            Some(TaxonomyVersion::new(3)?),
             built_in.description().clone(),
             None,
             built_in.commit_types()[..3].to_vec(),
@@ -1140,7 +1140,7 @@ mod tests {
             .find(|row| row.contains("team-changes"))
             .ok_or("missing Library taxonomy")?;
         assert!(row.starts_with(" ○ –  team-changes  custom"), "{row}");
-        assert!(row.trim_end().ends_with("3 types  v3"));
+        assert!(row.trim_end().ends_with("3 types"));
         for code in [
             KeyCode::Down,
             KeyCode::Down,
@@ -1162,13 +1162,13 @@ mod tests {
             created
                 .taxonomies()
                 .iter()
-                .map(|taxonomy| taxonomy.versioned().to_string())
+                .map(|taxonomy| taxonomy.reference().to_string())
                 .collect::<Vec<_>>(),
             [
                 "conventional-v1",
                 "research-v1",
                 "infra-ops-v1",
-                "team-changes-v3"
+                "team-changes"
             ]
         );
 

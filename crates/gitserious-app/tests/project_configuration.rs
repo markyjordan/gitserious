@@ -31,7 +31,7 @@ fn with_team() -> GlobalConfiguration {
     let source = &built_in_taxonomies()[0];
     let team = Taxonomy::new(
         id("team"),
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         source.description().clone(),
         Some(TaxonomyLineage::new(source.id().clone(), source.version())),
         source.commit_types().to_vec(),

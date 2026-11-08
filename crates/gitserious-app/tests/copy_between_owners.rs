@@ -25,7 +25,7 @@ fn team() -> Result<Taxonomy, Box<dyn Error>> {
     let source = &built_in_taxonomies()[0];
     Ok(Taxonomy::new(
         TaxonomyId::new("team")?,
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         source.description().clone(),
         Some(TaxonomyLineage::new(source.id().clone(), source.version())),
         source.commit_types()[..2].to_vec(),
@@ -68,8 +68,11 @@ fn importing_into_a_project_follows_the_collision_rules() -> Result<(), Box<dyn 
 
     draft.copy_in(&conventional, CopyIn::Renamed)?;
     let copy = built(&draft, "conventional-copy")?;
-    assert_eq!(copy.commit_types(), conventional.commit_types());
-    assert_eq!(copy.version(), TaxonomyVersion::V1);
+    assert_eq!(
+        copy.commit_types(),
+        conventional.clone().into_custom().commit_types()
+    );
+    assert_eq!(copy.version(), None);
     assert_eq!(
         copy.derived_from().map(|lineage| lineage.id().as_str()),
         Some("conventional")

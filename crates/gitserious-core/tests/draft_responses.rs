@@ -41,7 +41,7 @@ fn definition() -> Result<CommitTypeDefinition, Box<dyn Error>> {
     })
     .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
     Ok(CommitTypeDefinition::new(
-        SchemaVersion::V1,
+        Some(SchemaVersion::V1),
         CommitTypeId::new("change")?,
         "A change.",
         properties,

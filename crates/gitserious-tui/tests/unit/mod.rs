@@ -557,7 +557,7 @@ fn property(
 
 fn presentation_definition() -> Result<CommitTypeDefinition, Box<dyn Error>> {
     Ok(CommitTypeDefinition::new(
-        SchemaVersion::V1,
+        Some(SchemaVersion::V1),
         CommitTypeId::new("custom")?,
         "Exercise every property presentation.",
         vec![
@@ -577,7 +577,7 @@ fn presentation_definition() -> Result<CommitTypeDefinition, Box<dyn Error>> {
 
 fn guidance_definition(description: &str) -> Result<CommitTypeDefinition, Box<dyn Error>> {
     Ok(CommitTypeDefinition::new(
-        SchemaVersion::V1,
+        Some(SchemaVersion::V1),
         CommitTypeId::new("custom")?,
         "Exercise guidance measurement.",
         vec![PropertyDefinition::new(
@@ -591,7 +591,7 @@ fn guidance_definition(description: &str) -> Result<CommitTypeDefinition, Box<dy
 fn wide_property_definition() -> Result<CommitTypeDefinition, Box<dyn Error>> {
     let key = "a".repeat(70);
     Ok(CommitTypeDefinition::new(
-        SchemaVersion::V1,
+        Some(SchemaVersion::V1),
         CommitTypeId::new("custom")?,
         "Exercise definition-specific minimum widths.",
         vec![property(&key, PropertyRequirement::Optional)?],
@@ -2788,7 +2788,7 @@ fn focus_heading(session: &mut AuthoringSession<'_>, heading: &str) -> Result<()
 #[test]
 fn custom_editor_label_collisions_keep_distinct_field_identity() -> Result<(), Box<dyn Error>> {
     let definitions = vec![CommitTypeDefinition::new(
-        SchemaVersion::V1,
+        Some(SchemaVersion::V1),
         CommitTypeId::new("custom")?,
         "Collision coverage",
         vec![

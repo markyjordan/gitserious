@@ -110,7 +110,12 @@ fn project_owned_built_in_identity_loads_as_written() -> Result<(), Box<dyn Erro
     let taxonomy = &stored.configuration.taxonomies()[0];
 
     assert_eq!(taxonomy.id().as_str(), "conventional");
-    assert_eq!(taxonomy.version().get(), 7);
+    assert_eq!(
+        taxonomy
+            .version()
+            .map(gitserious_core::TaxonomyVersion::get),
+        Some(7)
+    );
     assert_eq!(
         taxonomy
             .commit_types()

@@ -13,7 +13,7 @@ fn commit_type(
     properties: Vec<PropertyDefinition>,
 ) -> Result<CommitTypeDefinition, Box<dyn Error>> {
     Ok(CommitTypeDefinition::new(
-        SchemaVersion::V1,
+        Some(SchemaVersion::V1),
         CommitTypeId::new(id)?,
         format!("The {id} change."),
         properties,
@@ -51,10 +51,11 @@ fn descriptions_preserve_text_and_reject_blank_values() -> Result<(), Box<dyn Er
 }
 
 #[test]
-fn taxonomy_preserves_identity_version_description_and_order() -> Result<(), Box<dyn Error>> {
+fn custom_taxonomy_preserves_identity_description_and_order_without_versions()
+-> Result<(), Box<dyn Error>> {
     let taxonomy = Taxonomy::new(
         TaxonomyId::new("custom")?,
-        TaxonomyVersion::new(2)?,
+        Some(TaxonomyVersion::new(2)?),
         Description::new("A custom taxonomy.")?,
         None,
         vec![
@@ -64,7 +65,12 @@ fn taxonomy_preserves_identity_version_description_and_order() -> Result<(), Box
     )?;
 
     assert_eq!(taxonomy.id().as_str(), "custom");
-    assert_eq!(taxonomy.version().get(), 2);
+    assert_eq!(
+        taxonomy
+            .version()
+            .map(gitserious_core::TaxonomyVersion::get),
+        None
+    );
     assert_eq!(taxonomy.description().as_str(), "A custom taxonomy.");
     assert_eq!(
         taxonomy
@@ -86,7 +92,7 @@ fn taxonomy_rejects_empty_and_duplicate_commit_types() -> Result<(), Box<dyn Err
     assert_eq!(
         Taxonomy::new(
             id.clone(),
-            TaxonomyVersion::V1,
+            Some(TaxonomyVersion::V1),
             description.clone(),
             None,
             Vec::new()
@@ -96,7 +102,7 @@ fn taxonomy_rejects_empty_and_duplicate_commit_types() -> Result<(), Box<dyn Err
     assert_eq!(
         Taxonomy::new(
             id,
-            TaxonomyVersion::V1,
+            Some(TaxonomyVersion::V1),
             description,
             None,
             vec![

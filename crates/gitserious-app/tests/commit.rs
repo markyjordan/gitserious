@@ -348,11 +348,11 @@ fn uninitialized_project_is_rejected_before_authoring() {
 fn project_owned_built_in_identity_replaces_the_compiled_schema() -> Result<(), Box<dyn Error>> {
     let conventional = Taxonomy::new(
         TaxonomyId::new("conventional")?,
-        TaxonomyVersion::new(7)?,
+        Some(TaxonomyVersion::new(7)?),
         Description::new("A project-owned conventional taxonomy.")?,
         None,
         vec![CommitTypeDefinition::new(
-            SchemaVersion::V1,
+            Some(SchemaVersion::V1),
             CommitTypeId::new("ship")?,
             "Ships a change.",
             vec![PropertyDefinition::new(
@@ -464,11 +464,11 @@ fn every_port_failure_is_preserved_and_stops_downstream_calls() -> Result<(), Bo
 fn custom_taxonomy_commits_with_its_own_schema() -> Result<(), Box<dyn Error>> {
     let ops = Taxonomy::new(
         TaxonomyId::new("ops")?,
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         Description::new("Operations change classes.")?,
         None,
         vec![CommitTypeDefinition::new(
-            SchemaVersion::V1,
+            Some(SchemaVersion::V1),
             CommitTypeId::new("provision")?,
             "Infrastructure provisioning.",
             vec![PropertyDefinition::new(
@@ -493,7 +493,7 @@ fn custom_taxonomy_commits_with_its_own_schema() -> Result<(), Box<dyn Error>> {
     let message = &harness.writer.messages.borrow()[0];
     assert!(message.starts_with("provision: create durable commit\n"));
     assert!(message.contains("intent:\nauthored intent\n"));
-    assert!(message.contains("Gitserious-Taxonomy: ops-v1\n"));
+    assert!(message.contains("Gitserious-Taxonomy: ops\n"));
     Ok(())
 }
 

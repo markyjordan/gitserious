@@ -71,15 +71,15 @@ fn new_taxonomy_form_omits_facts_until_saved() -> Result {
         let terminal = draw(&mut state, size)?;
         let screen = screen + &text(&terminal);
         assert!(screen.contains("Types"), "{size:?}: {screen}");
-        assert!(screen.contains("Version"), "{size:?}: {screen}");
+        assert!(!screen.contains("Version"), "{size:?}: {screen}");
         press(&mut state, &workspace, &[KeyCode::Char('e')]);
         let terminal = draw(&mut state, (size.0, size.1.max(30)))?;
         let screen = text(&terminal);
-        assert!(screen.contains("Version"), "{size:?}: {screen}");
+        assert!(!screen.contains("Version"), "{size:?}: {screen}");
         press(&mut state, &workspace, &[KeyCode::Esc, KeyCode::Char('f')]);
         let terminal = draw(&mut state, (size.0, size.1.max(30)))?;
         let screen = text(&terminal);
-        assert!(screen.contains("Version"), "{size:?}: {screen}");
+        assert!(!screen.contains("Version"), "{size:?}: {screen}");
         press(&mut state, &workspace, &[KeyCode::Esc, KeyCode::PageDown]);
         let terminal = draw(&mut state, size)?;
         let screen = screen + &text(&terminal);

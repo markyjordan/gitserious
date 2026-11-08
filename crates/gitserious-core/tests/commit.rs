@@ -243,7 +243,7 @@ fn breaking_change_adds_header_bang_and_uppercase_multiline_footer() -> Result<(
 fn breaking_change_without_scope_or_body_preserves_canonical_separation()
 -> Result<(), Box<dyn Error>> {
     let definition = CommitTypeDefinition::new(
-        SchemaVersion::V1,
+        Some(SchemaVersion::V1),
         CommitTypeId::new("custom")?,
         "No body properties.",
         vec![PropertyDefinition::new(

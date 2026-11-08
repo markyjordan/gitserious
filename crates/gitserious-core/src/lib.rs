@@ -43,4 +43,4 @@ pub use property_validation::{
 };
 pub use schema_version::SchemaVersion;
 pub use taxonomy_provenance::CommitProvenance;
-pub use taxonomy_version::{TaxonomyVersion, TaxonomyVersionError, VersionedTaxonomy};
+pub use taxonomy_version::{TaxonomyReference, TaxonomyVersion, TaxonomyVersionError};

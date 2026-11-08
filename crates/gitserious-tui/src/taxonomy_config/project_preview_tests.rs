@@ -13,12 +13,12 @@ fn fixture() -> Result<(Workspace, ConfigView)> {
     let workspace = Workspace::new();
     let taxonomy = Taxonomy::new(
         TaxonomyId::new("local-team")?,
-        TaxonomyVersion::new(3)?,
+        Some(TaxonomyVersion::new(3)?),
         Description::new("Only the project's installed definition.")?,
         None,
         vec![
             CommitTypeDefinition::new(
-                SchemaVersion::new(1)?,
+                Some(SchemaVersion::new(1)?),
                 CommitTypeId::new("change")?,
                 "A project-only change.",
                 vec![PropertyDefinition::new(
@@ -28,7 +28,7 @@ fn fixture() -> Result<(Workspace, ConfigView)> {
                 )?],
             )?,
             CommitTypeDefinition::new(
-                SchemaVersion::new(1)?,
+                Some(SchemaVersion::new(1)?),
                 CommitTypeId::new("empty")?,
                 "A type without properties.",
                 vec![],
@@ -100,7 +100,8 @@ fn installed_definitions_use_the_library_layout_even_without_a_readable_library(
         assert!(
             !local.contains(" project ")
                 && !local.contains(" default ")
-                && local.contains("2 types  v3"),
+                && local.contains("2 types")
+                && !local.contains("v3"),
             "{local}"
         );
         assert!(

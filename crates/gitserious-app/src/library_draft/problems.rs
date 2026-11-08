@@ -32,8 +32,6 @@ pub enum ProblemKind {
     Taken(String),
     /// A description or rationale holds no text.
     Blank,
-    /// A changed taxonomy cannot advance its persisted version.
-    VersionLimit,
     /// The default or available taxonomies do not resolve.
     Selection(ConfigurationError),
     /// A project taxonomy has no commit types, so commits could not use it.
@@ -76,8 +74,6 @@ impl Display for Problem {
             ProblemKind::Label(error) => write!(formatter, "{field}: {error}"),
             ProblemKind::Taken(id) => write!(formatter, "{field} \"{id}\" is already taken"),
             ProblemKind::Blank => write!(formatter, "{field} is blank"),
-            ProblemKind::VersionLimit => formatter
-                .write_str("taxonomy version limit reached; fork this taxonomy to continue"),
             ProblemKind::Selection(error) => error.fmt(formatter),
             ProblemKind::NoTypes => {
                 formatter.write_str("a project taxonomy needs at least one commit type")
@@ -182,12 +178,12 @@ pub(super) fn custom(draft: &LibraryDraft) -> (Vec<(usize, LibraryTaxonomy)>, Ve
             &mut taken,
             &mut problems,
         );
-        match (id, content(draft, taxonomy), draft.version(&taxonomy.id)) {
-            (Some(id), Ok((description, types)), Some(version)) if problems.len() == before => {
+        match (id, content(draft, taxonomy)) {
+            (Some(id), Ok((description, types))) if problems.len() == before => {
                 custom.extend(
                     LibraryTaxonomy::new(
                         id,
-                        version,
+                        taxonomy.version,
                         description,
                         taxonomy.derived_from.clone(),
                         types,
@@ -202,12 +198,7 @@ pub(super) fn custom(draft: &LibraryDraft) -> (Vec<(usize, LibraryTaxonomy)>, Ve
                     }),
                 );
             }
-            (_, Err(more), _) => problems.extend(more),
-            (_, Ok(_), None) => problems.push(Problem::field(
-                &taxonomy.id,
-                DraftField::Description,
-                ProblemKind::VersionLimit,
-            )),
+            (_, Err(more)) => problems.extend(more),
             _ => {}
         }
     }
