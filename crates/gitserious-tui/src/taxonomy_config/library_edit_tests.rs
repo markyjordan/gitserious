@@ -28,6 +28,65 @@ fn row(terminal: &Terminal<TestBackend>, y: u16) -> String {
         .collect()
 }
 
+fn text(terminal: &Terminal<TestBackend>) -> String {
+    (0..terminal.backend().buffer().area.height)
+        .map(|y| row(terminal, y))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn new_taxonomy_form_omits_facts_until_saved() -> Result {
+    for size in [(87, 40), (100, 30), (125, 51), (66, 18)] {
+        let (workspace, mut state) = fixture()?;
+        press(&mut state, &workspace, &[KeyCode::Down; 30]);
+        assert_eq!(
+            state.taxonomies.observe(state.library()).cursor_path,
+            ["+ new taxonomy"]
+        );
+        press(&mut state, &workspace, &[KeyCode::Enter]);
+        for input in ["", "Fresh ideas"] {
+            state.handle_event(Event::Paste(input.into()), &workspace);
+            let terminal = draw(&mut state, size)?;
+            let screen = text(&terminal);
+            assert!(!screen.contains("Version"), "{size:?}: {screen}");
+            assert!(!screen.contains("Types"), "{size:?}: {screen}");
+            assert!(screen.contains("Name"), "{size:?}: {screen}");
+            assert!(screen.contains("Description"), "{size:?}: {screen}");
+        }
+        press(&mut state, &workspace, &[KeyCode::Enter]);
+        state.handle_event(Event::Paste("Ideas for the team.".into()), &workspace);
+        let terminal = draw(&mut state, size)?;
+        let screen = text(&terminal);
+        assert!(!screen.contains("Version"), "{size:?}: {screen}");
+        assert!(!screen.contains("Types"), "{size:?}: {screen}");
+
+        press(&mut state, &workspace, &[KeyCode::Esc]);
+        assert!(!state.taxonomies.editing());
+        let terminal = draw(&mut state, size)?;
+        let screen = text(&terminal);
+        assert!(screen.contains("Version"), "{size:?}: {screen}");
+        press(&mut state, &workspace, &[KeyCode::PageDown]);
+        let terminal = draw(&mut state, size)?;
+        let screen = screen + &text(&terminal);
+        assert!(screen.contains("Types"), "{size:?}: {screen}");
+        press(&mut state, &workspace, &[KeyCode::Char('e')]);
+        let terminal = draw(&mut state, size)?;
+        let screen = text(&terminal);
+        assert!(screen.contains("Version"), "{size:?}: {screen}");
+        press(&mut state, &workspace, &[KeyCode::Esc, KeyCode::Char('f')]);
+        let terminal = draw(&mut state, size)?;
+        let screen = text(&terminal);
+        assert!(screen.contains("Version"), "{size:?}: {screen}");
+        press(&mut state, &workspace, &[KeyCode::Esc, KeyCode::PageDown]);
+        let terminal = draw(&mut state, size)?;
+        let screen = screen + &text(&terminal);
+        assert!(screen.contains("Types"), "{size:?}: {screen}");
+        assert!(screen.contains("Forked from"), "{size:?}: {screen}");
+    }
+    Ok(())
+}
+
 #[test]
 fn edit_focus_has_amber_cues_muted_navigation_and_a_footer_counter() -> Result {
     for size in SIZES {

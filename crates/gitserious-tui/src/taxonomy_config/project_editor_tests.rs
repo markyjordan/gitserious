@@ -248,6 +248,21 @@ fn importing_copies_new_library_taxonomies_and_skips_identical_ones() -> Result 
     assert!(draft(&state)?.find_path(&["team"]).is_some());
     assert!(matches!(&state.status, Some(Notice::Info(message)) if message.contains("Ctrl+S")));
 
+    select(&mut state, &workspace, &["team"])?;
+    press(&mut state, &workspace, KeyCode::Char('e'));
+    let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
+    terminal.draw(|frame| state.render(frame))?;
+    let screen = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(ratatui::buffer::Cell::symbol)
+        .collect::<String>();
+    assert!(screen.contains("Version"), "{screen}");
+    assert!(screen.contains("Types"), "{screen}");
+    press(&mut state, &workspace, KeyCode::Esc);
+
     import_row(&mut state, &workspace, "conventional")?;
     assert!(
         matches!(&state.status, Some(Notice::Info(message)) if message.contains("already has"))
