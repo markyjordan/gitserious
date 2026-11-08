@@ -219,7 +219,7 @@ fn describe(
             if let Some(source) = taxonomy.derived_from() {
                 fact(&mut lines, "Forked from", &source.reference().to_string());
             }
-            if !creating && !built_in && !library.is_project() {
+            if !editing && !built_in && !library.is_project() {
                 let record = library.saved_taxonomy(id);
                 for (label, date) in [
                     (
@@ -535,24 +535,28 @@ mod tests {
                         let types = at("Types").ok_or("types")?;
                         let version = at("Version");
                         if owner == "conventional-fork" {
+                            let lineage = at("Forked from").ok_or("lineage")?;
+                            assert!(types < lineage, "{rows:?}");
+                        }
+                        if owner == "conventional-fork" && focus.is_none() {
                             let created = at("Created on").ok_or("created date")?;
                             let modified = at("Modified on").ok_or("modified date")?;
-                            assert!(types < created && created < modified, "{rows:?}");
+                            assert!(
+                                at("Forked from").ok_or("lineage")? < created && created < modified,
+                                "{rows:?}"
+                            );
                             assert!(rows[created].ends_with("Unknown"));
                             assert!(rows[modified].ends_with("Unknown"));
                         } else {
                             assert_eq!(at("Created on"), None);
                             assert_eq!(at("Modified on"), None);
-                            assert!(version.is_some_and(|version| types < version));
                         }
-                        assert!(description < types, "{rows:?}");
-                        if owner == "conventional-fork" {
-                            assert!(
-                                at("Forked from").ok_or("lineage")?
-                                    < at("Created on").ok_or("created")?
-                            );
+                        if owner == "conventional" {
+                            assert!(version.is_some_and(|version| types < version));
+                        } else {
                             assert_eq!(version, None);
                         }
+                        assert!(description < types, "{rows:?}");
                     }
                 }
             }

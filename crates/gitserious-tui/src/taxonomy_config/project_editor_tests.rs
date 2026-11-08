@@ -149,6 +149,36 @@ fn project_taxonomies_edit_without_the_library_and_apply_only_after_review() -> 
     Ok(())
 }
 
+fn screen(terminal: &Terminal<TestBackend>) -> String {
+    let buffer = terminal.backend().buffer();
+    (0..buffer.area.height)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn project_taxonomy_editor_omits_library_dates() -> Result {
+    let (workspace, mut state) = fixture()?;
+    open_outline(&mut state, &workspace);
+    select(&mut state, &workspace, &["conventional"])?;
+    let mut terminal = Terminal::new(TestBackend::new(100, 40))?;
+    terminal.draw(|frame| state.render(frame))?;
+    let inspect = screen(&terminal);
+    press(&mut state, &workspace, KeyCode::Char('e'));
+    terminal.draw(|frame| state.render(frame))?;
+    let edit = screen(&terminal);
+    for (mode, text) in [("inspect", &inspect), ("edit", &edit)] {
+        assert!(!text.contains("Created on"), "{mode}\n{text}");
+        assert!(!text.contains("Modified on"), "{mode}\n{text}");
+    }
+    Ok(())
+}
+
 #[test]
 fn project_deletion_confirms_and_never_removes_the_default() -> Result {
     let (workspace, mut state) = fixture()?;
