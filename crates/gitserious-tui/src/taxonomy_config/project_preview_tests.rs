@@ -173,7 +173,14 @@ fn project_browsing_expands_real_nodes_and_never_offers_or_performs_mutations() 
     press(&mut view, &workspace, KeyCode::Down);
     let text = rendered(&mut view, &mut terminal)?;
     assert!(text.contains("Type change"));
-    assert!(text.contains("Project-only guidance."));
+    assert!(text.contains("Property") && text.contains("Policy"));
+    assert!(
+        text.replace('│', " ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains("Project-only guidance.")
+    );
     assert!(
         text.split_whitespace()
             .collect::<Vec<_>>()
