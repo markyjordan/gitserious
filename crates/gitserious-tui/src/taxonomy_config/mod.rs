@@ -29,6 +29,8 @@ use crate::theme::{
 };
 
 #[cfg(test)]
+mod alert_tests;
+#[cfg(test)]
 mod copy_tests;
 #[cfg(test)]
 mod direct_tests;
