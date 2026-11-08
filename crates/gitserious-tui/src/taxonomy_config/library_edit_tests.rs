@@ -51,6 +51,8 @@ fn new_taxonomy_form_omits_facts_until_saved() -> Result {
             let screen = text(&terminal);
             assert!(!screen.contains("Version"), "{size:?}: {screen}");
             assert!(!screen.contains("Types"), "{size:?}: {screen}");
+            assert!(!screen.contains("Created on"), "{size:?}: {screen}");
+            assert!(!screen.contains("Modified on"), "{size:?}: {screen}");
             assert!(screen.contains("Name"), "{size:?}: {screen}");
             assert!(screen.contains("Description"), "{size:?}: {screen}");
         }

@@ -219,6 +219,25 @@ fn describe(
             if let Some(source) = taxonomy.derived_from() {
                 fact(&mut lines, "Forked from", &source.versioned().to_string());
             }
+            if !creating && !built_in && !library.is_project() {
+                let record = library.saved_taxonomy(id);
+                for (label, date) in [
+                    (
+                        "Created on",
+                        record.and_then(gitserious_app::LibraryTaxonomy::created_on),
+                    ),
+                    (
+                        "Modified on",
+                        record.and_then(gitserious_app::LibraryTaxonomy::modified_on),
+                    ),
+                ] {
+                    fact(
+                        &mut lines,
+                        label,
+                        &date.map_or_else(|| "Unknown".into(), |date| date.to_string()),
+                    );
+                }
+            }
             if !creating {
                 let version = library
                     .version(id)
@@ -500,6 +519,19 @@ mod tests {
                         let description = at("Description").ok_or("description")?;
                         let types = at("Types").ok_or("types")?;
                         let version = at("Version").ok_or("version")?;
+                        if owner == "conventional-fork" {
+                            let created = at("Created on").ok_or("created date")?;
+                            let modified = at("Modified on").ok_or("modified date")?;
+                            assert!(
+                                types < created && created < modified && modified < version,
+                                "{rows:?}"
+                            );
+                            assert!(rows[created].ends_with("Unknown"));
+                            assert!(rows[modified].ends_with("Unknown"));
+                        } else {
+                            assert_eq!(at("Created on"), None);
+                            assert_eq!(at("Modified on"), None);
+                        }
                         assert!(description < types && types < version, "{rows:?}");
                         if owner == "conventional-fork" {
                             assert!(at("Forked from").ok_or("lineage")? < version);
@@ -507,6 +539,50 @@ mod tests {
                     }
                 }
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn saved_library_dates_display_the_recorded_calendar_days()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use super::{Chips, describe};
+        use gitserious_app::{DraftEdit, DraftField, GlobalConfiguration, LibraryDraft};
+        let mut library = LibraryDraft::from_configuration(GlobalConfiguration::default());
+        let source = library.find_path(&["conventional"]).ok_or("source")?;
+        let id = library.fork(&source)?;
+        let mut library = library
+            .saved_on("2024-02-29".parse()?)
+            .map_err(|problems| format!("{problems:?}"))?;
+        library.edit(
+            &id,
+            DraftEdit::Text(DraftField::Description, "Updated purpose"),
+        )?;
+        let library = library
+            .saved_on("2026-11-07".parse()?)
+            .map_err(|problems| format!("{problems:?}"))?;
+        for width in [28, 80] {
+            let (lines, _) = describe(
+                &Chips::new(&library, false),
+                library.node(&id).ok_or("taxonomy")?,
+                None,
+                width,
+            );
+            let text = lines
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                text.lines()
+                    .any(|line| line.starts_with("Created on") && line.ends_with("2024-02-29")),
+                "{text}"
+            );
+            assert!(
+                text.lines()
+                    .any(|line| line.starts_with("Modified on") && line.ends_with("2026-11-07")),
+                "{text}"
+            );
         }
         Ok(())
     }
