@@ -603,12 +603,14 @@ impl State {
         {
             let candidate = session.library().and_then(|library| library.saved().ok());
             let result = if session.is_dirty() {
-                workspace.save(session).map(|_| ())
+                workspace
+                    .save(session)
+                    .map(|saved| saved.library().cloned())
             } else {
-                Ok(())
+                Ok(candidate)
             };
             match result {
-                Ok(()) => {
+                Ok(candidate) => {
                     if let Some(candidate) = candidate
                         && let Some(library) = self
                             .global
@@ -2164,7 +2166,11 @@ mod tests {
                     }
                     let mut saved = session.clone();
                     *saved.library_mut().ok_or("missing Library")? = library
-                        .saved()
+                        .saved_on(
+                            "2026-11-08"
+                                .parse::<gitserious_app::TaxonomyDate>()
+                                .map_err(|error| error.to_string())?,
+                        )
                         .map_err(|problems| format!("{problems:?}"))?;
                     *self.global.borrow_mut() = saved.clone();
                     Ok(saved)

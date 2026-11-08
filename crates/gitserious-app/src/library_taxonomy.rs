@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+use crate::TaxonomyDate;
+
 use gitserious_core::{
     CommitTypeDefinition, Description, Taxonomy, TaxonomyError, TaxonomyId, TaxonomyLineage,
     TaxonomyVersion,
@@ -14,6 +16,8 @@ pub struct LibraryTaxonomy {
     derived_from: Option<TaxonomyLineage>,
     commit_types: Vec<CommitTypeDefinition>,
     name_locked: bool,
+    created_on: Option<TaxonomyDate>,
+    modified_on: Option<TaxonomyDate>,
 }
 
 impl LibraryTaxonomy {
@@ -39,6 +43,8 @@ impl LibraryTaxonomy {
             description,
             derived_from,
             commit_types,
+            created_on: None,
+            modified_on: None,
         })
     }
 
@@ -72,6 +78,28 @@ impl LibraryTaxonomy {
         self.name_locked
     }
 
+    /// Attaches Library history without changing usable project policy.
+    #[must_use]
+    pub const fn with_dates(
+        mut self,
+        created_on: Option<TaxonomyDate>,
+        modified_on: Option<TaxonomyDate>,
+    ) -> Self {
+        self.created_on = created_on;
+        self.modified_on = modified_on;
+        self
+    }
+
+    #[must_use]
+    pub const fn created_on(&self) -> Option<TaxonomyDate> {
+        self.created_on
+    }
+
+    #[must_use]
+    pub const fn modified_on(&self) -> Option<TaxonomyDate> {
+        self.modified_on
+    }
+
     /// Produces project policy only when at least one type exists.
     #[must_use]
     pub fn usable(&self) -> Option<Taxonomy> {
@@ -95,6 +123,8 @@ impl From<Taxonomy> for LibraryTaxonomy {
             derived_from: taxonomy.derived_from().cloned(),
             commit_types: taxonomy.commit_types().to_vec(),
             name_locked: true,
+            created_on: None,
+            modified_on: None,
         }
     }
 }

@@ -312,8 +312,8 @@ fn each_applied_edit_advances_the_version_by_one() -> Result<(), Box<dyn Error>>
     })?;
 
     assert_eq!(
-        store.current.borrow().custom_taxonomies(),
-        [at_version(&original, 3, "Third revision.").into()]
+        store.current.borrow().custom_taxonomies()[0].usable(),
+        Some(at_version(&original, 3, "Third revision."))
     );
     Ok(())
 }
@@ -641,6 +641,7 @@ fn the_workspace_names_the_library_file() -> Result<(), Box<dyn Error>> {
 fn reviewed_global_sessions_save_one_snapshot_and_reject_concurrent_changes()
 -> Result<(), Box<dyn Error>> {
     let store = FakeGlobalStore::new(GlobalConfiguration::default());
+    let started = gitserious_app::TaxonomyDate::today_utc();
     edit_global(&store, |workspace| {
         let mut session = workspace.load(ConfigurationDestination::Global)?;
         fork_as(&mut session, "conventional", "team");
@@ -650,10 +651,14 @@ fn reviewed_global_sessions_save_one_snapshot_and_reject_concurrent_changes()
         Ok(())
     })?;
     assert_eq!(store.swaps.get(), 1);
-    assert_eq!(
-        store.current.borrow().custom_taxonomies(),
-        [custom("team").into()]
-    );
+    let current = store.current.borrow();
+    let record = &current.custom_taxonomies()[0];
+    assert_eq!(record.usable(), Some(custom("team")));
+    let completed = gitserious_app::TaxonomyDate::today_utc();
+    let created = record.created_on().ok_or("creation date")?;
+    assert!((started..=completed).contains(&created));
+    assert_eq!(record.modified_on(), record.created_on());
+    drop(current);
 
     let stale = FakeGlobalStore::new(GlobalConfiguration::default());
     let error = edit_global(&stale, |workspace| {
@@ -696,8 +701,22 @@ fn global_store_failures_are_reported_and_leave_the_library_unchanged() {
 
     let error = edit_global(&store, |workspace| {
         let mut session = workspace.load(ConfigurationDestination::Global)?;
-        fork_as(&mut session, "conventional", "team");
-        workspace.save(&session).map(|_| ())
+        let node = fork_as(&mut session, "conventional", "team");
+        let result = workspace.save(&session);
+        let record = session
+            .library()
+            .and_then(|draft| draft.build().ok())
+            .and_then(|config| config.custom_taxonomies().first().cloned())
+            .ok_or("draft record")?;
+        assert_eq!(record.created_on(), None);
+        assert_eq!(record.modified_on(), None);
+        assert!(
+            session
+                .library()
+                .and_then(|draft| draft.node(&node))
+                .is_some()
+        );
+        result.map(|_| ())
     })
     .expect_err("a failed save was reported as success");
 

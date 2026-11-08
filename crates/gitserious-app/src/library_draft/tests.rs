@@ -751,3 +751,153 @@ fn a_blank_new_property_can_cancel_under_any_policy_but_never_with_text() -> Tes
     assert!(!library.blank_creation(&existing));
     Ok(())
 }
+
+#[test]
+fn library_dates_follow_saved_content_without_changing_project_policy() -> TestResult {
+    let day = "2026-11-07".parse()?;
+    let next = "2026-11-08".parse()?;
+    let mut draft = LibraryDraft::from_configuration(team()?);
+    let team = find(&draft, &["team"])?;
+    let original_policy = draft
+        .build()
+        .map_err(|problems| format!("{problems:?}"))?
+        .catalog()?;
+    assert_eq!(
+        draft
+            .saved_on(day)
+            .map_err(|problems| format!("{problems:?}"))?
+            .build()
+            .map_err(|problems| format!("{problems:?}"))?,
+        draft.build().map_err(|problems| format!("{problems:?}"))?
+    );
+    draft.edit(
+        &team,
+        DraftEdit::Text(DraftField::Description, "Updated team"),
+    )?;
+    assert!(
+        draft
+            .build()
+            .map_err(|problems| format!("{problems:?}"))?
+            .custom_taxonomies()
+            .iter()
+            .all(|record| record.modified_on().is_none())
+    );
+    let mut saved = draft
+        .saved_on(day)
+        .map_err(|problems| format!("{problems:?}"))?;
+    let record = saved.saved_taxonomy(&team).ok_or("saved team")?;
+    assert_eq!(record.created_on(), None);
+    assert_eq!(record.modified_on(), Some(day));
+    assert_eq!(
+        saved
+            .saved_on(next)
+            .map_err(|problems| format!("{problems:?}"))?
+            .build()
+            .map_err(|problems| format!("{problems:?}"))?,
+        saved.build().map_err(|problems| format!("{problems:?}"))?
+    );
+    let property = find(&saved, &["team", "release", "summary"])?;
+    saved.edit(
+        &property,
+        DraftEdit::Text(DraftField::Description, "New guidance"),
+    )?;
+    let saved = saved
+        .saved_on(next)
+        .map_err(|problems| format!("{problems:?}"))?;
+    let records = saved.build().map_err(|problems| format!("{problems:?}"))?;
+    assert_eq!(records.custom_taxonomies()[0].modified_on(), None);
+    assert_eq!(
+        saved.saved_taxonomy(&team).ok_or("team")?.modified_on(),
+        Some(next)
+    );
+    assert_ne!(records.catalog()?, original_policy);
+    Ok(())
+}
+
+#[test]
+fn new_and_forked_library_entries_get_their_own_saved_dates() -> TestResult {
+    let day = "2026-11-07".parse()?;
+    let next = "2026-11-08".parse()?;
+    let mut draft = LibraryDraft::from_configuration(GlobalConfiguration::default());
+    let source = find(&draft, &["conventional"])?;
+    let fork = draft.fork(&source)?;
+    let mut draft = draft
+        .saved_on(day)
+        .map_err(|problems| format!("{problems:?}"))?;
+    let source = draft.saved_taxonomy(&fork).ok_or("fork")?;
+    assert_eq!(source.created_on(), Some(day));
+    assert_eq!(source.modified_on(), Some(day));
+    let policy = source.usable();
+    assert_eq!(source.clone().with_dates(None, None).usable(), policy);
+    let fork2 = draft.fork(&fork)?;
+    let mut draft = draft
+        .saved_on(next)
+        .map_err(|problems| format!("{problems:?}"))?;
+    assert_eq!(
+        draft.saved_taxonomy(&fork).ok_or("source")?.created_on(),
+        Some(day)
+    );
+    assert_eq!(
+        draft.saved_taxonomy(&fork2).ok_or("fork2")?.created_on(),
+        Some(next)
+    );
+    let source = &built_in_taxonomies()[1];
+    let replacement = Taxonomy::new(
+        TaxonomyId::new("imported")?,
+        TaxonomyVersion::V1,
+        source.description().clone(),
+        None,
+        source.commit_types().to_vec(),
+    )?;
+    let target = draft.copy_in(&replacement, CopyIn::New)?;
+    let mut draft = draft
+        .saved_on(next)
+        .map_err(|problems| format!("{problems:?}"))?;
+    assert_eq!(
+        draft.saved_taxonomy(&target).ok_or("copy")?.created_on(),
+        Some(next)
+    );
+    let replacement = Taxonomy::new(
+        replacement.id().clone(),
+        TaxonomyVersion::V1,
+        Description::new("Replacement content")?,
+        None,
+        replacement.commit_types().to_vec(),
+    )?;
+    draft.copy_in(&replacement, CopyIn::Replace)?;
+    let later = "2026-11-09".parse()?;
+    let draft = draft
+        .saved_on(later)
+        .map_err(|problems| format!("{problems:?}"))?;
+    let record = draft.saved_taxonomy(&target).ok_or("replaced")?;
+    assert_eq!(record.created_on(), Some(next));
+    assert_eq!(record.modified_on(), Some(later));
+    Ok(())
+}
+
+#[test]
+fn selection_changes_and_reverted_edits_keep_library_dates() -> TestResult {
+    let day = "2026-11-07".parse()?;
+    let mut draft = LibraryDraft::from_configuration(team()?);
+    let id = find(&draft, &["team"])?;
+    draft.edit(&id, DraftEdit::Text(DraftField::Description, "Temporary"))?;
+    draft.edit(
+        &id,
+        DraftEdit::Text(DraftField::Description, "Team taxonomy"),
+    )?;
+    draft.select(
+        TaxonomyId::new("research")?,
+        vec![TaxonomyId::new("research")?],
+    );
+    let saved = draft
+        .saved_on(day)
+        .map_err(|problems| format!("{problems:?}"))?;
+    let config = saved.build().map_err(|problems| format!("{problems:?}"))?;
+    assert!(
+        config
+            .custom_taxonomies()
+            .iter()
+            .all(|record| record.created_on().is_none() && record.modified_on().is_none())
+    );
+    Ok(())
+}
