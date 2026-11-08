@@ -322,7 +322,7 @@ fn origin_label(library: &LibraryDraft, taxonomy: &TaxonomyNode) -> &'static str
         if library.default_taxonomy().as_str() == taxonomy.name() {
             "default"
         } else {
-            "project"
+            ""
         }
     } else {
         taxonomy.origin().as_str()

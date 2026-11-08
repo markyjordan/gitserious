@@ -108,6 +108,7 @@ An initialized Project opens directly on the taxonomies stored in
 colors, and property spacing as Library. Taxonomy names stay separate from
 `x types  vX` metadata. The configured default is labeled `default` in the
 ownership column, independent of the selected row or the order in the file.
+Other installed taxonomies leave that label blank.
 The repository name and path appear
 above the outline, with a sage file badge. Enter expands or collapses a taxonomy
 or type; Up and Down choose a row, and Page Up and Page Down scroll its Inspector.
