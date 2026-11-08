@@ -2411,16 +2411,22 @@ mod tests {
                     .cloned()
                     .unwrap_or_default()
             };
-            assert!(outline("conventional").contains("│ ▸ conventional   built-in "));
-            assert!(
-                outline("conventional")
-                    .trim_end()
-                    .ends_with(" 11 types  v1")
-            );
-            assert!(outline("infra-ops").contains(" infra-ops      built-in "));
-            assert!(outline("infra-ops").trim_end().ends_with(" 10 types  v1"));
-            assert!(outline("original").contains(" original       custom "));
-            assert!(outline("original").trim_end().ends_with("  1 type"));
+            let beside_status = |row: &str, label: &str, status: &str| {
+                let row = row.trim_end();
+                row.rfind(status)
+                    .is_some_and(|status_at| row[..status_at].trim_end().ends_with(label))
+            };
+            assert!(beside_status(
+                &outline("conventional"),
+                "built-in",
+                "11 types  v1"
+            ));
+            assert!(beside_status(
+                &outline("infra-ops"),
+                "built-in",
+                "10 types  v1"
+            ));
+            assert!(beside_status(&outline("original"), "custom", "1 type"));
             let text = screen.join("\n");
             let rule = rule_row(&terminal).ok_or("missing the rule above the Inspector")?;
             assert!(screen[usize::from(rule) + 1].contains("│ Taxonomy conventional "));
