@@ -7,7 +7,6 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::summary_scroll::{SummaryScroll, Target};
 use super::{Chip, Chips, DIM, fit, panes, policy_style};
 use crate::theme::theme;
 
@@ -182,8 +181,6 @@ pub(super) fn render(
     selected: usize,
     offset: &mut usize,
     focused: bool,
-    summary_scroll: &mut SummaryScroll,
-    animation_viewport: Option<Rect>,
 ) -> Rect {
     let inner = Rect {
         height: panes::shown(rows.len(), area.height),
@@ -200,7 +197,6 @@ pub(super) fn render(
     let width = usize::from(inner.width).saturating_sub(1);
     let columns = Columns::new(chips.library);
     let cursor = cursor_style(focused);
-    let mut target = None;
     let lines = rows
         .iter()
         .enumerate()
@@ -220,20 +216,6 @@ pub(super) fn render(
                 1,
             );
             frame.buffer_mut().set_style(row_area, cursor);
-            if let Some(viewport) = animation_viewport {
-                let summary_style = if focused { cursor } else { cursor.patch(DIM) };
-                target = summary_target(
-                    row,
-                    open,
-                    Rect {
-                        width: inner.width.saturating_sub(1),
-                        ..row_area
-                    },
-                    viewport,
-                    summary_style,
-                    chips.read_only,
-                );
-            }
             if !focused {
                 return line;
             }
@@ -249,7 +231,6 @@ pub(super) fn render(
         })
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines), inner);
-    summary_scroll.render(frame.buffer_mut(), target);
     inner
 }
 
@@ -295,15 +276,6 @@ fn pad(text: &str, width: usize) -> String {
     )
 }
 
-fn summary(commit_type: &TypeNode) -> String {
-    commit_type
-        .properties()
-        .iter()
-        .map(gitserious_app::PropertyNode::name)
-        .collect::<Vec<_>>()
-        .join(" · ")
-}
-
 fn last_type(taxonomy: &TaxonomyNode, commit_type: &TypeNode, read_only: bool) -> bool {
     (read_only || taxonomy.origin() == TaxonomyOrigin::BuiltIn)
         && taxonomy
@@ -341,53 +313,6 @@ fn property_branch(
         "│  "
     };
     format!("{ancestor}{}", branch(last))
-}
-
-fn summary_target(
-    row: Row<'_>,
-    open: bool,
-    row_area: Rect,
-    viewport: Rect,
-    style: Style,
-    read_only: bool,
-) -> Option<Target> {
-    let Row::Node(NodeRef::Type {
-        taxonomy,
-        commit_type,
-    }) = row
-    else {
-        return None;
-    };
-    if open {
-        return None;
-    }
-    let name = column(
-        commit_type.name(),
-        taxonomy.types().iter().map(TypeNode::name),
-    );
-    let prefix = format!(
-        " {}▸ {name}",
-        branch(last_type(taxonomy, commit_type, read_only))
-    );
-    let prefix_width = Span::raw(&prefix).width();
-    let room = usize::from(row_area.width).saturating_sub(prefix_width);
-    let summary = summary(commit_type);
-    if room == 0 || Span::raw(&summary).width() <= room {
-        return None;
-    }
-    Some(Target {
-        node: commit_type.id().clone(),
-        prefix,
-        summary,
-        viewport,
-        area: Rect::new(
-            row_area.x + u16::try_from(prefix_width).ok()?,
-            row_area.y,
-            u16::try_from(room).ok()?,
-            1,
-        ),
-        style,
-    })
 }
 
 /// A taxonomy row's right side: its type count and version, or that it is invalid. Narrow
@@ -515,7 +440,7 @@ fn row_line(
                 commit_type.name(),
                 taxonomy.types().iter().map(TypeNode::name),
             );
-            let mut left = vec![
+            let left = vec![
                 gutter,
                 Span::styled(
                     branch(last_type(taxonomy, commit_type, chips.read_only)),
@@ -524,9 +449,6 @@ fn row_line(
                 marker,
                 Span::styled(name, TEXT),
             ];
-            if !open {
-                left.push(Span::styled(summary(commit_type), DIM));
-            }
             (left, Vec::new())
         }
         Row::Node(NodeRef::Property {

@@ -18,7 +18,7 @@ fn fixture() -> Result<(TaxonomiesView, LibraryDraft)> {
 fn draw(view: &mut TaxonomiesView, library: &LibraryDraft, height: u16) -> Result<Buffer> {
     let mut terminal = Terminal::new(TestBackend::new(70, height))?;
     terminal.draw(|frame| {
-        view.render(frame, frame.area(), 0, Some(library), true, false);
+        view.render(frame, frame.area(), 0, Some(library), true);
     })?;
     Ok(terminal.backend().buffer().clone())
 }
@@ -79,14 +79,7 @@ fn outline_counts_rows_below_in_its_last_row_without_a_box() -> Result {
                 }
             }
             terminal.draw(|frame| {
-                view.render(
-                    frame,
-                    frame.area(),
-                    0,
-                    loaded.then_some(&library),
-                    true,
-                    false,
-                );
+                view.render(frame, frame.area(), 0, loaded.then_some(&library), true);
             })?;
             let buffer = terminal.backend().buffer();
             let screen = text_in(buffer, buffer.area);
@@ -307,7 +300,7 @@ fn focused_fields_and_their_errors_remain_visible_in_short_inspectors() -> Resul
         for height in [14, 15, 36, 14] {
             let mut terminal = Terminal::new(TestBackend::new(51, height))?;
             terminal.draw(|frame| {
-                view.render(frame, frame.area(), 0, Some(&library), true, false);
+                view.render(frame, frame.area(), 0, Some(&library), true);
             })?;
             let buffer = terminal.backend().buffer();
             let below = rule_row(buffer).ok_or("missing the rule")? + 1;
@@ -336,6 +329,46 @@ fn footer_keys_have_balanced_padding_and_a_separate_label_gap() -> Result {
                 assert!(label.content.starts_with(' '));
                 assert_eq!(label.style.bg, Some(theme().band));
             }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn type_rows_omit_property_previews_and_expand_to_real_properties() -> Result {
+    for read_only in [false, true] {
+        for (width, height) in [(66, 24), (87, 40), (100, 30), (125, 40)] {
+            let (mut view, library) = fixture()?;
+            view.read_only = read_only;
+            open(&mut view, &library, "conventional")?;
+            let feat = library.find_path(&["conventional", "feat"]).ok_or("type")?;
+            view.select(feat);
+            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+            terminal.draw(|frame| {
+                view.render(frame, frame.area(), 0, Some(&library), true);
+            })?;
+            let outline = text_in(terminal.backend().buffer(), view.outline_area);
+            let row = outline
+                .lines()
+                .find(|row| row.contains("▸ feat"))
+                .ok_or("type row")?;
+            assert!(row.trim_end().ends_with("feat"), "{row}");
+            assert!(
+                !outline.contains("intent"),
+                "properties appear only after expansion"
+            );
+            press(&mut view, &library, KeyCode::Enter);
+            terminal.draw(|frame| {
+                view.render(frame, frame.area(), 0, Some(&library), true);
+            })?;
+            let outline = text_in(terminal.backend().buffer(), view.outline_area);
+            assert!(outline.contains("intent"), "{outline}");
+            assert!(outline.contains("required"), "{outline}");
+            let row = outline
+                .lines()
+                .find(|row| row.contains("▾ feat"))
+                .ok_or("expanded type row")?;
+            assert!(row.trim_end().ends_with("feat"), "{row}");
         }
     }
     Ok(())

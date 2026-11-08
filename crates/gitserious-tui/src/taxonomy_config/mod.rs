@@ -1,6 +1,5 @@
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 use crate::confirmation::{
     self, APPLY_OR_DISCARD, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT, REMOVE,
@@ -53,8 +52,6 @@ mod project_overview;
 #[cfg(test)]
 mod project_preview_tests;
 mod review;
-#[cfg(test)]
-mod summary_scroll_tests;
 mod taxonomies;
 use home_overlay::{CommandPaletteState, HomeCommand};
 use naming::sentence;
@@ -71,16 +68,9 @@ impl ConfigurationEditor for RatatuiTaxonomyConfigurationEditor {
         }
         crate::runtime::run(|terminal| {
             let mut state = State::new(workspace);
-            let mut previous = Instant::now();
             loop {
-                let now = Instant::now();
-                state.advance(now.duration_since(previous), true);
-                previous = now;
                 terminal.draw(|frame| state.render(frame))?;
-                let Some(event) = crate::runtime::next_event(state.next_frame_in())? else {
-                    continue;
-                };
-                previous = Instant::now();
+                let event = ratatui::crossterm::event::read()?;
                 if state.handle_event(event, workspace) {
                     return Ok::<_, io::Error>(());
                 }
@@ -105,14 +95,6 @@ impl ConfigView {
 
     pub(crate) fn render(&mut self, frame: &mut Frame<'_>, area: Rect) {
         self.state.render_at(frame, area);
-    }
-
-    pub(crate) fn advance(&mut self, elapsed: Duration, host_visible: bool) {
-        self.state.advance(elapsed, host_visible);
-    }
-
-    pub(crate) fn next_frame_in(&self) -> Option<Duration> {
-        self.state.next_frame_in()
     }
 
     /// Routes requests requiring the shell's application services.
@@ -360,7 +342,6 @@ struct State {
     dialog: ConfirmDialog,
     settings: Option<SettingsDraft>,
     too_small: bool,
-    host_visible: bool,
     shell_request: Option<ConfigRequest>,
     project_area: Rect,
     tab_areas: [Rect; 2],
@@ -396,7 +377,6 @@ impl State {
             dialog: ConfirmDialog::default(),
             settings: None,
             too_small: false,
-            host_visible: true,
             shell_request: None,
             project_area: Rect::default(),
             tab_areas: [Rect::default(); 2],
@@ -509,33 +489,6 @@ impl State {
         false
     }
 
-    fn animation_visible(&self) -> bool {
-        self.host_visible
-            && !self.too_small
-            && matches!(self.screen, Screen::Home)
-            && self.editor().is_some()
-            && self.home_focus == HomeFocus::Content
-            && self.home_overlay.is_none()
-            && self.editor_view().navigating()
-    }
-
-    fn advance(&mut self, elapsed: Duration, host_visible: bool) {
-        self.host_visible = host_visible;
-        let visible = self.animation_visible();
-        let view = self.editor_view_mut();
-        if visible {
-            view.advance(elapsed);
-        } else {
-            view.reset_animation();
-        }
-    }
-
-    fn next_frame_in(&self) -> Option<Duration> {
-        self.animation_visible()
-            .then(|| self.editor_view().next_frame_in())
-            .flatten()
-    }
-
     /// The active outline: Library, the shell's installed project preview, or the standalone
     /// adapter's project editor while its taxonomies are open.
     fn editor(&self) -> Option<Editor> {
@@ -562,13 +515,6 @@ impl State {
         }
     }
 
-    fn editor_view_mut(&mut self) -> &mut TaxonomiesView {
-        match self.editor() {
-            Some(Editor::Project) => &mut self.project_taxonomies,
-            _ => &mut self.taxonomies,
-        }
-    }
-
     fn editor_draft(&self) -> Option<&LibraryDraft> {
         match self.editor()? {
             Editor::Library => self.library(),
@@ -587,10 +533,6 @@ impl State {
     }
 
     fn handle_event(&mut self, event: Event, workspace: &dyn ConfigurationWorkspace) -> bool {
-        if matches!(event, Event::Resize(_, _)) {
-            self.taxonomies.reset_animation();
-            self.project_taxonomies.reset_animation();
-        }
         let before_global = self.global.clone();
         let before_view = self.taxonomies.clone();
         let before_screen = self.screen.clone();
@@ -637,9 +579,6 @@ impl State {
                     return false;
                 }
             }
-        }
-        if !self.animation_visible() {
-            self.editor_view_mut().reset_animation();
         }
         quit
     }
@@ -1445,9 +1384,6 @@ impl State {
         );
         let terminal = frame.area();
         self.too_small = terminal.width < MINIMUM_WIDTH || terminal.height < MINIMUM_HEIGHT;
-        if !self.animation_visible() {
-            self.taxonomies.reset_animation();
-        }
         if self.too_small {
             self.tab_areas = [Rect::default(); 2];
             if let Some(question) = self.confirmation() {
@@ -1822,7 +1758,6 @@ impl State {
 
     fn render_taxonomies(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let focused = matches!(self.screen, Screen::Home) && self.home_focus == HomeFocus::Content;
-        let animate = self.animation_visible();
         if self.editor() == Some(Editor::Project) {
             let draft = self
                 .project
@@ -1838,7 +1773,6 @@ impl State {
                 },
                 draft,
                 focused,
-                animate,
             );
             if self.embedded
                 && let Some(session) = &self.project
@@ -1847,14 +1781,9 @@ impl State {
             }
         } else {
             let library = self.global.as_ref().and_then(ConfigurationSession::library);
-            let header = self.taxonomies.render(
-                frame,
-                area,
-                library_header::HEIGHT,
-                library,
-                focused,
-                animate,
-            );
+            let header =
+                self.taxonomies
+                    .render(frame, area, library_header::HEIGHT, library, focused);
             library_header::render(frame, header, &self.library_path, self.home.as_deref());
             if self.taxonomies.editing() {
                 crate::theme::dim_region(frame, header);
@@ -2677,16 +2606,20 @@ mod tests {
         press(&mut state, KeyCode::Char('2'))?;
         press(&mut state, KeyCode::Enter)?;
         let screen = press(&mut state, KeyCode::Down)?;
-        assert!(screen.contains("│ ├─ ▸ feat      intent · decision · constraints"));
+        assert!(screen.contains("│ ├─ ▸ feat"));
         assert_eq!(
             screen
                 .lines()
                 .find(|row| row.contains("│ ├─ ▸ feat "))
                 .and_then(|row| row.split_once('│'))
                 .map(|(_, content)| content.trim_end()),
-            Some(" ├─ ▸ feat      intent · decision · constraints")
+            Some(" ├─ ▸ feat")
         );
-        assert!(screen.contains("│ ├─ ▸ fix       cause · decision · constraints"));
+        assert!(
+            screen
+                .lines()
+                .any(|row| row.trim_end().ends_with("├─ ▸ fix"))
+        );
         assert!(screen.contains("Type feat"));
         assert!(screen.contains("in conventional"));
         assert!(!screen.contains("The composer asks"));

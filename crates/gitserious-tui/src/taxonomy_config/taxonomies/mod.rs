@@ -7,7 +7,6 @@
 
 use std::collections::BTreeSet;
 use std::ops::Range;
-use std::time::Duration;
 
 use gitserious_app::{
     DraftEdit, DraftField, EditRefusal, LibraryDraft, NodeId, NodeRef, Policy, Problem,
@@ -33,7 +32,6 @@ mod layout_tests;
 mod outline;
 mod panes;
 mod picker;
-mod summary_scroll;
 mod text_layout;
 
 const DIM: Style = Style::new().fg(theme().dim);
@@ -117,7 +115,6 @@ pub(super) struct TaxonomiesView {
     /// The Inspector's rows of text, without the row that counts the rows below; pgup and pgdn
     /// page by its height.
     inspector_area: Rect,
-    summary_scroll: summary_scroll::SummaryScroll,
 }
 
 /// NAV moves through the outline. EDIT types into one field of the selected node; `cursor` is
@@ -179,7 +176,6 @@ impl TaxonomiesView {
     fn set_cursor(&mut self, key: RowKey) {
         if self.cursor.as_ref() != Some(&key) {
             self.inspector_offset = 0;
-            self.summary_scroll.reset();
         }
         self.cursor = Some(key);
     }
@@ -190,18 +186,6 @@ impl TaxonomiesView {
 
     pub(super) const fn navigating(&self) -> bool {
         matches!(self.mode, Mode::Nav)
-    }
-
-    pub(super) fn reset_animation(&mut self) {
-        self.summary_scroll.reset();
-    }
-
-    pub(super) fn advance(&mut self, elapsed: Duration) {
-        self.summary_scroll.advance(elapsed);
-    }
-
-    pub(super) fn next_frame_in(&self) -> Option<Duration> {
-        self.summary_scroll.next_frame_in()
     }
 
     pub(super) const fn shell_keys(&self) -> ShellKeys {
@@ -306,7 +290,6 @@ impl TaxonomiesView {
                 Row::NewTaxonomy => return Nav::Act(LibraryAction::Create),
                 Row::AddType(_) | Row::AddProperty(..) => return Nav::Act(LibraryAction::Add),
                 Row::Node(node) if outline::has_children(row, self.read_only) => {
-                    self.summary_scroll.reset();
                     if open {
                         self.expanded.remove(node.id());
                     } else {
@@ -641,14 +624,12 @@ impl TaxonomiesView {
         lead: u16,
         library: Option<&LibraryDraft>,
         focused: bool,
-        animate: bool,
     ) -> Rect {
         let rows = library.map(|library| outline::rows(library, &self.expanded, self.read_only));
         let panes = panes::Panes::new(area, frame.area(), lead, rows.as_ref().map_or(1, Vec::len));
         panes.render_rule(frame);
         self.inspector_area = Rect::default();
         let (Some(library), Some(rows)) = (library, rows) else {
-            self.summary_scroll.reset();
             self.outline_area = Rect::default();
             frame.render_widget(
                 Paragraph::new("Taxonomy library unavailable."),
@@ -659,7 +640,6 @@ impl TaxonomiesView {
         let selected = outline::resolve(&rows, self.cursor.as_ref(), library);
         // EDIT and the copy picker hold focus away from the outline.
         let outline_focused = focused && self.navigating();
-        let animate = animate && self.navigating();
         let chips = Chips::new(library, self.read_only);
         self.outline_area = outline::render(
             frame,
@@ -670,8 +650,6 @@ impl TaxonomiesView {
             selected,
             &mut self.outline_offset,
             outline_focused,
-            &mut self.summary_scroll,
-            animate.then_some(area),
         );
         if self.editing() {
             crate::theme::dim_region(frame, panes.outline);
