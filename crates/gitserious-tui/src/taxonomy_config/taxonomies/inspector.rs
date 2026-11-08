@@ -299,47 +299,65 @@ fn describe(
     (lines, focused)
 }
 
-/// A type's properties: each key with its policy flush right, followed by its indented,
-/// dim description. One blank row separates adjacent properties.
 fn property_guidance_lines(properties: &[PropertyNode], width: usize) -> Vec<Line<'static>> {
     if properties.is_empty() {
         return Vec::new();
     }
+    let available = width.saturating_sub(6);
+    let name_width = properties
+        .iter()
+        .map(|property| Span::raw(property.name()).width())
+        .max()
+        .unwrap_or(8)
+        .max(8)
+        .min((available / 4).max(1));
+    let policy_width = "recommended".len().min((available / 3).max(1));
+    let widths = [
+        name_width,
+        policy_width,
+        available.saturating_sub(name_width + policy_width).max(1),
+    ];
     let mut lines = vec![Line::default()];
-    for (index, property) in properties.iter().enumerate() {
-        if index > 0 {
-            lines.push(Line::default());
-        }
-        let policy = property.policy();
-        lines.push(fit(
-            vec![Span::raw(property.name().to_owned())],
-            vec![Span::styled(policy.label(), policy_style(policy))],
-            width,
-        ));
-        let graphemes = property
-            .description()
-            .graphemes(true)
-            .map(|grapheme| {
-                if grapheme.contains(['\n', '\r']) {
-                    " "
-                } else {
-                    grapheme
-                }
-            })
-            .collect::<Vec<_>>();
-        if graphemes.is_empty() {
-            continue;
-        }
-        lines.extend(
-            wrap(&graphemes, width.saturating_sub(2))
+    let header = (["Property", "Policy", "Description"], [DIM; 3]);
+    let rows = std::iter::once(header).chain(properties.iter().map(|property| {
+        (
+            [
+                property.name(),
+                property.policy().label(),
+                property.description(),
+            ],
+            [Style::default(), policy_style(property.policy()), DIM],
+        )
+    }));
+    for (index, (cells, styles)) in rows.enumerate() {
+        let wrapped = std::array::from_fn::<_, 3, _>(|column| {
+            let text = cells[column].replace(['\n', '\r'], " ");
+            let graphemes = text.graphemes(true).collect::<Vec<_>>();
+            wrap(&graphemes, widths[column])
                 .into_iter()
-                .map(|(start, end)| {
-                    Line::from(vec![
-                        Span::raw("  "),
-                        Span::styled(graphemes[start..end].concat(), DIM),
-                    ])
-                }),
-        );
+                .map(|(start, end)| graphemes[start..end].concat())
+                .collect::<Vec<_>>()
+        });
+        let height = wrapped.iter().map(Vec::len).max().unwrap_or(1);
+        for row in 0..height {
+            let mut spans = Vec::new();
+            for column in 0..3 {
+                if column > 0 {
+                    spans.push(Span::styled(" │ ", DIM));
+                }
+                let text = wrapped[column].get(row).cloned().unwrap_or_default();
+                let padding = widths[column].saturating_sub(Span::raw(&text).width());
+                spans.push(Span::styled(text, styles[column]));
+                spans.push(Span::raw(" ".repeat(padding)));
+            }
+            lines.push(Line::from(spans));
+        }
+        if index == 0 {
+            lines.push(Line::styled(
+                widths.map(|width| "─".repeat(width)).join("─┼─"),
+                DIM,
+            ));
+        }
     }
     lines
 }
@@ -622,6 +640,56 @@ mod tests {
                         assert!(!text.contains(action), "{text}");
                     }
                 }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn type_property_table_keeps_each_description_in_its_column()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use gitserious_app::{GlobalConfiguration, LibraryDraft, NodeRef};
+        let library = LibraryDraft::from_configuration(GlobalConfiguration::default());
+        let id = library.find_path(&["conventional", "feat"]).ok_or("type")?;
+        let NodeRef::Type { commit_type, .. } = library.node(&id).ok_or("node")? else {
+            return Err("expected type".into());
+        };
+        assert!(super::property_guidance_lines(&[], 80).is_empty());
+        for width in [40, 52, 80] {
+            for property in commit_type.properties() {
+                let lines = super::property_guidance_lines(std::slice::from_ref(property), width);
+                assert!(lines.iter().all(|line| line.width() <= width));
+                let rows = lines.iter().map(ToString::to_string).collect::<Vec<_>>();
+                assert_eq!(
+                    rows[1].split(" │ ").map(str::trim).collect::<Vec<_>>(),
+                    ["Property", "Policy", "Description"]
+                );
+                let cells = rows[3..]
+                    .iter()
+                    .map(|row| row.split(" │ ").map(str::trim).collect::<Vec<_>>())
+                    .collect::<Vec<_>>();
+                assert!(cells.iter().all(|row| row.len() == 3));
+                assert_eq!(
+                    cells.iter().map(|row| row[0]).collect::<String>(),
+                    property.name()
+                );
+                assert_eq!(
+                    cells.iter().map(|row| row[1]).collect::<String>(),
+                    property.policy().label()
+                );
+                assert_eq!(
+                    cells
+                        .iter()
+                        .map(|row| row[2])
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .trim(),
+                    property.description()
+                );
+                assert!(
+                    !cells[0][2].is_empty(),
+                    "description starts beside its property"
+                );
             }
         }
         Ok(())

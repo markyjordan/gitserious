@@ -6,7 +6,6 @@ use super::library_rows_tests::{Result, fixture, press, select};
 use super::tests::Workspace;
 use super::*;
 
-const DIM: Color = theme().dim;
 const SIZES: [(u16, u16); 3] = [(87, 40), (125, 51), (100, 30)];
 
 /// The fix type's properties as conventional defines them: key, policy, and description.
@@ -79,24 +78,23 @@ fn inspector(state: &mut State, size: (u16, u16)) -> Result<Page> {
     })
 }
 
-/// Every row of the Inspector, from its first page and, when that page counts rows below, the
-/// page pgdn shows. The count must match the rows pgdn reveals.
 fn every_row(state: &mut State, workspace: &Workspace, size: (u16, u16)) -> Result<Vec<Row>> {
-    let Page { mut rows, hidden } = inspector(state, size)?;
-    if hidden == 0 {
-        return Ok(rows);
+    let Page {
+        mut rows,
+        mut hidden,
+    } = inspector(state, size)?;
+    while hidden > 0 {
+        press(state, workspace, &[KeyCode::PageDown]);
+        let next = inspector(state, size)?;
+        assert!(next.hidden < hidden, "page down reveals more rows");
+        let advanced = hidden - next.hidden;
+        let overlap = next.rows.len().saturating_sub(advanced);
+        for (row, again) in rows[rows.len() - overlap..].iter().zip(&next.rows) {
+            assert_eq!(row.text, again.text, "the count of rows below is exact");
+        }
+        rows.extend_from_slice(&next.rows[overlap..]);
+        hidden = next.hidden;
     }
-    press(state, workspace, &[KeyCode::PageDown]);
-    let last = inspector(state, size)?;
-    assert_eq!(last.hidden, 0, "one page down reaches the end");
-    // The last page ends on the last row, so it starts `hidden` rows into the first page.
-    let shown = rows.len();
-    assert_eq!(last.rows.len(), shown);
-    assert!(hidden <= shown);
-    for (row, again) in rows[hidden..].iter().zip(&last.rows) {
-        assert_eq!(row.text, again.text, "the count of rows below is exact");
-    }
-    rows.extend_from_slice(&last.rows[shown - hidden..]);
     Ok(rows)
 }
 
@@ -108,7 +106,7 @@ fn continued<'a>(rows: &'a [Row], at: usize, indent: &str) -> impl Iterator<Item
 }
 
 #[test]
-fn a_built_in_type_lists_its_properties_without_a_heading_and_pages_to_the_fork_hint() -> Result {
+fn a_built_in_type_lists_its_property_table_and_pages_to_the_fork_hint() -> Result {
     for size in SIZES {
         let (workspace, mut state) = fixture()?;
         select(&mut state, &["conventional", "fix"])?;
@@ -117,7 +115,6 @@ fn a_built_in_type_lists_its_properties_without_a_heading_and_pages_to_the_fork_
             assert!(inspector(&mut state, size)?.hidden > 0, "fix overflows");
         }
         let rows = every_row(&mut state, &workspace, size)?;
-        let width = rows[0].text.chars().count();
         let text = |at: usize| rows[at].text.trim_end();
 
         assert!(text(0).starts_with("Type fix "), "{}", text(0));
@@ -134,59 +131,70 @@ fn a_built_in_type_lists_its_properties_without_a_heading_and_pages_to_the_fork_
             description,
             "A causal correction of an observed failure or incorrect behavior."
         );
-        let mut at = 3 + continued(&rows, 3, &" ".repeat(13)).count() + 1;
-        assert_eq!(text(at), "");
-        for (index, (key, policy, guidance)) in FIX.into_iter().enumerate() {
+        let header = rows
+            .iter()
+            .position(|row| row.text.starts_with("Property "))
+            .ok_or("table header")?;
+        assert_eq!(
+            rows[header]
+                .text
+                .split('│')
+                .map(str::trim)
+                .collect::<Vec<_>>(),
+            ["Property", "Policy", "Description"]
+        );
+        let mut at = header + 2;
+        for (key, policy, guidance) in FIX {
+            let start = at;
+            assert!(
+                !rows[start]
+                    .text
+                    .split('│')
+                    .nth(2)
+                    .ok_or("description cell")?
+                    .trim()
+                    .is_empty()
+            );
             at += 1;
-            let row = &rows[at];
-            assert!(row.text.starts_with(&format!("{key} ")), "{}", row.text);
-            // Flush right, one column short of the pane's edge like the heading's badge.
-            assert_eq!(
-                row.text.trim_end().chars().count(),
-                width - 1,
-                "{}",
-                row.text
-            );
-            assert!(row.text.trim_end().ends_with(&format!(" {policy}")));
-            for cell in row.cells(key)? {
-                assert_ne!(cell.fg, DIM);
-                assert!(!cell.modifier.contains(Modifier::BOLD));
-            }
-            let style = match policy {
-                "required" => theme().blocks,
-                "conditional" => theme().pending,
-                "recommended" => theme().done,
-                _ => DIM,
-            };
-            for cell in row.cells(policy)? {
-                assert_eq!(cell.fg, style);
-            }
-            let lines = continued(&rows, at, "  ").collect::<Vec<_>>();
-            assert!(!lines.is_empty(), "{key} has its guidance beneath it");
-            for line in &lines {
-                assert!(!line.text.starts_with("   "), "indented 2: {:?}", line.text);
-                for cell in line.cells(line.text.trim())? {
-                    assert_eq!(cell.fg, DIM);
-                }
-            }
-            assert_eq!(
-                lines
-                    .iter()
-                    .map(|line| line.text.trim())
-                    .collect::<Vec<_>>()
-                    .join(" "),
-                guidance
-            );
-            at += lines.len();
-            if index + 1 < FIX.len() {
-                assert_eq!(text(at + 1), "", "one blank row between properties");
-                assert!(!text(at + 2).is_empty(), "exactly one blank row");
+            while at < rows.len()
+                && rows[at].text.contains('│')
+                && rows[at]
+                    .text
+                    .split('│')
+                    .nth(1)
+                    .is_some_and(|cell| cell.trim().is_empty())
+            {
                 at += 1;
             }
+            let cells = rows[start..at]
+                .iter()
+                .map(|row| row.text.split('│').map(str::trim).collect::<Vec<_>>())
+                .collect::<Vec<_>>();
+            assert_eq!(cells.iter().map(|row| row[0]).collect::<String>(), key);
+            assert_eq!(cells[0][1], policy);
+            assert_eq!(
+                cells
+                    .iter()
+                    .map(|row| row[2])
+                    .collect::<String>()
+                    .split_whitespace()
+                    .collect::<String>(),
+                guidance.split_whitespace().collect::<String>()
+            );
+            for cell in rows[start].cells(policy)? {
+                assert_eq!(
+                    cell.fg,
+                    if policy == "required" {
+                        theme().blocks
+                    } else {
+                        theme().pending
+                    }
+                );
+            }
         }
-        assert_eq!(text(at + 1), "");
-        assert_eq!(text(at + 2), "f fork to customize");
-        assert!(rows[at + 3..].iter().all(|row| row.text.trim().is_empty()));
+        assert_eq!(text(at), "");
+        assert_eq!(text(at + 1), "f fork to customize");
+        assert!(rows[at + 2..].iter().all(|row| row.text.trim().is_empty()));
         assert!(
             !rows
                 .iter()
@@ -217,32 +225,27 @@ fn a_custom_type_shows_each_policy_in_the_outline_style() -> Result {
             .iter()
             .position(|row| row.text.starts_with("intent "))
             .ok_or("intent guidance")?;
-        let keys = rows[first..]
+        let properties = rows[first..]
             .iter()
-            .filter(|row| !row.text.starts_with(' '))
-            .map(|row| row.text.split_whitespace().collect::<Vec<_>>())
+            .filter(|row| {
+                row.text
+                    .split('│')
+                    .nth(1)
+                    .is_some_and(|cell| !cell.trim().is_empty())
+            })
             .collect::<Vec<_>>();
-        assert_eq!(
-            keys,
-            [["intent", "required"], ["constraints", "conditional"]]
-        );
-        let row = |key: &str| {
-            rows.iter()
-                .find(|row| row.text.starts_with(&format!("{key} ")))
-                .ok_or(format!("no {key} row"))
-        };
-        for cell in row("intent")?.cells("required")? {
-            assert_eq!(cell.fg, theme().blocks);
+        assert_eq!(properties.len(), 2);
+        for (row, (name, policy, color)) in properties.iter().zip([
+            ("intent", "required", theme().blocks),
+            ("constraints", "conditional", theme().pending),
+        ]) {
+            let cells = row.text.split('│').map(str::trim).collect::<Vec<_>>();
+            assert!(name.starts_with(cells[0]));
+            assert_eq!(cells[1], policy);
+            for cell in row.cells(policy)? {
+                assert_eq!(cell.fg, color);
+            }
         }
-        for cell in row("constraints")?.cells("conditional")? {
-            assert_eq!(cell.fg, theme().pending);
-        }
-        let conditional = rows
-            .iter()
-            .position(|row| row.text.starts_with("constraints "))
-            .ok_or("conditional guidance")?;
-        assert!(rows[conditional - 1].text.trim().is_empty());
-        assert!(!rows[conditional - 2].text.trim().is_empty());
         let text = rows.iter().map(|row| row.text.as_str()).collect::<String>();
         assert!(!text.contains("fork"), "{text}");
     }
