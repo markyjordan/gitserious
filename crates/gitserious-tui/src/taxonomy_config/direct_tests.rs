@@ -176,6 +176,68 @@ fn error(state: &State) -> Result<&str> {
     }
 }
 
+fn hidden_library_edit_pauses(event: Event) -> Result {
+    for (width, height) in [(MINIMUM_WIDTH - 1, 40), (87, MINIMUM_HEIGHT - 1)] {
+        let (store, mut state) = fixture()?;
+        let original = stored(&store)?;
+        let node = select(&mut state, &["team", "feat"])?;
+        press(&mut state, &store, KeyCode::Char('e'));
+        replace(&mut state, &store, "Resized type")?;
+        assert!(frame(&mut state, 87, 40)?.contains("Resized type"));
+        let warning = frame(&mut state, width, height)?;
+        assert!(!state.handle_event(event.clone(), &store));
+        assert_eq!(
+            store.inner.saves(),
+            0,
+            "hidden {event:?} at {width}x{height}"
+        );
+        assert_eq!(stored(&store)?, original);
+        assert!(state.taxonomies.editing());
+        assert_eq!(
+            state
+                .library()
+                .and_then(|library| library.text(&node, DraftField::Name)),
+            Some("Resized type"),
+            "hidden {event:?} at {width}x{height} changed the draft"
+        );
+        assert!(warning.contains("Resize to continue editing"), "{warning}");
+        assert!(!warning.contains("esc"), "{warning}");
+        assert!(!warning.contains("cancel"), "{warning}");
+        assert!(frame(&mut state, 87, 40)?.contains("Resized type"));
+        press(&mut state, &store, KeyCode::Esc);
+        assert!(state.taxonomies.navigating());
+        assert_eq!(store.inner.saves(), 1);
+        assert_ne!(stored(&store)?, original);
+    }
+    Ok(())
+}
+
+#[test]
+fn hidden_library_edit_pauses_escape() -> Result {
+    hidden_library_edit_pauses(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+}
+
+#[test]
+fn hidden_library_edit_pauses_q() -> Result {
+    hidden_library_edit_pauses(Event::Key(KeyEvent::new(
+        KeyCode::Char('q'),
+        KeyModifiers::NONE,
+    )))
+}
+
+#[test]
+fn hidden_library_edit_pauses_text_key() -> Result {
+    hidden_library_edit_pauses(Event::Key(KeyEvent::new(
+        KeyCode::Char('x'),
+        KeyModifiers::NONE,
+    )))
+}
+
+#[test]
+fn hidden_library_edit_pauses_paste() -> Result {
+    hidden_library_edit_pauses(Event::Paste("hidden paste".into()))
+}
+
 #[test]
 fn blank_creation_cancels_for_every_policy_and_the_footer_tracks_all_text() -> Result {
     use gitserious_app::Policy;
