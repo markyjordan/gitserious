@@ -90,6 +90,29 @@ fn new_taxonomy_form_omits_facts_until_saved() -> Result {
 }
 
 #[test]
+fn saved_taxonomy_dates_appear_only_while_inspecting() -> Result {
+    let (workspace, mut state) = fixture()?;
+    select(&mut state, &["team"])?;
+    let terminal = draw(&mut state, (100, 40))?;
+    let inspect = text(&terminal);
+    press(&mut state, &workspace, &[KeyCode::Char('e')]);
+    let terminal = draw(&mut state, (100, 40))?;
+    let edit = text(&terminal);
+    assert!(
+        inspect.contains("Created on")
+            && inspect.contains("Modified on")
+            && !edit.contains("Created on")
+            && !edit.contains("Modified on"),
+        "inspect created {} modified {} edit created {} modified {}\nINSPECT\n{inspect}\nEDIT\n{edit}",
+        inspect.contains("Created on"),
+        inspect.contains("Modified on"),
+        edit.contains("Created on"),
+        edit.contains("Modified on"),
+    );
+    Ok(())
+}
+
+#[test]
 fn edit_focus_has_amber_cues_muted_navigation_and_a_footer_counter() -> Result {
     for size in SIZES {
         let (workspace, mut state) = property()?;
