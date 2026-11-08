@@ -242,6 +242,9 @@ impl Shell {
         if self.overlay.is_some() {
             return self.handle_overlay(event, workspace);
         }
+        if self.too_small && self.section == Section::Config && self.config.modal() {
+            return None;
+        }
         if self.section == Section::Config && self.config.modal() {
             return self.config_event(event, workspace);
         }
@@ -572,8 +575,13 @@ impl Shell {
             area,
         );
         if self.too_small {
+            let message = if self.section == Section::Config && self.config.modal() {
+                "Terminal too small\nResize to continue"
+            } else {
+                "Terminal too small\nResize or press esc/q to quit"
+            };
             frame.render_widget(
-                Paragraph::new("Terminal too small\nResize or press esc/q to quit").centered(),
+                Paragraph::new(message).centered(),
                 centered_rect(54, 3, area),
             );
         } else {
