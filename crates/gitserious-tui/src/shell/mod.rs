@@ -669,7 +669,7 @@ impl Shell {
     fn render_overlay(&mut self, frame: &mut Frame<'_>, area: Rect) {
         self.quit_dialog.invalidate();
         if matches!(self.overlay, Some(Overlay::QuitConfirm)) {
-            self.quit_dialog.render(frame, area, &quit_question());
+            self.quit_dialog.render(frame, &quit_question());
             return;
         }
         let commands = self.commands();

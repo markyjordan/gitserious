@@ -29,6 +29,8 @@ use crate::theme::{
 };
 
 #[cfg(test)]
+mod alert_tests;
+#[cfg(test)]
 mod copy_tests;
 #[cfg(test)]
 mod direct_tests;
@@ -1387,7 +1389,7 @@ impl State {
         if self.too_small {
             self.tab_areas = [Rect::default(); 2];
             if let Some(question) = self.confirmation() {
-                self.dialog.render(frame, area, &question);
+                self.dialog.render(frame, &question);
             } else {
                 frame.render_widget(
                     Paragraph::new("Terminal too small\n\nResize or press esc/q to cancel")
@@ -1420,7 +1422,7 @@ impl State {
             } else {
                 self.render_project(frame, body);
             }
-            self.dialog.render(frame, body, &question);
+            self.dialog.render(frame, &question);
             confirmation::hints(question.choices)
         } else {
             match self.screen.clone() {
@@ -1479,7 +1481,7 @@ impl State {
             render_navigation_row(frame, footer, &hints);
         }
         if let Some(overlay) = &mut self.home_overlay {
-            overlay.render(frame, main, self.category);
+            overlay.render(frame, self.category);
         } else {
             self.render_notice(frame, body);
         }

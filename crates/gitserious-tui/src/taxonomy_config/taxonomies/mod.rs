@@ -695,7 +695,7 @@ impl TaxonomiesView {
             chosen,
         } = &self.mode
         {
-            picker::render(frame, area, library, property, *cursor, chosen);
+            picker::render(frame, library, property, *cursor, chosen);
         }
         panes.lead
     }

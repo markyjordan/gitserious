@@ -109,7 +109,6 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
         if session.stage == Stage::Confirm {
             session.discard_dialog.render(
                 frame,
-                area,
                 &Confirmation {
                     title: "Discard Message",
                     message: "Discard this draft?".into(),
@@ -136,7 +135,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
         Stage::Confirm => unreachable!("confirmation resolves to its underlying stage"),
     }
     if session.stage == Stage::Confirm {
-        render_confirmation(frame, area, session);
+        render_confirmation(frame, session);
     }
     normalize_background(frame, area);
 }
@@ -976,14 +975,13 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
     );
 }
 
-fn render_confirmation(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
+fn render_confirmation(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) {
     let message = match session.confirmation {
         ConfirmationAction::Cancel => "Discard this draft and cancel the commit?",
         ConfirmationAction::ChangeType => "Discard this draft and choose another type?",
     };
     session.discard_dialog.render(
         frame,
-        area,
         &Confirmation {
             title: "Discard Message",
             message: message.into(),

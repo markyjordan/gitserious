@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use gitserious_app::{LibraryDraft, NodeId, NodeRef};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Flex, Layout, Margin, Rect};
+use ratatui::layout::{Constraint, Flex, Layout, Margin};
 use ratatui::text::Line;
 use ratatui::widgets::{Clear, Paragraph};
 
@@ -14,7 +14,6 @@ pub(super) const CHOICES: [(&str, &str); 3] =
 
 pub(super) fn render(
     frame: &mut Frame<'_>,
-    area: Rect,
     library: &LibraryDraft,
     property: &NodeId,
     cursor: usize,
@@ -30,7 +29,8 @@ pub(super) fn render(
     };
     let targets = library.copy_targets(property);
     let rows = u16::try_from(targets.len()).unwrap_or(u16::MAX);
-    let popup = centered_rect(58, rows.saturating_add(10).min(area.height), area);
+    let viewport = frame.area();
+    let popup = centered_rect(58, rows.saturating_add(10).min(viewport.height), viewport);
     frame.render_widget(Clear, popup);
     frame.render_widget(popup_block(), popup);
     let [title, _, message, _, list, _, buttons] = Layout::vertical([
