@@ -4,7 +4,6 @@ mod home;
 mod init_editor;
 
 use std::io::{self, IsTerminal};
-use std::time::{Duration, Instant};
 
 use gitserious_app::{
     CommitAuthoringContext, HelpPage, HomeState, InteractiveEntry, InteractiveUi,
@@ -61,24 +60,15 @@ impl InteractiveUi for RatatuiInteractiveUi {
         }
         crate::runtime::run(|terminal| {
             let mut shell = Shell::new(entry, workspace, help);
-            let mut previous = Instant::now();
             loop {
-                let now = Instant::now();
-                shell.advance(now.duration_since(previous));
-                previous = now;
                 terminal.draw(|frame| shell.render(frame, help))?;
-                let Some(event) = crate::runtime::next_event(shell.next_frame_in())? else {
-                    continue;
-                };
-                // Idle time is not animation time for transitions triggered by this event.
-                previous = Instant::now();
+                let event = ratatui::crossterm::event::read()?;
                 if let Some(action) = shell.handle_event(event, workspace, help) {
                     if matches!(action, Action::Quit) {
                         return Ok(());
                     }
                     if matches!(action, Action::Author | Action::Resume) {
                         shell.author(terminal, workspace, matches!(action, Action::Resume))?;
-                        previous = Instant::now();
                     }
                 }
             }
@@ -193,22 +183,6 @@ impl Shell {
         }
     }
 
-    fn advance(&mut self, elapsed: Duration) {
-        self.config.advance(elapsed, self.config_visible());
-    }
-
-    fn config_visible(&self) -> bool {
-        self.section == Section::Config && self.overlay.is_none() && !self.too_small
-    }
-
-    fn next_frame_in(&self) -> Option<Duration> {
-        if self.config_visible() {
-            self.config.next_frame_in()
-        } else {
-            None
-        }
-    }
-
     fn execute(&mut self, action: Action, workspace: &dyn InteractiveWorkspace) -> Option<Action> {
         match action {
             Action::Select(section) => {
@@ -257,17 +231,6 @@ impl Shell {
     }
 
     fn handle_event(
-        &mut self,
-        event: Event,
-        workspace: &dyn InteractiveWorkspace,
-        help: &[HelpPage],
-    ) -> Option<Action> {
-        let action = self.handle_event_inner(event, workspace, help);
-        self.config.advance(Duration::ZERO, self.config_visible());
-        action
-    }
-
-    fn handle_event_inner(
         &mut self,
         event: Event,
         workspace: &dyn InteractiveWorkspace,
@@ -603,7 +566,6 @@ impl Shell {
     fn render(&mut self, frame: &mut Frame<'_>, help: &[HelpPage]) {
         let area = frame.area();
         self.too_small = area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT;
-        self.config.advance(Duration::ZERO, self.config_visible());
         self.root_areas = [Rect::default(); Section::ALL.len()];
         frame.render_widget(
             Block::default().style(Style::default().fg(theme().text).bg(theme().ground)),
@@ -1364,7 +1326,6 @@ mod tests {
         assert!(shell.commit.blocker.is_some());
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
         assert_eq!(shell.section, Section::Config);
-        assert!(shell.next_frame_in().is_none());
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let text = rendered(&terminal);
@@ -1498,62 +1459,6 @@ mod tests {
                 }
             }
         }
-        Ok(())
-    }
-
-    #[test]
-    fn config_summary_deadline_advances_without_keys_and_resets_when_hidden()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
-        let mut terminal = Terminal::new(TestBackend::new(80, 30))?;
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        for code in [
-            KeyCode::Char('2'),
-            KeyCode::Down,
-            KeyCode::Enter,
-            KeyCode::Down,
-        ] {
-            shell.handle_event(key(code), &services, &[]);
-        }
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        let initial = terminal.backend().buffer().clone();
-        let hold = Duration::from_secs(3);
-        assert_eq!(shell.next_frame_in(), Some(hold));
-        shell.advance(hold);
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert_ne!(*terminal.backend().buffer(), initial);
-        assert_eq!(shell.next_frame_in(), Some(Duration::from_millis(150)));
-
-        shell.execute(Action::Result, &services);
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        let overlay = terminal.backend().buffer().clone();
-        shell.advance(Duration::from_secs(20));
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert_eq!(shell.next_frame_in(), None);
-        assert_eq!(*terminal.backend().buffer(), overlay);
-        shell.handle_event(key(KeyCode::Esc), &services, &[]);
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert_eq!(shell.next_frame_in(), Some(hold));
-
-        for section in [Section::Commit, Section::Help, Section::Home] {
-            shell.execute(Action::Select(section), &services);
-            terminal.draw(|frame| shell.render(frame, &[]))?;
-            assert_eq!(shell.next_frame_in(), None);
-            shell.advance(Duration::from_secs(20));
-            shell.execute(Action::Select(Section::Config), &services);
-            terminal.draw(|frame| shell.render(frame, &[]))?;
-            assert_eq!(shell.next_frame_in(), Some(hold));
-        }
-
-        terminal.backend_mut().resize(60, 15);
-        terminal.resize(Rect::new(0, 0, 60, 15))?;
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert_eq!(shell.next_frame_in(), None);
-        terminal.backend_mut().resize(80, 30);
-        terminal.resize(Rect::new(0, 0, 80, 30))?;
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert_eq!(shell.next_frame_in(), Some(hold));
         Ok(())
     }
 
@@ -2277,7 +2182,6 @@ mod tests {
     {
         let services = Services;
         let mut shell = Shell::new(InteractiveEntry::Home, &services, &[]);
-        assert_eq!(shell.next_frame_in(), None, "Home never redraws while idle");
         for (width, height) in [(87, 40), (100, 30), (120, 30), (66, 18)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| shell.render(frame, &[]))?;
