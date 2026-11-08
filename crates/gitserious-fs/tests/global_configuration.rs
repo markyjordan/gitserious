@@ -6,7 +6,9 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use gitserious_app::{GlobalConfiguration, GlobalConfigurationStore, GlobalPaths};
+use gitserious_app::{
+    GlobalConfiguration, GlobalConfigurationStore, GlobalPaths, ProjectConfigurationStore,
+};
 use gitserious_core::{
     Taxonomy, TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
 };
@@ -347,5 +349,54 @@ fn eligibility_changes_keep_selection_and_durable_name_locking() -> Result<(), B
         Err(gitserious_app::EditRefusal::NameLocked)
     );
     assert!(draft.build().is_ok());
+    Ok(())
+}
+
+#[test]
+fn library_dates_round_trip_and_invalid_calendar_dates_are_rejected() -> Result<(), Box<dyn Error>>
+{
+    let temporary = TempDir::new()?;
+    let store = store(temporary.path());
+    let configuration = custom_configuration()?;
+    let record = configuration.custom_taxonomies()[0]
+        .clone()
+        .with_dates(Some("2024-02-29".parse()?), Some("2026-11-07".parse()?));
+    let configuration = GlobalConfiguration::new(
+        1,
+        configuration.default_taxonomy().clone(),
+        configuration.available_taxonomies().to_vec(),
+        vec![record],
+    )?;
+    store.compare_and_swap(&GlobalConfiguration::default(), &configuration)?;
+    assert_eq!(store.load()?, configuration);
+    let bytes = fs::read_to_string(store.path())?;
+    assert!(bytes.contains("created-on = \"2024-02-29\""));
+    assert!(bytes.contains("modified-on = \"2026-11-07\""));
+    let root = gitserious_app::RepositoryRoot::new(temporary.path().join("project"))?;
+    fs::create_dir(root.as_path())?;
+    let project = gitserious_app::ProjectConfiguration::new(
+        1,
+        configuration.default_taxonomy().clone(),
+        vec![
+            configuration.custom_taxonomies()[0]
+                .usable()
+                .ok_or("usable")?,
+        ],
+    )?;
+    let project_store = gitserious_fs::TomlProjectStore;
+    project_store.create(&root, &project)?;
+    let project_path = root.as_path().join("gitserious.toml");
+    let project_bytes = fs::read_to_string(&project_path)?;
+    assert!(!project_bytes.contains("created-on"));
+    fs::write(
+        &project_path,
+        project_bytes.replace(
+            "[[taxonomies]]",
+            "[[taxonomies]]\ncreated-on = \"2024-02-29\"",
+        ),
+    )?;
+    assert!(project_store.load(&root).is_err());
+    fs::write(store.path(), bytes.replace("2024-02-29", "2025-02-29"))?;
+    assert!(store.load().is_err());
     Ok(())
 }

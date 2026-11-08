@@ -194,7 +194,12 @@ pub(super) fn custom(draft: &LibraryDraft) -> (Vec<(usize, LibraryTaxonomy)>, Ve
                         taxonomy.name_locked,
                     )
                     .ok()
-                    .map(|built| (index, built)),
+                    .map(|built| {
+                        (
+                            index,
+                            built.with_dates(taxonomy.created_on, taxonomy.modified_on),
+                        )
+                    }),
                 );
             }
             (_, Err(more), _) => problems.extend(more),

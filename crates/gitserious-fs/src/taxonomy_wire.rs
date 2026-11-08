@@ -17,6 +17,10 @@ pub(crate) struct TaxonomyWire {
     commit_types: Vec<CommitTypeWire>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     name_locked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    created_on: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    modified_on: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -64,6 +68,8 @@ pub(crate) fn taxonomy_to_wire(taxonomy: &Taxonomy) -> TaxonomyWire {
 pub(crate) fn library_taxonomy_to_wire(taxonomy: &LibraryTaxonomy) -> TaxonomyWire {
     TaxonomyWire {
         name_locked: (!taxonomy.name_locked()).then_some(false),
+        created_on: taxonomy.created_on().map(|date| date.to_string()),
+        modified_on: taxonomy.modified_on().map(|date| date.to_string()),
         id: taxonomy.id().to_string(),
         version: taxonomy.version().get(),
         description: taxonomy.description().to_string(),
@@ -109,6 +115,11 @@ pub(crate) fn taxonomy_from_wire(wire: TaxonomyWire, location: &str) -> Result<T
     if wire.name_locked.is_some() {
         return Err(format!("{location}: name-locked belongs to the Library"));
     }
+    if wire.created_on.is_some() || wire.modified_on.is_some() {
+        return Err(format!(
+            "{location}: created-on and modified-on belong to the Library"
+        ));
+    }
     library_taxonomy_from_wire(wire, location)?
         .usable()
         .ok_or_else(|| format!("{location}: taxonomy must contain at least one commit type"))
@@ -141,6 +152,18 @@ pub(crate) fn library_taxonomy_from_wire(
             commit_type_from_wire(definition, &format!("{location}.commit-types[{index}]"))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let created_on = wire
+        .created_on
+        .as_deref()
+        .map(str::parse)
+        .transpose()
+        .map_err(|error| format!("{location}.created-on: {error}"))?;
+    let modified_on = wire
+        .modified_on
+        .as_deref()
+        .map(str::parse)
+        .transpose()
+        .map_err(|error| format!("{location}.modified-on: {error}"))?;
     LibraryTaxonomy::new(
         id,
         version,
@@ -149,6 +172,7 @@ pub(crate) fn library_taxonomy_from_wire(
         commit_types,
         wire.name_locked.unwrap_or(true),
     )
+    .map(|taxonomy| taxonomy.with_dates(created_on, modified_on))
     .map_err(|error| format!("{location}: {error}"))
 }
 

@@ -220,6 +220,8 @@ pub struct TaxonomyNode {
     types: Vec<TypeNode>,
     name_locked: bool,
     saved_name: Option<TaxonomyId>,
+    created_on: Option<crate::TaxonomyDate>,
+    modified_on: Option<crate::TaxonomyDate>,
 }
 
 impl TaxonomyNode {
@@ -235,6 +237,8 @@ impl TaxonomyNode {
             version: taxonomy.version(),
             name_locked: taxonomy.name_locked(),
             saved_name: Some(taxonomy.id().clone()),
+            created_on: taxonomy.created_on(),
+            modified_on: taxonomy.modified_on(),
             derived_from: taxonomy.derived_from().cloned(),
             types: taxonomy
                 .commit_types()
@@ -746,10 +750,32 @@ impl LibraryDraft {
     }
 
     /// A validated snapshot acknowledged in place after persistence, retaining every node id.
-    pub fn saved(&self) -> Result<Self, Vec<Problem>> {
+    pub fn saved_on(&self, date: crate::TaxonomyDate) -> Result<Self, Vec<Problem>> {
         let owner = problems::build_owner(self)?;
         let mut saved = self.clone();
-        saved.owner = owner;
+        if let Owner::Library(configuration) = &owner {
+            for (node, record) in saved
+                .taxonomies
+                .iter_mut()
+                .filter(|node| node.origin == TaxonomyOrigin::Custom)
+                .zip(configuration.custom_taxonomies())
+            {
+                let previous = self.saved_taxonomy(&node.id);
+                if previous != Some(record) {
+                    node.modified_on = Some(date);
+                    if previous.is_none() {
+                        node.created_on = Some(date);
+                    }
+                }
+            }
+        }
+        saved.saved()
+    }
+
+    /// A clock-free canonical snapshot used when an edit changes no persisted content.
+    pub fn saved(&self) -> Result<Self, Vec<Problem>> {
+        let mut saved = self.clone();
+        saved.owner = problems::build_owner(self)?;
         let records = saved.records().to_vec();
         for (node, record) in saved
             .taxonomies
@@ -1094,6 +1120,8 @@ impl LibraryDraft {
             version: TaxonomyVersion::V1,
             name_locked: false,
             saved_name: None,
+            created_on: None,
+            modified_on: None,
             derived_from: None,
             types: Vec::new(),
         });
@@ -1114,6 +1142,8 @@ impl LibraryDraft {
         fork.origin = TaxonomyOrigin::Custom;
         fork.name_locked = false;
         fork.saved_name = None;
+        fork.created_on = None;
+        fork.modified_on = None;
         let room = NAME_LIMIT - FORK_SUFFIX.len();
         fork.name = source.name.graphemes(true).take(room).collect::<String>() + FORK_SUFFIX;
         fork.version = TaxonomyVersion::V1;
@@ -1205,6 +1235,8 @@ impl LibraryDraft {
                 replacement.id.clone_from(&current.id);
                 replacement.baseline.clone_from(&current.baseline);
                 replacement.saved_name.clone_from(&current.saved_name);
+                replacement.created_on = current.created_on;
+                replacement.modified_on = current.modified_on;
                 replacement.version = current.version;
                 replacement.derived_from.clone_from(&current.derived_from);
                 self.taxonomies[index] = replacement;
