@@ -212,18 +212,18 @@ fn describe(
             if !chips.read_only && editable.contains(&DraftField::Name) {
                 show(&mut lines, DraftField::Name);
             }
-            if !creating {
-                let version = library
-                    .version(id)
-                    .map_or_else(String::new, |version| version.to_string());
-                fact(&mut lines, "Version", &version);
-            }
             show(&mut lines, DraftField::Description);
             if !creating {
                 fact(&mut lines, "Types", &taxonomy.types().len().to_string());
             }
             if let Some(source) = taxonomy.derived_from() {
                 fact(&mut lines, "Forked from", &source.versioned().to_string());
+            }
+            if !creating {
+                let version = library
+                    .version(id)
+                    .map_or_else(String::new, |version| version.to_string());
+                fact(&mut lines, "Version", &version);
             }
             if chip.is_some() {
                 let sentence = "Add a type before this taxonomy can be included in a project."
@@ -472,6 +472,44 @@ mod tests {
     use crate::library_lookup::LibraryLookup;
 
     use super::wrap;
+
+    #[test]
+    fn taxonomy_details_end_with_the_version_after_description_types_and_lineage()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use super::{Chips, Focus, describe};
+        use gitserious_app::{DraftField, GlobalConfiguration, LibraryDraft};
+        let mut library = LibraryDraft::from_configuration(GlobalConfiguration::default());
+        let source = library.find_path(&["conventional"]).ok_or("source")?;
+        library.fork(&source)?;
+        for owner in ["conventional", "conventional-fork"] {
+            let id = library.find_path(&[owner]).ok_or("taxonomy")?;
+            let node = library.node(&id).ok_or("node")?;
+            for width in [28, 80] {
+                for read_only in [false, true] {
+                    for focus in [
+                        None,
+                        Some(Focus {
+                            field: DraftField::Description,
+                            cursor: Some(0),
+                        }),
+                    ] {
+                        let (lines, _) =
+                            describe(&Chips::new(&library, read_only), node, focus, width);
+                        let rows = lines.iter().map(ToString::to_string).collect::<Vec<_>>();
+                        let at = |label: &str| rows.iter().position(|row| row.starts_with(label));
+                        let description = at("Description").ok_or("description")?;
+                        let types = at("Types").ok_or("types")?;
+                        let version = at("Version").ok_or("version")?;
+                        assert!(description < types && types < version, "{rows:?}");
+                        if owner == "conventional-fork" {
+                            assert!(at("Forked from").ok_or("lineage")? < version);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn property_details_have_no_example_or_preview_in_browsing_or_editing()
