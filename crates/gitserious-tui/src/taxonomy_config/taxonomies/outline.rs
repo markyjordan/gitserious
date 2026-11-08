@@ -315,8 +315,6 @@ fn property_branch(
     format!("{ancestor}{}", branch(last))
 }
 
-/// A taxonomy row's right side: its type count and version, or that it is invalid. Narrow
-/// rows drop the count, then the version, before the name gives way.
 fn taxonomy_status(
     library: &LibraryDraft,
     taxonomy: &TaxonomyNode,
@@ -326,36 +324,66 @@ fn taxonomy_status(
     room: usize,
 ) -> Vec<Span<'static>> {
     let fits = |spans: &[Span<'static>]| Line::from(spans.to_vec()).width() < room;
+    let origin = library_origin(library, taxonomy, columns);
     if let Some(chip) = chip {
-        let invalid = vec![chip.span()];
+        let mut invalid = join_status(origin.clone(), vec![chip.span()]);
+        if !fits(&invalid) {
+            invalid = origin;
+        }
         return if fits(&invalid) { invalid } else { Vec::new() };
     }
     let style = if selected { TEXT } else { DIM };
     let count = taxonomy.types().len();
+    let version_text = version(library, taxonomy);
     let version = Span::styled(
+        format!("{:>width$}", version_text, width = columns.version),
+        style,
+    );
+    let count_span = Span::styled(
         format!(
-            "{:>width$}",
-            version(library, taxonomy),
-            width = columns.version
+            "{count:>width$} {}",
+            if count == 1 { "type " } else { "types" },
+            width = columns.count
         ),
         style,
     );
-    let full = vec![
-        Span::styled(
-            format!(
-                "{count:>width$} {}",
-                if count == 1 { "type " } else { "types" },
-                width = columns.count
-            ),
-            style,
-        ),
-        Span::raw("  "),
-        version.clone(),
-    ];
-    [full, vec![version]]
+    let full = join_status(
+        origin.clone(),
+        vec![count_span, Span::raw("  "), version.clone()],
+    );
+    let without_count = if version_text.is_empty() {
+        origin.clone()
+    } else {
+        join_status(origin.clone(), vec![version])
+    };
+    [full, without_count, origin]
         .into_iter()
         .find(|spans| fits(spans))
         .unwrap_or_default()
+}
+
+fn library_origin(
+    library: &LibraryDraft,
+    taxonomy: &TaxonomyNode,
+    columns: &Columns,
+) -> Vec<Span<'static>> {
+    if library.is_project() {
+        return Vec::new();
+    }
+    vec![Span::styled(
+        pad(origin_label(library, taxonomy), columns.origin),
+        TEXT.add_modifier(Modifier::BOLD),
+    )]
+}
+
+fn join_status(mut origin: Vec<Span<'static>>, rest: Vec<Span<'static>>) -> Vec<Span<'static>> {
+    if origin.is_empty() || rest.is_empty() {
+        origin.extend(rest);
+        return origin;
+    }
+    origin.push(Span::raw("  "));
+    origin.extend(rest);
+    origin
 }
 
 /// One row: a taxonomy names its origin and status, a closed type its property keys, and a
@@ -402,9 +430,10 @@ fn row_line(
         ),
         Row::Node(NodeRef::Taxonomy(taxonomy)) => {
             let bold = TEXT.add_modifier(Modifier::BOLD);
-            // The design sets the origin three columns past the widest name. A name too long
-            // for the row gives way before its origin does.
-            let name_width = (columns.name + 2).min(width.saturating_sub(4 + columns.origin));
+            let separator = usize::from(columns.origin > 0);
+            let name_width = (columns.name + 2).min(
+                width.saturating_sub(gutter.width() + marker.width() + separator + columns.origin),
+            );
             let mut left = vec![gutter, marker];
             left.extend(
                 fit(
@@ -414,13 +443,15 @@ fn row_line(
                 )
                 .spans,
             );
-            left.push(Span::styled(
-                format!(
-                    " {}",
-                    pad(origin_label(chips.library, taxonomy), columns.origin)
-                ),
-                bold,
-            ));
+            if chips.library.is_project() {
+                left.push(Span::styled(
+                    format!(
+                        " {}",
+                        pad(origin_label(chips.library, taxonomy), columns.origin)
+                    ),
+                    bold,
+                ));
+            }
             let room = width.saturating_sub(Line::from(left.clone()).width());
             let right = taxonomy_status(
                 chips.library,

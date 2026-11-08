@@ -130,32 +130,28 @@ fn taxonomy_rows_name_their_origin_type_count_and_version() -> Result {
     for size in SIZES {
         let (_, mut state) = fixture()?;
         let frame = Frame::draw(&mut state, size)?;
-        for (marker, start, end) in [
-            (
-                "▾ conventional ",
-                " ▾ conventional   built-in ",
-                " 11 types  v1",
-            ),
-            (
-                "▸ research ",
-                " ▸ research       built-in ",
-                " 10 types  v1",
-            ),
-            (
-                "▸ infra-ops ",
-                " ▸ infra-ops      built-in ",
-                " 10 types  v1",
-            ),
-            ("▸ team ", " ▸ team           custom   ", "  3 types"),
-            (
-                "▸ draft-ideas ",
-                " ▸ draft-ideas    custom   ",
-                " ▲ invalid",
-            ),
+        for (marker, label, end) in [
+            ("▾ conventional ", "built-in", "11 types  v1"),
+            ("▸ research ", "built-in", "10 types  v1"),
+            ("▸ infra-ops ", "built-in", "10 types  v1"),
+            ("▸ team ", "custom", "3 types"),
+            ("▸ draft-ideas ", "custom", "▲ invalid"),
         ] {
             let (_, row) = frame.row(marker)?;
-            assert!(row.starts_with(start), "{size:?}: {row:?}");
-            assert!(row.ends_with(end), "{size:?}: {row:?}");
+            assert!(row.starts_with(&format!(" {marker}")), "{size:?}: {row:?}");
+            let status_at = row.rfind(end).ok_or_else(|| format!("{size:?}: {row:?}"))?;
+            assert!(
+                row[..status_at].trim_end().ends_with(label),
+                "{size:?}: {row:?}"
+            );
+            let name = marker.trim_start_matches(['▾', '▸', ' ']);
+            let name_at = row.find(name).ok_or_else(|| format!("{size:?}: {row:?}"))?;
+            assert!(
+                row[name_at + name.len()..status_at]
+                    .trim()
+                    .starts_with(label),
+                "{size:?}: {row:?}"
+            );
         }
         let custom = frame.cell("▸ team ", "custom")?;
         assert_eq!(colors(custom), (theme().text, theme().ground));
@@ -235,7 +231,7 @@ fn enter_on_the_last_row_creates_a_taxonomy() -> Result {
             .collect::<Vec<_>>();
         let at = rows
             .iter()
-            .position(|row| row.starts_with("▌▾ Fresh ideas    custom"))
+            .position(|row| row.starts_with("▌▾ Fresh ideas") && row.contains("custom"))
             .ok_or_else(|| rows.join("\n"))?;
         assert_eq!(rows[at + 1], " └─ + add type");
         assert_eq!(rows[at + 2], " + new taxonomy");

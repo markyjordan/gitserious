@@ -1005,7 +1005,9 @@ fn saved_eligibility_badges(
         let built_in_root = id.as_ref().and_then(|id| library.node(id)).is_some_and(|node| {
             matches!(node, NodeRef::Taxonomy(taxonomy) if taxonomy.origin() == gitserious_app::TaxonomyOrigin::BuiltIn)
         });
-        if row.contains(" built-in ") != built_in_root || row.contains("read-only") {
+        if row.split_whitespace().any(|word| word == "built-in") != built_in_root
+            || row.contains("read-only")
+        {
             return Err(format!(
                 "The outline origin badge disagrees with its node: {row:?}"
             ));
