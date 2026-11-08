@@ -205,15 +205,23 @@ fn describe(
     };
     match node {
         NodeRef::Taxonomy(taxonomy) => {
+            let creating = editing
+                && editable.contains(&DraftField::Name)
+                && library.saved_taxonomy(id).is_none()
+                && taxonomy.derived_from().is_none();
             if !chips.read_only && editable.contains(&DraftField::Name) {
                 show(&mut lines, DraftField::Name);
             }
-            let version = library
-                .version(id)
-                .map_or_else(String::new, |version| version.to_string());
-            fact(&mut lines, "Version", &version);
+            if !creating {
+                let version = library
+                    .version(id)
+                    .map_or_else(String::new, |version| version.to_string());
+                fact(&mut lines, "Version", &version);
+            }
             show(&mut lines, DraftField::Description);
-            fact(&mut lines, "Types", &taxonomy.types().len().to_string());
+            if !creating {
+                fact(&mut lines, "Types", &taxonomy.types().len().to_string());
+            }
             if let Some(source) = taxonomy.derived_from() {
                 fact(&mut lines, "Forked from", &source.versioned().to_string());
             }
