@@ -257,14 +257,9 @@ fn taxonomy_changes(
     let mut lines = Vec::new();
     for taxonomy in after.taxonomies() {
         match before.and_then(|before| before.find(taxonomy.id())) {
-            None => lines.push(format!("  + {}  v{}", taxonomy.id(), taxonomy.version())),
+            None => lines.push(format!("  + {}", taxonomy.reference())),
             Some(old) if fingerprint_taxonomy(old) != fingerprint_taxonomy(taxonomy) => {
-                lines.push(format!(
-                    "  ~ {}  v{} -> v{}",
-                    taxonomy.id(),
-                    old.version(),
-                    taxonomy.version()
-                ));
+                lines.push(format!("  ~ {}", taxonomy.reference()));
             }
             Some(_) => {}
         }

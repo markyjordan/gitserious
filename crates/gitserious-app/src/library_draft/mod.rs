@@ -214,8 +214,7 @@ pub struct TaxonomyNode {
     origin: TaxonomyOrigin,
     name: String,
     description: String,
-    /// The version it was loaded at; a taxonomy created or forked here starts at 1.
-    version: TaxonomyVersion,
+    version: Option<TaxonomyVersion>,
     derived_from: Option<TaxonomyLineage>,
     types: Vec<TypeNode>,
     name_locked: bool,
@@ -279,18 +278,13 @@ impl TaxonomyNode {
     pub fn types(&self) -> &[TypeNode] {
         &self.types
     }
-
-    /// Whether the configuration stores this custom taxonomy under its current name.
-    fn persisted(&self) -> bool {
-        self.origin == TaxonomyOrigin::Custom && self.saved_name.is_some()
-    }
 }
 
 #[derive(Clone, Debug)]
 pub struct TypeNode {
     id: NodeId,
     baseline: Option<LoadedPath>,
-    schema_version: SchemaVersion,
+    schema_version: Option<SchemaVersion>,
     name: String,
     description: String,
     properties: Vec<PropertyNode>,
@@ -691,32 +685,9 @@ impl LibraryDraft {
         }
     }
 
-    /// The version saving would write for the taxonomy that owns `id`: the stored version, one
-    /// past it once the content differs, and 1 for a taxonomy created or forked here.
     #[must_use]
     pub fn version(&self, id: &NodeId) -> Option<TaxonomyVersion> {
-        let taxonomy = self.node(id)?.taxonomy();
-        if !taxonomy.persisted() {
-            return Some(taxonomy.version);
-        }
-        let stored = self
-            .records()
-            .iter()
-            .find(|stored| Some(stored.id()) == taxonomy.saved_name.as_ref())?;
-        let unchanged = problems::content(self, taxonomy).is_ok_and(|(description, types)| {
-            &description == stored.description()
-                && types == stored.commit_types()
-                && TaxonomyId::from_label(&taxonomy.name).as_ref() == Ok(stored.id())
-        });
-        if unchanged {
-            Some(stored.version())
-        } else {
-            stored
-                .version()
-                .get()
-                .checked_add(1)
-                .and_then(|version| TaxonomyVersion::new(version).ok())
-        }
+        self.node(id)?.taxonomy().version
     }
 
     /// Whether saving would write anything: the draft does not build to what it was loaded from.
@@ -955,8 +926,7 @@ impl LibraryDraft {
                     self.taxonomies[t].types.push(TypeNode {
                         id: id.clone(),
                         baseline: None,
-                        schema_version: SchemaVersion::new(1)
-                            .unwrap_or_else(|_| unreachable!("schema version 1 is valid")),
+                        schema_version: None,
                         name: String::new(),
                         description: String::new(),
                         properties: Vec::new(),
@@ -1117,7 +1087,7 @@ impl LibraryDraft {
             origin: TaxonomyOrigin::Custom,
             name: String::new(),
             description: String::new(),
-            version: TaxonomyVersion::V1,
+            version: None,
             name_locked: false,
             saved_name: None,
             created_on: None,
@@ -1129,14 +1099,13 @@ impl LibraryDraft {
     }
 
     /// Appends a copy of the taxonomy that owns `id`, named `<source>-fork` with the source part
-    /// cut to fit the Name limit, with lineage to the source's version. Each copied node keeps
+    /// cut to fit the Name limit, with lineage to the source. Each copied node keeps
     /// the baseline of the node it copies, but no property names a type it was copied from.
     pub fn fork(&mut self, id: &NodeId) -> Result<NodeId, EditRefusal> {
         let source = self.node(id).ok_or(EditRefusal::Missing)?.taxonomy();
         let lineage = TaxonomyId::from_label(&source.name)
             .ok()
-            .zip(self.version(&source.id))
-            .map(|(id, version)| TaxonomyLineage::new(id, version))
+            .map(|id| TaxonomyLineage::new(id, self.version(&source.id)))
             .ok_or(EditRefusal::NotApplicable)?;
         let mut fork = source.clone();
         fork.origin = TaxonomyOrigin::Custom;
@@ -1146,10 +1115,11 @@ impl LibraryDraft {
         fork.modified_on = None;
         let room = NAME_LIMIT - FORK_SUFFIX.len();
         fork.name = source.name.graphemes(true).take(room).collect::<String>() + FORK_SUFFIX;
-        fork.version = TaxonomyVersion::V1;
+        fork.version = None;
         fork.derived_from = Some(lineage);
         fork.id = self.mint();
         for commit_type in &mut fork.types {
+            commit_type.schema_version = None;
             commit_type.id = self.mint();
             for property in &mut commit_type.properties {
                 property.id = self.mint();
@@ -1182,7 +1152,7 @@ pub enum CopyIn {
     /// Add it under its own identity, which nothing here may already use.
     New,
     /// Replace the content of the taxonomy here that has its identity, keeping that
-    /// taxonomy's place and version history.
+    /// taxonomy's place and creation history.
     Replace,
     /// Add it under `<identity>-copy`, with lineage to the source, ready to rename.
     Renamed,
@@ -1237,7 +1207,6 @@ impl LibraryDraft {
                 replacement.saved_name.clone_from(&current.saved_name);
                 replacement.created_on = current.created_on;
                 replacement.modified_on = current.modified_on;
-                replacement.version = current.version;
                 replacement.derived_from.clone_from(&current.derived_from);
                 self.taxonomies[index] = replacement;
                 Ok(self.taxonomies[index].id.clone())
@@ -1296,14 +1265,19 @@ impl LibraryDraft {
         name_locked: bool,
         derived_from: Option<TaxonomyLineage>,
     ) -> TaxonomyNode {
-        let mut node = TaxonomyNode::new(&taxonomy.clone().into(), TaxonomyOrigin::Custom);
+        let record: LibraryTaxonomy = if self.is_project() && derived_from.is_none() {
+            taxonomy.clone().into()
+        } else {
+            taxonomy.clone().into_custom().into()
+        };
+        let mut node = TaxonomyNode::new(&record, TaxonomyOrigin::Custom);
         node.id = self.mint();
         node.baseline = None;
         node.saved_name = None;
         node.name = name;
         node.name_locked = name_locked;
         if derived_from.is_some() {
-            node.version = TaxonomyVersion::V1;
+            node.version = None;
             node.derived_from = derived_from;
         }
         for commit_type in &mut node.types {

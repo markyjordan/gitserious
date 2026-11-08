@@ -395,7 +395,7 @@ fn empty_library() -> Result<Workspace, String> {
     let workspace = Workspace::new();
     let record = gitserious_app::LibraryTaxonomy::new(
         TaxonomyId::new("unfinished").map_err(|error| error.to_string())?,
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         Description::new("Awaiting its first type").map_err(|error| error.to_string())?,
         None,
         Vec::new(),
@@ -422,7 +422,7 @@ fn team_library() -> Result<Workspace, String> {
 fn team_pair_library() -> Result<Workspace, String> {
     let hotfix = || -> Result<CommitTypeDefinition, Box<dyn std::error::Error>> {
         Ok(CommitTypeDefinition::new(
-            SchemaVersion::new(1)?,
+            Some(SchemaVersion::new(1)?),
             CommitTypeId::new("hotfix")?,
             "Urgent fixes",
             vec![PropertyDefinition::new(
@@ -452,11 +452,11 @@ fn team_configuration(
     let description = format!("Team taxonomy{}", ".".repeat(87));
     let team = Taxonomy::new(
         TaxonomyId::new("team")?,
-        TaxonomyVersion::new(1)?,
+        Some(TaxonomyVersion::new(1)?),
         Description::new(description)?,
         None,
         std::iter::once(CommitTypeDefinition::new(
-            SchemaVersion::new(1)?,
+            Some(SchemaVersion::new(1)?),
             CommitTypeId::new("release")?,
             "Release notes",
             vec![

@@ -87,7 +87,7 @@ pub enum HomeState {
     Initialized {
         root: RepositoryRoot,
         default: TaxonomyId,
-        version: TaxonomyVersion,
+        version: Option<TaxonomyVersion>,
         /// Git does not track `gitserious.toml` yet, so the policy stays local.
         policy_untracked: bool,
     },

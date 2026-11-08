@@ -44,7 +44,7 @@ fn library_taxonomy_initializes_and_commits_from_the_project_copy() -> Result<()
     let init = home.run(repository.path(), &["init"])?;
     assert!(init.status.success(), "{}", stderr(&init));
     assert!(
-        stdout(&init).ends_with(" (platform-v1).\n"),
+        stdout(&init).ends_with(" (platform).\n"),
         "{}",
         stdout(&init)
     );

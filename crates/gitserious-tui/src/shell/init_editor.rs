@@ -251,7 +251,11 @@ impl InitEditor {
         let version_width = self
             .rows
             .iter()
-            .map(|row| row.taxonomy.version().to_string().len() + 1)
+            .map(|row| {
+                row.taxonomy
+                    .version()
+                    .map_or(0, |version| version.to_string().len() + 1)
+            })
             .max()
             .unwrap_or(0);
         let mut number = 0;
@@ -276,7 +280,9 @@ impl InitEditor {
                 let right = format!(
                     "{count} {}  {:>version_width$} ",
                     if count == 1 { "type " } else { "types" },
-                    format!("v{}", row.taxonomy.version())
+                    row.taxonomy
+                        .version()
+                        .map_or_else(String::new, |version| format!("v{version}"))
                 );
                 // Each row keeps one line, so the window arithmetic above stays exact.
                 let budget =
@@ -350,7 +356,7 @@ impl InitEditor {
             .horizontal_margin(1)
             .areas(area);
         let default = self.default_row().map_or_else(String::new, |row| {
-            self.rows[row].taxonomy.versioned().to_string()
+            self.rows[row].taxonomy.reference().to_string()
         });
         let mut entries = Vec::new();
         if self.creates_repository {
@@ -464,7 +470,7 @@ mod tests {
     fn team_changes() -> Result<Taxonomy, Box<dyn std::error::Error>> {
         Ok(Taxonomy::new(
             TaxonomyId::new("team-changes")?,
-            TaxonomyVersion::new(3)?,
+            Some(TaxonomyVersion::new(3)?),
             Description::new("Changes our team tracks.")?,
             None,
             built_in_taxonomies()[0].commit_types()[..3].to_vec(),
@@ -489,7 +495,7 @@ mod tests {
         let order = configuration
             .taxonomies()
             .iter()
-            .map(|taxonomy| taxonomy.versioned().to_string())
+            .map(|taxonomy| taxonomy.reference().to_string())
             .collect::<Vec<_>>();
         assert_eq!(
             configuration.default_taxonomy(),
@@ -526,7 +532,7 @@ mod tests {
         assert!(rows[6].starts_with(" ✓ 2  research"));
         assert!(rows[7].starts_with(" ✓ 3  infra-ops"));
         assert!(rows[8].starts_with(" ○ –  team-changes  custom"));
-        assert!(rows[8].ends_with("3 types  v3 "));
+        assert!(rows[8].trim_end().ends_with("3 types"));
         assert_eq!(
             initialize(&mut editor)?,
             ["conventional-v1", "research-v1", "infra-ops-v1"]
@@ -564,7 +570,7 @@ mod tests {
         assert!(rows[7].starts_with(" ○ –  research"));
         assert_eq!(
             initialize(&mut editor)?,
-            ["team-changes-v3", "conventional-v1", "infra-ops-v1"]
+            ["team-changes", "conventional-v1", "infra-ops-v1"]
         );
         Ok(())
     }
@@ -578,7 +584,7 @@ mod tests {
                 let padding = "-fork".repeat(index % 3 * 12);
                 Ok(Taxonomy::new(
                     TaxonomyId::new(format!("team{padding}-{index:02}"))?,
-                    TaxonomyVersion::V1,
+                    Some(TaxonomyVersion::V1),
                     template.description().clone(),
                     None,
                     template.commit_types().to_vec(),

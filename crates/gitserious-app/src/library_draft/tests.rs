@@ -13,7 +13,7 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn team() -> Result<GlobalConfiguration, Box<dyn std::error::Error>> {
     let release = CommitTypeDefinition::new(
-        SchemaVersion::new(1)?,
+        Some(SchemaVersion::new(1)?),
         CommitTypeId::new("release")?,
         "Release notes",
         vec![
@@ -34,7 +34,7 @@ fn team() -> Result<GlobalConfiguration, Box<dyn std::error::Error>> {
     )?;
     let team = Taxonomy::new(
         TaxonomyId::new("team")?,
-        TaxonomyVersion::new(3)?,
+        Some(TaxonomyVersion::new(3)?),
         Description::new("Team taxonomy")?,
         None,
         vec![release],
@@ -42,7 +42,7 @@ fn team() -> Result<GlobalConfiguration, Box<dyn std::error::Error>> {
     let source = &built_in_taxonomies()[0];
     let zeta = Taxonomy::new(
         TaxonomyId::new("zeta")?,
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         source.description().clone(),
         Some(TaxonomyLineage::new(source.id().clone(), source.version())),
         source.commit_types().to_vec(),
@@ -83,7 +83,7 @@ fn built_ins_come_first_then_custom_taxonomies_in_storage_order() -> TestResult 
     assert_eq!(
         draft.taxonomies()[3]
             .derived_from()
-            .map(|source| source.versioned().to_string()),
+            .map(|source| source.reference().to_string()),
         Some("conventional-v1".into())
     );
     Ok(())
@@ -146,7 +146,7 @@ fn reads_walk_from_a_node_to_its_ancestors() -> TestResult {
         draft.node(&rollback).map(NodeRef::names),
         Some(vec!["team", "release", "rollback"])
     );
-    assert_eq!(draft.version(&rollback), TaxonomyVersion::new(3).ok());
+    assert_eq!(draft.version(&rollback), None);
     assert_eq!(draft.find_path(&["team", "missing"]), None);
     Ok(())
 }
@@ -275,18 +275,18 @@ fn added_nodes_start_blank_and_removal_lands_on_a_neighbor() -> TestResult {
 }
 
 #[test]
-fn edits_advance_a_stored_version_once_and_restoring_the_content_restores_it() -> TestResult {
+fn edits_and_reverts_never_add_custom_version_metadata() -> TestResult {
     let mut draft = LibraryDraft::from_configuration(team()?);
     let team = find(&draft, &["team"])?;
     for description in ["First revision.", "Second revision."] {
         draft.edit(&team, DraftEdit::Text(DraftField::Description, description))?;
-        assert_eq!(draft.version(&team), TaxonomyVersion::new(4).ok());
+        assert_eq!(draft.version(&team), None);
     }
     draft.edit(
         &team,
         DraftEdit::Text(DraftField::Description, "Team taxonomy"),
     )?;
-    assert_eq!(draft.version(&team), TaxonomyVersion::new(3).ok());
+    assert_eq!(draft.version(&team), None);
     assert!(!draft.is_changed());
     Ok(())
 }
@@ -303,7 +303,7 @@ fn a_fork_copies_its_source_under_a_new_name_with_lineage_and_source_baselines()
     assert_eq!(copy.origin(), TaxonomyOrigin::Custom);
     assert_eq!(
         copy.derived_from()
-            .map(|source| source.versioned().to_string()),
+            .map(|source| source.reference().to_string()),
         Some("conventional-v1".into())
     );
     let source = &draft.taxonomies()[0];
@@ -316,7 +316,7 @@ fn a_fork_copies_its_source_under_a_new_name_with_lineage_and_source_baselines()
                 matches!(copy.id(), NodeId::Local(_)) && copy.baseline() == source.baseline()
             })
     );
-    assert_eq!(draft.version(&fork), Some(TaxonomyVersion::V1));
+    assert_eq!(draft.version(&fork), None);
     assert_eq!(
         draft.fields(&fork),
         &[DraftField::Name, DraftField::Description]
@@ -327,7 +327,12 @@ fn a_fork_copies_its_source_under_a_new_name_with_lineage_and_source_baselines()
             .custom_taxonomies()
             .last()
             .map(LibraryTaxonomy::commit_types),
-        Some(built_in_taxonomies()[0].commit_types())
+        Some(
+            built_in_taxonomies()[0]
+                .clone()
+                .into_custom()
+                .commit_types()
+        )
     );
     Ok(())
 }
@@ -479,8 +484,8 @@ fn edited_prose_builds_trimmed_and_loaded_prose_stays_byte_for_byte() -> TestRes
     assert!(!draft.is_changed());
     assert_eq!(
         draft.version(&summary),
-        TaxonomyVersion::new(3).ok(),
-        "trailing spaces alone do not advance the version"
+        None,
+        "trailing spaces do not add version metadata"
     );
     assert_eq!(
         draft.text(&summary, DraftField::Description),
@@ -496,7 +501,7 @@ fn edited_prose_builds_trimmed_and_loaded_prose_stays_byte_for_byte() -> TestRes
 
     let padded = Taxonomy::new(
         TaxonomyId::new("padded")?,
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         Description::new(" Padded taxonomy \n")?,
         None,
         built_in_taxonomies()[0].commit_types().to_vec(),
@@ -693,7 +698,7 @@ fn zero_types_save_at_one_and_first_type_finalizes_the_name() -> TestResult {
     draft.edit(&node, DraftEdit::Text(DraftField::Description, "Purpose"))?;
     let saved = draft.build().map_err(|problems| format!("{problems:?}"))?;
     let record = &saved.custom_taxonomies()[0];
-    assert_eq!(record.version(), TaxonomyVersion::V1);
+    assert_eq!(record.version(), None);
     assert!(!record.name_locked());
     assert!(record.usable().is_none());
     let mut draft = LibraryDraft::from_configuration(saved);
@@ -705,7 +710,7 @@ fn zero_types_save_at_one_and_first_type_finalizes_the_name() -> TestResult {
     draft.edit(&child, DraftEdit::Text(DraftField::Description, "A change"))?;
     let saved = draft.build().map_err(|problems| format!("{problems:?}"))?;
     assert!(saved.custom_taxonomies()[0].name_locked());
-    assert_eq!(saved.custom_taxonomies()[0].version().get(), 2);
+    assert_eq!(saved.custom_taxonomies()[0].version(), None);
     assert!(
         saved
             .catalog()?
@@ -718,7 +723,7 @@ fn zero_types_save_at_one_and_first_type_finalizes_the_name() -> TestResult {
     draft.edit(&child, DraftEdit::Remove)?;
     let saved = draft.build().map_err(|problems| format!("{problems:?}"))?;
     assert!(saved.custom_taxonomies()[0].name_locked());
-    assert_eq!(saved.custom_taxonomies()[0].version().get(), 3);
+    assert_eq!(saved.custom_taxonomies()[0].version(), None);
     assert!(!draft.fields(&node).contains(&DraftField::Name));
     Ok(())
 }
@@ -844,7 +849,7 @@ fn new_and_forked_library_entries_get_their_own_saved_dates() -> TestResult {
     let source = &built_in_taxonomies()[1];
     let replacement = Taxonomy::new(
         TaxonomyId::new("imported")?,
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         source.description().clone(),
         None,
         source.commit_types().to_vec(),
@@ -859,7 +864,7 @@ fn new_and_forked_library_entries_get_their_own_saved_dates() -> TestResult {
     );
     let replacement = Taxonomy::new(
         replacement.id().clone(),
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         Description::new("Replacement content")?,
         None,
         replacement.commit_types().to_vec(),

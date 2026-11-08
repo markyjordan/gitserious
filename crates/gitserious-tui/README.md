@@ -124,8 +124,8 @@ Config uses the shared Bone palette: ground behind content, band behind
 raised rows, text for values, dim for context, pending orange for EDIT, and
 blocks coral for validation. The Library header reads "Commit message taxonomy
 library" above its configuration file path. Library has a taxonomy outline and
-an Inspector. Custom taxonomy details show Created on and Modified on immediately
-above Version. Dates use UTC calendar days in `YYYY-MM-DD` format. Custom
+an Inspector. Custom taxonomy details show Created on and Modified on. Built-in
+inspectors retain Version; custom taxonomies have no version field. Dates use UTC calendar days in `YYYY-MM-DD` format. Custom
 entries without recorded dates show `Unknown`; built-ins omit both facts.
 Saving a new entry
 records both dates; later content edits preserve Created on and update
@@ -182,7 +182,7 @@ Names such as `Team Changes` save as `team-changes`. Name and Condition accept
 80 graphemes; Description and Rationale accept 100. Loaded content beyond those
 limits remains intact and may shrink. Edited descriptions and rationales are
 trimmed, while unchanged loaded prose is preserved. A no-op edit performs no
-write or version increment. Successful Library saves remain quiet; write
+write. Successful Library saves remain quiet; write
 failures still report an actionable error and preserve the edit for retry.
 
 A taxonomy may be saved without types. It shows `▲ invalid`, and the Inspector
@@ -190,9 +190,9 @@ explains: "Add a type before this taxonomy can be included in a project."
 Types and properties use inline field errors without invalid badges. Saved
 eligibility stays unchanged while a child is being edited. A taxonomy's name
 locks after its first save with types and remains locked if its last type is
-removed. Existing records default to locked names. New taxonomies start at
-version 1, and each substantive successful save increments an existing version
-once. Forks start at version 1 and record informational source lineage.
+removed. Existing records default to locked names. Custom taxonomies and their
+types have no version metadata or revision counters. Forks record informational
+source lineage, with a version only for a built-in source.
 
 Copy, reorder, and confirmed deletion save immediately. All Library writes use
 the canonical `config.toml` and compare-and-swap storage. A failed write or

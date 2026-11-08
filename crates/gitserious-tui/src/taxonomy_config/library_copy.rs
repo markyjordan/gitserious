@@ -122,9 +122,11 @@ impl State {
                     .and_then(|catalog| catalog.origin(taxonomy.id()))
                     .map_or("", TaxonomyOrigin::as_str);
                 ListItem::new(format!(
-                    "{:<20} v{:<3} {origin:<9} {state}",
+                    "{:<20} {:<4} {origin:<9} {state}",
                     taxonomy.id().as_str(),
-                    taxonomy.version().get(),
+                    taxonomy
+                        .version()
+                        .map_or_else(String::new, |version| format!("v{version}")),
                 ))
                 .style(row_style(index))
             })

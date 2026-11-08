@@ -37,25 +37,28 @@ impl Display for TaxonomyVersion {
     }
 }
 
-/// One taxonomy version written as `<id>-v<N>`, such as `conventional-v1`.
+/// A plain custom identity or a built-in release such as `conventional-v1`.
 ///
 /// Taxonomy identifiers cannot end in `-v<digits>`, so the text splits back one way.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct VersionedTaxonomy<'a> {
+pub struct TaxonomyReference<'a> {
     id: &'a TaxonomyId,
-    version: TaxonomyVersion,
+    version: Option<TaxonomyVersion>,
 }
 
-impl<'a> VersionedTaxonomy<'a> {
+impl<'a> TaxonomyReference<'a> {
     #[must_use]
-    pub const fn new(id: &'a TaxonomyId, version: TaxonomyVersion) -> Self {
+    pub const fn new(id: &'a TaxonomyId, version: Option<TaxonomyVersion>) -> Self {
         Self { id, version }
     }
 }
 
-impl Display for VersionedTaxonomy<'_> {
+impl Display for TaxonomyReference<'_> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}-v{}", self.id, self.version)
+        match self.version {
+            Some(version) => write!(formatter, "{}-v{version}", self.id),
+            None => Display::fmt(self.id, formatter),
+        }
     }
 }
 

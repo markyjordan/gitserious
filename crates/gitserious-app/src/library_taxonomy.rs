@@ -11,7 +11,7 @@ use gitserious_core::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LibraryTaxonomy {
     id: TaxonomyId,
-    version: TaxonomyVersion,
+    version: Option<TaxonomyVersion>,
     description: Description,
     derived_from: Option<TaxonomyLineage>,
     commit_types: Vec<CommitTypeDefinition>,
@@ -21,15 +21,21 @@ pub struct LibraryTaxonomy {
 }
 
 impl LibraryTaxonomy {
-    /// Validates type uniqueness. An entry with types always has a finalized name.
+    /// Validates type uniqueness and discards release metadata for custom identities.
+    /// An entry with types always has a finalized name.
     pub fn new(
         id: TaxonomyId,
-        version: TaxonomyVersion,
+        version: Option<TaxonomyVersion>,
         description: Description,
         derived_from: Option<TaxonomyLineage>,
         commit_types: Vec<CommitTypeDefinition>,
         name_locked: bool,
     ) -> Result<Self, TaxonomyError> {
+        let version = version.filter(|_| {
+            gitserious_core::built_in_taxonomies()
+                .iter()
+                .any(|taxonomy| taxonomy.id() == &id)
+        });
         let mut ids = BTreeSet::new();
         for definition in &commit_types {
             if !ids.insert(definition.id()) {
@@ -42,7 +48,14 @@ impl LibraryTaxonomy {
             version,
             description,
             derived_from,
-            commit_types,
+            commit_types: if version.is_none() {
+                commit_types
+                    .into_iter()
+                    .map(CommitTypeDefinition::into_custom)
+                    .collect()
+            } else {
+                commit_types
+            },
             created_on: None,
             modified_on: None,
         })
@@ -54,7 +67,7 @@ impl LibraryTaxonomy {
     }
 
     #[must_use]
-    pub const fn version(&self) -> TaxonomyVersion {
+    pub const fn version(&self) -> Option<TaxonomyVersion> {
         self.version
     }
 
@@ -98,6 +111,18 @@ impl LibraryTaxonomy {
     #[must_use]
     pub const fn modified_on(&self) -> Option<TaxonomyDate> {
         self.modified_on
+    }
+
+    /// Removes taxonomy and type release metadata from a custom Library record.
+    #[must_use]
+    pub fn into_custom(mut self) -> Self {
+        self.version = None;
+        self.commit_types = self
+            .commit_types
+            .into_iter()
+            .map(CommitTypeDefinition::into_custom)
+            .collect();
+        self
     }
 
     /// Produces project policy only when at least one type exists.

@@ -22,7 +22,7 @@ pub(super) fn team() -> Result<Workspace, Box<dyn std::error::Error>> {
     };
     let commit_type = |id: &str, properties| -> Result<_, Box<dyn std::error::Error>> {
         Ok(CommitTypeDefinition::new(
-            SchemaVersion::new(1)?,
+            Some(SchemaVersion::new(1)?),
             CommitTypeId::new(id)?,
             format!("A {id} change."),
             properties,
@@ -34,7 +34,7 @@ pub(super) fn team() -> Result<Workspace, Box<dyn std::error::Error>> {
     )?);
     let team = Taxonomy::new(
         TaxonomyId::new("team")?,
-        TaxonomyVersion::new(1)?,
+        Some(TaxonomyVersion::new(1)?),
         Description::new("Team taxonomy")?,
         None,
         vec![

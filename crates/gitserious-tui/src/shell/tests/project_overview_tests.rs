@@ -87,7 +87,7 @@ fn project_enter_opens_the_same_editor_as_home_and_cancel_writes_nothing()
             configuration
                 .taxonomies()
                 .iter()
-                .map(|taxonomy| taxonomy.versioned().to_string())
+                .map(|taxonomy| taxonomy.reference().to_string())
                 .collect::<Vec<_>>(),
             ["infra-ops-v1", "research-v1"]
         );

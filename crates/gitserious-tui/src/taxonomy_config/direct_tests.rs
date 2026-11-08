@@ -324,7 +324,7 @@ fn partial_fields_and_duplicate_names_stay_in_edit_with_inline_errors() -> Resul
         assert!(!frame(&mut state, width, height)?.contains("Saved."));
     }
     let saved = stored(&store)?;
-    assert_eq!(saved.custom_taxonomies()[0].version().get(), 2);
+    assert_eq!(saved.custom_taxonomies()[0].version(), None);
     assert_eq!(
         saved.custom_taxonomies()[0].commit_types()[0].description(),
         "New kind purpose"
@@ -357,7 +357,7 @@ fn zero_type_entry_reopens_unlocks_until_eligible_and_stays_locked_after_last_ty
         .custom_taxonomies()
         .last()
         .ok_or("new record missing")?;
-    assert_eq!(record.version().get(), 1);
+    assert_eq!(record.version(), None);
     assert!(!record.name_locked());
     assert!(record.usable().is_none());
     assert!(frame(&mut state, 87, 40)?.contains("▲ invalid"));
@@ -436,7 +436,7 @@ fn zero_type_entry_reopens_unlocks_until_eligible_and_stays_locked_after_last_ty
             .find(&TaxonomyId::new("final-name")?)
             .is_some()
     );
-    assert_eq!(record.version().get(), 3);
+    assert_eq!(record.version(), None);
     assert!(!frame(&mut state, 87, 40)?.contains("▲ invalid"));
     press(&mut state, &store, KeyCode::Char('d'));
     press(&mut state, &store, KeyCode::Char('y'));
@@ -454,7 +454,7 @@ fn zero_type_entry_reopens_unlocks_until_eligible_and_stays_locked_after_last_ty
         .ok_or("new record missing")?;
     assert!(record.name_locked());
     assert!(record.commit_types().is_empty());
-    assert_eq!(record.version().get(), 4);
+    assert_eq!(record.version(), None);
     assert!(
         !state
             .library()
@@ -513,7 +513,7 @@ fn conditional_fields_are_required_and_type_and_property_never_show_invalid_chip
         assert!(!frame(&mut state, width, height)?.contains("Saved."));
     }
     let saved = stored(&store)?;
-    assert_eq!(saved.custom_taxonomies()[0].version().get(), 2);
+    assert_eq!(saved.custom_taxonomies()[0].version(), None);
     assert_eq!(store.inner.saves(), 1);
     Ok(())
 }
@@ -596,7 +596,7 @@ fn copy_reorder_and_delete_rollback_on_failure_and_persist_on_retry() -> Result 
         assert!(state.status.is_none(), "{operation} retry must be quiet");
         assert!(!frame(&mut state, 87, 40)?.contains("Saved."));
         assert!(!state.scope_dirty(ConfigurationDestination::Global));
-        assert_eq!(stored(&store)?.custom_taxonomies()[0].version().get(), 2);
+        assert_eq!(stored(&store)?.custom_taxonomies()[0].version(), None);
     }
     Ok(())
 }

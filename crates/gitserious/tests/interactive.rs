@@ -142,11 +142,11 @@ fn shell_services_gate_staging_validate_review_and_retry_git_rejection()
     git(temp.path(), &["config", "commit.gpgsign", "false"])?;
     let taxonomy = Taxonomy::new(
         TaxonomyId::new("notes")?,
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         Description::new("Test notes")?,
         None,
         vec![CommitTypeDefinition::new(
-            SchemaVersion::V1,
+            Some(SchemaVersion::V1),
             CommitTypeId::new("note")?,
             "Record a note",
             Vec::new(),
@@ -292,7 +292,7 @@ impl InteractiveUi for HomeUi<'_> {
             HomeState::Initialized {
                 root: root.clone(),
                 default: TaxonomyId::new("conventional").map_err(|error| error.to_string())?,
-                version: TaxonomyVersion::V1,
+                version: Some(TaxonomyVersion::V1),
                 policy_untracked: true,
             }
         );
@@ -358,11 +358,11 @@ impl InteractiveUi for LibraryUi {
         let offered = workspace
             .library_taxonomies()?
             .iter()
-            .map(|taxonomy| taxonomy.versioned().to_string())
+            .map(|taxonomy| taxonomy.reference().to_string())
             .collect::<Vec<_>>();
         assert_eq!(
             offered,
-            ["team-changes-v3"],
+            ["team-changes"],
             "a taxonomy without types is left out"
         );
         Ok(())
@@ -376,7 +376,7 @@ fn initialization_offers_only_library_taxonomies_that_have_types() -> Result<(),
     let custom = |id: &str, version, commit_types: &[CommitTypeDefinition]| {
         LibraryTaxonomy::new(
             TaxonomyId::new(id)?,
-            TaxonomyVersion::new(version)?,
+            Some(TaxonomyVersion::new(version)?),
             Description::new("A team taxonomy")?,
             None,
             commit_types.to_vec(),

@@ -1726,9 +1726,8 @@ impl State {
                     .iter()
                     .map(|taxonomy| {
                         format!(
-                            "{}  v{}\n  {}\n  Types: {}",
-                            taxonomy.id(),
-                            taxonomy.version().get(),
+                            "{}\n  {}\n  Types: {}",
+                            taxonomy.reference(),
                             taxonomy.description(),
                             taxonomy
                                 .commit_types()
@@ -2039,11 +2038,11 @@ mod tests {
     fn custom_workspace() -> Result<(Workspace, Taxonomy), Box<dyn std::error::Error>> {
         let source = Taxonomy::new(
             TaxonomyId::new("original")?,
-            TaxonomyVersion::new(3)?,
+            Some(TaxonomyVersion::new(3)?),
             Description::new("Original taxonomy")?,
             None,
             vec![CommitTypeDefinition::new(
-                SchemaVersion::new(4)?,
+                Some(SchemaVersion::new(4)?),
                 CommitTypeId::new("existing")?,
                 "Existing type",
                 vec![PropertyDefinition::new(
@@ -2336,7 +2335,7 @@ mod tests {
         assert!(commit.contains("Valid"));
         state.project_section = ProjectSection::Taxonomies;
         let taxonomies = state.project_detail();
-        assert!(taxonomies.contains("team  v1"));
+        assert!(taxonomies.contains("team\n"));
         assert!(taxonomies.contains("Types: feat, fix"));
 
         state.project_section = ProjectSection::Commit;
@@ -2421,7 +2420,7 @@ mod tests {
             assert!(outline("infra-ops").contains(" infra-ops      built-in "));
             assert!(outline("infra-ops").trim_end().ends_with(" 10 types  v1"));
             assert!(outline("original").contains(" original       custom "));
-            assert!(outline("original").trim_end().ends_with("  1 type   v3"));
+            assert!(outline("original").trim_end().ends_with("  1 type"));
             let text = screen.join("\n");
             let rule = rule_row(&terminal).ok_or("missing the rule above the Inspector")?;
             assert!(screen[usize::from(rule) + 1].contains("│ Taxonomy conventional "));
@@ -3891,7 +3890,10 @@ mod tests {
             .find(|row| row.contains("▾ team "))
             .ok_or("team row")?;
         assert!(team.contains(" custom "), "{team}");
-        assert!(team.contains(" 11 types  v1 │ "), "{team}");
+        assert!(
+            team.contains(" 11 types") && !team.contains("types  v1"),
+            "{team}"
+        );
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(matches!(
             state.taxonomies.observe(state.library()).mode,
@@ -4391,7 +4393,7 @@ mod tests {
                 .find_path(&["original"])
                 .ok_or("original")?,
         );
-        assert_eq!(version, TaxonomyVersion::new(4).ok());
+        assert_eq!(version, None);
         Ok(())
     }
 

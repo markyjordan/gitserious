@@ -22,7 +22,7 @@ pub struct InitOutcome {
     status: InitStatus,
     root: RepositoryRoot,
     taxonomy: TaxonomyId,
-    version: TaxonomyVersion,
+    version: Option<TaxonomyVersion>,
 }
 
 impl InitOutcome {
@@ -39,7 +39,7 @@ impl InitOutcome {
         &self.taxonomy
     }
     #[must_use]
-    pub const fn version(&self) -> TaxonomyVersion {
+    pub const fn version(&self) -> Option<TaxonomyVersion> {
         self.version
     }
 }

@@ -29,7 +29,7 @@ fn custom_configuration() -> Result<GlobalConfiguration, Box<dyn Error>> {
     let source = &built_in_taxonomies()[0];
     let fork = Taxonomy::new(
         team.clone(),
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         source.description().clone(),
         Some(TaxonomyLineage::new(source.id().clone(), source.version())),
         source.commit_types().to_vec(),
@@ -258,7 +258,7 @@ fn empty_record(
 ) -> Result<gitserious_app::LibraryTaxonomy, Box<dyn Error>> {
     Ok(gitserious_app::LibraryTaxonomy::new(
         TaxonomyId::new(name)?,
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         gitserious_core::Description::new("A Library entry awaiting its first type.")?,
         None,
         Vec::new(),
@@ -321,7 +321,7 @@ fn eligibility_changes_keep_selection_and_durable_name_locking() -> Result<(), B
     let original = &initial.custom_taxonomies()[0];
     let empty = gitserious_app::LibraryTaxonomy::new(
         original.id().clone(),
-        TaxonomyVersion::new(2)?,
+        Some(TaxonomyVersion::new(2)?),
         original.description().clone(),
         original.derived_from().cloned(),
         Vec::new(),

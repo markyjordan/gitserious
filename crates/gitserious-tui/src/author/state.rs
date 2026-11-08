@@ -1623,11 +1623,11 @@ mod tests {
     fn notes_taxonomy() -> Result<Taxonomy, Box<dyn std::error::Error>> {
         Ok(Taxonomy::new(
             TaxonomyId::new("notes")?,
-            TaxonomyVersion::V1,
+            Some(TaxonomyVersion::V1),
             Description::new("Notes")?,
             None,
             vec![CommitTypeDefinition::new(
-                SchemaVersion::V1,
+                Some(SchemaVersion::V1),
                 CommitTypeId::new("note")?,
                 "Record a note",
                 Vec::new(),
@@ -1743,14 +1743,14 @@ mod tests {
         let first = notes_taxonomy()?;
         let second = Taxonomy::new(
             TaxonomyId::new("second")?,
-            TaxonomyVersion::V1,
+            Some(TaxonomyVersion::V1),
             Description::new("Second")?,
             None,
             first.commit_types().to_vec(),
         )?;
         let third = Taxonomy::new(
             TaxonomyId::new("third")?,
-            TaxonomyVersion::V1,
+            Some(TaxonomyVersion::V1),
             Description::new("Third")?,
             None,
             first.commit_types().to_vec(),

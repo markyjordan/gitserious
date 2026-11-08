@@ -166,7 +166,7 @@ fn assert_resolution(status: InitStatus, outcome: &InitOutcome) {
     assert_eq!(outcome.status(), status);
     assert_eq!(outcome.root().as_path(), repository_path());
     assert_eq!(outcome.taxonomy().as_str(), "conventional");
-    assert_eq!(Ok(outcome.version()), TaxonomyVersion::new(1));
+    assert_eq!(outcome.version(), TaxonomyVersion::new(1).ok());
 }
 
 #[test]
@@ -260,7 +260,7 @@ fn definition(
     properties: Vec<PropertyDefinition>,
 ) -> Result<CommitTypeDefinition, Box<dyn Error>> {
     Ok(CommitTypeDefinition::new(
-        SchemaVersion::new(version)?,
+        Some(SchemaVersion::new(version)?),
         CommitTypeId::new(id)?,
         description,
         properties,
@@ -270,7 +270,7 @@ fn definition(
 fn taxonomy(commit_types: Vec<CommitTypeDefinition>) -> Result<Taxonomy, Box<dyn Error>> {
     Ok(Taxonomy::new(
         TaxonomyId::new("team")?,
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         Description::new("Team policy.")?,
         None,
         commit_types,
@@ -340,7 +340,9 @@ fn taxonomy_fingerprint_changes_for_every_semantic_dimension() -> Result<(), Box
     let variants = commit_type_variants()?;
     let mut taxonomies = variants
         .iter()
-        .map(|definition| taxonomy(vec![definition.clone()]))
+        .enumerate()
+        .filter(|(index, _)| *index != 1)
+        .map(|(_, definition)| taxonomy(vec![definition.clone()]))
         .collect::<Result<Vec<_>, _>>()?;
     let base = taxonomy(vec![variants[0].clone()])?;
     let renamed = Taxonomy::new(
@@ -352,7 +354,7 @@ fn taxonomy_fingerprint_changes_for_every_semantic_dimension() -> Result<(), Box
     )?;
     let versioned = Taxonomy::new(
         base.id().clone(),
-        TaxonomyVersion::new(2)?,
+        Some(TaxonomyVersion::new(2)?),
         base.description().clone(),
         None,
         base.commit_types().to_vec(),
@@ -370,13 +372,21 @@ fn taxonomy_fingerprint_changes_for_every_semantic_dimension() -> Result<(), Box
         base.description().clone(),
         Some(TaxonomyLineage::new(
             TaxonomyId::new("conventional")?,
-            TaxonomyVersion::V1,
+            Some(TaxonomyVersion::V1),
         )),
         base.commit_types().to_vec(),
     )?;
     let pair = taxonomy(vec![variants[0].clone(), variants[2].clone()])?;
     let reversed = taxonomy(vec![variants[2].clone(), variants[0].clone()])?;
-    taxonomies.extend([renamed, versioned, described, derived, pair, reversed]);
+    assert_eq!(
+        fingerprint_taxonomy(&versioned),
+        fingerprint_taxonomy(&base)
+    );
+    assert_eq!(
+        fingerprint_taxonomy(&taxonomy(vec![variants[1].clone()])?),
+        fingerprint_taxonomy(&base)
+    );
+    taxonomies.extend([renamed, described, derived, pair, reversed]);
 
     let fingerprints = taxonomies
         .iter()
@@ -422,7 +432,7 @@ fn initial_project_copies_available_custom_taxonomies() -> Result<(), Box<dyn Er
     let source = &built_in_taxonomies()[0];
     let fork = Taxonomy::new(
         team.clone(),
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         source.description().clone(),
         Some(TaxonomyLineage::new(source.id().clone(), source.version())),
         source.commit_types().to_vec(),

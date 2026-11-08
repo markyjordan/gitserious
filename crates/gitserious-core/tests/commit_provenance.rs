@@ -26,11 +26,11 @@ fn taxonomy(domain: &str, required: Option<&str>) -> Result<Taxonomy, Box<dyn Er
         .collect();
     Ok(Taxonomy::new(
         TaxonomyId::new(domain)?,
-        TaxonomyVersion::new(2)?,
+        Some(TaxonomyVersion::new(2)?),
         Description::new("Domain changes.")?,
         None,
         vec![CommitTypeDefinition::new(
-            SchemaVersion::V1,
+            Some(SchemaVersion::V1),
             CommitTypeId::new("fix")?,
             "Correct a failure.",
             properties,
@@ -180,9 +180,9 @@ fn empty_schemas_render_header_and_provenance_without_empty_properties() -> Test
         validate_commit_draft_with_provenance(&provenance, &draft(None)?).into_message()?;
 
     assert!(
-        message.as_str().starts_with(
-            "fix(data-source): preserve the evidence\n\nGitserious-Taxonomy: empty-v2\n"
-        )
+        message
+            .as_str()
+            .starts_with("fix(data-source): preserve the evidence\n\nGitserious-Taxonomy: empty\n")
     );
     assert_eq!(message.as_str().lines().count(), 4);
     Ok(())

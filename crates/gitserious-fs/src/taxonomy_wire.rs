@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct TaxonomyWire {
     id: String,
-    version: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    version: Option<u16>,
     description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     derived_from: Option<LineageWire>,
@@ -27,14 +28,16 @@ pub(crate) struct TaxonomyWire {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct LineageWire {
     taxonomy: String,
-    version: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    version: Option<u16>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct CommitTypeWire {
     id: String,
-    schema_version: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    schema_version: Option<u16>,
     description: String,
     properties: Vec<PropertyWire>,
 }
@@ -71,18 +74,18 @@ pub(crate) fn library_taxonomy_to_wire(taxonomy: &LibraryTaxonomy) -> TaxonomyWi
         created_on: taxonomy.created_on().map(|date| date.to_string()),
         modified_on: taxonomy.modified_on().map(|date| date.to_string()),
         id: taxonomy.id().to_string(),
-        version: taxonomy.version().get(),
+        version: taxonomy.version().map(TaxonomyVersion::get),
         description: taxonomy.description().to_string(),
         derived_from: taxonomy.derived_from().map(|source| LineageWire {
             taxonomy: source.id().to_string(),
-            version: source.version().get(),
+            version: source.version().map(TaxonomyVersion::get),
         }),
         commit_types: taxonomy
             .commit_types()
             .iter()
             .map(|definition| CommitTypeWire {
                 id: definition.id().to_string(),
-                schema_version: definition.schema_version().get(),
+                schema_version: definition.schema_version().map(SchemaVersion::get),
                 description: definition.description().to_owned(),
                 properties: definition
                     .properties()
@@ -130,17 +133,35 @@ pub(crate) fn library_taxonomy_from_wire(
     location: &str,
 ) -> Result<LibraryTaxonomy, String> {
     let id = TaxonomyId::new(wire.id).map_err(|error| format!("{location}.id: {error}"))?;
-    let version = TaxonomyVersion::new(wire.version)
-        .map_err(|error| format!("{location}.version: {error}"))?;
+    let built_in = gitserious_core::built_in_taxonomies()
+        .iter()
+        .any(|taxonomy| taxonomy.id() == &id);
+    let version = if built_in {
+        wire.version
+            .map(TaxonomyVersion::new)
+            .transpose()
+            .map_err(|error| format!("{location}.version: {error}"))?
+    } else {
+        None
+    };
     let description = Description::new(wire.description)
         .map_err(|error| format!("{location}.description: {error}"))?;
     let derived_from = if let Some(source) = wire.derived_from {
-        Some(TaxonomyLineage::new(
-            TaxonomyId::new(source.taxonomy)
-                .map_err(|error| format!("{location}.derived-from.taxonomy: {error}"))?,
-            TaxonomyVersion::new(source.version)
-                .map_err(|error| format!("{location}.derived-from.version: {error}"))?,
-        ))
+        let id = TaxonomyId::new(source.taxonomy)
+            .map_err(|error| format!("{location}.derived-from.taxonomy: {error}"))?;
+        let version = if gitserious_core::built_in_taxonomies()
+            .iter()
+            .any(|taxonomy| taxonomy.id() == &id)
+        {
+            source
+                .version
+                .map(TaxonomyVersion::new)
+                .transpose()
+                .map_err(|error| format!("{location}.derived-from.version: {error}"))?
+        } else {
+            None
+        };
+        Some(TaxonomyLineage::new(id, version))
     } else {
         None
     };
@@ -149,7 +170,11 @@ pub(crate) fn library_taxonomy_from_wire(
         .into_iter()
         .enumerate()
         .map(|(index, definition)| {
-            commit_type_from_wire(definition, &format!("{location}.commit-types[{index}]"))
+            commit_type_from_wire(
+                definition,
+                &format!("{location}.commit-types[{index}]"),
+                built_in,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     let created_on = wire
@@ -172,17 +197,31 @@ pub(crate) fn library_taxonomy_from_wire(
         commit_types,
         wire.name_locked.unwrap_or(true),
     )
-    .map(|taxonomy| taxonomy.with_dates(created_on, modified_on))
+    .map(|taxonomy| {
+        let taxonomy = if built_in {
+            taxonomy
+        } else {
+            taxonomy.into_custom()
+        };
+        taxonomy.with_dates(created_on, modified_on)
+    })
     .map_err(|error| format!("{location}: {error}"))
 }
 
 fn commit_type_from_wire(
     wire: CommitTypeWire,
     location: &str,
+    built_in: bool,
 ) -> Result<CommitTypeDefinition, String> {
     let id = CommitTypeId::new(wire.id).map_err(|error| format!("{location}.id: {error}"))?;
-    let version = SchemaVersion::new(wire.schema_version)
-        .map_err(|error| format!("{location}.schema-version: {error}"))?;
+    let version = if built_in {
+        wire.schema_version
+            .map(SchemaVersion::new)
+            .transpose()
+            .map_err(|error| format!("{location}.schema-version: {error}"))?
+    } else {
+        None
+    };
     let properties = wire
         .properties
         .into_iter()

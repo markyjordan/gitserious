@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use gitserious_app::HomeState;
-use gitserious_core::VersionedTaxonomy;
+use gitserious_core::TaxonomyReference;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -95,7 +95,7 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, state: &HomeState, error
                 Span::styled(
                     format!(
                         " is initialized with {}",
-                        VersionedTaxonomy::new(default, *version)
+                        TaxonomyReference::new(default, *version)
                     ),
                     dim,
                 ),

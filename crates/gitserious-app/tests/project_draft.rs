@@ -20,7 +20,7 @@ fn built_in_project() -> LibraryDraft {
 }
 
 #[test]
-fn a_project_owned_built_in_is_editable_and_advances_its_version() -> Result<(), Box<dyn Error>> {
+fn a_project_owned_built_in_is_editable_without_a_revision_counter() -> Result<(), Box<dyn Error>> {
     let mut draft = built_in_project();
     let fix = draft
         .find_path(&["conventional", "fix"])
@@ -37,7 +37,12 @@ fn a_project_owned_built_in_is_editable_and_advances_its_version() -> Result<(),
     let conventional = built
         .find(&TaxonomyId::new("conventional")?)
         .ok_or("conventional stays")?;
-    assert_eq!(conventional.version().get(), 2);
+    assert_eq!(
+        conventional
+            .version()
+            .map(gitserious_core::TaxonomyVersion::get),
+        Some(1)
+    );
     assert!(
         conventional
             .commit_types()
@@ -111,8 +116,8 @@ fn review_names_added_changed_and_removed_taxonomies() -> Result<(), Box<dyn Err
 
     let review = session.review()?.changes;
 
-    assert!(review.contains("  ~ conventional  v1 -> v2"), "{review}");
-    assert!(review.contains("  + conventional-fork  v1"), "{review}");
+    assert!(review.contains("  ~ conventional-v1"), "{review}");
+    assert!(review.contains("  + conventional-fork"), "{review}");
     assert!(review.contains("  - infra-ops"), "{review}");
     assert!(session.is_dirty());
     Ok(())

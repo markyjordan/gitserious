@@ -4,21 +4,28 @@ use std::fmt::{self, Display, Formatter};
 use std::sync::LazyLock;
 
 use crate::{
-    CommitTypeDefinition, CommitTypeId, Description, TaxonomyId, TaxonomyVersion,
-    VersionedTaxonomy, built_in_commit_types,
+    CommitTypeDefinition, CommitTypeId, Description, TaxonomyId, TaxonomyReference,
+    TaxonomyVersion, built_in_commit_types,
 };
+
+const BUILT_IN_IDS: [&str; 3] = ["conventional", "research", "infra-ops"];
 
 /// Informational source recorded when one taxonomy is forked from another.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaxonomyLineage {
     id: TaxonomyId,
-    version: TaxonomyVersion,
+    version: Option<TaxonomyVersion>,
 }
 
 impl TaxonomyLineage {
-    /// Records the exact source snapshot without creating an update relationship.
+    /// Records source identity and an optional built-in release without an update relationship.
     #[must_use]
-    pub const fn new(id: TaxonomyId, version: TaxonomyVersion) -> Self {
+    pub fn new(id: TaxonomyId, version: Option<TaxonomyVersion>) -> Self {
+        let version = version.filter(|_| {
+            built_in_taxonomies()
+                .iter()
+                .any(|source| source.id() == &id)
+        });
         Self { id, version }
     }
 
@@ -30,14 +37,14 @@ impl TaxonomyLineage {
 
     /// Returns the source taxonomy version at fork time.
     #[must_use]
-    pub const fn version(&self) -> TaxonomyVersion {
+    pub const fn version(&self) -> Option<TaxonomyVersion> {
         self.version
     }
 
-    /// Returns the source as `<id>-v<N>`.
+    /// Returns the source identity with its optional built-in release.
     #[must_use]
-    pub const fn versioned(&self) -> VersionedTaxonomy<'_> {
-        VersionedTaxonomy::new(&self.id, self.version)
+    pub const fn reference(&self) -> TaxonomyReference<'_> {
+        TaxonomyReference::new(&self.id, self.version)
     }
 }
 
@@ -45,7 +52,7 @@ impl TaxonomyLineage {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Taxonomy {
     id: TaxonomyId,
-    version: TaxonomyVersion,
+    version: Option<TaxonomyVersion>,
     description: Description,
     derived_from: Option<TaxonomyLineage>,
     commit_types: Vec<CommitTypeDefinition>,
@@ -53,16 +60,18 @@ pub struct Taxonomy {
 
 impl Taxonomy {
     /// Creates a complete taxonomy with unique, ordered commit types.
+    /// Custom identities discard taxonomy and type release metadata.
     ///
     /// # Errors
     /// Returns an error when no commit types are supplied or an identifier is repeated.
     pub fn new(
         id: TaxonomyId,
-        version: TaxonomyVersion,
+        version: Option<TaxonomyVersion>,
         description: Description,
         derived_from: Option<TaxonomyLineage>,
         commit_types: Vec<CommitTypeDefinition>,
     ) -> Result<Self, TaxonomyError> {
+        let version = version.filter(|_| BUILT_IN_IDS.contains(&id.as_str()));
         if commit_types.is_empty() {
             return Err(TaxonomyError::EmptyCommitTypes);
         }
@@ -77,7 +86,14 @@ impl Taxonomy {
             version,
             description,
             derived_from,
-            commit_types,
+            commit_types: if version.is_none() {
+                commit_types
+                    .into_iter()
+                    .map(CommitTypeDefinition::into_custom)
+                    .collect()
+            } else {
+                commit_types
+            },
         })
     }
 
@@ -87,16 +103,28 @@ impl Taxonomy {
         &self.id
     }
 
-    /// Returns the taxonomy semantic version.
+    /// Returns the optional built-in taxonomy release version.
     #[must_use]
-    pub const fn version(&self) -> TaxonomyVersion {
+    pub const fn version(&self) -> Option<TaxonomyVersion> {
         self.version
     }
 
-    /// Returns this taxonomy as `<id>-v<N>`.
+    /// Returns the taxonomy identity with its optional built-in release.
     #[must_use]
-    pub const fn versioned(&self) -> VersionedTaxonomy<'_> {
-        VersionedTaxonomy::new(&self.id, self.version)
+    pub const fn reference(&self) -> TaxonomyReference<'_> {
+        TaxonomyReference::new(&self.id, self.version)
+    }
+
+    /// Removes release metadata from this taxonomy and all its types.
+    #[must_use]
+    pub fn into_custom(mut self) -> Self {
+        self.version = None;
+        self.commit_types = self
+            .commit_types
+            .into_iter()
+            .map(CommitTypeDefinition::into_custom)
+            .collect();
+        self
     }
 
     /// Returns the taxonomy purpose.
@@ -145,17 +173,17 @@ impl Error for TaxonomyError {}
 static BUILT_INS: LazyLock<Vec<Taxonomy>> = LazyLock::new(|| {
     vec![
         built_in(
-            "conventional",
+            BUILT_IN_IDS[0],
             "The Conventional Commits classification system for software changes.",
             built_in_commit_types(),
         ),
         built_in(
-            "research",
+            BUILT_IN_IDS[1],
             "Change categories for empirical machine-learning research.",
             crate::built_in_ml_research::commit_types(),
         ),
         built_in(
-            "infra-ops",
+            BUILT_IN_IDS[2],
             "Change categories for infrastructure and operational systems.",
             crate::built_in_infra_ops::commit_types(),
         ),
@@ -169,7 +197,7 @@ fn built_in(
 ) -> Taxonomy {
     Taxonomy::new(
         TaxonomyId::from_trusted(id),
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         Description::from_trusted(description),
         None,
         commit_types.to_vec(),
@@ -203,13 +231,16 @@ mod tests {
         let source = &built_in_taxonomies()[0];
         let fork = Taxonomy::new(
             TaxonomyId::from_trusted("team"),
-            TaxonomyVersion::V1,
+            Some(TaxonomyVersion::V1),
             source.description().clone(),
             Some(TaxonomyLineage::new(source.id().clone(), source.version())),
             source.commit_types().to_vec(),
         )?;
-        assert_eq!(fork.version(), TaxonomyVersion::V1);
-        assert_eq!(fork.commit_types(), source.commit_types());
+        assert_eq!(fork.version(), None);
+        assert_eq!(
+            fork.commit_types(),
+            source.clone().into_custom().commit_types()
+        );
         assert_eq!(
             fork.derived_from().map(TaxonomyLineage::id),
             Some(source.id())

@@ -16,7 +16,7 @@ use gitserious_app::{
     RepositoryLocator, RepositoryRoot, RepositoryStatusReader, create_commit_with_taxonomy,
     edit_configuration, initialize_project, run_interactive,
 };
-use gitserious_core::{CommitMessage, CommitTypeDefinition, VersionedTaxonomy};
+use gitserious_core::{CommitMessage, CommitTypeDefinition, TaxonomyReference};
 
 const HELP_WIDTH: usize = 100;
 
@@ -545,7 +545,7 @@ fn write_init_outcome(output: &mut (impl Write + ?Sized), outcome: &InitOutcome)
         output,
         "{action} {} ({}).",
         outcome.root().as_path().display(),
-        VersionedTaxonomy::new(outcome.taxonomy(), outcome.version())
+        TaxonomyReference::new(outcome.taxonomy(), outcome.version())
     )
     .is_ok()
     {

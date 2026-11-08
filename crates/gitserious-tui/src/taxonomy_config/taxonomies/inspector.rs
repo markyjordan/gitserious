@@ -217,7 +217,7 @@ fn describe(
                 fact(&mut lines, "Types", &taxonomy.types().len().to_string());
             }
             if let Some(source) = taxonomy.derived_from() {
-                fact(&mut lines, "Forked from", &source.versioned().to_string());
+                fact(&mut lines, "Forked from", &source.reference().to_string());
             }
             if !creating && !built_in && !library.is_project() {
                 let record = library.saved_taxonomy(id);
@@ -238,11 +238,8 @@ fn describe(
                     );
                 }
             }
-            if !creating {
-                let version = library
-                    .version(id)
-                    .map_or_else(String::new, |version| version.to_string());
-                fact(&mut lines, "Version", &version);
+            if !creating && let Some(version) = library.version(id) {
+                fact(&mut lines, "Version", &version.to_string());
             }
             if chip.is_some() {
                 let sentence = "Add a type before this taxonomy can be included in a project."
@@ -536,23 +533,25 @@ mod tests {
                         let at = |label: &str| rows.iter().position(|row| row.starts_with(label));
                         let description = at("Description").ok_or("description")?;
                         let types = at("Types").ok_or("types")?;
-                        let version = at("Version").ok_or("version")?;
+                        let version = at("Version");
                         if owner == "conventional-fork" {
                             let created = at("Created on").ok_or("created date")?;
                             let modified = at("Modified on").ok_or("modified date")?;
-                            assert!(
-                                types < created && created < modified && modified < version,
-                                "{rows:?}"
-                            );
+                            assert!(types < created && created < modified, "{rows:?}");
                             assert!(rows[created].ends_with("Unknown"));
                             assert!(rows[modified].ends_with("Unknown"));
                         } else {
                             assert_eq!(at("Created on"), None);
                             assert_eq!(at("Modified on"), None);
+                            assert!(version.is_some_and(|version| types < version));
                         }
-                        assert!(description < types && types < version, "{rows:?}");
+                        assert!(description < types, "{rows:?}");
                         if owner == "conventional-fork" {
-                            assert!(at("Forked from").ok_or("lineage")? < version);
+                            assert!(
+                                at("Forked from").ok_or("lineage")?
+                                    < at("Created on").ok_or("created")?
+                            );
+                            assert_eq!(version, None);
                         }
                     }
                 }

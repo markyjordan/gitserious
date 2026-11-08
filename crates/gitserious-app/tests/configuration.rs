@@ -37,7 +37,7 @@ fn custom(name: &str) -> Taxonomy {
     let source = &built_in_taxonomies()[0];
     Taxonomy::new(
         id(name),
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         source.description().clone(),
         Some(TaxonomyLineage::new(source.id().clone(), source.version())),
         source.commit_types().to_vec(),
@@ -48,7 +48,7 @@ fn custom(name: &str) -> Taxonomy {
 fn at_version(original: &Taxonomy, version: u16, description: &str) -> Taxonomy {
     Taxonomy::new(
         original.id().clone(),
-        TaxonomyVersion::new(version).expect("valid test version"),
+        (TaxonomyVersion::new(version).expect("valid test version")).into(),
         Description::new(description).expect("valid test description"),
         original.derived_from().cloned(),
         original.commit_types().to_vec(),
@@ -213,11 +213,11 @@ fn created_taxonomies_are_queryable_as_custom_library_entries() -> Result<(), Bo
     }
     let expected = Taxonomy::new(
         id("team"),
-        TaxonomyVersion::V1,
+        Some(TaxonomyVersion::V1),
         Description::new("Team policy.")?,
         None,
         vec![CommitTypeDefinition::new(
-            SchemaVersion::new(1)?,
+            Some(SchemaVersion::new(1)?),
             CommitTypeId::new("release")?,
             "Release notes",
             vec![PropertyDefinition::new(
@@ -279,7 +279,7 @@ fn updates_that_change_nothing_leave_the_library_unchanged() -> Result<(), Box<d
 }
 
 #[test]
-fn edits_in_one_session_advance_the_version_once() -> Result<(), Box<dyn Error>> {
+fn edits_in_one_session_keep_custom_taxonomies_unversioned() -> Result<(), Box<dyn Error>> {
     let original = custom("team");
     let mut session = ConfigurationSession::open_global(library(vec![original.clone()])?);
 
@@ -298,7 +298,7 @@ fn edits_in_one_session_advance_the_version_once() -> Result<(), Box<dyn Error>>
 }
 
 #[test]
-fn each_applied_edit_advances_the_version_by_one() -> Result<(), Box<dyn Error>> {
+fn each_applied_edit_keeps_custom_taxonomies_unversioned() -> Result<(), Box<dyn Error>> {
     let original = custom("team");
     let store = FakeGlobalStore::new(library(vec![original.clone()])?);
 
@@ -319,8 +319,7 @@ fn each_applied_edit_advances_the_version_by_one() -> Result<(), Box<dyn Error>>
 }
 
 #[test]
-fn edits_to_a_taxonomy_created_in_the_session_keep_its_first_version() -> Result<(), Box<dyn Error>>
-{
+fn edits_to_a_taxonomy_created_in_the_session_keep_it_unversioned() -> Result<(), Box<dyn Error>> {
     let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
     fork_as(&mut session, "conventional", "team");
 
@@ -400,9 +399,12 @@ fn fork_copies_a_built_in_under_a_new_identity_with_lineage() -> Result<(), Box<
         .find(&id("lab"))
         .cloned()
         .ok_or("fork is missing")?;
-    assert_eq!(fork.version(), TaxonomyVersion::V1);
+    assert_eq!(fork.version(), None);
     assert_eq!(fork.description(), source.description());
-    assert_eq!(fork.commit_types(), source.commit_types());
+    assert_eq!(
+        fork.commit_types(),
+        source.clone().into_custom().commit_types()
+    );
     assert_eq!(
         fork.derived_from(),
         Some(&TaxonomyLineage::new(id("research"), source.version()))
@@ -433,9 +435,12 @@ fn a_fork_takes_its_authored_content_and_refuses_its_source_name() -> Result<(),
         .find(&id("team"))
         .cloned()
         .ok_or("fork is missing")?;
-    assert_eq!(fork.version(), TaxonomyVersion::V1);
+    assert_eq!(fork.version(), None);
     assert_eq!(fork.description().as_str(), "A team policy.");
-    assert_eq!(fork.commit_types(), &source.commit_types()[..2]);
+    assert_eq!(
+        fork.commit_types(),
+        &source.clone().into_custom().commit_types()[..2]
+    );
     assert_eq!(
         fork.derived_from(),
         Some(&TaxonomyLineage::new(source.id().clone(), source.version()))
@@ -459,12 +464,12 @@ fn fork_names_that_reserved_or_existing_taxonomies_use_are_problems() -> Result<
 }
 
 #[test]
-fn forks_of_custom_taxonomies_preserve_content_and_reset_the_new_version()
+fn forks_of_custom_taxonomies_preserve_content_without_version_metadata()
 -> Result<(), Box<dyn Error>> {
     let original = custom("team");
     let revised = Taxonomy::new(
         original.id().clone(),
-        TaxonomyVersion::new(2)?,
+        Some(TaxonomyVersion::new(2)?),
         Description::new("Second team policy.")?,
         original.derived_from().cloned(),
         built_in_taxonomies()[2].commit_types().to_vec(),
@@ -478,12 +483,15 @@ fn forks_of_custom_taxonomies_preserve_content_and_reset_the_new_version()
         .find(&id("team-copy"))
         .cloned()
         .ok_or("fork is missing")?;
-    assert_eq!(fork.version(), TaxonomyVersion::V1);
+    assert_eq!(fork.version(), None);
     assert_eq!(fork.description(), revised.description());
     assert_eq!(fork.commit_types(), revised.commit_types());
     assert_eq!(
         fork.derived_from(),
-        Some(&TaxonomyLineage::new(id("team"), TaxonomyVersion::new(2)?))
+        Some(&TaxonomyLineage::new(
+            id("team"),
+            Some(TaxonomyVersion::new(2)?)
+        ))
     );
     Ok(())
 }
@@ -752,7 +760,7 @@ fn saved_library_keeps_node_ids_and_no_op_saves_do_not_write() -> Result<(), Box
                 .library()
                 .and_then(|library| library.version(&taxonomy))
                 .map(TaxonomyVersion::get),
-            Some(1)
+            None
         );
         Ok(())
     })?;
@@ -760,7 +768,7 @@ fn saved_library_keeps_node_ids_and_no_op_saves_do_not_write() -> Result<(), Box
 }
 
 #[test]
-fn exhausted_versions_refuse_changes_without_writing() -> Result<(), Box<dyn Error>> {
+fn retired_version_limits_do_not_block_custom_edits() -> Result<(), Box<dyn Error>> {
     let source = custom("team");
     let last = at_version(&source, u16::MAX, source.description().as_str());
     let original = library(vec![last])?;
@@ -768,14 +776,17 @@ fn exhausted_versions_refuse_changes_without_writing() -> Result<(), Box<dyn Err
     edit_global(&store, |workspace| {
         let mut session = workspace.load(ConfigurationDestination::Global)?;
         workspace.save(&session)?;
-        describe(&mut session, "team", "Cannot advance this version");
-        let error = workspace
-            .save(&session)
-            .expect_err("version overflow was saved");
-        assert!(error.contains("version limit reached"), "{error}");
+        describe(&mut session, "team", "No revision counter");
+        let saved = workspace.save(&session)?;
+        assert_eq!(built(&saved).custom_taxonomies()[0].version(), None);
         Ok(())
     })?;
-    assert_eq!(store.swaps.get(), 0);
-    assert_eq!(*store.current.borrow(), original);
+    assert_eq!(store.swaps.get(), 1);
+    assert_eq!(
+        store.current.borrow().custom_taxonomies()[0]
+            .description()
+            .as_str(),
+        "No revision counter"
+    );
     Ok(())
 }
