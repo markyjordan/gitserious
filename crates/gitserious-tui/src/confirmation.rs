@@ -148,14 +148,10 @@ impl ConfirmDialog {
         }
     }
 
-    pub(crate) fn render(
-        &mut self,
-        frame: &mut Frame<'_>,
-        area: Rect,
-        question: &Confirmation<'_>,
-    ) {
+    pub(crate) fn render(&mut self, frame: &mut Frame<'_>, question: &Confirmation<'_>) {
         self.invalidate();
-        let popup = centered_rect(58, 9.min(area.height), area);
+        let viewport = frame.area();
+        let popup = centered_rect(58, 9.min(viewport.height), viewport);
         frame.render_widget(Clear, popup);
         frame.render_widget(popup_block(), popup);
         let labels = question
@@ -283,10 +279,7 @@ mod tests {
         for (width, height) in [(60, 18), (87, 40), (125, 51), (120, 30)] {
             let mut dialog = ConfirmDialog::default();
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-            terminal.draw(|frame| {
-                let area = frame.area();
-                dialog.render(frame, area, &discard);
-            })?;
+            terminal.draw(|frame| dialog.render(frame, &discard))?;
             let buttons = dialog.buttons.ok_or("missing buttons")?;
             assert_eq!(buttons.alternate, None);
             for area in [buttons.confirm, buttons.keep] {
@@ -333,20 +326,14 @@ mod tests {
         let discard = question("Discard Type", "Discard type changes?", DISCARD);
         let mut dialog = ConfirmDialog::default();
         let mut terminal = Terminal::new(TestBackend::new(60, 18))?;
-        terminal.draw(|frame| {
-            let area = frame.area();
-            dialog.render(frame, area, &discard);
-        })?;
+        terminal.draw(|frame| dialog.render(frame, &discard))?;
         let old = dialog.buttons.ok_or("missing buttons")?;
         dialog.handle_event(DISCARD, &Event::Resize(30, 7));
         assert!(dialog.buttons.is_none());
         assert_eq!(dialog.handle_event(DISCARD, &click(old.confirm)), None);
         for (width, height) in [(30, 7), (1, 1)] {
             let mut tiny = Terminal::new(TestBackend::new(width, height))?;
-            tiny.draw(|frame| {
-                let area = frame.area();
-                dialog.render(frame, area, &discard);
-            })?;
+            tiny.draw(|frame| dialog.render(frame, &discard))?;
             assert!(dialog.buttons.is_none());
             assert_eq!(dialog.handle_event(DISCARD, &click(old.keep)), None);
             assert_eq!(
@@ -354,10 +341,7 @@ mod tests {
                 Some(Answer::Keep)
             );
         }
-        terminal.draw(|frame| {
-            let area = frame.area();
-            dialog.render(frame, area, &discard);
-        })?;
+        terminal.draw(|frame| dialog.render(frame, &discard))?;
         dialog.invalidate();
         assert_eq!(dialog.handle_event(DISCARD, &click(old.confirm)), None);
         Ok(())

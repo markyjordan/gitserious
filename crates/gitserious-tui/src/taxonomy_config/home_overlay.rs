@@ -142,27 +142,27 @@ impl CommandPaletteState {
 }
 
 impl CommandPaletteState {
-    pub(super) fn render(&mut self, frame: &mut Frame<'_>, area: Rect, category: Category) {
+    pub(super) fn render(&mut self, frame: &mut Frame<'_>, category: Category) {
         let entries = self
             .visible(category)
             .iter()
             .map(|command| (command.label(category), command.shortcut()))
             .collect();
-        render_palette(frame, area, self, entries);
+        render_palette(frame, self, entries);
     }
 }
 
 fn render_palette(
     frame: &mut Frame<'_>,
-    area: Rect,
     state: &mut CommandPaletteState,
     visible: Vec<(&'static str, &'static str)>,
 ) {
+    let viewport = frame.area();
     let height = u16::try_from(visible.len().max(1))
         .unwrap_or(u16::MAX)
         .saturating_add(7)
-        .min(area.height);
-    let popup = centered_rect(58, height, area);
+        .min(viewport.height);
+    let popup = centered_rect(58, height, viewport);
     frame.render_widget(Clear, popup);
     frame.render_widget(popup_block(), popup);
     let content_x = popup.x.saturating_add(2);
