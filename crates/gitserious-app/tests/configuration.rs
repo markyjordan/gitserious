@@ -524,7 +524,8 @@ impl Error for FakeError {}
 
 struct FakeGlobalStore {
     current: RefCell<GlobalConfiguration>,
-    fail: bool,
+    fail: Cell<bool>,
+    load_fail: Cell<bool>,
     swaps: Cell<usize>,
 }
 
@@ -532,7 +533,8 @@ impl FakeGlobalStore {
     fn new(current: GlobalConfiguration) -> Self {
         Self {
             current: RefCell::new(current),
-            fail: false,
+            fail: Cell::new(false),
+            load_fail: Cell::new(false),
             swaps: Cell::new(0),
         }
     }
@@ -546,6 +548,9 @@ impl GlobalConfigurationStore for FakeGlobalStore {
     }
 
     fn load(&self) -> Result<GlobalConfiguration, Self::Error> {
+        if self.load_fail.get() {
+            return Err(FakeError("global read failed"));
+        }
         Ok(self.current.borrow().clone())
     }
 
@@ -555,7 +560,7 @@ impl GlobalConfigurationStore for FakeGlobalStore {
         replacement: &GlobalConfiguration,
     ) -> Result<(), Self::Error> {
         self.swaps.set(self.swaps.get() + 1);
-        if self.fail {
+        if self.fail.get() {
             return Err(FakeError("global store failed"));
         }
         if *self.current.borrow() != *expected {
@@ -704,8 +709,8 @@ fn apply_refuses_while_the_library_has_problems() -> Result<(), Box<dyn Error>> 
 
 #[test]
 fn global_store_failures_are_reported_and_leave_the_library_unchanged() {
-    let mut store = FakeGlobalStore::new(GlobalConfiguration::default());
-    store.fail = true;
+    let store = FakeGlobalStore::new(GlobalConfiguration::default());
+    store.fail.set(true);
 
     let error = edit_global(&store, |workspace| {
         let mut session = workspace.load(ConfigurationDestination::Global)?;
@@ -788,5 +793,61 @@ fn retired_version_limits_do_not_block_custom_edits() -> Result<(), Box<dyn Erro
             .as_str(),
         "No revision counter"
     );
+    Ok(())
+}
+
+#[test]
+fn a_failed_global_save_retries_the_same_draft_and_preserves_identity() -> Result<(), Box<dyn Error>>
+{
+    let store = FakeGlobalStore::new(GlobalConfiguration::default());
+    edit_global(&store, |workspace| {
+        let mut session = workspace.load(ConfigurationDestination::Global)?;
+        let identity = fork_as(&mut session, "conventional", "team");
+        let before = built(&session);
+        store.fail.set(true);
+        assert_eq!(
+            workspace.save(&session).err().as_deref(),
+            Some("global store failed")
+        );
+        assert_eq!(built(&session), before);
+        assert!(session.is_dirty());
+        assert_eq!(*store.current.borrow(), GlobalConfiguration::default());
+
+        store.fail.set(false);
+        let saved = workspace.save(&session)?;
+        assert!(!saved.is_dirty());
+        assert_eq!(
+            saved
+                .library()
+                .and_then(|library| library.find_path(&["team"])),
+            Some(identity)
+        );
+        let stored = store.current.borrow();
+        let record = stored.custom_taxonomies().first().ok_or("saved taxonomy")?;
+        assert!(record.created_on().is_some());
+        assert_eq!(record.modified_on(), record.created_on());
+        assert_eq!(built(&session), before);
+        Ok(())
+    })?;
+    assert_eq!(store.swaps.get(), 2);
+    Ok(())
+}
+
+#[test]
+fn a_global_load_failure_does_not_attempt_persistence() -> Result<(), Box<dyn Error>> {
+    let store = FakeGlobalStore::new(GlobalConfiguration::default());
+    store.load_fail.set(true);
+    edit_global(&store, |workspace| {
+        assert_eq!(
+            workspace
+                .load(ConfigurationDestination::Global)
+                .err()
+                .as_deref(),
+            Some("global read failed")
+        );
+        Ok(())
+    })?;
+    assert_eq!(store.swaps.get(), 0);
+    assert_eq!(*store.current.borrow(), GlobalConfiguration::default());
     Ok(())
 }
