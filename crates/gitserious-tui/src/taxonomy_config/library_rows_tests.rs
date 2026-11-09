@@ -179,6 +179,42 @@ fn taxonomy_rows_name_their_origin_type_count_and_version() -> Result {
 }
 
 #[test]
+fn custom_ends_on_the_same_column_as_built_in() -> Result {
+    for size in SIZES {
+        let (_, mut state) = fixture()?;
+        let frame = Frame::draw(&mut state, size)?;
+        let (_, built_in) = frame.row("▾ conventional ")?;
+        let (_, custom) = frame.row("▸ team ")?;
+        let end = |row: &str, word: &str| -> Result<usize> {
+            let start = row
+                .rfind(word)
+                .ok_or_else(|| format!("{word:?} missing from {row:?}"))?;
+            Ok(row[..start].chars().count() + word.chars().count())
+        };
+        let column = end(&built_in, "built-in")?;
+        assert_eq!(
+            column,
+            end(&custom, "custom")?,
+            "{size:?}\n{built_in}\n{custom}"
+        );
+        assert_eq!(built_in.chars().nth(column - 1), Some('n'), "{built_in}");
+        assert_eq!(custom.chars().nth(column - 1), Some('m'), "{custom}");
+        let types_at = |row: &str| -> Result<usize> {
+            let start = row
+                .rfind(" types")
+                .ok_or_else(|| format!("types missing from {row:?}"))?;
+            Ok(row[..start].chars().count())
+        };
+        assert_eq!(
+            types_at(&built_in)?,
+            types_at(&custom)?,
+            "{size:?}\n{built_in}\n{custom}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn add_rows_are_dim() -> Result {
     for size in SIZES {
         let (workspace, mut state) = fixture()?;

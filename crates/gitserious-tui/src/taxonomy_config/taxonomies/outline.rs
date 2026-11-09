@@ -276,6 +276,13 @@ fn pad(text: &str, width: usize) -> String {
     )
 }
 
+fn pad_start(text: &str, width: usize) -> String {
+    format!(
+        "{}{text}",
+        " ".repeat(width.saturating_sub(Span::raw(text).width()))
+    )
+}
+
 fn last_type(taxonomy: &TaxonomyNode, commit_type: &TypeNode, read_only: bool) -> bool {
     (read_only || taxonomy.origin() == TaxonomyOrigin::BuiltIn)
         && taxonomy
@@ -371,7 +378,7 @@ fn library_origin(
         return Vec::new();
     }
     vec![Span::styled(
-        pad(origin_label(library, taxonomy), columns.origin),
+        pad_start(origin_label(library, taxonomy), columns.origin),
         TEXT.add_modifier(Modifier::BOLD),
     )]
 }
