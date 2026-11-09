@@ -23,7 +23,6 @@ mod shell;
 mod taxonomy_config;
 mod theme;
 
-pub use author::RatatuiCommitDraftAuthor;
 pub use taxonomy_config::RatatuiTaxonomyConfigurationEditor;
 
 pub use shell::{InitialPage, RatatuiInteractiveUi};

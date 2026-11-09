@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use gitserious_app::{CommitDraftAuthor, CommitDraftAuthorOutcome};
+use gitserious_app::CommitDraftAuthorOutcome;
 use gitserious_core::{
     COMMIT_MESSAGE_WIDTH, CommitTypeDefinition, CommitTypeId, ConditionId, PropertyCondition,
     PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion, built_in_commit_types,
@@ -16,8 +16,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use tui_textarea::{CursorMove, CursorRenderMode, TextArea, WrapMode};
 
-use crate::RatatuiCommitDraftAuthor;
-use crate::author::RatatuiCommitDraftAuthorError;
 use crate::theme::{ACCENT, theme};
 
 mod author_harness {
@@ -2701,41 +2699,6 @@ fn wrapped_and_explicit_lines_keep_a_blank_row_before_the_next_field() -> Result
         .ok_or("missing decision")?;
     assert_eq!(decision.1, intent.1 + 4);
     assert!((36..117).all(|column| buffer[(column, intent.1 + 3)].symbol() == " "));
-    Ok(())
-}
-
-#[test]
-fn adapter_rejects_catalog_and_terminal_preconditions_before_running_ratatui()
--> Result<(), Box<dyn Error>> {
-    let empty = RatatuiCommitDraftAuthor
-        .author(&[], None)
-        .err()
-        .ok_or("empty catalog should fail")?;
-    assert!(matches!(empty, RatatuiCommitDraftAuthorError::EmptyCatalog));
-    assert!(empty.source().is_none());
-
-    let custom = presentation_definition()?;
-    let unknown = RatatuiCommitDraftAuthor
-        .author(built_in_commit_types(), Some(&custom))
-        .err()
-        .ok_or("unknown preselection should fail")?;
-    assert!(matches!(
-        unknown,
-        RatatuiCommitDraftAuthorError::UnknownPreselection
-    ));
-
-    let non_terminal = RatatuiCommitDraftAuthor
-        .author(built_in_commit_types(), None)
-        .err()
-        .ok_or("captured test streams should not be terminals")?;
-    assert!(matches!(
-        non_terminal,
-        RatatuiCommitDraftAuthorError::NotTerminal
-    ));
-    assert_eq!(
-        non_terminal.to_string(),
-        "commit authoring requires an interactive terminal"
-    );
     Ok(())
 }
 
