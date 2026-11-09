@@ -6,7 +6,7 @@ mod init_editor;
 use std::io::{self, IsTerminal};
 
 use gitserious_app::{
-    CommitAuthoringContext, HelpPage, HomeState, InteractiveUi, InteractiveWorkspace,
+    CommitAuthoringContext, CommitOutput, HelpPage, HomeState, InteractiveUi, InteractiveWorkspace,
     ProjectConfiguration,
 };
 use gitserious_core::built_in_taxonomies;
@@ -196,29 +196,30 @@ impl Shell {
             root_areas: [Rect::default(); Section::ALL.len()],
             too_small: false,
         };
-        if section == Section::Commit {
-            shell.commit.refresh(workspace);
-        }
+        shell.enter(section, workspace);
         shell
+    }
+
+    /// Arrives at `section` the same way a tab, a click, or the launch does.
+    fn enter(&mut self, section: Section, workspace: &dyn InteractiveWorkspace) {
+        self.section = section;
+        match section {
+            Section::Commit => self.commit.refresh(workspace),
+            Section::Home => {
+                self.home = workspace.home();
+                self.home_error = None;
+                if !HomeAction::of(&self.home).is_some_and(HomeAction::initializes) {
+                    self.init_editor = None;
+                }
+            }
+            Section::Help => self.help.enter(),
+            Section::Config => {}
+        }
     }
 
     fn execute(&mut self, action: Action, workspace: &dyn InteractiveWorkspace) -> Option<Action> {
         match action {
-            Action::Select(section) => {
-                self.section = section;
-                match section {
-                    Section::Commit => self.commit.refresh(workspace),
-                    Section::Home => {
-                        self.home = workspace.home();
-                        self.home_error = None;
-                        if !HomeAction::of(&self.home).is_some_and(HomeAction::initializes) {
-                            self.init_editor = None;
-                        }
-                    }
-                    Section::Help => self.help.enter(),
-                    Section::Config => {}
-                }
-            }
+            Action::Select(section) => self.enter(section, workspace),
             Action::Initialize => {
                 self.section = Section::Home;
                 let library = workspace.library_taxonomies().unwrap_or_else(|error| {
@@ -558,9 +559,27 @@ impl Shell {
             }
         };
         let Some((authored, checkpoint)) = embedded_author(terminal, &context, checkpoint)? else {
+            self.conclude_authoring(workspace, None);
             return Ok(());
         };
         let result = crate::runtime::suspended(terminal, || workspace.submit_commit(&authored))?;
+        self.conclude_authoring(workspace, Some((context, checkpoint, result)));
+        Ok(())
+    }
+
+    /// Applies the editor's outcome. Cancellation leaves the Commit page as it was.
+    fn conclude_authoring(
+        &mut self,
+        workspace: &dyn InteractiveWorkspace,
+        outcome: Option<(
+            CommitAuthoringContext,
+            crate::author::AuthoringCheckpoint,
+            Result<CommitOutput, String>,
+        )>,
+    ) {
+        let Some((context, checkpoint, result)) = outcome else {
+            return;
+        };
         match result {
             Ok(output) => {
                 self.pending_author = None;
@@ -582,7 +601,6 @@ impl Shell {
             }
         }
         self.commit.refresh(workspace);
-        Ok(())
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, help: &[HelpPage]) {
@@ -842,6 +860,50 @@ mod tests {
             _: &gitserious_app::AuthoredCommit,
         ) -> Result<CommitOutput, String> {
             Err("test submit unavailable".into())
+        }
+    }
+
+    struct Unavailable;
+
+    impl ConfigurationWorkspace for Unavailable {
+        fn load(
+            &self,
+            destination: ConfigurationDestination,
+        ) -> Result<ConfigurationSession, String> {
+            Services.load(destination)
+        }
+        fn save(&self, session: &ConfigurationSession) -> Result<ConfigurationSession, String> {
+            Services.save(session)
+        }
+        fn library_path(&self) -> std::path::PathBuf {
+            Services.library_path()
+        }
+    }
+
+    impl InteractiveWorkspace for Unavailable {
+        fn home(&self) -> HomeState {
+            Services.home()
+        }
+        fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
+            Services.initialize(configuration)
+        }
+        fn library_taxonomies(&self) -> Result<Vec<gitserious_core::Taxonomy>, String> {
+            Services.library_taxonomies()
+        }
+        fn configuration(&self) -> &dyn ConfigurationWorkspace {
+            self
+        }
+        fn repository_status(&self) -> Result<RepositoryStatus, String> {
+            Err("repository unavailable".into())
+        }
+        fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
+            Err("repository unavailable".into())
+        }
+        fn submit_commit(
+            &self,
+            authored: &gitserious_app::AuthoredCommit,
+        ) -> Result<CommitOutput, String> {
+            Services.submit_commit(authored)
         }
     }
 
@@ -2284,6 +2346,98 @@ mod tests {
         let help = shell.root_areas[Section::Help.index()];
         shell.handle_event(click(help), &services, &[]);
         assert_eq!(shell.section, Section::Help);
+        Ok(())
+    }
+
+    fn commit_page(shell: &Shell) -> (Option<String>, Option<RepositoryStatus>) {
+        (shell.commit.blocker.clone(), shell.commit.snapshot.clone())
+    }
+
+    #[test]
+    fn opening_commit_matches_navigating_there_and_does_not_author() {
+        let services = Services;
+        let mut opened = Shell::new(InitialPage::Commit, &services, &[]);
+        let mut visited = Shell::new(InitialPage::Home, &services, &[]);
+        visited.execute(Action::Select(Section::Commit), &services);
+
+        assert_eq!(opened.section, Section::Commit);
+        assert_eq!(commit_page(&opened), commit_page(&visited));
+        assert!(opened.pending_author.is_none());
+        assert!(opened.commit.notice.is_empty());
+        assert_eq!(
+            opened.handle_event(key(KeyCode::Enter), &services, &[]),
+            Some(Action::Author)
+        );
+        assert!(opened.pending_author.is_none());
+    }
+
+    #[test]
+    fn a_missing_repository_blocks_the_commit_page_and_leaves_the_other_pages_open() {
+        let workspace = Unavailable;
+        let mut opened = Shell::new(InitialPage::Commit, &workspace, &[]);
+        let mut visited = Shell::new(InitialPage::Home, &workspace, &[]);
+        visited.execute(Action::Select(Section::Commit), &workspace);
+
+        assert_eq!(
+            opened.commit.blocker.as_deref(),
+            Some("repository unavailable")
+        );
+        assert!(opened.commit.snapshot.is_none());
+        assert_eq!(commit_page(&opened), commit_page(&visited));
+        assert_eq!(
+            opened.handle_event(key(KeyCode::Tab), &workspace, &[]),
+            None
+        );
+        assert_eq!(opened.section, Section::Config);
+        assert_eq!(
+            opened.handle_event(key(KeyCode::Char('q')), &workspace, &[]),
+            Some(Action::Quit)
+        );
+    }
+
+    #[test]
+    fn cancelling_authoring_returns_to_commit_without_writing() {
+        let services = Services;
+        let mut shell = Shell::new(InitialPage::Commit, &services, &[]);
+        let notice = shell.commit.notice.clone();
+
+        shell.conclude_authoring(&services, None);
+
+        assert_eq!(shell.section, Section::Commit);
+        assert!(shell.pending_author.is_none());
+        assert_eq!(shell.commit.notice, notice);
+    }
+
+    #[test]
+    fn a_created_commit_returns_to_commit_and_a_rejected_one_keeps_the_review()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (context, _, checkpoint) = crate::author::reviewed_submission()?;
+        let created = CommitOutput::new(b"created\n".to_vec(), b"hook note\n".to_vec());
+        let mut shell = Shell::new(InitialPage::Commit, &Services, &[]);
+
+        shell.conclude_authoring(&Services, Some((context, checkpoint, Ok(created))));
+
+        assert_eq!(shell.section, Section::Commit);
+        assert!(shell.pending_author.is_none());
+        assert!(shell.commit.notice.contains("Commit created."));
+        assert!(shell.commit.notice.contains("created"));
+        assert!(shell.commit.notice.contains("hook note"));
+
+        let (context, _, checkpoint) = crate::author::reviewed_submission()?;
+        shell.conclude_authoring(
+            &Services,
+            Some((context, checkpoint, Err("hook rejected".into()))),
+        );
+
+        assert_eq!(shell.section, Section::Commit);
+        assert!(shell.pending_author.is_some());
+        assert!(
+            shell
+                .commit
+                .notice
+                .contains("The reviewed message is retained.")
+        );
+        assert!(shell.commit.notice.contains("hook rejected"));
         Ok(())
     }
 
