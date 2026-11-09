@@ -649,7 +649,7 @@ fn the_workspace_names_the_library_file() -> Result<(), Box<dyn Error>> {
 fn reviewed_global_sessions_save_one_snapshot_and_reject_concurrent_changes()
 -> Result<(), Box<dyn Error>> {
     let store = FakeGlobalStore::new(GlobalConfiguration::default());
-    let started = gitserious_app::TaxonomyDate::today_utc();
+    let started = gitserious_app::TaxonomyDate::now_utc();
     edit_global(&store, |workspace| {
         let mut session = workspace.load(ConfigurationDestination::Global)?;
         fork_as(&mut session, "conventional", "team");
@@ -662,7 +662,7 @@ fn reviewed_global_sessions_save_one_snapshot_and_reject_concurrent_changes()
     let current = store.current.borrow();
     let record = &current.custom_taxonomies()[0];
     assert_eq!(record.usable(), Some(custom("team")));
-    let completed = gitserious_app::TaxonomyDate::today_utc();
+    let completed = gitserious_app::TaxonomyDate::now_utc();
     let created = record.created_on().ok_or("creation date")?;
     assert!((started..=completed).contains(&created));
     assert_eq!(record.modified_on(), record.created_on());

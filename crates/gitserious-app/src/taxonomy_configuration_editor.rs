@@ -361,7 +361,7 @@ where
         match &session.scope {
             Scope::Global(library) => {
                 let saved = library
-                    .saved_on(crate::TaxonomyDate::today_utc())
+                    .saved_on(crate::TaxonomyDate::now_utc())
                     .map_err(|problems| first_problem(&problems))?;
                 let (Some(before), Some(working)) = (library.persisted(), saved.persisted()) else {
                     return Err("a Library session holds the Library".into());
