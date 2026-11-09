@@ -1,3 +1,17 @@
 # Dead code that check-dead-code.sh accepts, one tab-separated "file<TAB>item"
 # row each. Add a row only with an issue that decides it; the check fails on
 # new offenders and on stale entries.
+#
+# The shell prepares a commit, runs the embedded editor, and submits. These
+# names are the use case and author port that path does not call. Integration
+# tests still drive them, and cargo check --lib --bins does not compile tests.
+crates/gitserious-app/src/commit/commit_draft_author.rs	CommitDraftAuthor
+crates/gitserious-app/src/commit/create_taxonomy_commit.rs	Author
+crates/gitserious-app/src/commit/create_taxonomy_commit.rs	CommitOutcome
+crates/gitserious-app/src/commit/create_taxonomy_commit.rs	CreateCommitResult
+crates/gitserious-app/src/commit/create_taxonomy_commit.rs	Writer
+crates/gitserious-app/src/commit/create_taxonomy_commit.rs	create_commit_with_taxonomy
+crates/gitserious-app/src/commit/taxonomy_authoring_context.rs	CommitAuthoringOutcome
+crates/gitserious-app/src/lib.rs	CommitOutcome
+crates/gitserious-app/src/lib.rs	CreateCommitError
+crates/gitserious-app/src/lib.rs	create_commit_with_taxonomy
