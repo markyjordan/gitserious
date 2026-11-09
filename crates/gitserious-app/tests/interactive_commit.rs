@@ -4,14 +4,14 @@ use std::path::{Path, PathBuf};
 
 use gitserious_app::{
     AuthoredCommit, BranchState, CommitAuthoringContext, CommitOutput, CommitWriter,
-    GlobalConfiguration, GlobalConfigurationStore, HelpPage, InteractiveUi, InteractiveWorkspace,
-    ProjectConfiguration, ProjectConfigurationStore, ProjectRevision, RepositoryInitializer,
-    RepositoryLocator, RepositoryRoot, RepositoryStatus, RepositoryStatusReader, StatusEntry,
-    StoredProject, run_interactive,
+    ConfigurationDestination, GlobalConfiguration, GlobalConfigurationStore, HelpPage,
+    InteractiveUi, InteractiveWorkspace, ProjectConfiguration, ProjectConfigurationStore,
+    ProjectRevision, RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryStatus,
+    RepositoryStatusReader, StatusEntry, StoredProject, run_interactive,
 };
 use gitserious_core::{
     CommitDraft, CommitMessage, CommitSubject, CommitTypeDefinition, CommitTypeId, Description,
-    Taxonomy, TaxonomyId,
+    PropertyDefinition, PropertyKey, PropertyRequirement, Taxonomy, TaxonomyId,
 };
 
 struct Locator {
@@ -372,4 +372,198 @@ fn submission_rechecks_index_and_conflicts_after_approval() -> Result<(), Box<dy
         assert!(session.writer.0.borrow().is_empty());
     }
     Ok(())
+}
+
+#[test]
+fn submission_rejects_a_removed_or_incompatible_authored_taxonomy() -> Result<(), Box<dyn Error>> {
+    let required_property = Taxonomy::new(
+        TaxonomyId::new("team")?,
+        None,
+        Description::new("Project change notes.")?,
+        None,
+        vec![CommitTypeDefinition::new(
+            None,
+            CommitTypeId::new("note")?,
+            "Records a change.",
+            vec![PropertyDefinition::new(
+                PropertyKey::new("reason")?,
+                "Why the change is needed.",
+                PropertyRequirement::Required,
+            )?],
+        )?],
+    )?;
+    let replacements = [
+        ProjectConfiguration::new(1, TaxonomyId::new("other")?, vec![taxonomy("other")?])?,
+        ProjectConfiguration::new(
+            1,
+            TaxonomyId::new("team")?,
+            vec![required_property, taxonomy("other")?],
+        )?,
+    ];
+    for replacement in replacements {
+        let session = Session::new(vec![entry("file", 'M', '.')])?;
+        session.run(|workspace| {
+            let authored = approved(&workspace.prepare_commit()?)?;
+            *session.project.0.borrow_mut() = Ok(Some(replacement.clone()));
+            assert!(workspace.submit_commit(&authored).is_err());
+            Ok(())
+        })?;
+        assert!(session.writer.0.borrow().is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn submission_rejects_changed_provenance_even_when_the_draft_remains_valid()
+-> Result<(), Box<dyn Error>> {
+    let session = Session::new(vec![entry("file", 'M', '.')])?;
+    session.run(|workspace| {
+        let authored = approved(&workspace.prepare_commit()?)?;
+        let original = taxonomy("team")?;
+        let changed = Taxonomy::new(
+            original.id().clone(),
+            original.version(),
+            Description::new("A changed project description.")?,
+            original.derived_from().cloned(),
+            original.commit_types().to_vec(),
+        )?;
+        *session.project.0.borrow_mut() = Ok(Some(ProjectConfiguration::new(
+            1,
+            changed.id().clone(),
+            vec![changed, taxonomy("other")?],
+        )?));
+        let current = workspace.prepare_commit()?;
+        let new_message = current
+            .find_taxonomy(authored.taxonomy())
+            .ok_or("selected taxonomy disappeared")?
+            .validate(authored.draft())
+            .into_message()?;
+        assert_ne!(Some(&new_message), authored.reviewed_message());
+        assert!(workspace.submit_commit(&authored).is_err());
+        Ok(())
+    })?;
+    assert!(session.writer.0.borrow().is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_default_only_change_keeps_the_authored_taxonomy_usable() -> Result<(), Box<dyn Error>> {
+    let session = Session::new(vec![entry("file", 'M', '.')])?;
+    session.run(|workspace| {
+        let authored = approved(&workspace.prepare_commit()?)?;
+        *session.project.0.borrow_mut() = Ok(Some(ProjectConfiguration::new(
+            1,
+            TaxonomyId::new("other")?,
+            vec![taxonomy("team")?, taxonomy("other")?],
+        )?));
+        assert_eq!(
+            workspace.prepare_commit()?.initial_taxonomy().id().as_str(),
+            "other"
+        );
+        workspace.submit_commit(&authored)?;
+        assert_eq!(
+            session.writer.0.borrow().as_slice(),
+            &[(
+                session.locator.root.clone(),
+                authored
+                    .reviewed_message()
+                    .ok_or("no approved bytes")?
+                    .clone()
+            )]
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn persisted_policy_loss_after_approval_prevents_writing() -> Result<(), Box<dyn Error>> {
+    for replacement in [Ok(None), Err("invalid persisted project policy")] {
+        let session = Session::new(vec![entry("file", 'M', '.')])?;
+        session.run(|workspace| {
+            let authored = approved(&workspace.prepare_commit()?)?;
+            *session.project.0.borrow_mut() = replacement.clone();
+            assert!(workspace.submit_commit(&authored).is_err());
+            Ok(())
+        })?;
+        assert!(session.writer.0.borrow().is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn an_unapplied_project_draft_does_not_replace_persisted_commit_policy()
+-> Result<(), Box<dyn Error>> {
+    let session = Session::new(vec![entry("file", 'M', '.')])?;
+    session.run(|workspace| {
+        let authored = approved(&workspace.prepare_commit()?)?;
+        let mut draft = workspace
+            .configuration()
+            .load(ConfigurationDestination::Project)?;
+        draft.configure_project(TaxonomyId::new("other")?, &[TaxonomyId::new("other")?])?;
+        assert_eq!(
+            draft
+                .project_config()
+                .ok_or("missing draft")?
+                .taxonomies()
+                .len(),
+            1
+        );
+        workspace.submit_commit(&authored)?;
+        assert_eq!(
+            session.writer.0.borrow().as_slice(),
+            &[(
+                session.locator.root.clone(),
+                authored
+                    .reviewed_message()
+                    .ok_or("no approved bytes")?
+                    .clone()
+            )]
+        );
+        assert_eq!(
+            *session.project.0.borrow(),
+            Ok(Some(project_configuration()?))
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_changed_library_does_not_replace_project_owned_commit_policy() -> Result<(), Box<dyn Error>> {
+    let session = Session::new(vec![entry("file", 'M', '.')])?;
+    *session.library.0.borrow_mut() = GlobalConfiguration::new(
+        1,
+        TaxonomyId::new("team")?,
+        vec![TaxonomyId::new("team")?],
+        vec![taxonomy("team")?.into()],
+    )?;
+    session.run(|workspace| {
+        let authored = approved(&workspace.prepare_commit()?)?;
+        let original = taxonomy("team")?;
+        let changed = Taxonomy::new(
+            original.id().clone(),
+            original.version(),
+            Description::new("The library changed after review.")?,
+            original.derived_from().cloned(),
+            original.commit_types().to_vec(),
+        )?;
+        *session.library.0.borrow_mut() = GlobalConfiguration::new(
+            1,
+            changed.id().clone(),
+            vec![changed.id().clone()],
+            vec![changed.clone().into()],
+        )?;
+        assert_eq!(workspace.library_taxonomies()?, vec![changed]);
+        workspace.submit_commit(&authored)?;
+        assert_eq!(
+            session.writer.0.borrow().as_slice(),
+            &[(
+                session.locator.root.clone(),
+                authored
+                    .reviewed_message()
+                    .ok_or("no approved bytes")?
+                    .clone()
+            )]
+        );
+        Ok(())
+    })
 }
