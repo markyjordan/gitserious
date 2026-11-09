@@ -51,8 +51,8 @@ fn new_taxonomy_form_omits_facts_until_saved() -> Result {
             let screen = text(&terminal);
             assert!(!screen.contains("Version"), "{size:?}: {screen}");
             assert!(!screen.contains("Types"), "{size:?}: {screen}");
-            assert!(!screen.contains("Created on"), "{size:?}: {screen}");
-            assert!(!screen.contains("Modified on"), "{size:?}: {screen}");
+            assert!(!screen.contains("Created"), "{size:?}: {screen}");
+            assert!(!screen.contains("Modified"), "{size:?}: {screen}");
             assert!(screen.contains("Name"), "{size:?}: {screen}");
             assert!(screen.contains("Description"), "{size:?}: {screen}");
         }
@@ -110,15 +110,17 @@ fn saved_taxonomy_dates_appear_only_while_inspecting() -> Result {
     let terminal = draw(&mut state, (100, 40))?;
     let edit = text(&terminal);
     assert!(
-        inspect.contains("Created on")
-            && inspect.contains("Modified on")
-            && !edit.contains("Created on")
-            && !edit.contains("Modified on"),
+        inspect.contains("Created")
+            && !inspect.contains("Created on")
+            && inspect.contains("Modified")
+            && !inspect.contains("Modified on")
+            && !edit.contains("Created")
+            && !edit.contains("Modified"),
         "inspect created {} modified {} edit created {} modified {}\nINSPECT\n{inspect}\nEDIT\n{edit}",
-        inspect.contains("Created on"),
-        inspect.contains("Modified on"),
-        edit.contains("Created on"),
-        edit.contains("Modified on"),
+        inspect.contains("Created"),
+        inspect.contains("Modified"),
+        edit.contains("Created"),
+        edit.contains("Modified"),
     );
     Ok(())
 }

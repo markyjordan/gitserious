@@ -173,8 +173,8 @@ fn project_taxonomy_editor_omits_library_dates() -> Result {
     terminal.draw(|frame| state.render(frame))?;
     let edit = screen(&terminal);
     for (mode, text) in [("inspect", &inspect), ("edit", &edit)] {
-        assert!(!text.contains("Created on"), "{mode}\n{text}");
-        assert!(!text.contains("Modified on"), "{mode}\n{text}");
+        assert!(!text.contains("Created"), "{mode}\n{text}");
+        assert!(!text.contains("Modified"), "{mode}\n{text}");
     }
     Ok(())
 }

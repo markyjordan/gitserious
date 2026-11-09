@@ -223,11 +223,11 @@ fn describe(
                 let record = library.saved_taxonomy(id);
                 for (label, date) in [
                     (
-                        "Created on",
+                        "Created",
                         record.and_then(gitserious_app::LibraryTaxonomy::created_on),
                     ),
                     (
-                        "Modified on",
+                        "Modified",
                         record.and_then(gitserious_app::LibraryTaxonomy::modified_on),
                     ),
                 ] {
@@ -539,8 +539,10 @@ mod tests {
                             assert!(types < lineage, "{rows:?}");
                         }
                         if owner == "conventional-fork" && focus.is_none() {
-                            let created = at("Created on").ok_or("created date")?;
-                            let modified = at("Modified on").ok_or("modified date")?;
+                            let created = at("Created ").ok_or("created date")?;
+                            let modified = at("Modified ").ok_or("modified date")?;
+                            assert!(!rows[created].starts_with("Created on"), "{rows:?}");
+                            assert!(!rows[modified].starts_with("Modified on"), "{rows:?}");
                             assert!(
                                 at("Forked from").ok_or("lineage")? < created && created < modified,
                                 "{rows:?}"
@@ -548,8 +550,8 @@ mod tests {
                             assert!(rows[created].ends_with("Unknown"));
                             assert!(rows[modified].ends_with("Unknown"));
                         } else {
-                            assert_eq!(at("Created on"), None);
-                            assert_eq!(at("Modified on"), None);
+                            assert_eq!(at("Created "), None);
+                            assert_eq!(at("Modified "), None);
                         }
                         if owner == "conventional" {
                             assert!(version.is_some_and(|version| types < version));
@@ -595,16 +597,70 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n");
             assert!(
-                text.lines()
-                    .any(|line| line.starts_with("Created on") && line.ends_with("2024-02-29")),
+                text.lines().any(|line| {
+                    line.starts_with("Created ")
+                        && !line.starts_with("Created on")
+                        && line.ends_with("2024-02-29")
+                }),
                 "{text}"
             );
             assert!(
-                text.lines()
-                    .any(|line| line.starts_with("Modified on") && line.ends_with("2026-11-07")),
+                text.lines().any(|line| {
+                    line.starts_with("Modified ")
+                        && !line.starts_with("Modified on")
+                        && line.ends_with("2026-11-07")
+                }),
                 "{text}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn saved_timestamps_show_the_calendar_day_and_the_utc_time()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use super::{Chips, describe};
+        use gitserious_app::{DraftEdit, DraftField, GlobalConfiguration, LibraryDraft};
+        let mut library = LibraryDraft::from_configuration(GlobalConfiguration::default());
+        let source = library.find_path(&["conventional"]).ok_or("source")?;
+        let id = library.fork(&source)?;
+        let mut library = library
+            .saved_on("2024-02-29 01:02:03 UTC".parse()?)
+            .map_err(|problems| format!("{problems:?}"))?;
+        library.edit(
+            &id,
+            DraftEdit::Text(DraftField::Description, "Updated purpose"),
+        )?;
+        let library = library
+            .saved_on("2026-11-07 15:04:05 UTC".parse()?)
+            .map_err(|problems| format!("{problems:?}"))?;
+        let (lines, _) = describe(
+            &Chips::new(&library, false),
+            library.node(&id).ok_or("taxonomy")?,
+            None,
+            80,
+        );
+        let text = lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.lines().any(|line| {
+                line.starts_with("Created ")
+                    && !line.starts_with("Created on")
+                    && line.contains("2024-02-29 01:02:03 UTC")
+            }),
+            "{text}"
+        );
+        assert!(
+            text.lines().any(|line| {
+                line.starts_with("Modified ")
+                    && !line.starts_with("Modified on")
+                    && line.contains("2026-11-07 15:04:05 UTC")
+            }),
+            "{text}"
+        );
         Ok(())
     }
 

@@ -169,8 +169,8 @@ fn project_browsing_expands_real_nodes_and_never_offers_or_performs_mutations() 
     );
     let text = rendered(&mut view, &mut terminal)?;
     assert!(!text.contains("+ add"));
-    assert!(!text.contains("Created on"));
-    assert!(!text.contains("Modified on"));
+    assert!(!text.contains("Created"));
+    assert!(!text.contains("Modified"));
     press(&mut view, &workspace, KeyCode::Down);
     let text = rendered(&mut view, &mut terminal)?;
     assert!(text.contains("Type change"));
