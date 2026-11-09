@@ -5,23 +5,23 @@
 #[cfg(test)]
 extern crate self as gitserious_app;
 
-mod commit_draft_author;
-mod commit_writer;
+mod commit;
 mod config;
-mod create_taxonomy_commit;
 mod directory_creator;
 mod global_path_resolver;
 mod global_paths;
 mod initialize_taxonomy_project;
 mod interactive;
 mod repository_locator;
-mod repository_status;
 mod resolve_global_paths;
 mod storage_directory;
-mod taxonomy_authoring_context;
 
-pub use commit_draft_author::{CommitDraftAuthor, CommitDraftAuthorOutcome};
-pub use commit_writer::{CommitOutput, CommitWriter};
+pub use commit::{
+    AuthoredCommit, BranchState, CommitAuthoringContext, CommitAuthoringOutcome, CommitDraftAuthor,
+    CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitTaxonomy, CommitWriter,
+    CreateCommitError, RepositoryStatus, RepositoryStatusReader, StatusEntry,
+    create_commit_with_taxonomy, prepare_commit_with_taxonomy, validate_reviewed_commit,
+};
 pub use config::{
     Collision, ConfigurationDestination, ConfigurationEditor, ConfigurationError,
     ConfigurationSession, ConfigurationWorkspace, CopyIn, DraftEdit, DraftField, EditRefusal,
@@ -29,10 +29,6 @@ pub use config::{
     Policy, Problem, ProblemKind, ProblemSite, ProjectConfiguration, ProjectConfigurationStore,
     ProjectRevision, PropertyNode, Review, StoredProject, TaxonomyCatalog, TaxonomyDate,
     TaxonomyNode, TaxonomyOrigin, TypeNode, edit_configuration, fingerprint_taxonomy,
-};
-pub use create_taxonomy_commit::{
-    CommitOutcome, CreateCommitError, create_commit_with_taxonomy, prepare_commit_with_taxonomy,
-    validate_reviewed_commit,
 };
 pub use directory_creator::DirectoryCreator;
 pub use global_path_resolver::GlobalPathResolver;
@@ -48,9 +44,5 @@ pub use interactive::{
 pub use repository_locator::{
     RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryRootError,
 };
-pub use repository_status::{BranchState, RepositoryStatus, RepositoryStatusReader, StatusEntry};
 pub use resolve_global_paths::resolve_global_paths;
 pub use storage_directory::StorageDirectory;
-pub use taxonomy_authoring_context::{
-    AuthoredCommit, CommitAuthoringContext, CommitAuthoringOutcome, CommitTaxonomy,
-};
