@@ -3,8 +3,8 @@
 //! Seeds cover blank creation, forks, existing fields, conditional policy, limits and copies.
 //! Every transition checks modal editing, direct persistence, deletion confirmation, saved
 //! eligibility badges, the new taxonomy row that ends the Library, name locking, field limits,
-//! inline messages and copy independence. Blank new nodes may cancel under any policy,
-//! but every text field (including hidden conditional text) and child list must be empty.
+//! inline messages and copy independence. Esc restores the checkpoint taken before the
+//! active edit and writes nothing. Ctrl+W finishes that edit only after storage succeeds.
 //! At most one taxonomy root is expanded, while type expansion can be remembered independently.
 //! The existing breadth-first runner deduplicates snapshots and reports shortest counterexamples.
 //! Mouse, resize, write failures and the embedded shell are covered by interaction tests.
@@ -29,7 +29,7 @@ use ratatui::backend::TestBackend;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::naming::problem_sentence;
-use super::taxonomies::{Mode, Observation};
+use super::taxonomies::{Observation, ObservedMode as Mode};
 use super::tests::Workspace;
 use super::*;
 use crate::confirmation::{self, Answer, ConfirmDialog, DISCARD_AND_QUIT, REMOVE};
@@ -44,6 +44,7 @@ const fn plain(code: KeyCode) -> Event {
 
 const INPUTS: &[(&str, Event)] = &[
     ("esc", plain(KeyCode::Esc)),
+    ("ctrl+w", press(KeyCode::Char('w'), KeyModifiers::CONTROL)),
     ("enter", plain(KeyCode::Enter)),
     ("alt+enter", press(KeyCode::Enter, KeyModifiers::ALT)),
     ("tab", plain(KeyCode::Tab)),
@@ -89,6 +90,7 @@ const COPY_KEYS: &[&str] = &[
     "space",
     "c",
     "ctrl+s",
+    "ctrl+w",
 ];
 
 struct Seed {
@@ -592,6 +594,10 @@ type Check = fn(&Snapshot, &Event, Option<&Snapshot>) -> Result<(), String>;
 
 const PROPERTIES: &[(&str, Check)] = &[
     (
+        "Esc restores the edit checkpoint without writing",
+        cancellation_restores_without_writing,
+    ),
+    (
         "P14, at most one taxonomy root is expanded",
         at_most_one_taxonomy_root_is_expanded,
     ),
@@ -721,11 +727,13 @@ fn no_silent_draft_loss(
         }
         Screen::ConfirmRemove(_) => answer(REMOVE, input) == Some(Answer::Confirm),
         Screen::Home => {
-            edits(before, input)
+            cancelled_edit(before, input, after)
+                || edits(before, input)
                 || matches!(
                     input,
                     Event::Key(KeyEvent {
-                        code: KeyCode::Esc,
+                        code: KeyCode::Char('w'),
+                        modifiers: KeyModifiers::CONTROL,
                         ..
                     })
                 ) && matches!(before.taxonomies.mode, Mode::Edit { .. })
@@ -909,6 +917,51 @@ fn children(library: &LibraryDraft) -> HashSet<NodeId> {
         .collect()
 }
 
+fn cancelled_edit(before: &Snapshot, input: &Event, after: Option<&Snapshot>) -> bool {
+    let Some(baseline) = &before.taxonomies.edit_baseline else {
+        return false;
+    };
+    let Some(after) = after else {
+        return false;
+    };
+    before.outline_takes_keys()
+        && matches!(
+            input,
+            Event::Key(KeyEvent {
+                code: KeyCode::Esc,
+                ..
+            })
+        )
+        && matches!(after.taxonomies.mode, Mode::Nav)
+        && format!("{:?}", after.library()) == format!("{:?}", Some(&baseline.library))
+        && after.taxonomies.cursor == baseline.cursor
+        && after.taxonomies.expanded == baseline.expanded
+        && after.taxonomies.outline_offset == baseline.outline_offset
+        && after.taxonomies.inspector_offset == baseline.inspector_offset
+        && format!("{:?}", after.saved) == format!("{:?}", before.saved)
+}
+
+fn cancellation_restores_without_writing(
+    before: &Snapshot,
+    input: &Event,
+    after: Option<&Snapshot>,
+) -> Result<(), String> {
+    if before.outline_takes_keys()
+        && before.taxonomies.edit_baseline.is_some()
+        && matches!(
+            input,
+            Event::Key(KeyEvent {
+                code: KeyCode::Esc,
+                ..
+            })
+        )
+        && !cancelled_edit(before, input, after)
+    {
+        return Err("Esc did not restore the edit checkpoint without writing storage.".into());
+    }
+    Ok(())
+}
+
 fn removals_go_through_their_dialog(
     before: &Snapshot,
     input: &Event,
@@ -921,16 +974,7 @@ fn removals_go_through_their_dialog(
     if children(old).is_subset(&new) {
         return Ok(());
     }
-    if let Mode::Edit { node, .. } = &before.taxonomies.mode
-        && old.blank_creation(node)
-        && matches!(
-            input,
-            Event::Key(KeyEvent {
-                code: KeyCode::Esc,
-                ..
-            })
-        )
-    {
+    if cancelled_edit(before, input, after) {
         return Ok(());
     }
     let confirmed = match before.screen {
@@ -1077,7 +1121,7 @@ fn saved_eligibility_badges(
     if let Some(NodeRef::Property { taxonomy, .. }) =
         selected.as_ref().and_then(|id| library.node(id))
     {
-        let actions = matches!(after.taxonomies.mode, taxonomies::Mode::Nav)
+        let actions = matches!(after.taxonomies.mode, taxonomies::ObservedMode::Nav)
             && taxonomy.origin() == gitserious_app::TaxonomyOrigin::Custom;
         for label in ["e edit", "c copy property", "d delete"] {
             if footer.contains(label) != actions {

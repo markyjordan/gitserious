@@ -1547,7 +1547,11 @@ mod tests {
             assert!(!warning.contains("quit"), "{warning}");
             assert!(
                 shell
-                    .handle_event(key(KeyCode::Esc), &services, &[])
+                    .handle_event(
+                        Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+                        &services,
+                        &[]
+                    )
                     .is_none()
             );
             large.draw(|frame| shell.render(frame, &[]))?;
@@ -1559,6 +1563,14 @@ mod tests {
     #[test]
     fn hidden_config_edit_pauses_escape() -> Result<(), Box<dyn std::error::Error>> {
         hidden_config_edit_pauses(key(KeyCode::Esc))
+    }
+
+    #[test]
+    fn hidden_config_edit_pauses_save() -> Result<(), Box<dyn std::error::Error>> {
+        hidden_config_edit_pauses(Event::Key(KeyEvent::new(
+            KeyCode::Char('w'),
+            KeyModifiers::CONTROL,
+        )))
     }
 
     #[test]
@@ -1593,16 +1605,12 @@ mod tests {
         }
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.section, Section::Config);
-        assert_eq!(shell.config.shell_keys(), ShellKeys::None);
-        shell.handle_event(key(KeyCode::Up), &services, &[]);
-        shell.handle_event(key(KeyCode::Backspace), &services, &[]);
-        shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.config.shell_keys(), ShellKeys::Navigation);
+        assert!(!shell.config.dirty());
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
         assert_eq!(shell.section, Section::Help);
         shell.handle_event(key(KeyCode::BackTab), &services, &[]);
         assert_eq!(shell.section, Section::Config);
-        assert!(!shell.config.dirty());
         assert_eq!(
             shell.handle_event(key(KeyCode::Char('q')), &services, &[]),
             Some(Action::Quit)

@@ -69,7 +69,7 @@ Add project-first left navigation, focused taxonomy browsing, progressive detail
 full-screen CRUD children, and semantic review using the commit TUI visual system.
 
 constraints:
-Library edits save on Esc; copy, reorder, and confirmed deletion save immediately. Project writes require review. Preserve draft state on errors, require explicit scope
+Library edits save on Ctrl+W and cancel on Esc; copy, reorder, and confirmed deletion save immediately. Project writes require review. Preserve draft state on errors, require explicit scope
 transitions, support mouse and paste input, and block hidden actions when the
 terminal is too small.
 ```

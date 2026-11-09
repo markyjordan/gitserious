@@ -534,6 +534,54 @@ impl State {
         }
     }
 
+    fn save_editor_edit(&mut self, editor: Editor, workspace: &dyn ConfigurationWorkspace) {
+        if editor == Editor::Project {
+            self.project_taxonomies.finish_edit();
+            self.status = None;
+            return;
+        }
+        let Some(session) = self.global.as_ref() else {
+            return;
+        };
+        let Some(library) = session.library() else {
+            return;
+        };
+        let result = if session.is_dirty() {
+            workspace
+                .save(session)
+                .map(|saved| saved.library().cloned())
+        } else {
+            library.saved().map(Some).map_err(|problems| {
+                problems
+                    .iter()
+                    .map(|problem| naming::problem_sentence(library, problem))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+        };
+        match result {
+            Ok(candidate) => {
+                if let Some(candidate) = candidate
+                    && let Some(library) = self
+                        .global
+                        .as_mut()
+                        .and_then(ConfigurationSession::library_mut)
+                {
+                    *library = candidate;
+                }
+                self.taxonomies.finish_edit();
+                self.status = None;
+                if !self.scope_dirty(ConfigurationDestination::Project) {
+                    self.replace_session(
+                        ConfigurationDestination::Project,
+                        workspace.load(ConfigurationDestination::Project),
+                    );
+                }
+            }
+            Err(error) => self.status = Some(Notice::error(error)),
+        }
+    }
+
     fn handle_event(&mut self, event: Event, workspace: &dyn ConfigurationWorkspace) -> bool {
         if self.too_small && self.editor_view().editing() {
             return false;
@@ -542,12 +590,10 @@ impl State {
         let before_view = self.taxonomies.clone();
         let before_screen = self.screen.clone();
         let quit = self.handle_event_inner(event, workspace);
-        let finished_edit = before_view.editing() && !self.taxonomies.editing();
-        let immediate_change =
-            !self.taxonomies.editing() && self.scope_dirty(ConfigurationDestination::Global);
-        if (finished_edit || immediate_change)
-            && let Some(session) = self.global.as_ref()
-        {
+        let immediate_change = !before_view.editing()
+            && !self.taxonomies.editing()
+            && self.scope_dirty(ConfigurationDestination::Global);
+        if immediate_change && let Some(session) = self.global.as_ref() {
             let candidate = session.library().and_then(|library| library.saved().ok());
             let result = if session.is_dirty() {
                 workspace
@@ -566,14 +612,12 @@ impl State {
                     {
                         *library = candidate;
                     }
-                    if immediate_change {
-                        self.status = None;
-                        if !self.scope_dirty(ConfigurationDestination::Project) {
-                            self.replace_session(
-                                ConfigurationDestination::Project,
-                                workspace.load(ConfigurationDestination::Project),
-                            );
-                        }
+                    self.status = None;
+                    if !self.scope_dirty(ConfigurationDestination::Project) {
+                        self.replace_session(
+                            ConfigurationDestination::Project,
+                            workspace.load(ConfigurationDestination::Project),
+                        );
                     }
                 }
                 Err(error) => {
@@ -798,7 +842,7 @@ impl State {
         false
     }
 
-    fn home_key(&mut self, key: KeyEvent, _workspace: &dyn ConfigurationWorkspace) -> bool {
+    fn home_key(&mut self, key: KeyEvent, workspace: &dyn ConfigurationWorkspace) -> bool {
         if self.empty_project_overview()
             && matches!(key.code, KeyCode::Enter | KeyCode::Char('i'))
             && key.modifiers.is_empty()
@@ -820,11 +864,18 @@ impl State {
             return false;
         }
         let editor = self.editor();
-        if editor.is_some() && self.editor_view().editing() {
-            if let Some((view, library)) = self.editor_parts_mut()
-                && let Err(error) = view.edit_key(key, library)
-            {
-                self.status = Some(Notice::error(error));
+        if let Some(editor) = editor
+            && self.editor_view().editing()
+        {
+            if let Some((view, library)) = self.editor_parts_mut() {
+                match view.edit_key(key, library) {
+                    Ok(taxonomies::EditOutcome::SaveRequested) => {
+                        self.save_editor_edit(editor, workspace)
+                    }
+                    Ok(taxonomies::EditOutcome::Cancelled) => self.status = None,
+                    Ok(taxonomies::EditOutcome::Continue) => {}
+                    Err(error) => self.status = Some(Notice::error(error)),
+                }
             }
             return false;
         }
@@ -3251,8 +3302,13 @@ mod tests {
                         }
                         if editing {
                             assert!(
-                                footer
-                                    .starts_with("  EDIT   enter next field  ←/→ cursor  esc save")
+                                footer.contains("EDIT")
+                                    && footer.contains("enter next")
+                                    && footer.contains("ctrl+w")
+                                    && footer.contains("save")
+                                    && footer.contains("esc")
+                                    && footer.contains("cancel"),
+                                "{footer}"
                             );
                         } else {
                             assert!(!footer.contains(" NAV ") && footer.contains("←/→ focus"));
@@ -3895,7 +3951,7 @@ mod tests {
             .and_then(ConfigurationSession::library_mut)
             .ok_or("missing global")?
             .edit(&fork, DraftEdit::Text(DraftField::Name, "team"))?;
-        state.handle_event(key(KeyCode::Esc), &workspace);
+        state.handle_event(ctrl(KeyCode::Char('w')), &workspace);
         assert!(!state.taxonomies.editing());
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| state.render(frame))?;
@@ -3912,7 +3968,7 @@ mod tests {
         state.handle_event(key(KeyCode::Char('e')), &workspace);
         assert!(matches!(
             state.taxonomies.observe(state.library()).mode,
-            taxonomies::Mode::Edit {
+            taxonomies::ObservedMode::Edit {
                 field: DraftField::Description,
                 ..
             }
@@ -4096,8 +4152,8 @@ mod tests {
 
     fn field(state: &State) -> Option<DraftField> {
         match state.taxonomies.observe(state.library()).mode {
-            taxonomies::Mode::Edit { field, .. } => Some(field),
-            taxonomies::Mode::Nav | taxonomies::Mode::CopyTo { .. } => None,
+            taxonomies::ObservedMode::Edit { field, .. } => Some(field),
+            taxonomies::ObservedMode::Nav | taxonomies::ObservedMode::CopyTo { .. } => None,
         }
     }
 
@@ -4232,7 +4288,7 @@ mod tests {
                     press(&mut state, &workspace, &[KeyCode::Enter]);
                     state.handle_event(Event::Paste("Property purpose".into()), &workspace);
                 }
-                press(&mut state, &workspace, &[KeyCode::Esc]);
+                state.handle_event(ctrl(KeyCode::Char('w')), &workspace);
                 for width in MINIMUM_WIDTH..=140 {
                     let line = state
                         .taxonomies
@@ -4259,8 +4315,11 @@ mod tests {
                     let footer = row_text(&terminal, 0, 39, width);
                     assert!(
                         footer.contains("EDIT")
-                            && footer.contains("enter next field")
-                            && footer.contains("esc save"),
+                            && footer.contains("enter next")
+                            && footer.contains("ctrl+w")
+                            && footer.contains("save")
+                            && footer.contains("esc")
+                            && footer.contains("cancel"),
                         "{footer}"
                     );
                     for label in ["e edit", "c copy", "d delete"] {
@@ -4313,7 +4372,12 @@ mod tests {
             assert!(screen.contains("5/80"), "{screen}");
             let footer = row_text(&terminal, 0, height - 1, width);
             assert!(
-                footer.starts_with("  EDIT   enter next field  ←/→ cursor  esc save"),
+                footer.contains("EDIT")
+                    && footer.contains("enter next")
+                    && footer.contains("ctrl+w")
+                    && footer.contains("save")
+                    && footer.contains("esc")
+                    && footer.contains("cancel"),
                 "{footer}"
             );
             assert!(!footer.contains("ctrl+s review"), "{footer}");
@@ -4369,7 +4433,7 @@ mod tests {
             assert!(rows(&terminal).join("\n").contains("0/100"));
             press(&mut state, &workspace, &[KeyCode::Enter]);
             assert_eq!(field(&state), Some(DraftField::Name));
-            press(&mut state, &workspace, &[KeyCode::Esc]);
+            state.handle_event(ctrl(KeyCode::Char('w')), &workspace);
             assert_eq!(field(&state), Some(DraftField::Rationale));
             assert!(matches!(state.screen, Screen::Home));
             assert!(state.scope_dirty(ConfigurationDestination::Global));
@@ -4439,15 +4503,12 @@ mod tests {
         assert_eq!(cursor(&state), ["original", "existing", "verification"]);
         state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
         assert!(matches!(state.screen, Screen::Home));
-        press(&mut state, &workspace, &[KeyCode::Esc]);
+        state.handle_event(ctrl(KeyCode::Char('w')), &workspace);
         assert_eq!(field(&state), Some(DraftField::Description));
         assert_eq!(notice(&state), None);
         state.handle_event(Event::Paste("Verification evidence".into()), &workspace);
-        press(
-            &mut state,
-            &workspace,
-            &[KeyCode::Esc, KeyCode::Down, KeyCode::Down],
-        );
+        state.handle_event(ctrl(KeyCode::Char('w')), &workspace);
+        press(&mut state, &workspace, &[KeyCode::Down, KeyCode::Down]);
         assert_eq!(cursor(&state), ["original", "+ add type"]);
         press(&mut state, &workspace, &[KeyCode::Enter]);
         assert_eq!(cursor(&state), ["original", ""]);
@@ -4578,8 +4639,9 @@ mod tests {
         press(
             &mut state,
             &workspace,
-            &[KeyCode::Char('e'), KeyCode::Char('q'), KeyCode::Esc],
+            &[KeyCode::Char('e'), KeyCode::Char('q')],
         );
+        state.handle_event(ctrl(KeyCode::Char('w')), &workspace);
         assert!(!state.any_dirty());
         assert_eq!(workspace.saves(), 1);
         assert!(state.handle_event(key(KeyCode::Char('q')), &workspace));
