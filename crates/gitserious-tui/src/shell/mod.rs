@@ -242,6 +242,9 @@ impl Shell {
         if self.overlay.is_some() {
             return self.handle_overlay(event, workspace);
         }
+        if self.too_small && self.section == Section::Config && self.config.modal() {
+            return None;
+        }
         if self.section == Section::Config && self.config.modal() {
             return self.config_event(event, workspace);
         }
@@ -572,8 +575,13 @@ impl Shell {
             area,
         );
         if self.too_small {
+            let message = if self.section == Section::Config && self.config.modal() {
+                "Terminal too small\nResize to continue"
+            } else {
+                "Terminal too small\nResize or press esc/q to quit"
+            };
             frame.render_widget(
-                Paragraph::new("Terminal too small\nResize or press esc/q to quit").centered(),
+                Paragraph::new(message).centered(),
                 centered_rect(54, 3, area),
             );
         } else {
@@ -1491,6 +1499,81 @@ mod tests {
             "Config"
         );
         Ok(())
+    }
+
+    fn hidden_config_edit_pauses(event: Event) -> Result<(), Box<dyn std::error::Error>> {
+        for (width, height) in [(MINIMUM_WIDTH - 1, 40), (87, MINIMUM_HEIGHT - 1)] {
+            let services = Services;
+            let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
+            for event in [
+                key(KeyCode::Char('2')),
+                key(KeyCode::Char('n')),
+                Event::Paste("Paused taxonomy".into()),
+                key(KeyCode::Enter),
+                Event::Paste("Paused purpose".into()),
+            ] {
+                assert!(shell.handle_event(event, &services, &[]).is_none());
+            }
+            let mut large = Terminal::new(TestBackend::new(87, 40))?;
+            large.draw(|frame| shell.render(frame, &[]))?;
+            let original = rendered(&large);
+            assert!(original.contains("Paused taxonomy"));
+            assert!(original.contains("Paused purpose"));
+            let mut small = Terminal::new(TestBackend::new(width, height))?;
+            small.draw(|frame| shell.render(frame, &[]))?;
+            let warning = rendered(&small);
+            assert!(shell.handle_event(event.clone(), &services, &[]).is_none());
+            large.draw(|frame| shell.render(frame, &[]))?;
+            let resumed = rendered(&large);
+            assert!(
+                !resumed.contains("Test save unavailable"),
+                "hidden {event:?} at {width}x{height} attempted a save"
+            );
+            let draft_rows = |text: &str| {
+                text.lines()
+                    .filter(|line| line.contains("Paused"))
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                draft_rows(&resumed),
+                draft_rows(&original),
+                "hidden {event:?} at {width}x{height} changed the draft"
+            );
+            assert!(shell.config.modal());
+            assert_eq!(shell.config.shell_keys(), ShellKeys::None);
+            assert!(warning.contains("Resize to continue"), "{warning}");
+            assert!(!warning.contains("esc"), "{warning}");
+            assert!(!warning.contains("quit"), "{warning}");
+            assert!(
+                shell
+                    .handle_event(key(KeyCode::Esc), &services, &[])
+                    .is_none()
+            );
+            large.draw(|frame| shell.render(frame, &[]))?;
+            assert!(rendered(&large).contains("Test save unavailable"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn hidden_config_edit_pauses_escape() -> Result<(), Box<dyn std::error::Error>> {
+        hidden_config_edit_pauses(key(KeyCode::Esc))
+    }
+
+    #[test]
+    fn hidden_config_edit_pauses_q() -> Result<(), Box<dyn std::error::Error>> {
+        hidden_config_edit_pauses(key(KeyCode::Char('q')))
+    }
+
+    #[test]
+    fn hidden_config_edit_pauses_text_key() -> Result<(), Box<dyn std::error::Error>> {
+        hidden_config_edit_pauses(key(KeyCode::Char('x')))
+    }
+
+    #[test]
+    fn hidden_config_edit_pauses_paste() -> Result<(), Box<dyn std::error::Error>> {
+        hidden_config_edit_pauses(Event::Paste("hidden paste".into()))
     }
 
     #[test]

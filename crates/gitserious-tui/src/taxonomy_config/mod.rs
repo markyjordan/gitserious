@@ -535,6 +535,9 @@ impl State {
     }
 
     fn handle_event(&mut self, event: Event, workspace: &dyn ConfigurationWorkspace) -> bool {
+        if self.too_small && self.editor_view().editing() {
+            return false;
+        }
         let before_global = self.global.clone();
         let before_view = self.taxonomies.clone();
         let before_screen = self.screen.clone();
@@ -1391,9 +1394,13 @@ impl State {
             if let Some(question) = self.confirmation() {
                 self.dialog.render(frame, &question);
             } else {
+                let message = if self.editor_view().editing() {
+                    "Terminal too small\n\nResize to continue editing"
+                } else {
+                    "Terminal too small\n\nResize or press esc/q to cancel"
+                };
                 frame.render_widget(
-                    Paragraph::new("Terminal too small\n\nResize or press esc/q to cancel")
-                        .centered(),
+                    Paragraph::new(message).centered(),
                     centered_rect(54, 3, area),
                 );
             }
