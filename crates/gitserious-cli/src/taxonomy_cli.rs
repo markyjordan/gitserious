@@ -735,6 +735,31 @@ mod tests {
     }
 
     #[test]
+    fn terminal_help_launch_failures_report_stderr_without_printing_help() {
+        for command in [None, Some("commit")] {
+            let requested = command.map(str::to_owned);
+            let mut opened = Vec::new();
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+
+            let exit = answer(
+                route(HelpRequest::Topic(requested.clone()), true),
+                &mut stdout,
+                &mut stderr,
+                |page| {
+                    opened.push(page);
+                    Err("help shell rejected".into())
+                },
+            );
+
+            assert_eq!(exit, ExitCode::FAILURE);
+            assert_eq!(opened, [ShellStart::Help { command: requested }]);
+            assert!(stdout.is_empty());
+            assert_eq!(stderr, b"error: help shell rejected\n");
+        }
+    }
+
+    #[test]
     fn usage_shows_options_once_with_or_without_a_real_option() {
         let mut root = with_options_usage(
             clap::Command::new("tool")
