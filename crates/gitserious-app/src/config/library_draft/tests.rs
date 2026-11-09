@@ -1,4 +1,4 @@
-#[path = "../../tests/support/library_lookup.rs"]
+#[path = "../../../tests/support/library_lookup.rs"]
 mod library_lookup;
 use library_lookup::LibraryLookup;
 
