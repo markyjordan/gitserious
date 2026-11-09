@@ -188,3 +188,135 @@ fn terminal_long_and_topic_help_open_the_tui_without_paging() -> Result<(), Box<
     }
     Ok(())
 }
+
+fn active_page(screen: &vt100::Screen, page: &str) -> bool {
+    let row = screen.rows(0, screen.size().1).next().unwrap_or_default();
+    row.find(page)
+        .and_then(|column| u16::try_from(column).ok())
+        .and_then(|column| screen.cell(0, column))
+        .is_some_and(|cell| cell.bold() && cell.underline())
+}
+
+fn record(session: &Session, name: &str) -> io::Result<()> {
+    if let Some(directory) = std::env::var_os("GITSERIOUS_TERMINAL_RECEIPTS") {
+        let directory = std::path::PathBuf::from(directory);
+        fs::create_dir_all(&directory)?;
+        fs::write(directory.join(format!("{name}.txt")), session.contents())?;
+        fs::write(directory.join(format!("{name}.ansi")), session.transcript())?;
+    }
+    Ok(())
+}
+
+fn initialized_repository() -> Result<(tempfile::TempDir, Home), Box<dyn Error>> {
+    let repository = support::repository()?;
+    let home = Home::new()?;
+    home.init(repository.path())?;
+    fs::write(repository.path().join("staged-file"), "reviewed later\n")?;
+    support::git(repository.path(), &["add", "staged-file"])?;
+    Ok((repository, home))
+}
+
+fn quit(session: &mut Session) -> Result<(), Box<dyn Error>> {
+    session.send(b"q")?;
+    assert!(session.finish()?.success());
+    assert!(!session.screen().alternate_screen());
+    assert!(!session.screen().hide_cursor());
+    assert!(session.modes_restored(), "terminal modes were not restored");
+    Ok(())
+}
+
+#[test]
+fn executable_commands_select_the_initial_page_without_authoring_or_git_writes()
+-> Result<(), Box<dyn Error>> {
+    let (repository, home) = initialized_repository()?;
+    let before = support::git(repository.path(), &["status", "--porcelain=v1"])?.stdout;
+    for (arguments, page, content) in [
+        (Vec::<&str>::new(), "Home", "Go to Commit"),
+        (vec!["commit"], "Commit", "[enter] start commit"),
+        (vec!["config"], "Config", "1  Project"),
+        (vec!["help", "commit"], "Help", "gitserious help: commit"),
+    ] {
+        let mut command = home.command(repository.path());
+        command.args(&arguments);
+        let mut session = Session::spawn(&command, Streams::Terminal)?;
+        session
+            .wait_for(|screen| active_page(screen, page) && screen.contents().contains(content))?;
+        if page == "Commit" {
+            assert!(session.contents().contains("Staged (1)"));
+        }
+        for other in ["Home", "Commit", "Config", "Help"] {
+            assert_eq!(active_page(session.screen(), other), other == page);
+        }
+        record(&session, &format!("initial-{page}"))?;
+        quit(&mut session)?;
+        assert_eq!(
+            support::git(repository.path(), &["status", "--porcelain=v1"])?.stdout,
+            before
+        );
+        assert!(!support::head_exists(repository.path())?);
+    }
+    Ok(())
+}
+
+#[test]
+fn executable_commit_entry_matches_navigation_from_home() -> Result<(), Box<dyn Error>> {
+    let (repository, home) = initialized_repository()?;
+    let mut command = home.command(repository.path());
+    command.arg("commit");
+    let mut direct = Session::spawn(&command, Streams::Terminal)?;
+    direct.wait_for(|screen| {
+        active_page(screen, "Commit") && screen.contents().contains("[enter] start commit")
+    })?;
+    let expected = direct.contents();
+    record(&direct, "commit-direct")?;
+    quit(&mut direct)?;
+
+    let mut navigated = Session::spawn(&home.command(repository.path()), Streams::Terminal)?;
+    navigated.wait_for(|screen| {
+        active_page(screen, "Home") && screen.contents().contains("Go to Commit")
+    })?;
+    navigated.send(b"\t")?;
+    navigated.wait_for(|screen| {
+        active_page(screen, "Commit") && screen.contents().contains("[enter] start commit")
+    })?;
+    for contract in [
+        "Staged (1)",
+        "staged-file",
+        "Unstaged (0)",
+        "[enter] start commit",
+    ] {
+        assert!(expected.contains(contract), "direct entry lacks {contract}");
+        assert!(
+            navigated.contents().contains(contract),
+            "navigation lacks {contract}"
+        );
+    }
+    record(&navigated, "commit-navigated")?;
+    quit(&mut navigated)?;
+    Ok(())
+}
+
+#[test]
+fn missing_repository_blocks_commit_and_still_allows_config_navigation()
+-> Result<(), Box<dyn Error>> {
+    let directory = tempfile::tempdir()?;
+    let home = Home::new()?;
+    let mut command = home.command(directory.path());
+    command.arg("commit");
+    let mut session = Session::spawn(&command, Streams::Terminal)?;
+    session.wait_for(|screen| {
+        active_page(screen, "Commit")
+            && screen.contents().contains("Repository unavailable")
+            && screen.contents().contains("Start commit unavailable")
+    })?;
+    record(&session, "commit-no-repository")?;
+    session.send(b"\t")?;
+    session.wait_for(|screen| {
+        active_page(screen, "Config") && screen.contents().contains("1  Project")
+    })?;
+    record(&session, "config-no-repository")?;
+    quit(&mut session)?;
+    assert!(!directory.path().join(".git").exists());
+    assert!(!directory.path().join("gitserious.toml").exists());
+    Ok(())
+}

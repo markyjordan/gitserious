@@ -35,6 +35,7 @@ pub struct Session {
     transcript: Vec<u8>,
     status: Option<ExitStatus>,
     closed: bool,
+    initial_modes: String,
 }
 
 impl Session {
@@ -71,7 +72,12 @@ impl Session {
             }
         }
         cmd.env("TERM", "xterm-256color");
+        cmd.env_remove("NO_COLOR");
         let pair = native_pty_system().openpty(size(40, 120))?;
+        let initial_modes = format!(
+            "{:?}",
+            pair.master.get_termios().ok_or("PTY termios unavailable")?
+        );
         let mut reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
         let mut child = pair.slave.spawn_command(cmd)?;
@@ -106,6 +112,7 @@ impl Session {
             transcript: Vec::new(),
             status: None,
             closed: false,
+            initial_modes,
         })
     }
 
@@ -115,6 +122,12 @@ impl Session {
 
     pub fn contents(&self) -> String {
         self.screen().contents()
+    }
+
+    pub fn modes_restored(&self) -> bool {
+        self.master
+            .get_termios()
+            .is_some_and(|modes| format!("{modes:?}") == self.initial_modes)
     }
 
     pub fn transcript(&self) -> &[u8] {
