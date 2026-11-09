@@ -61,3 +61,38 @@ fn config_opens_the_shell_on_the_config_page() {
     assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
     assert_eq!(opened.0.borrow().clone(), Some(ShellStart::Config));
 }
+
+struct Rejected(RefCell<Vec<ShellStart>>);
+
+impl ShellLauncher for Rejected {
+    fn open(&self, start: ShellStart, directory: &Path, help: &[HelpPage]) -> Result<(), String> {
+        assert_eq!(directory, &repository_path().join("subdir"));
+        assert!(!help.is_empty());
+        self.0.borrow_mut().push(start);
+        Err("shell launch rejected".into())
+    }
+}
+
+#[test]
+fn shell_launch_failures_report_stderr_without_falling_back_to_another_command() {
+    for (command, page) in [
+        ("commit", ShellStart::Commit),
+        ("config", ShellStart::Config),
+    ] {
+        let mut harness = Harness::new(Project::default());
+        harness.locator.fail = true;
+        harness.global.fail = true;
+        let rejected = Rejected(RefCell::new(Vec::new()));
+
+        let (exit, stdout, stderr) = harness.run_with(
+            &["gitserious", command],
+            &CommitAdapters::new().with_shell(&rejected),
+        );
+
+        assert_eq!(exit, ExitCode::FAILURE);
+        assert!(stdout.is_empty());
+        assert_eq!(stderr, "error: shell launch rejected\n");
+        assert_eq!(*rejected.0.borrow(), [page]);
+        assert!(harness.project.initialized.borrow().is_none());
+    }
+}
