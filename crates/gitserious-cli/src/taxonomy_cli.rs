@@ -1,6 +1,5 @@
-use std::error::Error;
 use std::ffi::OsString;
-use std::fmt::{self, Display, Formatter};
+use std::fmt::Display;
 use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::process::{self, ExitCode, Stdio};
@@ -10,13 +9,11 @@ use clap::builder::styling::{Style, Styles};
 use clap::error::ErrorKind;
 use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
 use gitserious_app::{
-    CommitDraftAuthor, CommitDraftAuthorOutcome, CommitOutcome, CommitOutput, CommitWriter,
     ConfigurationEditor, GlobalConfigurationStore, HelpLine, HelpPage, HelpSpan, InitOutcome,
-    InitStatus, InteractiveEntry, InteractiveUi, ProjectConfigurationStore, RepositoryInitializer,
-    RepositoryLocator, RepositoryRoot, RepositoryStatusReader, create_commit_with_taxonomy,
-    edit_configuration, initialize_project, run_interactive,
+    InitStatus, ProjectConfigurationStore, RepositoryLocator, edit_configuration,
+    initialize_project,
 };
-use gitserious_core::{CommitMessage, CommitTypeDefinition, TaxonomyReference};
+use gitserious_core::TaxonomyReference;
 
 const HELP_WIDTH: usize = 100;
 
@@ -76,8 +73,8 @@ enum Command {
     Config,
     /// Author and create a durable commit from the staged index.
     ///
-    /// Commit starts from the project default taxonomy in `gitserious.toml`.
-    /// You choose a type, write its properties, and review the exact message
+    /// Commit opens the Commit page. From that page you start authoring,
+    /// choose a type, write its properties, and review the exact message
     /// before gitserious passes it to `git commit`.
     ///
     /// Only staged changes are committed. Stage them with `git add` first.
@@ -89,41 +86,69 @@ enum Command {
     },
 }
 
-type InteractiveAdapters<'a> = (
-    &'a dyn InteractiveUi,
-    &'a dyn RepositoryStatusReader,
-    &'a dyn RepositoryInitializer,
-);
+/// The page an interactive command asks the shell to show first.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ShellStart {
+    Home,
+    Commit,
+    Config,
+    /// Help, on the page of the named command, or the overview for none.
+    Help {
+        command: Option<String>,
+    },
+}
+
+/// Opens the unified shell. The composition root supplies the terminal and the use cases.
+pub trait ShellLauncher {
+    fn open(&self, start: ShellStart, directory: &Path, help: &[HelpPage]) -> Result<(), String>;
+}
+
+/// Where a parsed command goes, once help flags have been answered.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Launch {
+    Shell(ShellStart),
+    /// Bare `gitserious` with no terminal.
+    ConciseHelp,
+    Init,
+    /// `config` when no shell is configured.
+    EditConfiguration,
+}
+
+/// Chooses where `command` goes. `shell` says a launcher is configured.
+/// `terminal` says stdin and stdout are both terminals.
+fn launch(command: Option<&Command>, shell: bool, terminal: bool) -> Result<Launch, &'static str> {
+    match command {
+        Some(Command::Help { .. }) => unreachable!("help is answered before launch"),
+        None if !terminal => Ok(Launch::ConciseHelp),
+        None | Some(Command::Commit) if !shell => Err("interactive shell is not configured"),
+        None => Ok(Launch::Shell(ShellStart::Home)),
+        Some(Command::Init) => Ok(Launch::Init),
+        Some(Command::Config) if !shell => Ok(Launch::EditConfiguration),
+        Some(Command::Config) => Ok(Launch::Shell(ShellStart::Config)),
+        Some(Command::Commit) => Ok(Launch::Shell(ShellStart::Commit)),
+    }
+}
 
 /// Concrete interaction adapters required by the binary.
 #[derive(Clone, Copy)]
-pub struct CommitAdapters<'a, A: ?Sized, W: ?Sized> {
-    author: &'a A,
-    writer: &'a W,
+pub struct CommitAdapters<'a> {
     configuration_editor: Option<&'a dyn ConfigurationEditor>,
-    interactive: Option<InteractiveAdapters<'a>>,
+    shell: Option<&'a dyn ShellLauncher>,
 }
 
-impl<'a, A: ?Sized, W: ?Sized> CommitAdapters<'a, A, W> {
+impl<'a> CommitAdapters<'a> {
     #[must_use]
-    pub const fn new(author: &'a A, writer: &'a W) -> Self {
+    pub const fn new() -> Self {
         Self {
-            author,
-            writer,
             configuration_editor: None,
-            interactive: None,
+            shell: None,
         }
     }
 
-    /// Supplies the unified shell, its read-only Git status, and `git init` for Home.
+    /// Supplies the unified shell.
     #[must_use]
-    pub fn with_interactive(
-        mut self,
-        ui: &'a dyn InteractiveUi,
-        status: &'a dyn RepositoryStatusReader,
-        initializer: &'a dyn RepositoryInitializer,
-    ) -> Self {
-        self.interactive = Some((ui, status, initializer));
+    pub fn with_shell(mut self, shell: &'a dyn ShellLauncher) -> Self {
+        self.shell = Some(shell);
         self
     }
 
@@ -131,6 +156,12 @@ impl<'a, A: ?Sized, W: ?Sized> CommitAdapters<'a, A, W> {
     pub fn with_configuration_editor(mut self, editor: &'a dyn ConfigurationEditor) -> Self {
         self.configuration_editor = Some(editor);
         self
+    }
+}
+
+impl Default for CommitAdapters<'_> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -156,13 +187,12 @@ where
     Out: Write + ?Sized,
     Err: Write + ?Sized,
 {
-    let unavailable = UnsupportedCommitAdapter;
     run_with_commit(
         arguments,
         locator,
         store,
         global,
-        &CommitAdapters::new(&unavailable, &unavailable),
+        &CommitAdapters::new(),
         stdout,
         stderr,
     )
@@ -171,12 +201,12 @@ where
 /// Runs from the process current directory with concrete adapters.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
-pub fn run_with_commit<I, T, L, S, G, A, W, Out, Err>(
+pub fn run_with_commit<I, T, L, S, G, Out, Err>(
     arguments: I,
     locator: &L,
     store: &S,
     global: &G,
-    adapters: &CommitAdapters<'_, A, W>,
+    adapters: &CommitAdapters<'_>,
     stdout: &mut Out,
     stderr: &mut Err,
 ) -> ExitCode
@@ -189,10 +219,6 @@ where
     S::Error: Display,
     G: GlobalConfigurationStore + ?Sized,
     G::Error: Display,
-    A: CommitDraftAuthor + ?Sized,
-    A::Error: Display,
-    W: CommitWriter + ?Sized,
-    W::Error: Display,
     Out: Write + ?Sized,
     Err: Write + ?Sized,
 {
@@ -228,14 +254,13 @@ where
     Out: Write + ?Sized,
     Err: Write + ?Sized,
 {
-    let unavailable = UnsupportedCommitAdapter;
     run_from_with_commit(
         arguments,
         start,
         locator,
         store,
         global,
-        &CommitAdapters::new(&unavailable, &unavailable),
+        &CommitAdapters::new(),
         stdout,
         stderr,
     )
@@ -244,13 +269,13 @@ where
 /// Runs from an explicit directory with concrete adapters.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
-pub fn run_from_with_commit<I, T, L, S, G, A, W, Out, Err>(
+pub fn run_from_with_commit<I, T, L, S, G, Out, Err>(
     arguments: I,
     start: &Path,
     locator: &L,
     store: &S,
     global: &G,
-    adapters: &CommitAdapters<'_, A, W>,
+    adapters: &CommitAdapters<'_>,
     stdout: &mut Out,
     stderr: &mut Err,
 ) -> ExitCode
@@ -263,36 +288,21 @@ where
     S::Error: Display,
     G: GlobalConfigurationStore + ?Sized,
     G::Error: Display,
-    A: CommitDraftAuthor + ?Sized,
-    A::Error: Display,
-    W: CommitWriter + ?Sized,
-    W::Error: Display,
     Out: Write + ?Sized,
     Err: Write + ?Sized,
 {
     let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-    let interactive = |entry| {
-        let (ui, status, initializer) = adapters
-            .interactive
-            .ok_or_else(|| "interactive shell is not configured".to_owned())?;
-        run_interactive(
-            locator,
-            store,
-            global,
-            status,
-            initializer,
-            adapters.writer,
-            start,
-            ui,
-            entry,
-            &interactive_help(),
-        )
+    let open_shell = |page: ShellStart| {
+        adapters
+            .shell
+            .ok_or_else(|| "interactive shell is not configured".to_owned())?
+            .open(page, start, &interactive_help())
     };
     let matches = match root().try_get_matches_from(arguments) {
         Ok(matches) => matches,
         Err(error) if error.kind() == ErrorKind::DisplayHelp => {
             let request = HelpRequest::Concise(printed(&error.render()));
-            return answer(route(request, terminal), stdout, stderr, interactive);
+            return answer(route(request, terminal), stdout, stderr, open_shell);
         }
         Err(error) => return write_clap_error(stdout, stderr, &error),
     };
@@ -302,41 +312,23 @@ where
     };
     if cli.full {
         let request = HelpRequest::Full(matches.subcommand_name().map(str::to_owned));
-        return answer(route(request, terminal), stdout, stderr, interactive);
+        return answer(route(request, terminal), stdout, stderr, open_shell);
     }
-    let entry = match &cli.command {
-        None => Some(InteractiveEntry::Home),
-        Some(Command::Config) if adapters.interactive.is_some() => Some(InteractiveEntry::Config),
-        _ => None,
-    };
-    if let Some(entry) = entry {
-        if entry == InteractiveEntry::Home && !terminal {
-            return write_all(stdout, &printed(&concise_help(root())));
-        }
-        return interactive(entry).map_or_else(
-            |error| operational_error(stderr, error),
-            |()| ExitCode::SUCCESS,
+    if let Some(Command::Help { command }) = &cli.command {
+        return answer(
+            route(HelpRequest::Topic(command.clone()), terminal),
+            stdout,
+            stderr,
+            open_shell,
         );
     }
-    let Some(command) = cli.command else {
-        return ExitCode::SUCCESS;
-    };
-    match command {
-        Command::Commit => match create_commit_with_taxonomy(
-            locator,
-            store,
-            adapters.author,
-            adapters.writer,
-            start,
-        ) {
-            Ok(CommitOutcome::Created(output)) => write_commit_output(stdout, stderr, &output),
-            Ok(CommitOutcome::Cancelled) => {
-                let _ = writeln!(stderr, "Commit cancelled.");
-                ExitCode::FAILURE
-            }
-            Err(error) => operational_error(stderr, error),
-        },
-        Command::Init => {
+    match launch(cli.command.as_ref(), adapters.shell.is_some(), terminal) {
+        Ok(Launch::ConciseHelp) => write_all(stdout, &printed(&concise_help(root()))),
+        Ok(Launch::Shell(page)) => open_shell(page).map_or_else(
+            |error| operational_error(stderr, error),
+            |()| ExitCode::SUCCESS,
+        ),
+        Ok(Launch::Init) => {
             let global = match global.load() {
                 Ok(value) => value,
                 Err(error) => return operational_error(stderr, error),
@@ -346,7 +338,7 @@ where
                 Err(error) => operational_error(stderr, error),
             }
         }
-        Command::Config => {
+        Ok(Launch::EditConfiguration) => {
             let Some(editor) = adapters.configuration_editor else {
                 return operational_error(stderr, "configuration editor is not configured");
             };
@@ -355,12 +347,7 @@ where
                 Err(error) => operational_error(stderr, error),
             }
         }
-        Command::Help { command } => answer(
-            route(HelpRequest::Topic(command), terminal),
-            stdout,
-            stderr,
-            interactive,
-        ),
+        Err(message) => operational_error(stderr, message),
     }
 }
 
@@ -464,10 +451,10 @@ fn answer(
     outcome: HelpOutcome,
     stdout: &mut (impl Write + ?Sized),
     stderr: &mut (impl Write + ?Sized),
-    interactive: impl FnOnce(InteractiveEntry) -> Result<(), String>,
+    interactive: impl FnOnce(ShellStart) -> Result<(), String>,
 ) -> ExitCode {
     match outcome {
-        HelpOutcome::Tui(command) => interactive(InteractiveEntry::Help { command }).map_or_else(
+        HelpOutcome::Tui(command) => interactive(ShellStart::Help { command }).map_or_else(
             |error| operational_error(stderr, error),
             |()| ExitCode::SUCCESS,
         ),
@@ -524,18 +511,6 @@ fn write_clap_error(
     }
 }
 
-fn write_commit_output(
-    stdout: &mut (impl Write + ?Sized),
-    stderr: &mut (impl Write + ?Sized),
-    output: &CommitOutput,
-) -> ExitCode {
-    if stdout.write_all(output.stdout()).is_ok() && stderr.write_all(output.stderr()).is_ok() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    }
-}
-
 fn write_init_outcome(output: &mut (impl Write + ?Sized), outcome: &InitOutcome) -> ExitCode {
     let action = match outcome.status() {
         InitStatus::Initialized => "Initialized gitserious in",
@@ -562,42 +537,6 @@ fn operational_error(output: &mut (impl Write + ?Sized), error: impl Display) ->
 
 fn exit_code(code: i32) -> ExitCode {
     u8::try_from(code).map_or(ExitCode::FAILURE, ExitCode::from)
-}
-
-#[derive(Clone, Copy, Debug)]
-struct UnsupportedCommitAdapter;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct UnsupportedCommitError;
-
-impl Display for UnsupportedCommitError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter.write_str("interactive commit adapters are not configured")
-    }
-}
-
-impl Error for UnsupportedCommitError {}
-
-impl CommitDraftAuthor for UnsupportedCommitAdapter {
-    type Error = UnsupportedCommitError;
-    fn author(
-        &self,
-        _definitions: &[CommitTypeDefinition],
-        _preselected: Option<&CommitTypeDefinition>,
-    ) -> Result<CommitDraftAuthorOutcome, Self::Error> {
-        Err(UnsupportedCommitError)
-    }
-}
-
-impl CommitWriter for UnsupportedCommitAdapter {
-    type Error = UnsupportedCommitError;
-    fn commit(
-        &self,
-        _root: &RepositoryRoot,
-        _message: &CommitMessage,
-    ) -> Result<CommitOutput, Self::Error> {
-        Err(UnsupportedCommitError)
-    }
 }
 
 /// Help pages for the unified Help surface: what `-h` prints, then what
@@ -705,6 +644,52 @@ mod tests {
             text: text.into(),
             strong,
         }
+    }
+
+    fn parsed(arguments: &[&str]) -> Cli {
+        Cli::from_arg_matches(&root().get_matches_from(arguments))
+            .unwrap_or_else(|_| unreachable!("the arguments are a valid command"))
+    }
+
+    #[test]
+    fn commands_select_a_shell_page_and_commit_does_not_author() {
+        let page = |arguments, shell, terminal| {
+            launch(parsed(arguments).command.as_ref(), shell, terminal)
+        };
+        assert_eq!(
+            page(&["gitserious"], true, true),
+            Ok(Launch::Shell(ShellStart::Home))
+        );
+        assert_eq!(page(&["gitserious"], true, false), Ok(Launch::ConciseHelp));
+        assert_eq!(
+            page(&["gitserious"], false, true),
+            Err("interactive shell is not configured")
+        );
+        assert_eq!(
+            page(&["gitserious", "commit"], true, true),
+            Ok(Launch::Shell(ShellStart::Commit))
+        );
+        assert_eq!(
+            page(&["gitserious", "commit"], true, false),
+            Ok(Launch::Shell(ShellStart::Commit)),
+            "a missing terminal is the shell's concern, not a second author"
+        );
+        assert_eq!(
+            page(&["gitserious", "commit"], false, false),
+            Err("interactive shell is not configured")
+        );
+        assert_eq!(
+            page(&["gitserious", "config"], true, false),
+            Ok(Launch::Shell(ShellStart::Config))
+        );
+        assert_eq!(
+            page(&["gitserious", "config"], false, true),
+            Ok(Launch::EditConfiguration)
+        );
+        assert_eq!(
+            page(&["gitserious", "init"], false, false),
+            Ok(Launch::Init)
+        );
     }
 
     #[test]

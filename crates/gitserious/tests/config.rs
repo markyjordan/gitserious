@@ -58,7 +58,7 @@ fn library_taxonomy_initializes_and_commits_from_the_project_copy() -> Result<()
     assert!(!portable.status.success());
     assert_eq!(
         stderr(&portable),
-        "error: commit authoring requires an interactive terminal\n"
+        "error: commit requires an interactive terminal\n"
     );
     Ok(())
 }

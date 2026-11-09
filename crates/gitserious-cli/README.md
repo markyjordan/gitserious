@@ -20,8 +20,8 @@ gitserious help [<command>]
 Configuration belongs to the reviewed TUI.
 
 Bare `gitserious` opens the unified Home TUI in a terminal and prints the
-concise help when redirected. Bare `config` enters the shell at Config; `commit`
-still enters authoring directly.
+concise help when redirected. Bare `config` enters the shell at Config, and
+`commit` enters the shell at Commit.
 
 Help has two tiers. `-h` prints the concise help, through `$PAGER` or `less`
 when stdin and stdout are terminals; `less` prints help that fits one screen

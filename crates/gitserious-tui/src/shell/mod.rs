@@ -6,8 +6,8 @@ mod init_editor;
 use std::io::{self, IsTerminal};
 
 use gitserious_app::{
-    CommitAuthoringContext, HelpPage, HomeState, InteractiveEntry, InteractiveUi,
-    InteractiveWorkspace, ProjectConfiguration,
+    CommitAuthoringContext, HelpPage, HomeState, InteractiveUi, InteractiveWorkspace,
+    ProjectConfiguration,
 };
 use gitserious_core::built_in_taxonomies;
 use ratatui::crossterm::event::{
@@ -39,27 +39,45 @@ fn quit_question() -> Confirmation<'static> {
     }
 }
 
+/// The page a unified session shows first.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InitialPage {
+    Home,
+    Commit,
+    Config,
+    /// Help, on the page of the named command, or the overview for none.
+    Help {
+        command: Option<String>,
+    },
+}
+
 /// Unified Home, Commit, Config, and Help terminal adapter.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct RatatuiInteractiveUi;
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RatatuiInteractiveUi {
+    start: InitialPage,
+}
+
+impl RatatuiInteractiveUi {
+    #[must_use]
+    pub const fn at(start: InitialPage) -> Self {
+        Self { start }
+    }
+}
 
 impl InteractiveUi for RatatuiInteractiveUi {
-    fn run(
-        &self,
-        entry: InteractiveEntry,
-        workspace: &dyn InteractiveWorkspace,
-        help: &[HelpPage],
-    ) -> Result<(), String> {
+    fn run(&self, workspace: &dyn InteractiveWorkspace, help: &[HelpPage]) -> Result<(), String> {
         if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-            return Err(if entry == InteractiveEntry::Config {
-                "configuration editing requires an interactive terminal"
-            } else {
-                "interactive shell requires an interactive terminal"
+            return Err(match self.start {
+                InitialPage::Config => "configuration editing requires an interactive terminal",
+                InitialPage::Commit => "commit requires an interactive terminal",
+                InitialPage::Home | InitialPage::Help { .. } => {
+                    "interactive shell requires an interactive terminal"
+                }
             }
             .into());
         }
         crate::runtime::run(|terminal| {
-            let mut shell = Shell::new(entry, workspace, help);
+            let mut shell = Shell::new(self.start.clone(), workspace, help);
             loop {
                 terminal.draw(|frame| shell.render(frame, help))?;
                 let event = ratatui::crossterm::event::read()?;
@@ -150,15 +168,12 @@ struct Shell {
 }
 
 impl Shell {
-    fn new(
-        entry: InteractiveEntry,
-        workspace: &dyn InteractiveWorkspace,
-        help: &[HelpPage],
-    ) -> Self {
+    fn new(entry: InitialPage, workspace: &dyn InteractiveWorkspace, help: &[HelpPage]) -> Self {
         let (section, help) = match entry {
-            InteractiveEntry::Home => (Section::Home, HelpView::default()),
-            InteractiveEntry::Config => (Section::Config, HelpView::default()),
-            InteractiveEntry::Help { command } => (
+            InitialPage::Home => (Section::Home, HelpView::default()),
+            InitialPage::Commit => (Section::Commit, HelpView::default()),
+            InitialPage::Config => (Section::Config, HelpView::default()),
+            InitialPage::Help { command } => (
                 Section::Help,
                 HelpView::at(
                     help.iter()
@@ -167,7 +182,7 @@ impl Shell {
                 ),
             ),
         };
-        Self {
+        let mut shell = Self {
             section,
             config: ConfigView::new(workspace.configuration()),
             commit: CommitView::default(),
@@ -180,7 +195,11 @@ impl Shell {
             help,
             root_areas: [Rect::default(); Section::ALL.len()],
             too_small: false,
+        };
+        if section == Section::Commit {
+            shell.commit.refresh(workspace);
         }
+        shell
     }
 
     fn execute(&mut self, action: Action, workspace: &dyn InteractiveWorkspace) -> Option<Action> {
@@ -930,7 +949,7 @@ mod tests {
         width: u16,
         height: u16,
     ) -> Result<(Shell, Terminal<TestBackend>), Box<dyn std::error::Error>> {
-        let mut shell = Shell::new(InteractiveEntry::Home, workspace, &[]);
+        let mut shell = Shell::new(InitialPage::Home, workspace, &[]);
         let mut terminal = Terminal::new(TestBackend::new(width, height))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         Ok((shell, terminal))
@@ -1328,7 +1347,7 @@ mod tests {
     fn config_overview_tab_switches_sections_and_keeps_menu_selection()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
         assert_eq!(shell.section, Section::Commit);
         assert!(shell.commit.blocker.is_some());
@@ -1362,7 +1381,7 @@ mod tests {
     fn embedded_config_places_the_library_inspector_by_terminal_shape()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
         shell.handle_event(key(KeyCode::Char('2')), &services, &[]);
         let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
         // Content starts right of the 13-column rail and its rule.
@@ -1436,7 +1455,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
         for (width, height) in [(87, 40), (MINIMUM_WIDTH, MINIMUM_HEIGHT)] {
-            let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
+            let mut shell = Shell::new(InitialPage::Config, &services, &[]);
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             for section in Section::ALL {
                 shell.execute(Action::Select(section), &services);
@@ -1473,7 +1492,7 @@ mod tests {
     #[test]
     fn the_config_tab_has_no_library_change_badge() -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(!rendered(&terminal).contains('●'));
@@ -1504,7 +1523,7 @@ mod tests {
     fn hidden_config_edit_pauses(event: Event) -> Result<(), Box<dyn std::error::Error>> {
         for (width, height) in [(MINIMUM_WIDTH - 1, 40), (87, MINIMUM_HEIGHT - 1)] {
             let services = Services;
-            let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
+            let mut shell = Shell::new(InitialPage::Config, &services, &[]);
             for event in [
                 key(KeyCode::Char('2')),
                 key(KeyCode::Char('n')),
@@ -1591,7 +1610,7 @@ mod tests {
     #[test]
     fn config_edit_locks_tabs_and_gives_esc_and_q_to_the_field() {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
         shell.handle_event(key(KeyCode::Char('2')), &services, &[]);
         shell.handle_event(key(KeyCode::Char('n')), &services, &[]);
         assert_eq!(shell.config.shell_keys(), ShellKeys::None);
@@ -1620,7 +1639,7 @@ mod tests {
     #[test]
     fn question_mark_does_not_open_help_but_the_help_tab_still_works() {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
         shell.handle_event(key(KeyCode::Char('?')), &services, &[]);
         assert_eq!(shell.section, Section::Home);
         assert!(shell.overlay.is_none());
@@ -1632,7 +1651,7 @@ mod tests {
     fn root_wrap_palette_is_modal_and_help_scrolls_with_resize()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
         let help = vec![
             HelpPage::new("Overview", None, |_| numbered(100)),
             HelpPage::new("Config", Some("config"), |_| numbered(1)),
@@ -1667,7 +1686,7 @@ mod tests {
     fn the_overview_opens_on_its_help_and_bolds_only_headings_and_names()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
         let help = vec![HelpPage::new("Overview", None, |_| {
             vec![
                 vec![span("Create durable commit-message policy", false)],
@@ -1724,7 +1743,7 @@ mod tests {
     fn command_pages_open_with_their_help_command_and_no_prompt()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
         let help = pages(1);
         shell.handle_event(key(KeyCode::BackTab), &services, &help);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
@@ -1792,7 +1811,7 @@ mod tests {
                 .collect()
         };
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
         let help = vec![HelpPage::new("Overview", None, listing)];
         shell.handle_event(key(KeyCode::BackTab), &services, &help);
         let mut terminal = Terminal::new(TestBackend::new(66, 18))?;
@@ -1827,7 +1846,7 @@ mod tests {
     fn help_lists_its_pages_beside_a_rule_and_highlights_the_chosen_one()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
         let help = pages(1);
         shell.handle_event(key(KeyCode::BackTab), &services, &help);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
@@ -1881,7 +1900,7 @@ mod tests {
     fn pages_focus_arrows_digits_and_clicks_choose_the_page_without_scrolling()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
         let help = pages(100);
         shell.handle_event(key(KeyCode::BackTab), &services, &help);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
@@ -1944,7 +1963,7 @@ mod tests {
     #[test]
     fn reading_focus_scrolls_by_line_and_by_screen() -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
         let help = pages(100);
         shell.handle_event(key(KeyCode::BackTab), &services, &help);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
@@ -2000,7 +2019,7 @@ mod tests {
     fn help_reads_to_its_last_line_and_keeps_the_way_back_at_the_minimum_size()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
         let help = pages(40);
         shell.handle_event(key(KeyCode::BackTab), &services, &help);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
@@ -2037,7 +2056,7 @@ mod tests {
             (None, "1  Overview", "line 1"),
             (Some("help"), "1  Overview", "line 1"),
         ] {
-            let entry = InteractiveEntry::Help {
+            let entry = InitialPage::Help {
                 command: command.map(str::to_owned),
             };
             let mut shell = Shell::new(entry, &services, &help);
@@ -2066,7 +2085,7 @@ mod tests {
     fn returning_to_help_starts_in_the_sidebar_on_the_page_left_last()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
         let help = pages(1);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         shell.handle_event(key(KeyCode::BackTab), &services, &help);
@@ -2118,7 +2137,7 @@ mod tests {
     #[test]
     fn config_drafts_survive_section_visits_and_quit_requires_confirmation() {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
         shell.config.stage_legacy_project_review();
         assert!(shell.config.dirty());
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
@@ -2148,7 +2167,7 @@ mod tests {
         use std::fmt::Write as _;
 
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
         shell.execute(Action::Select(Section::Commit), &services);
         for index in 0..100 {
             writeln!(&mut shell.commit.notice, "Git diagnostic {index}")?;
@@ -2167,7 +2186,7 @@ mod tests {
     #[test]
     fn config_palette_quit_uses_one_shell_discard_confirmation() {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
         shell.config.stage_legacy_project_review();
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         shell.handle_event(key(KeyCode::Char('/')), &services, &[]);
@@ -2185,7 +2204,7 @@ mod tests {
     fn quit_confirmation_footer_shows_only_the_dialogs_choices()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
         shell.config.stage_legacy_project_review();
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         shell.handle_event(key(KeyCode::Char('q')), &services, &[]);
@@ -2210,7 +2229,7 @@ mod tests {
     fn tab_and_shift_tab_switch_sections_in_one_press_and_arrows_never_do()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let header: String = (0..100)
@@ -2272,7 +2291,7 @@ mod tests {
     fn home_draws_a_static_wordmark_and_tagline_in_bone() -> Result<(), Box<dyn std::error::Error>>
     {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
         for (width, height) in [(87, 40), (100, 30), (120, 30), (66, 18)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| shell.render(frame, &[]))?;
@@ -2341,7 +2360,7 @@ mod tests {
     #[test]
     fn config_review_survives_root_clicks() -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InteractiveEntry::Config, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let original_header = shell.root_areas;

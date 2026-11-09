@@ -292,8 +292,8 @@ fn command_help_puts_each_description_below_its_flag_with_blank_lines_between()
 #[test]
 fn help_wraps_each_paragraph_to_the_terminal_width_up_to_100_columns() -> Result<(), Box<dyn Error>>
 {
-    let paragraph = "Commit starts from the project default taxonomy in `gitserious.toml`. \
-                     You choose a type, write its properties, and review the exact message \
+    let paragraph = "Commit opens the Commit page. From that page you start authoring, \
+                     choose a type, write its properties, and review the exact message \
                      before gitserious passes it to `git commit`.";
     let arguments = ["help", "commit"];
     let wide = succeed_at(100, &arguments)?;
@@ -302,7 +302,7 @@ fn help_wraps_each_paragraph_to_the_terminal_width_up_to_100_columns() -> Result
     for (columns, help) in [(60, succeed_at(60, &arguments)?), (100, wide)] {
         let lines: Vec<_> = help
             .lines()
-            .skip_while(|line| !line.starts_with("Commit starts"))
+            .skip_while(|line| !line.starts_with("Commit opens"))
             .take_while(|line| !line.is_empty())
             .collect();
 

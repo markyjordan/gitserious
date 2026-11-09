@@ -109,38 +109,35 @@ fn git_stores_the_exact_reviewed_taxonomy_message() -> Result<(), Box<dyn Error>
 }
 
 #[test]
-fn project_policy_is_resolved_before_terminal_authoring() -> Result<(), Box<dyn Error>> {
+fn commit_without_a_terminal_stops_before_the_commit_page() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     let home = Home::new()?;
 
     let absent = home.run(repository.path(), &["commit"])?;
     assert_eq!(absent.status.code(), Some(1));
     assert!(stdout(&absent).is_empty());
-    assert!(
-        stderr(&absent).contains("not initialized"),
-        "{}",
-        stderr(&absent)
+    assert_eq!(
+        stderr(&absent),
+        "error: commit requires an interactive terminal\n"
     );
+    assert!(!repository.path().join("gitserious.toml").exists());
 
     home.init(repository.path())?;
     let config = repository.path().join("gitserious.toml");
     let valid = fs::read_to_string(&config)?;
-    fs::write(
-        &config,
-        valid.replace(
-            "default-taxonomy = \"conventional\"",
-            "default-taxonomy = \"missing\"",
-        ),
-    )?;
+    let broken = valid.replace(
+        "default-taxonomy = \"conventional\"",
+        "default-taxonomy = \"missing\"",
+    );
+    fs::write(&config, &broken)?;
     let invalid = home.run(repository.path(), &["commit"])?;
     assert_eq!(invalid.status.code(), Some(1));
     assert!(stdout(&invalid).is_empty());
-    assert!(
-        stderr(&invalid).contains("invalid project configuration")
-            && stderr(&invalid).contains("default taxonomy \"missing\""),
-        "{}",
-        stderr(&invalid)
+    assert_eq!(
+        stderr(&invalid),
+        "error: commit requires an interactive terminal\n"
     );
+    assert_eq!(fs::read_to_string(&config)?, broken);
     assert!(!head_exists(repository.path())?);
     Ok(())
 }
@@ -159,7 +156,7 @@ fn a_cloned_project_authors_without_any_usable_library() -> Result<(), Box<dyn E
 
     assert_eq!(
         stderr(&output),
-        "error: commit authoring requires an interactive terminal\n"
+        "error: commit requires an interactive terminal\n"
     );
     assert_eq!(fs::read_to_string(&library)?, "not = [toml\n");
     Ok(())
@@ -238,7 +235,7 @@ fn commit_rejects_non_terminal_execution_without_touching_policy_or_git()
     assert!(stdout(&output).is_empty());
     assert_eq!(
         stderr(&output),
-        "error: commit authoring requires an interactive terminal\n"
+        "error: commit requires an interactive terminal\n"
     );
     assert_eq!(fs::read(repository.path().join("gitserious.toml"))?, config);
     assert!(!repository.path().join("gitserious.lock").exists());

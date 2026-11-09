@@ -16,17 +16,6 @@ use crate::{
 /// The project file every gitserious repository commits.
 const POLICY_FILE: &str = "gitserious.toml";
 
-/// Starting view for the unified terminal interface.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum InteractiveEntry {
-    Home,
-    Config,
-    /// Help, on the page of the named command, or the overview for none.
-    Help {
-        command: Option<String>,
-    },
-}
-
 /// A run of help text; `strong` marks a heading or a command or flag name.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HelpSpan {
@@ -111,12 +100,7 @@ pub trait InteractiveWorkspace {
 
 /// Terminal adapter for the unified application.
 pub trait InteractiveUi {
-    fn run(
-        &self,
-        entry: InteractiveEntry,
-        workspace: &dyn InteractiveWorkspace,
-        help: &[HelpPage],
-    ) -> Result<(), String>;
+    fn run(&self, workspace: &dyn InteractiveWorkspace, help: &[HelpPage]) -> Result<(), String>;
 }
 
 /// Opens an interactive session with application-owned persistence and Git services.
@@ -130,7 +114,6 @@ pub fn run_interactive<L, S, G, W>(
     writer: &W,
     start: &Path,
     ui: &dyn InteractiveUi,
-    entry: InteractiveEntry,
     help: &[HelpPage],
 ) -> Result<(), String>
 where
@@ -154,7 +137,7 @@ where
         initializer,
         writer,
     };
-    ui.run(entry, &workspace, help)
+    ui.run(&workspace, help)
 }
 
 struct InteractiveServices<'a, L: ?Sized, S: ?Sized, G: ?Sized, W: ?Sized> {

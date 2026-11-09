@@ -1,75 +1,63 @@
 mod support;
 
-use std::error::Error;
+use std::cell::RefCell;
+use std::path::Path;
 use std::process::ExitCode;
 
-use gitserious_app::fingerprint_taxonomy;
-use gitserious_core::{built_in_commit_types, built_in_taxonomies};
-use support::{AuthorOutcome, Harness, Project, initialized_state};
+use gitserious_app::HelpPage;
+use gitserious_cli::{CommitAdapters, ShellLauncher, ShellStart};
+use support::{Harness, Project, repository_path};
 
-fn initialized() -> Result<Harness, Box<dyn Error>> {
-    Ok(Harness::new(Project::with(initialized_state()?)))
+struct Opened(RefCell<Option<ShellStart>>);
+
+impl ShellLauncher for Opened {
+    fn open(&self, start: ShellStart, directory: &Path, help: &[HelpPage]) -> Result<(), String> {
+        assert_eq!(directory, &repository_path().join("subdir"));
+        assert!(
+            help.iter()
+                .any(|page| page.command.as_deref() == Some("commit"))
+        );
+        *self.0.borrow_mut() = Some(start);
+        Ok(())
+    }
 }
 
 #[test]
-fn commit_forwards_exact_git_output_and_reviewed_bytes() -> Result<(), Box<dyn Error>> {
-    let harness = initialized()?;
+fn commit_opens_the_shell_on_the_commit_page() {
+    let harness = Harness::new(Project::default());
+    let opened = Opened(RefCell::new(None));
 
-    let (exit, stdout, stderr) = harness.run(&["gitserious", "commit"]);
-
-    assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
-    assert_eq!(stdout, "git summary\n");
-    assert_eq!(stderr, "hook warning\n");
-    assert_eq!(harness.author.calls.get(), 1);
-    assert_eq!(harness.writer.calls.get(), 1);
-    let fingerprint = fingerprint_taxonomy(&built_in_taxonomies()[0]);
-    assert_eq!(
-        harness.writer.messages.borrow()[0],
-        format!(
-            "feat(tui-editor)!: expose command\n\nintent:\nauthored intent\n\ndecision:\nauthored decision\n\nBREAKING CHANGE: replace CLI contract\n\nGitserious-Taxonomy: conventional-v1\nGitserious-Schema: {fingerprint}\n"
-        )
+    let (exit, stdout, stderr) = harness.run_with(
+        &["gitserious", "commit"],
+        &CommitAdapters::new().with_shell(&opened),
     );
-    Ok(())
-}
-
-#[test]
-fn bare_commit_delegates_type_selection_to_the_author() -> Result<(), Box<dyn Error>> {
-    let harness = initialized()?;
-
-    let (exit, _, stderr) = harness.run(&["gitserious", "commit"]);
 
     assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
-    let seen = harness.author.seen.borrow();
-    assert_eq!(seen[0].1, None);
-    assert_eq!(seen[0].0.len(), built_in_commit_types().len());
-    assert_eq!(harness.writer.calls.get(), 1);
-    Ok(())
+    assert!(stdout.is_empty());
+    assert_eq!(opened.0.borrow().clone(), Some(ShellStart::Commit));
 }
 
 #[test]
-fn cancellation_keeps_the_failure_status_and_never_writes() -> Result<(), Box<dyn Error>> {
-    let harness = initialized()?;
-    harness.author.outcome.replace(AuthorOutcome::Cancelled);
+fn commit_without_a_shell_fails_instead_of_authoring() {
+    let harness = Harness::new(Project::default());
 
     let (exit, stdout, stderr) = harness.run(&["gitserious", "commit"]);
 
     assert_eq!(exit, ExitCode::FAILURE);
     assert!(stdout.is_empty());
-    assert_eq!(stderr, "Commit cancelled.\n");
-    assert_eq!(harness.writer.calls.get(), 0);
-    Ok(())
+    assert_eq!(stderr, "error: interactive shell is not configured\n");
 }
 
 #[test]
-fn author_errors_are_presented_without_invoking_git() -> Result<(), Box<dyn Error>> {
-    let harness = initialized()?;
-    harness.author.outcome.replace(AuthorOutcome::Failed);
+fn config_opens_the_shell_on_the_config_page() {
+    let harness = Harness::new(Project::default());
+    let opened = Opened(RefCell::new(None));
 
-    let (exit, stdout, stderr) = harness.run(&["gitserious", "commit"]);
+    let (exit, _, stderr) = harness.run_with(
+        &["gitserious", "config"],
+        &CommitAdapters::new().with_shell(&opened),
+    );
 
-    assert_eq!(exit, ExitCode::FAILURE);
-    assert!(stdout.is_empty());
-    assert_eq!(stderr, "error: fake adapter failure\n");
-    assert_eq!(harness.writer.calls.get(), 0);
-    Ok(())
+    assert_eq!(exit, ExitCode::SUCCESS, "{stderr}");
+    assert_eq!(opened.0.borrow().clone(), Some(ShellStart::Config));
 }
