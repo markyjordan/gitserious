@@ -2442,6 +2442,119 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_review_survives_navigation_refresh_and_cancelling_new_authoring()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (context, _, checkpoint) = crate::author::reviewed_submission()?;
+        let mut shell = Shell::new(InitialPage::Commit, &Services, &[]);
+        shell.conclude_authoring(
+            &Services,
+            Some((context, checkpoint, Err("hook rejected".into()))),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        assert!(rendered(&terminal).contains("The reviewed message is retained."));
+
+        for expected in [
+            Section::Config,
+            Section::Help,
+            Section::Home,
+            Section::Commit,
+        ] {
+            assert_eq!(shell.handle_event(key(KeyCode::Tab), &Services, &[]), None);
+            assert_eq!(shell.section, expected);
+            assert!(shell.pending_author.is_some());
+        }
+        assert_eq!(
+            shell.handle_event(key(KeyCode::Char('r')), &Services, &[]),
+            None
+        );
+        assert!(shell.pending_author.is_some());
+        assert_eq!(
+            shell.handle_event(key(KeyCode::Enter), &Services, &[]),
+            Some(Action::Resume)
+        );
+        assert_eq!(
+            shell.handle_event(key(KeyCode::Char('c')), &Services, &[]),
+            Some(Action::Author)
+        );
+        shell.conclude_authoring(&Services, None);
+        assert!(shell.pending_author.is_some());
+        assert_eq!(
+            shell.handle_event(key(KeyCode::Enter), &Services, &[]),
+            Some(Action::Resume)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_pending_review_requires_confirmation_before_quitting()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (context, _, checkpoint) = crate::author::reviewed_submission()?;
+        let mut shell = Shell::new(InitialPage::Commit, &Services, &[]);
+        shell.conclude_authoring(
+            &Services,
+            Some((context, checkpoint, Err("hook rejected".into()))),
+        );
+
+        assert_eq!(
+            shell.handle_event(key(KeyCode::Char('q')), &Services, &[]),
+            None
+        );
+        assert!(matches!(shell.overlay, Some(Overlay::QuitConfirm)));
+        assert_eq!(
+            shell.handle_event(key(KeyCode::Char('n')), &Services, &[]),
+            None
+        );
+        assert!(shell.overlay.is_none());
+        assert!(shell.pending_author.is_some());
+        assert_eq!(shell.section, Section::Commit);
+
+        shell.handle_event(key(KeyCode::Char('q')), &Services, &[]);
+        assert_eq!(
+            shell.handle_event(key(KeyCode::Char('y')), &Services, &[]),
+            Some(Action::Quit)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repeated_rejections_remain_resumable_until_a_successful_retry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut shell = Shell::new(InitialPage::Commit, &Services, &[]);
+        for rejection in ["first hook rejection", "second hook rejection"] {
+            let (context, _, checkpoint) = crate::author::reviewed_submission()?;
+            shell.conclude_authoring(
+                &Services,
+                Some((context, checkpoint, Err(rejection.into()))),
+            );
+            assert!(shell.pending_author.is_some());
+            assert!(shell.commit.notice.contains(rejection));
+            assert!(!shell.commit.notice.contains("Commit created."));
+            assert_eq!(
+                shell.handle_event(key(KeyCode::Enter), &Services, &[]),
+                Some(Action::Resume)
+            );
+        }
+
+        let (context, _, checkpoint) = crate::author::reviewed_submission()?;
+        shell.conclude_authoring(
+            &Services,
+            Some((
+                context,
+                checkpoint,
+                Ok(CommitOutput::new(b"retry created\n".to_vec(), Vec::new())),
+            )),
+        );
+        assert!(shell.pending_author.is_none());
+        assert_eq!(shell.commit.notice, "Commit created.\nretry created");
+        assert_eq!(
+            shell.handle_event(key(KeyCode::Enter), &Services, &[]),
+            Some(Action::Author)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn home_draws_a_static_wordmark_and_tagline_in_bone() -> Result<(), Box<dyn std::error::Error>>
     {
         let services = Services;
