@@ -124,12 +124,13 @@ Config uses the shared Bone palette: ground behind content, band behind
 raised rows, text for values, dim for context, pending orange for EDIT, and
 blocks coral for validation. The Library header reads "Commit message taxonomy
 library" above its configuration file path. Library has a taxonomy outline and
-an Inspector. Custom taxonomy details show Created on and Modified on. Built-in
-inspectors retain Version; custom taxonomies have no version field. Dates use UTC calendar days in `YYYY-MM-DD` format. Custom
-entries without recorded dates show `Unknown`; built-ins omit both facts.
-Saving a new entry
-records both dates; later content edits preserve Created on and update
-Modified on. Browsing and no-op edits keep the recorded dates unchanged.
+an Inspector. Custom taxonomy details show Created and Modified. Built-in
+inspectors retain Version; custom taxonomies have no version field. A recorded
+instant shows the UTC calendar day and time as `YYYY-MM-DD HH:MM:SS UTC`. A
+stored calendar day stays `YYYY-MM-DD`. Custom entries without recorded dates
+show `Unknown`; built-ins omit both facts. Saving a new entry records both
+instants. Later content edits preserve Created and update Modified. Browsing
+and no-op edits keep the recorded values unchanged.
 The new-taxonomy form omits these facts until saved. Project policy does not
 carry Library dates.
 

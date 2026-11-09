@@ -223,11 +223,11 @@ fn describe(
                 let record = library.saved_taxonomy(id);
                 for (label, date) in [
                     (
-                        "Created on",
+                        "Created",
                         record.and_then(gitserious_app::LibraryTaxonomy::created_on),
                     ),
                     (
-                        "Modified on",
+                        "Modified",
                         record.and_then(gitserious_app::LibraryTaxonomy::modified_on),
                     ),
                 ] {
