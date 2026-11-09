@@ -38,8 +38,7 @@ pub use initialize_taxonomy_project::{
     initialize_project,
 };
 pub use interactive::{
-    HelpLine, HelpPage, HelpSpan, HomeState, InteractiveEntry, InteractiveUi, InteractiveWorkspace,
-    run_interactive,
+    HelpLine, HelpPage, HelpSpan, HomeState, InteractiveUi, InteractiveWorkspace, run_interactive,
 };
 pub use repository_locator::{
     RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryRootError,

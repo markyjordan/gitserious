@@ -9,7 +9,7 @@ use std::process::{Command, Output};
 
 use gitserious_app::{
     AuthoredCommit, GlobalConfiguration, GlobalConfigurationStore, HelpPage, HomeState,
-    InteractiveEntry, InteractiveUi, InteractiveWorkspace, LibraryTaxonomy, ProjectConfiguration,
+    InteractiveUi, InteractiveWorkspace, LibraryTaxonomy, ProjectConfiguration,
     RepositoryInitializer, initialize_project, run_interactive,
 };
 use gitserious_core::{
@@ -53,13 +53,7 @@ fn git(directory: &Path, arguments: &[&str]) -> Result<Output, Box<dyn Error>> {
 
 struct ExerciseUi<'a>(&'a Path);
 impl InteractiveUi for ExerciseUi<'_> {
-    fn run(
-        &self,
-        entry: InteractiveEntry,
-        workspace: &dyn InteractiveWorkspace,
-        _: &[HelpPage],
-    ) -> Result<(), String> {
-        assert_eq!(entry, InteractiveEntry::Home);
+    fn run(&self, workspace: &dyn InteractiveWorkspace, _: &[HelpPage]) -> Result<(), String> {
         assert!(workspace.prepare_commit().is_err());
         git(self.0, &["add", "file"]).map_err(|error| error.to_string())?;
         let context = workspace.prepare_commit()?;
@@ -175,7 +169,6 @@ fn shell_services_gate_staging_validate_review_and_retry_git_rejection()
         &GitCommitWriter,
         temp.path(),
         &ExerciseUi(temp.path()),
-        InteractiveEntry::Home,
         &[],
     )?;
     Ok(())
@@ -183,12 +176,7 @@ fn shell_services_gate_staging_validate_review_and_retry_git_rejection()
 
 struct BlockedUi<'a>(&'a str);
 impl InteractiveUi for BlockedUi<'_> {
-    fn run(
-        &self,
-        _: InteractiveEntry,
-        workspace: &dyn InteractiveWorkspace,
-        _: &[HelpPage],
-    ) -> Result<(), String> {
+    fn run(&self, workspace: &dyn InteractiveWorkspace, _: &[HelpPage]) -> Result<(), String> {
         let error = workspace
             .prepare_commit()
             .err()
@@ -216,7 +204,6 @@ fn shell_services_reject_absent_and_invalid_policy() -> Result<(), Box<dyn Error
             &GitCommitWriter,
             temp.path(),
             &BlockedUi(expected),
-            InteractiveEntry::Home,
             &[],
         )
     };
@@ -253,12 +240,7 @@ fn built_ins() -> Result<ProjectConfiguration, String> {
 
 struct HomeUi<'a>(&'a Path);
 impl InteractiveUi for HomeUi<'_> {
-    fn run(
-        &self,
-        _: InteractiveEntry,
-        workspace: &dyn InteractiveWorkspace,
-        _: &[HelpPage],
-    ) -> Result<(), String> {
+    fn run(&self, workspace: &dyn InteractiveWorkspace, _: &[HelpPage]) -> Result<(), String> {
         let fail = |error: Box<dyn Error>| error.to_string();
         assert_eq!(
             workspace.home(),
@@ -341,7 +323,6 @@ fn home_follows_a_directory_from_no_repository_to_a_tracked_project() -> Result<
         &GitCommitWriter,
         temp.path(),
         &HomeUi(temp.path()),
-        InteractiveEntry::Home,
         &[],
     )?;
     Ok(())
@@ -349,12 +330,7 @@ fn home_follows_a_directory_from_no_repository_to_a_tracked_project() -> Result<
 
 struct LibraryUi;
 impl InteractiveUi for LibraryUi {
-    fn run(
-        &self,
-        _: InteractiveEntry,
-        workspace: &dyn InteractiveWorkspace,
-        _: &[HelpPage],
-    ) -> Result<(), String> {
+    fn run(&self, workspace: &dyn InteractiveWorkspace, _: &[HelpPage]) -> Result<(), String> {
         let offered = workspace
             .library_taxonomies()?
             .iter()
@@ -402,7 +378,6 @@ fn initialization_offers_only_library_taxonomies_that_have_types() -> Result<(),
         &GitCommitWriter,
         temp.path(),
         &LibraryUi,
-        InteractiveEntry::Home,
         &[],
     )?;
     Ok(())
@@ -410,12 +385,7 @@ fn initialization_offers_only_library_taxonomies_that_have_types() -> Result<(),
 
 struct PlainDirectoryUi<'a>(&'a Path);
 impl InteractiveUi for PlainDirectoryUi<'_> {
-    fn run(
-        &self,
-        _: InteractiveEntry,
-        workspace: &dyn InteractiveWorkspace,
-        _: &[HelpPage],
-    ) -> Result<(), String> {
+    fn run(&self, workspace: &dyn InteractiveWorkspace, _: &[HelpPage]) -> Result<(), String> {
         assert!(matches!(workspace.home(), HomeState::NoRepository { .. }));
         workspace.initialize(&built_ins()?)?;
         support::assert_project_shape(self.0, &[]).map_err(|error| error.to_string())?;
@@ -439,12 +409,7 @@ impl InteractiveUi for PlainDirectoryUi<'_> {
 /// neither `git init` nor the project write runs.
 struct BlockedGitUi<'a>(&'a Path);
 impl InteractiveUi for BlockedGitUi<'_> {
-    fn run(
-        &self,
-        _: InteractiveEntry,
-        workspace: &dyn InteractiveWorkspace,
-        _: &[HelpPage],
-    ) -> Result<(), String> {
+    fn run(&self, workspace: &dyn InteractiveWorkspace, _: &[HelpPage]) -> Result<(), String> {
         assert!(workspace.initialize(&built_ins()?).is_err());
         assert!(
             !self.0.join("gitserious.toml").exists(),
@@ -472,7 +437,6 @@ fn run_home_with(
         &GitCommitWriter,
         directory,
         ui,
-        InteractiveEntry::Home,
         &[],
     )?;
     Ok(())
@@ -502,12 +466,7 @@ impl RepositoryInitializer for CountingInitializer {
 
 struct RecoveryUi<'a>(&'a Path, &'a CountingInitializer);
 impl InteractiveUi for RecoveryUi<'_> {
-    fn run(
-        &self,
-        _: InteractiveEntry,
-        workspace: &dyn InteractiveWorkspace,
-        _: &[HelpPage],
-    ) -> Result<(), String> {
+    fn run(&self, workspace: &dyn InteractiveWorkspace, _: &[HelpPage]) -> Result<(), String> {
         let blocker = self.0.join(".gitserious");
         assert!(
             workspace.initialize(&built_ins()?).is_err(),

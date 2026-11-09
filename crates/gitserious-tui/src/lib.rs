@@ -23,10 +23,9 @@ mod shell;
 mod taxonomy_config;
 mod theme;
 
-pub use author::RatatuiCommitDraftAuthor;
 pub use taxonomy_config::RatatuiTaxonomyConfigurationEditor;
 
-pub use shell::RatatuiInteractiveUi;
+pub use shell::{InitialPage, RatatuiInteractiveUi};
 
 #[cfg(test)]
 #[path = "../tests/unit/mod.rs"]

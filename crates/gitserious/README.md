@@ -3,7 +3,7 @@
 This crate is the entry-point to the `gitserious` command-line interface.
 
 Run `gitserious` in a terminal for Home, Commit preview, Config, and Help.
-`gitserious config` enters Config directly; `gitserious commit` enters message
-authoring directly. `gitserious --help` and `gitserious help <command>` enter
+`gitserious config` enters Config directly; `gitserious commit` enters the
+Commit page. `gitserious --help` and `gitserious help <command>` enter
 Help. Stage changes with Git before starting a shell commit.
 See [the TUI guide](../gitserious-tui/README.md) for navigation and draft controls.

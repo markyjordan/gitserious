@@ -1,22 +1,16 @@
 #![allow(dead_code)]
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use gitserious_app::{
-    AuthoredCommit, CommitAuthoringContext, CommitAuthoringOutcome, CommitDraftAuthor,
-    CommitDraftAuthorOutcome, CommitOutput, CommitWriter, GlobalConfiguration,
-    GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore, ProjectRevision,
-    RepositoryLocator, RepositoryRoot, StoredProject, initial_project_configuration,
+    GlobalConfiguration, GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore,
+    ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject,
 };
 use gitserious_cli::{CommitAdapters, run_from_with_commit};
-use gitserious_core::{
-    AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
-    CommitTypeId, PropertyRequirement, PropertyValue,
-};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FakeError(pub &'static str);
@@ -138,133 +132,10 @@ impl ProjectConfigurationStore for Project {
     }
 }
 
-pub fn initialized_state() -> Result<ProjectConfiguration, Box<dyn Error>> {
-    Ok(initial_project_configuration(
-        &GlobalConfiguration::default(),
-    )?)
-}
-
-pub enum AuthorOutcome {
-    Valid,
-    Cancelled,
-    Failed,
-}
-
-pub struct Author {
-    pub outcome: RefCell<AuthorOutcome>,
-    pub calls: Cell<usize>,
-    pub seen: RefCell<Vec<(Vec<CommitTypeId>, Option<CommitTypeId>)>>,
-}
-
-impl Default for Author {
-    fn default() -> Self {
-        Self {
-            outcome: RefCell::new(AuthorOutcome::Valid),
-            calls: Cell::new(0),
-            seen: RefCell::default(),
-        }
-    }
-}
-
-impl CommitDraftAuthor for Author {
-    type Error = FakeError;
-
-    fn author(
-        &self,
-        _: &[CommitTypeDefinition],
-        _: Option<&CommitTypeDefinition>,
-    ) -> Result<CommitDraftAuthorOutcome, Self::Error> {
-        Err(FakeError("unexpected flat authoring"))
-    }
-
-    fn author_with_context(
-        &self,
-        context: &CommitAuthoringContext,
-    ) -> Result<CommitAuthoringOutcome, Self::Error> {
-        self.calls.set(self.calls.get() + 1);
-        let taxonomy = context.initial_taxonomy();
-        self.seen.borrow_mut().push((
-            taxonomy
-                .definitions()
-                .iter()
-                .map(|definition| definition.id().clone())
-                .collect(),
-            context
-                .preselected_type()
-                .map(|definition| definition.id().clone()),
-        ));
-        match *self.outcome.borrow() {
-            AuthorOutcome::Valid => {
-                let definition = context
-                    .preselected_type()
-                    .unwrap_or(&taxonomy.definitions()[0]);
-                let draft = valid_draft(definition).map_err(|_| FakeError("invalid draft"))?;
-                let message = taxonomy
-                    .validate(&draft)
-                    .into_message()
-                    .map_err(|_| FakeError("unrenderable draft"))?;
-                Ok(CommitAuthoringOutcome::Authored(AuthoredCommit::reviewed(
-                    taxonomy.id().clone(),
-                    draft,
-                    message,
-                )))
-            }
-            AuthorOutcome::Cancelled => Ok(CommitAuthoringOutcome::Cancelled),
-            AuthorOutcome::Failed => Err(FakeError("fake adapter failure")),
-        }
-    }
-}
-
-pub fn valid_draft(definition: &CommitTypeDefinition) -> Result<CommitDraft, Box<dyn Error>> {
-    let properties = definition
-        .properties()
-        .iter()
-        .filter(|property| property.requirement() == &PropertyRequirement::Required)
-        .map(|property| {
-            Ok(AuthoredProperty::new(
-                property.key().clone(),
-                PropertyValue::new(format!("authored {}", property.key()))?,
-            ))
-        })
-        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
-    Ok(CommitDraft::new(
-        definition.id().clone(),
-        Some(CommitScope::new("tui editor")?),
-        CommitSubject::new("expose command")?,
-        properties,
-    )?
-    .with_breaking_change(PropertyValue::new("replace CLI contract")?))
-}
-
-#[derive(Default)]
-pub struct Writer {
-    pub calls: Cell<usize>,
-    pub messages: RefCell<Vec<String>>,
-}
-
-impl CommitWriter for Writer {
-    type Error = FakeError;
-
-    fn commit(
-        &self,
-        _: &RepositoryRoot,
-        message: &CommitMessage,
-    ) -> Result<CommitOutput, Self::Error> {
-        self.calls.set(self.calls.get() + 1);
-        self.messages.borrow_mut().push(message.as_str().to_owned());
-        Ok(CommitOutput::new(
-            b"git summary\n".to_vec(),
-            b"hook warning\n".to_vec(),
-        ))
-    }
-}
-
 pub struct Harness {
     pub locator: Locator,
     pub project: Project,
     pub global: Global,
-    pub author: Author,
-    pub writer: Writer,
 }
 
 impl Harness {
@@ -273,12 +144,18 @@ impl Harness {
             locator: Locator { fail: false },
             project,
             global: Global::new(GlobalConfiguration::default()),
-            author: Author::default(),
-            writer: Writer::default(),
         }
     }
 
     pub fn run(&self, arguments: &[&str]) -> (ExitCode, String, String) {
+        self.run_with(arguments, &CommitAdapters::new())
+    }
+
+    pub fn run_with(
+        &self,
+        arguments: &[&str],
+        adapters: &CommitAdapters<'_>,
+    ) -> (ExitCode, String, String) {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let exit = run_from_with_commit(
@@ -287,7 +164,7 @@ impl Harness {
             &self.locator,
             &self.project,
             &self.global,
-            &CommitAdapters::new(&self.author, &self.writer),
+            adapters,
             &mut stdout,
             &mut stderr,
         );

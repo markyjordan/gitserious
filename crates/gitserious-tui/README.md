@@ -77,8 +77,9 @@ with the active step highlighted. The parent is clickable and protects dirty
 drafts. Submission restores the terminal while Git runs, then returns to a
 refreshed overview with the result; `o` opens a scrollable full result. A
 rejected commit retains its reviewed message and composer; Enter resumes review. `c` starts a new commit. Quit asks
-before discarding a retained review. Direct `gitserious commit` still opens
-authoring immediately and exits with the existing Git result.
+before discarding a retained review. Direct `gitserious commit` opens this
+Commit page and waits. Authoring starts from the page, and cancelling it
+returns here.
 
 Help lists its Overview, Init, Config, and Commit pages in a numbered sidebar
 beside the chosen page. `gitserious --help` opens the shell at Help on the
@@ -208,8 +209,8 @@ compact and wide terminals.
 
 ## Commit authoring
 
-`gitserious commit` starts authoring from the default taxonomy in
-`gitserious.toml`. Picker tabs support Tab/Shift+Tab to switch forward/backward and
+Authoring, once started from the Commit page, begins at the default taxonomy
+in `gitserious.toml`. Picker tabs support Tab/Shift+Tab to switch forward/backward and
 show taxonomy identities and never mutate project policy.
 
 The composer retains the established schema-document interaction: immutable
