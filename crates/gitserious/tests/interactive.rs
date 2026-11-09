@@ -97,14 +97,37 @@ impl InteractiveUi for ExerciseUi<'_> {
                 .map_err(|error| error.to_string())?;
             fs::set_permissions(&hook, fs::Permissions::from_mode(0o755))
                 .map_err(|error| error.to_string())?;
+            let staged_before = git(self.0, &["diff", "--cached", "--binary"])
+                .map_err(|error| error.to_string())?
+                .stdout;
             let error = workspace
                 .submit_commit(&authored)
                 .err()
                 .ok_or("hook did not reject commit")?;
             assert!(error.contains("test-hook-rejected"));
+            assert!(
+                !support::head_exists(self.0).map_err(|error| error.to_string())?,
+                "a rejected first commit must leave HEAD unborn"
+            );
+            assert!(workspace.repository_status()?.has_staged_changes());
+            assert_eq!(
+                git(self.0, &["diff", "--cached", "--binary"])
+                    .map_err(|error| error.to_string())?
+                    .stdout,
+                staged_before
+            );
+            assert!(
+                git(self.0, &["ls-files", "untracked"])
+                    .map_err(|error| error.to_string())?
+                    .stdout
+                    .is_empty()
+            );
             fs::remove_file(hook).map_err(|error| error.to_string())?;
         }
         workspace.submit_commit(&authored)?;
+        let count =
+            git(self.0, &["rev-list", "--count", "HEAD"]).map_err(|error| error.to_string())?;
+        assert_eq!(String::from_utf8_lossy(&count.stdout).trim(), "1");
         let stored =
             git(self.0, &["log", "-1", "--format=%B"]).map_err(|error| error.to_string())?;
         // Git log adds its own terminating newline after the stored commit message.
