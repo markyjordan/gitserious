@@ -1605,16 +1605,12 @@ mod tests {
         }
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.section, Section::Config);
-        assert_eq!(shell.config.shell_keys(), ShellKeys::None);
-        shell.handle_event(key(KeyCode::Up), &services, &[]);
-        shell.handle_event(key(KeyCode::Backspace), &services, &[]);
-        shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.config.shell_keys(), ShellKeys::Navigation);
+        assert!(!shell.config.dirty());
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
         assert_eq!(shell.section, Section::Help);
         shell.handle_event(key(KeyCode::BackTab), &services, &[]);
         assert_eq!(shell.section, Section::Config);
-        assert!(!shell.config.dirty());
         assert_eq!(
             shell.handle_event(key(KeyCode::Char('q')), &services, &[]),
             Some(Action::Quit)

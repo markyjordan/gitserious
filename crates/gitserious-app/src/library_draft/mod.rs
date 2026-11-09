@@ -779,36 +779,6 @@ impl LibraryDraft {
         self.records().iter().find(|record| record.id() == name)
     }
 
-    /// A policy selection alone does not keep a blank new property in creation.
-    #[must_use]
-    pub fn blank_creation(&self, id: &NodeId) -> bool {
-        match self.node(id) {
-            Some(NodeRef::Taxonomy(node)) => {
-                node.saved_name.is_none()
-                    && node.baseline.is_none()
-                    && node.name.is_empty()
-                    && node.description.is_empty()
-                    && node.types.is_empty()
-            }
-            Some(NodeRef::Type {
-                commit_type: node, ..
-            }) => {
-                node.baseline.is_none()
-                    && node.name.is_empty()
-                    && node.description.is_empty()
-                    && node.properties.is_empty()
-            }
-            Some(NodeRef::Property { property: node, .. }) => {
-                node.baseline.is_none()
-                    && node.name.is_empty()
-                    && node.description.is_empty()
-                    && node.condition.is_empty()
-                    && node.rationale.is_empty()
-            }
-            None => false,
-        }
-    }
-
     /// Field errors for an edited node, including collisions with siblings later in the outline.
     #[must_use]
     pub fn field_problems(&self, id: &NodeId) -> Vec<Problem> {
