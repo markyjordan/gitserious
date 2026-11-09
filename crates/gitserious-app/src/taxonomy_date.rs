@@ -29,3 +29,20 @@ impl Display for TaxonomyDate {
         self.0.fmt(formatter)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::TaxonomyDate;
+
+    #[test]
+    fn a_calendar_day_stays_a_calendar_day() {
+        let day: TaxonomyDate = "2026-11-07".parse().unwrap();
+        assert_eq!(day.to_string(), "2026-11-07");
+    }
+
+    #[test]
+    fn a_utc_timestamp_keeps_the_calendar_day_and_the_time() {
+        let stamp: TaxonomyDate = "2026-11-07 15:04:05 UTC".parse().unwrap();
+        assert_eq!(stamp.to_string(), "2026-11-07 15:04:05 UTC");
+    }
+}
