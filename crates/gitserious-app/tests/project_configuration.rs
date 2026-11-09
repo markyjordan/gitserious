@@ -1,15 +1,15 @@
 #![allow(clippy::expect_used)]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
 use gitserious_app::{
     ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
-    GlobalConfiguration, GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore,
-    ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject, edit_configuration,
-    initial_project_configuration,
+    DraftEdit, DraftField, GlobalConfiguration, GlobalConfigurationStore, ProjectConfiguration,
+    ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject,
+    edit_configuration, initial_project_configuration,
 };
 use gitserious_core::{
     Taxonomy, TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
@@ -113,7 +113,9 @@ enum Write {
 /// One in-memory project file whose revision advances on every write.
 struct Project {
     stored: RefCell<Option<StoredProject>>,
-    failure: Option<&'static str>,
+    failure: Cell<Option<&'static str>>,
+    load_fail: Cell<bool>,
+    attempts: Cell<usize>,
     writes: RefCell<Vec<Write>>,
 }
 
@@ -124,7 +126,9 @@ impl Project {
                 configuration,
                 revision: ProjectRevision::of_bytes(b"0"),
             })),
-            failure: None,
+            failure: Cell::new(None),
+            load_fail: Cell::new(false),
+            attempts: Cell::new(0),
             writes: RefCell::default(),
         }
     }
@@ -156,6 +160,9 @@ impl ProjectConfigurationStore for Project {
     type Error = FakeError;
 
     fn load(&self, _: &RepositoryRoot) -> Result<Option<StoredProject>, Self::Error> {
+        if self.load_fail.get() {
+            return Err(FakeError("project read failed"));
+        }
         Ok(self.stored.borrow().clone())
     }
 
@@ -164,7 +171,8 @@ impl ProjectConfigurationStore for Project {
         _: &RepositoryRoot,
         configuration: &ProjectConfiguration,
     ) -> Result<ProjectRevision, Self::Error> {
-        if let Some(failure) = self.failure {
+        self.attempts.set(self.attempts.get() + 1);
+        if let Some(failure) = self.failure.get() {
             return Err(FakeError(failure));
         }
         if self.stored.borrow().is_some() {
@@ -182,7 +190,8 @@ impl ProjectConfigurationStore for Project {
         expected: ProjectRevision,
         configuration: &ProjectConfiguration,
     ) -> Result<ProjectRevision, Self::Error> {
-        if let Some(failure) = self.failure {
+        self.attempts.set(self.attempts.get() + 1);
+        if let Some(failure) = self.failure.get() {
             return Err(FakeError(failure));
         }
         if self.stored.borrow().as_ref().map(|stored| stored.revision) != Some(expected) {
@@ -319,17 +328,36 @@ fn first_save_creates_and_later_saves_replace_the_opened_revision() -> Result<()
         session.initialize_project(&library)?;
         let mut session = workspace.save(&session)?;
         session.configure_project(id("team"), &[id("team")])?;
+        let mut session = workspace.save(&session)?;
+        let draft = session.project_draft_mut().ok_or("project draft")?;
+        let team = draft
+            .taxonomies()
+            .iter()
+            .find(|taxonomy| taxonomy.name() == "team")
+            .ok_or("team taxonomy")?
+            .id()
+            .clone();
+        draft
+            .edit(
+                &team,
+                DraftEdit::Text(DraftField::Description, "Revised team taxonomy."),
+            )
+            .map_err(|error| error.to_string())?;
         workspace.save(&session)?;
         Ok(())
     })?;
 
     let initial = initial_project_configuration(&library)?;
     let writes = project.writes.borrow();
-    assert_eq!(writes.len(), 2);
+    assert_eq!(writes.len(), 3);
     assert_eq!(writes[0], Write::Create(initial));
     assert!(matches!(
         &writes[1],
         Write::Replace { to, .. } if to.default_taxonomy().as_str() == "team" && ids(to) == ["team"]
+    ));
+    assert!(matches!(
+        &writes[2],
+        Write::Replace { to, .. } if to.find(&id("team")).is_some_and(|taxonomy| taxonomy.description().as_str() == "Revised team taxonomy.")
     ));
     Ok(())
 }
@@ -347,8 +375,8 @@ fn stale_or_failed_applies_leave_the_project_file_unchanged() {
     assert!(error.contains("changed since it was opened"), "{error}");
     assert_eq!(project.configuration(), Some(built_in_project()));
 
-    let mut failing = Project::new(Some(built_in_project()));
-    failing.failure = Some("disk full");
+    let failing = Project::new(Some(built_in_project()));
+    failing.failure.set(Some("disk full"));
     let error = edit_project(&failing, |workspace| {
         let mut session = workspace.load(ConfigurationDestination::Project)?;
         session.configure_project(id("research"), &[id("research")])?;
@@ -357,4 +385,57 @@ fn stale_or_failed_applies_leave_the_project_file_unchanged() {
     .expect_err("a failed write reported success");
     assert_eq!(error, "disk full");
     assert!(failing.writes.borrow().is_empty());
+}
+
+#[test]
+fn a_failed_project_save_retries_the_same_draft() -> Result<(), Box<dyn Error>> {
+    let project = Project::new(Some(built_in_project()));
+    edit_project(&project, |workspace| {
+        let mut session = workspace.load(ConfigurationDestination::Project)?;
+        session.configure_project(id("research"), &[id("research")])?;
+        let before = session.project_config();
+        project.failure.set(Some("disk full"));
+        assert_eq!(workspace.save(&session).err().as_deref(), Some("disk full"));
+        assert_eq!(session.project_config(), before);
+        assert!(session.is_dirty());
+        assert_eq!(project.configuration(), Some(built_in_project()));
+
+        project.failure.set(None);
+        let saved = workspace.save(&session)?;
+        assert!(!saved.is_dirty());
+        assert_eq!(saved.project_config(), before);
+        assert_eq!(session.project_config(), before);
+        Ok(())
+    })?;
+    assert_eq!(project.attempts.get(), 2);
+    assert_eq!(project.writes.borrow().len(), 1);
+    assert_eq!(
+        project
+            .configuration()
+            .ok_or("saved project")?
+            .default_taxonomy()
+            .as_str(),
+        "research"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_project_load_failure_does_not_attempt_persistence() -> Result<(), Box<dyn Error>> {
+    let project = Project::new(Some(built_in_project()));
+    project.load_fail.set(true);
+    edit_project(&project, |workspace| {
+        assert_eq!(
+            workspace
+                .load(ConfigurationDestination::Project)
+                .err()
+                .as_deref(),
+            Some("project read failed")
+        );
+        Ok(())
+    })?;
+    assert_eq!(project.attempts.get(), 0);
+    assert!(project.writes.borrow().is_empty());
+    assert_eq!(project.configuration(), Some(built_in_project()));
+    Ok(())
 }
