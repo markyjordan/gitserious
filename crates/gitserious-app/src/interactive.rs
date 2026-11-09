@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use gitserious_core::{Taxonomy, TaxonomyId, TaxonomyVersion};
 
-use crate::taxonomy_configuration_editor::Workspace;
+use crate::config::Workspace;
 use crate::{
     AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitWriter, ConfigurationWorkspace,
     GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore,

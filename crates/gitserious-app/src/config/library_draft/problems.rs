@@ -11,7 +11,7 @@ use super::Owner;
 use super::{
     DraftField, LibraryDraft, LoadedPath, NodeId, Policy, PropertyNode, TaxonomyNode, TypeNode,
 };
-use crate::taxonomy_policy::validate_selection;
+use crate::config::taxonomy_policy::validate_selection;
 use crate::{
     ConfigurationError, GlobalConfiguration, LibraryTaxonomy, ProjectConfiguration, TaxonomyOrigin,
 };
