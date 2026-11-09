@@ -164,10 +164,7 @@ fn new_fork_and_revealed_children_collapse_all_other_roots() -> Result {
     let fork = view.selected(&library).ok_or("fork")?.id().clone();
     draw(&mut view, &library, 36)?;
     one_root(&view, &library, &fork);
-    view.edit_key(
-        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-        &mut library,
-    )?;
+    view.finish_edit();
     view.act(LibraryAction::Create, &mut library)?;
     let new = view.selected(&library).ok_or("new")?.id().clone();
     for height in [36, 14, 37, 36] {
@@ -180,7 +177,12 @@ fn new_fork_and_revealed_children_collapse_all_other_roots() -> Result {
         Some(NodeRef::Taxonomy(taxonomy)) => taxonomy.types()[0].properties()[0].id().clone(),
         _ => return Err("fork".into()),
     };
-    view.open(property.clone(), DraftField::Description, &library);
+    view.open(
+        property.clone(),
+        DraftField::Description,
+        &library,
+        view.edit_baseline(&library),
+    );
     draw(&mut view, &library, 36)?;
     one_root(&view, &library, &fork);
     assert_eq!(view.selected(&library).map(NodeRef::id), Some(&property));
@@ -296,7 +298,12 @@ fn focused_fields_and_their_errors_remain_visible_in_short_inspectors() -> Resul
         (DraftField::Condition, "Condition", "condition."),
         (DraftField::Rationale, "Rationale", "rationale."),
     ] {
-        view.open(property.clone(), field, &library);
+        view.open(
+            property.clone(),
+            field,
+            &library,
+            view.edit_baseline(&library),
+        );
         for height in [14, 15, 36, 14] {
             let mut terminal = Terminal::new(TestBackend::new(51, height))?;
             terminal.draw(|frame| {

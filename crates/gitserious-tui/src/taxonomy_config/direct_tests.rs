@@ -5,7 +5,7 @@ use gitserious_app::{DraftField, GlobalConfiguration};
 use ratatui::layout::Position;
 use ratatui::{Terminal, backend::TestBackend};
 
-use super::taxonomies::{Mode, RowKey};
+use super::taxonomies::{ObservedMode as Mode, RowKey};
 use super::tests::Workspace;
 use super::*;
 
@@ -204,7 +204,7 @@ fn hidden_library_edit_pauses(event: Event) -> Result {
         assert!(!warning.contains("esc"), "{warning}");
         assert!(!warning.contains("cancel"), "{warning}");
         assert!(frame(&mut state, 87, 40)?.contains("Resized type"));
-        press(&mut state, &store, KeyCode::Esc);
+        save_edit(&mut state, &store);
         assert!(state.taxonomies.navigating());
         assert_eq!(store.inner.saves(), 1);
         assert_ne!(stored(&store)?, original);
@@ -290,12 +290,12 @@ fn blank_creation_cancels_for_every_policy_and_the_footer_tracks_all_text() -> R
                 }
                 paste(&mut state, &store, "x");
                 assert!(
-                    super::tests::footer_text(&frame(&mut state, 87, 40)?).contains("esc save")
+                    super::tests::footer_text(&frame(&mut state, 87, 40)?).contains("ctrl+w  save")
                 );
-                // A non-empty incomplete item must validate, not disappear on Esc.
-                press(&mut state, &store, KeyCode::Esc);
+                // Saving an incomplete item focuses its invalid field.
+                save_edit(&mut state, &store);
                 assert!(state.taxonomies.editing());
-                // Esc can focus another invalid field; return to the field containing x.
+                // Return to the field containing x after validation.
                 for _ in 0..fields.len() {
                     if matches!(state.taxonomies.observe(state.library()).mode, Mode::Edit { field: current, .. } if current == field)
                     {
@@ -320,15 +320,15 @@ fn blank_creation_cancels_for_every_policy_and_the_footer_tracks_all_text() -> R
 }
 
 #[test]
-fn clearing_an_existing_property_never_turns_save_into_cancel() -> Result {
+fn clearing_an_existing_property_still_validates_on_save() -> Result {
     let (store, mut state) = fixture()?;
     let node = select(&mut state, &["team", "feat", "intent"])?;
     press(&mut state, &store, KeyCode::Char('e'));
     replace(&mut state, &store, "")?;
     press(&mut state, &store, KeyCode::Enter);
     replace(&mut state, &store, "")?;
-    assert!(super::tests::footer_text(&frame(&mut state, 87, 40)?).contains("esc save"));
-    press(&mut state, &store, KeyCode::Esc);
+    assert!(super::tests::footer_text(&frame(&mut state, 87, 40)?).contains("ctrl+w  save"));
+    save_edit(&mut state, &store);
     assert!(state.taxonomies.editing());
     assert!(
         state
@@ -346,7 +346,7 @@ fn partial_fields_and_duplicate_names_stay_in_edit_with_inline_errors() -> Resul
     select(&mut state, &["team", "feat"])?;
     press(&mut state, &store, KeyCode::Char('e'));
     replace(&mut state, &store, "FIX")?;
-    press(&mut state, &store, KeyCode::Esc);
+    save_edit(&mut state, &store);
     assert!(matches!(
         state.taxonomies.observe(state.library()).mode,
         Mode::Edit {
@@ -360,7 +360,7 @@ fn partial_fields_and_duplicate_names_stay_in_edit_with_inline_errors() -> Resul
     replace(&mut state, &store, "New kind")?;
     press(&mut state, &store, KeyCode::Enter);
     replace(&mut state, &store, " ")?;
-    press(&mut state, &store, KeyCode::Esc);
+    save_edit(&mut state, &store);
     assert!(matches!(
         state.taxonomies.observe(state.library()).mode,
         Mode::Edit {
@@ -372,7 +372,7 @@ fn partial_fields_and_duplicate_names_stay_in_edit_with_inline_errors() -> Resul
     assert_eq!(store.inner.saves(), 0);
     paste(&mut state, &store, " New kind purpose ");
     let before = state.taxonomies.observe(state.library());
-    press(&mut state, &store, KeyCode::Esc);
+    save_edit(&mut state, &store);
     let after = state.taxonomies.observe(state.library());
     assert!(state.taxonomies.navigating());
     assert_eq!(before.expanded, after.expanded);
@@ -392,7 +392,7 @@ fn partial_fields_and_duplicate_names_stay_in_edit_with_inline_errors() -> Resul
         "New kind purpose"
     );
     press(&mut state, &store, KeyCode::Char('e'));
-    press(&mut state, &store, KeyCode::Esc);
+    save_edit(&mut state, &store);
     assert_eq!(store.inner.saves(), 1);
     assert_eq!(stored(&store)?, saved);
     Ok(())
@@ -406,7 +406,7 @@ fn zero_type_entry_reopens_unlocks_until_eligible_and_stays_locked_after_last_ty
     paste(&mut state, &store, "Work in progress");
     press(&mut state, &store, KeyCode::Enter);
     paste(&mut state, &store, "Purpose");
-    press(&mut state, &store, KeyCode::Esc);
+    save_edit(&mut state, &store);
     assert!(
         state.status.is_none(),
         "successful Library save stays quiet"
@@ -467,7 +467,7 @@ fn zero_type_entry_reopens_unlocks_until_eligible_and_stays_locked_after_last_ty
     let taxonomy = select(&mut state, &["work-in-progress"])?;
     press(&mut state, &store, KeyCode::Char('e'));
     replace(&mut state, &store, "Final name")?;
-    press(&mut state, &store, KeyCode::Esc);
+    save_edit(&mut state, &store);
     add_row(&mut state, &store, RowKey::AddType(taxonomy.clone()))?;
     press(&mut state, &store, KeyCode::Enter);
     paste(&mut state, &store, "Change");
@@ -478,7 +478,7 @@ fn zero_type_entry_reopens_unlocks_until_eligible_and_stays_locked_after_last_ty
         rows.contains("▲ invalid"),
         "unsaved child changed saved eligibility"
     );
-    press(&mut state, &store, KeyCode::Esc);
+    save_edit(&mut state, &store);
     assert!(
         state.status.is_none(),
         "successful Library save stays quiet"
@@ -536,7 +536,7 @@ fn conditional_fields_are_required_and_type_and_property_never_show_invalid_chip
     press(&mut state, &store, KeyCode::Enter);
     press(&mut state, &store, KeyCode::Right);
     press(&mut state, &store, KeyCode::Right);
-    press(&mut state, &store, KeyCode::Esc);
+    save_edit(&mut state, &store);
     assert!(matches!(
         state.taxonomies.observe(state.library()).mode,
         Mode::Edit {
@@ -546,7 +546,7 @@ fn conditional_fields_are_required_and_type_and_property_never_show_invalid_chip
     ));
     assert!(validation_error(&state)?.contains("needs a condition"));
     paste(&mut state, &store, "Risky change");
-    press(&mut state, &store, KeyCode::Esc);
+    save_edit(&mut state, &store);
     assert!(matches!(
         state.taxonomies.observe(state.library()).mode,
         Mode::Edit {
@@ -562,11 +562,15 @@ fn conditional_fields_are_required_and_type_and_property_never_show_invalid_chip
             text.matches("+ new taxonomy").count()
         );
         assert!(!text.contains("~ modified"));
-        assert!(super::tests::footer_text(&text).contains("esc save"));
+        let footer = super::tests::footer_text(&text);
+        assert!(
+            footer.contains("ctrl+w") && footer.contains("save") && footer.contains("cancel"),
+            "{footer}"
+        );
         assert!(!text.contains("ctrl+s"));
     }
     paste(&mut state, &store, "Explain risky changes");
-    press(&mut state, &store, KeyCode::Esc);
+    save_edit(&mut state, &store);
     assert!(
         state.status.is_none(),
         "successful Library save stays quiet"
@@ -588,7 +592,7 @@ fn failed_edit_keeps_fields_and_retry_saves_once_without_changing_identity() -> 
     replace(&mut state, &store, "new intent")?;
     let original = stored(&store)?;
     store.fail.set(true);
-    press(&mut state, &store, KeyCode::Esc);
+    save_edit(&mut state, &store);
     assert!(state.taxonomies.editing());
     assert_eq!(
         state
@@ -600,7 +604,7 @@ fn failed_edit_keeps_fields_and_retry_saves_once_without_changing_identity() -> 
     assert!(error(&state)?.contains("/config/config.toml: disk full"));
     assert!(frame(&mut state, 87, 40)?.contains("disk full"));
     store.fail.set(false);
-    press(&mut state, &store, KeyCode::Esc);
+    save_edit(&mut state, &store);
     assert_eq!(
         state
             .library()
@@ -673,9 +677,9 @@ fn stale_library_cannot_overwrite_another_session() -> Result {
         press(state, &store, KeyCode::Char('e'));
         paste(state, &store, " edited");
     }
-    press(&mut first, &store, KeyCode::Esc);
+    save_edit(&mut first, &store);
     let current = stored(&store)?;
-    press(&mut second, &store, KeyCode::Esc);
+    save_edit(&mut second, &store);
     assert!(second.taxonomies.editing());
     assert!(error(&second)?.contains("changed while editing"));
     assert_eq!(stored(&store)?, current);
@@ -710,8 +714,162 @@ fn editing_blocks_navigation_clicks_review_shortcut_and_normal_quit() -> Result 
     assert!(matches!(state.screen, Screen::Home));
     assert_eq!(store.inner.saves(), 0);
     press(&mut state, &store, KeyCode::Char('q'));
-    press(&mut state, &store, KeyCode::Esc);
+    save_edit(&mut state, &store);
     assert!(state.taxonomies.editing());
     assert!(matches!(state.screen, Screen::Home));
+    Ok(())
+}
+
+fn save_edit(state: &mut State, store: &dyn ConfigurationWorkspace) {
+    assert!(!state.handle_event(
+        Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+        store
+    ));
+}
+
+#[test]
+fn explicit_edit_escape_restores_nonblank_creation_and_navigation() -> Result {
+    for action in ["taxonomy", "fork", "type", "property"] {
+        let (store, mut state) = fixture()?;
+        let team = select(&mut state, &["team"])?;
+        match action {
+            "type" => add_row(&mut state, &store, RowKey::AddType(team))?,
+            "property" => {
+                let kind = select(&mut state, &["team", "feat"])?;
+                add_row(&mut state, &store, RowKey::AddProperty(kind))?;
+            }
+            _ => {}
+        }
+        let before = format!("{:?}", state.library());
+        let navigation = format!("{:?}", state.taxonomies.observe(state.library()));
+        let original = stored(&store)?;
+        press(
+            &mut state,
+            &store,
+            match action {
+                "taxonomy" => KeyCode::Char('n'),
+                "fork" => KeyCode::Char('f'),
+                _ => KeyCode::Enter,
+            },
+        );
+        assert!(state.taxonomies.editing(), "{action}");
+        replace(&mut state, &store, "nonblank draft")?;
+        press(&mut state, &store, KeyCode::Esc);
+        assert!(!state.taxonomies.editing(), "{action} remained editing");
+        assert_eq!(
+            format!("{:?}", state.library()),
+            before,
+            "{action} escaped draft"
+        );
+        assert_eq!(
+            format!("{:?}", state.taxonomies.observe(state.library())),
+            navigation,
+            "{action} navigation"
+        );
+        assert_eq!(stored(&store)?, original, "{action} stored config");
+        assert_eq!(store.inner.saves(), 0, "{action} wrote on cancel");
+    }
+    Ok(())
+}
+
+#[test]
+fn explicit_edit_escape_restores_valid_and_invalid_existing_edits() -> Result {
+    for text in ["changed intent", ""] {
+        let (store, mut state) = fixture()?;
+        select(&mut state, &["team", "feat", "intent"])?;
+        let before = format!("{:?}", state.library());
+        let navigation = format!("{:?}", state.taxonomies.observe(state.library()));
+        let original = stored(&store)?;
+        press(&mut state, &store, KeyCode::Char('e'));
+        replace(&mut state, &store, text)?;
+        press(&mut state, &store, KeyCode::Esc);
+        assert!(
+            !state.taxonomies.editing(),
+            "cancel rejected invalid edit {text:?}"
+        );
+        assert_eq!(format!("{:?}", state.library()), before);
+        assert_eq!(
+            format!("{:?}", state.taxonomies.observe(state.library())),
+            navigation
+        );
+        assert_eq!(stored(&store)?, original);
+        assert_eq!(store.inner.saves(), 0);
+    }
+    Ok(())
+}
+
+#[test]
+fn explicit_edit_failed_save_retains_draft_for_retry_or_cancel() -> Result {
+    for retry in [false, true] {
+        let (store, mut state) = fixture()?;
+        let id = select(&mut state, &["team", "feat", "intent"])?;
+        let before = format!("{:?}", state.library());
+        let original = stored(&store)?;
+        press(&mut state, &store, KeyCode::Char('e'));
+        replace(&mut state, &store, "changed intent")?;
+        store.fail.set(true);
+        save_edit(&mut state, &store);
+        assert!(state.taxonomies.editing());
+        assert!(error(&state)?.contains("disk full"));
+        assert_eq!(
+            state
+                .library()
+                .and_then(|draft| draft.text(&id, DraftField::Name)),
+            Some("changed intent")
+        );
+        assert_eq!(stored(&store)?, original);
+        store.fail.set(false);
+        if retry {
+            save_edit(&mut state, &store);
+            assert!(!state.taxonomies.editing());
+            assert_eq!(store.inner.saves(), 1);
+            assert_ne!(stored(&store)?, original);
+        } else {
+            press(&mut state, &store, KeyCode::Esc);
+            assert!(!state.taxonomies.editing());
+            assert_eq!(format!("{:?}", state.library()), before);
+            assert_eq!(stored(&store)?, original);
+            assert_eq!(store.inner.saves(), 0);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn hidden_library_edit_pauses_save() -> Result {
+    hidden_library_edit_pauses(Event::Key(KeyEvent::new(
+        KeyCode::Char('w'),
+        KeyModifiers::CONTROL,
+    )))
+}
+
+#[test]
+fn explicit_edit_cancel_restores_policy_and_hidden_conditional_text() -> Result {
+    let (store, mut state) = fixture()?;
+    select(&mut state, &["team", "feat", "constraints"])?;
+    let before = format!("{:?}", state.library());
+    let original = stored(&store)?;
+    press(&mut state, &store, KeyCode::Char('e'));
+    for _ in 0..3 {
+        press(&mut state, &store, KeyCode::Enter);
+    }
+    replace(&mut state, &store, "changed condition")?;
+    press(&mut state, &store, KeyCode::Enter);
+    replace(&mut state, &store, "changed rationale")?;
+    for _ in 0..3 {
+        press(&mut state, &store, KeyCode::Enter);
+    }
+    assert!(matches!(
+        state.taxonomies.observe(state.library()).mode,
+        Mode::Edit {
+            field: DraftField::Policy,
+            ..
+        }
+    ));
+    press(&mut state, &store, KeyCode::Right);
+    press(&mut state, &store, KeyCode::Esc);
+    assert_eq!(format!("{:?}", state.library()), before);
+    assert_eq!(stored(&store)?, original);
+    assert_eq!(store.inner.saves(), 0);
     Ok(())
 }

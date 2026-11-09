@@ -120,20 +120,36 @@ pub(super) struct TaxonomiesView {
 /// NAV moves through the outline. EDIT types into one field of the selected node; `cursor` is
 /// a grapheme index into that field's text in the draft. `CopyTo` picks the types the selected
 /// property is copied to; `cursor` indexes its `copy_targets`.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(super) enum Mode {
+#[derive(Clone, Debug, Default)]
+enum Mode {
     #[default]
     Nav,
     Edit {
         node: NodeId,
         field: DraftField,
         cursor: usize,
+        before: Box<EditBaseline>,
     },
     CopyTo {
         property: NodeId,
         cursor: usize,
         chosen: BTreeSet<NodeId>,
     },
+}
+
+#[derive(Clone, Debug)]
+struct EditBaseline {
+    library: LibraryDraft,
+    cursor: Option<RowKey>,
+    expanded: BTreeSet<NodeId>,
+    outline_offset: usize,
+    inspector_offset: u16,
+}
+
+pub(super) enum EditOutcome {
+    Continue,
+    Cancelled,
+    SaveRequested,
 }
 
 /// A change to the Library a NAV key asks for. `State` runs it after its scope guard.
@@ -332,6 +348,7 @@ impl TaxonomiesView {
                 .map(|node| node.id().clone())
                 .ok_or_else(|| refused(EditRefusal::NotApplicable))
         };
+        let before = self.edit_baseline(library);
         let (node, field) = match (action, row.key()) {
             (LibraryAction::Create, _) => (library.create_taxonomy(), DraftField::Name),
             (LibraryAction::Fork, _) => {
@@ -390,7 +407,7 @@ impl TaxonomiesView {
         if matches!(action, LibraryAction::Create | LibraryAction::Fork) {
             self.expand(&node, library);
         }
-        self.open(node, field, library);
+        self.open(node, field, library, before);
         Ok(())
     }
 
@@ -441,8 +458,38 @@ impl TaxonomiesView {
         self.expanded.insert(node.clone());
     }
 
+    fn edit_baseline(&self, library: &LibraryDraft) -> EditBaseline {
+        EditBaseline {
+            library: library.clone(),
+            cursor: self.cursor.clone(),
+            expanded: self.expanded.clone(),
+            outline_offset: self.outline_offset,
+            inspector_offset: self.inspector_offset,
+        }
+    }
+
+    fn cancel_edit(&mut self, library: &mut LibraryDraft) {
+        if let Mode::Edit { before, .. } = std::mem::take(&mut self.mode) {
+            *library = before.library;
+            self.cursor = before.cursor;
+            self.expanded = before.expanded;
+            self.outline_offset = before.outline_offset;
+            self.inspector_offset = before.inspector_offset;
+        }
+    }
+
+    pub(super) fn finish_edit(&mut self) {
+        self.mode = Mode::Nav;
+    }
+
     /// Selects `node`, shows it, and enters EDIT on `field` with the cursor after its text.
-    fn open(&mut self, node: NodeId, field: DraftField, library: &LibraryDraft) {
+    fn open(
+        &mut self,
+        node: NodeId,
+        field: DraftField,
+        library: &LibraryDraft,
+        before: EditBaseline,
+    ) {
         let mut ancestor = library.parent(&node);
         while let Some(id) = ancestor {
             ancestor = library.parent(&id);
@@ -456,42 +503,40 @@ impl TaxonomiesView {
             node,
             field,
             cursor,
+            before: Box::new(before),
         };
     }
 
-    /// EDIT keys: enter and ↓ go to the next field (enter wraps), ↑ to the previous one, esc
-    /// focuses invalid fields or finishes a valid edit. ←/→ cycle policy or move the cursor; text
+    /// EDIT keys: enter and ↓ go to the next field (enter wraps), ↑ to the previous one, esc cancels,
+    /// and ctrl+w validates and requests a save. ←/→ cycle policy or move the cursor; text
     /// keys change the field in the draft.
     pub(super) fn edit_key(
         &mut self,
         key: KeyEvent,
         library: &mut LibraryDraft,
-    ) -> Result<(), String> {
+    ) -> Result<EditOutcome, String> {
+        if key.code == KeyCode::Esc {
+            self.cancel_edit(library);
+            return Ok(EditOutcome::Cancelled);
+        }
         let Mode::Edit {
             node,
             field,
             cursor,
+            ..
         } = &mut self.mode
         else {
-            return Ok(());
+            return Ok(EditOutcome::Continue);
         };
         let fields = library.fields(node);
         let Some(position) = fields.iter().position(|candidate| candidate == field) else {
             self.mode = Mode::Nav;
-            return Ok(());
+            return Ok(EditOutcome::Continue);
         };
         let text = library.text(node, *field).unwrap_or_default();
         let length = text.graphemes(true).count();
         let next = match key.code {
-            KeyCode::Esc => {
-                if library.blank_creation(node) {
-                    let landing = library
-                        .edit(node, DraftEdit::Remove)
-                        .map_err(|refusal| refusal_sentence(refusal, None))?;
-                    self.mode = Mode::Nav;
-                    self.select(landing);
-                    return Ok(());
-                }
+            KeyCode::Char('w') if key.modifiers == KeyModifiers::CONTROL => {
                 let errors = library.field_problems(node);
                 if let Some(problem) = errors.first() {
                     if let ProblemSite::Field(_, invalid) = problem.site {
@@ -500,10 +545,9 @@ impl TaxonomiesView {
                             .text(node, invalid)
                             .map_or(0, |text| text.graphemes(true).count());
                     }
-                    return Ok(());
+                    return Ok(EditOutcome::Continue);
                 }
-                self.mode = Mode::Nav;
-                return Ok(());
+                return Ok(EditOutcome::SaveRequested);
             }
             KeyCode::Enter => Some((position + 1) % fields.len()),
             KeyCode::Down => Some((position + 1).min(fields.len() - 1)),
@@ -515,43 +559,43 @@ impl TaxonomiesView {
             *cursor = library
                 .text(node, *field)
                 .map_or(0, |text| text.graphemes(true).count());
-            return Ok(());
+            return Ok(EditOutcome::Continue);
         }
         let (range, insert) = match key.code {
             KeyCode::PageUp => {
                 self.inspector_offset = self.inspector_offset.saturating_sub(self.inspector_page());
-                return Ok(());
+                return Ok(EditOutcome::Continue);
             }
             KeyCode::PageDown => {
                 self.inspector_offset = self.inspector_offset.saturating_add(self.inspector_page());
-                return Ok(());
+                return Ok(EditOutcome::Continue);
             }
             KeyCode::Left | KeyCode::Right if *field == DraftField::Policy => {
                 let Some(NodeRef::Property { property, .. }) = library.node(node) else {
-                    return Ok(());
+                    return Ok(EditOutcome::Continue);
                 };
                 let policy = property.policy().cycle(key.code == KeyCode::Right);
                 return library
                     .edit(node, DraftEdit::Policy(policy))
-                    .map(|_| ())
+                    .map(|_| EditOutcome::Continue)
                     .map_err(|refusal| refusal_sentence(refusal, Some(*field)));
             }
-            _ if *field == DraftField::Policy => return Ok(()),
+            _ if *field == DraftField::Policy => return Ok(EditOutcome::Continue),
             KeyCode::Left => {
                 *cursor = cursor.saturating_sub(1);
-                return Ok(());
+                return Ok(EditOutcome::Continue);
             }
             KeyCode::Right => {
                 *cursor = (*cursor + 1).min(length);
-                return Ok(());
+                return Ok(EditOutcome::Continue);
             }
             KeyCode::Home => {
                 *cursor = 0;
-                return Ok(());
+                return Ok(EditOutcome::Continue);
             }
             KeyCode::End => {
                 *cursor = length;
-                return Ok(());
+                return Ok(EditOutcome::Continue);
             }
             KeyCode::Backspace if *cursor > 0 => (*cursor - 1..*cursor, String::new()),
             KeyCode::Delete if *cursor < length => (*cursor..*cursor + 1, String::new()),
@@ -562,14 +606,14 @@ impl TaxonomiesView {
             {
                 (*cursor..*cursor, character.to_string())
             }
-            _ => return Ok(()),
+            _ => return Ok(EditOutcome::Continue),
         };
         let (text, at) = splice(text, range, &insert);
         library
             .edit(node, DraftEdit::Text(*field, &text))
             .map_err(|refusal| refusal_sentence(refusal, Some(*field)))?;
         *cursor = at;
-        Ok(())
+        Ok(EditOutcome::Continue)
     }
 
     /// Inserts pasted text at the cursor in EDIT, as much of it as the field's limit allows.
@@ -578,6 +622,7 @@ impl TaxonomiesView {
             node,
             field,
             cursor,
+            ..
         } = &mut self.mode
         else {
             return Ok(());
@@ -761,13 +806,14 @@ impl TaxonomiesView {
                     ("enter", "next field"),
                     ("←/→", if policy { "policy" } else { "cursor" }),
                     (
-                        "esc",
-                        if library.is_some_and(|library| library.blank_creation(node.id())) {
-                            "cancel"
+                        "ctrl+w",
+                        if library.is_some_and(LibraryDraft::is_project) {
+                            "stage"
                         } else {
                             "save"
                         },
                     ),
+                    ("esc", "cancel"),
                 ]);
             } else if !built_in && matches!(node, NodeRef::Property { .. }) {
                 hints.extend([
@@ -859,6 +905,14 @@ impl TaxonomiesView {
             hints.retain(|(key, _)| key != optional);
             candidate = line(&hints, &trailing, false);
         }
+        if !fits(&candidate)
+            && let Some((_, label)) = hints
+                .iter_mut()
+                .find(|(key, label)| *key == "enter" && *label == "next field")
+        {
+            *label = "next";
+            candidate = line(&hints, &trailing, false);
+        }
         // Choose hints using their original widths, then spend spare space on chip padding.
         let padded = line(&hints, &trailing, true);
         if fits(&padded) {
@@ -892,7 +946,38 @@ impl TaxonomiesView {
             expanded: self.expanded.iter().cloned().collect(),
             outline_offset: self.outline_offset,
             inspector_offset: self.inspector_offset,
-            mode: self.mode.clone(),
+            edit_baseline: match &self.mode {
+                Mode::Edit { before, .. } => Some(ObservedBaseline {
+                    library: before.library.clone(),
+                    cursor: before.cursor.clone(),
+                    expanded: before.expanded.iter().cloned().collect(),
+                    outline_offset: before.outline_offset,
+                    inspector_offset: before.inspector_offset,
+                }),
+                _ => None,
+            },
+            mode: match &self.mode {
+                Mode::Nav => ObservedMode::Nav,
+                Mode::Edit {
+                    node,
+                    field,
+                    cursor,
+                    ..
+                } => ObservedMode::Edit {
+                    node: node.clone(),
+                    field: *field,
+                    cursor: *cursor,
+                },
+                Mode::CopyTo {
+                    property,
+                    cursor,
+                    chosen,
+                } => ObservedMode::CopyTo {
+                    property: property.clone(),
+                    cursor: *cursor,
+                    chosen: chosen.clone(),
+                },
+            },
         }
     }
 }
@@ -904,6 +989,32 @@ fn splice(text: &str, range: Range<usize>, insert: &str) -> (String, usize) {
     let head = format!("{}{insert}", graphemes[..range.start].concat());
     let at = head.graphemes(true).count();
     (format!("{head}{}", graphemes[range.end..].concat()), at)
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+pub(super) struct ObservedBaseline {
+    pub(super) library: LibraryDraft,
+    pub(super) cursor: Option<RowKey>,
+    pub(super) expanded: Vec<NodeId>,
+    pub(super) outline_offset: usize,
+    pub(super) inspector_offset: u16,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum ObservedMode {
+    Nav,
+    Edit {
+        node: NodeId,
+        field: DraftField,
+        cursor: usize,
+    },
+    CopyTo {
+        property: NodeId,
+        cursor: usize,
+        chosen: BTreeSet<NodeId>,
+    },
 }
 
 /// What the model checker sees of this section: the raw cursor and expanded ids, the selected
@@ -920,7 +1031,8 @@ pub(super) struct Observation {
     pub(super) expanded: Vec<NodeId>,
     pub(super) outline_offset: usize,
     pub(super) inspector_offset: u16,
-    pub(super) mode: Mode,
+    pub(super) mode: ObservedMode,
+    pub(super) edit_baseline: Option<ObservedBaseline>,
 }
 
 fn hint_spans(hints: &[(&str, &str)], padded: bool) -> Vec<Span<'static>> {

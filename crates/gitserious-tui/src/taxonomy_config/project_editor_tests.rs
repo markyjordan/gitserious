@@ -7,7 +7,7 @@ use gitserious_app::{
 
 use ratatui::{Terminal, backend::TestBackend};
 
-use super::taxonomies::Mode;
+use super::taxonomies::ObservedMode as Mode;
 use super::tests::Workspace;
 use super::*;
 
@@ -127,7 +127,7 @@ fn project_taxonomies_edit_without_the_library_and_apply_only_after_review() -> 
 
     press(&mut state, &workspace, KeyCode::Char('e'));
     replace(&mut state, &workspace, "repair")?;
-    press(&mut state, &workspace, KeyCode::Esc);
+    ctrl(&mut state, &workspace, 'w');
 
     assert!(!state.project_taxonomies.editing());
     assert_eq!(draft(&state)?.text(&fix, DraftField::Name), Some("repair"));
@@ -309,7 +309,7 @@ fn a_different_project_copy_is_replaced_or_kept_only_on_request() -> Result {
     select(&mut state, &workspace, &["conventional", "fix"])?;
     press(&mut state, &workspace, KeyCode::Char('e'));
     replace(&mut state, &workspace, "repair")?;
-    press(&mut state, &workspace, KeyCode::Esc);
+    ctrl(&mut state, &workspace, 'w');
 
     import_row(&mut state, &workspace, "conventional")?;
     let question = state.confirmation().ok_or("no conflict dialog")?;
@@ -385,7 +385,7 @@ fn copying_to_the_library_saves_it_and_never_shadows_a_built_in() -> Result {
     select(&mut state, &workspace, &["conventional", "fix"])?;
     press(&mut state, &workspace, KeyCode::Char('e'));
     replace(&mut state, &workspace, "repair")?;
-    press(&mut state, &workspace, KeyCode::Esc);
+    ctrl(&mut state, &workspace, 'w');
     select(&mut state, &workspace, &["conventional"])?;
     press(&mut state, &workspace, KeyCode::Char('l'));
 
@@ -410,7 +410,7 @@ fn a_different_library_taxonomy_is_replaced_only_on_request() -> Result {
     select(&mut state, &workspace, &["team", &first_type])?;
     press(&mut state, &workspace, KeyCode::Char('e'));
     replace(&mut state, &workspace, "shipped")?;
-    press(&mut state, &workspace, KeyCode::Esc);
+    ctrl(&mut state, &workspace, 'w');
     select(&mut state, &workspace, &["team"])?;
 
     press(&mut state, &workspace, KeyCode::Char('l'));
@@ -439,5 +439,32 @@ fn copying_to_the_library_needs_the_library() -> Result {
         matches!(&state.status, Some(Notice::Error(message)) if message.contains("the Library is corrupt"))
     );
     assert_eq!(workspace.saves(), 0);
+    Ok(())
+}
+
+#[test]
+fn explicit_edit_project_cancel_preserves_prior_staged_edit() -> Result {
+    let (workspace, mut state) = fixture()?;
+    open_outline(&mut state, &workspace);
+    let fix = select(&mut state, &workspace, &["conventional", "fix"])?;
+    press(&mut state, &workspace, KeyCode::Char('e'));
+    replace(&mut state, &workspace, "repair")?;
+    ctrl(&mut state, &workspace, 'w');
+    assert!(!state.project_taxonomies.editing());
+    select(&mut state, &workspace, &["conventional", "feat"])?;
+    let before = format!("{:?}", draft(&state)?);
+    press(&mut state, &workspace, KeyCode::Char('e'));
+    replace(&mut state, &workspace, "discard this")?;
+    press(&mut state, &workspace, KeyCode::Esc);
+    assert_eq!(format!("{:?}", draft(&state)?), before);
+    assert_eq!(draft(&state)?.text(&fix, DraftField::Name), Some("repair"));
+    assert_eq!(workspace.saves(), 0);
+    ctrl(&mut state, &workspace, 's');
+    assert!(matches!(
+        state.screen,
+        Screen::Review(ConfigurationDestination::Project)
+    ));
+    press(&mut state, &workspace, KeyCode::Enter);
+    assert_eq!(workspace.saves(), 1);
     Ok(())
 }

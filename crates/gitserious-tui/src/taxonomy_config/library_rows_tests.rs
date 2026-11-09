@@ -40,7 +40,10 @@ pub(super) fn fixture() -> Result<(Workspace, State)> {
         Event::Paste("Ideas that have not earned a type yet.".into()),
         &workspace,
     );
-    press(&mut state, &workspace, &[KeyCode::Esc]);
+    assert!(!state.handle_event(
+        Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+        &workspace
+    ));
     select(&mut state, &["conventional"])?;
     press(&mut state, &workspace, &[KeyCode::Enter]);
     Ok((workspace, state))

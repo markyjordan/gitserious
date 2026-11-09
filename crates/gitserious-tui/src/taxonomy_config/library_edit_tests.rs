@@ -63,7 +63,10 @@ fn new_taxonomy_form_omits_facts_until_saved() -> Result {
         assert!(!screen.contains("Version"), "{size:?}: {screen}");
         assert!(!screen.contains("Types"), "{size:?}: {screen}");
 
-        press(&mut state, &workspace, &[KeyCode::Esc]);
+        state.handle_event(
+            Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+            &workspace,
+        );
         assert!(!state.taxonomies.editing());
         let terminal = draw(&mut state, size)?;
         let screen = text(&terminal);
@@ -76,11 +79,19 @@ fn new_taxonomy_form_omits_facts_until_saved() -> Result {
         let terminal = draw(&mut state, (size.0, size.1.max(30)))?;
         let screen = text(&terminal);
         assert!(!screen.contains("Version"), "{size:?}: {screen}");
-        press(&mut state, &workspace, &[KeyCode::Esc, KeyCode::Char('f')]);
+        state.handle_event(
+            Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+            &workspace,
+        );
+        press(&mut state, &workspace, &[KeyCode::Char('f')]);
         let terminal = draw(&mut state, (size.0, size.1.max(30)))?;
         let screen = text(&terminal);
         assert!(!screen.contains("Version"), "{size:?}: {screen}");
-        press(&mut state, &workspace, &[KeyCode::Esc, KeyCode::PageDown]);
+        state.handle_event(
+            Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+            &workspace,
+        );
+        press(&mut state, &workspace, &[KeyCode::PageDown]);
         let terminal = draw(&mut state, size)?;
         let screen = screen + &text(&terminal);
         assert!(screen.contains("Types"), "{size:?}: {screen}");
@@ -126,7 +137,7 @@ fn edit_focus_has_amber_cues_muted_navigation_and_a_footer_counter() -> Result {
         let terminal = draw(&mut state, size)?;
         let buffer = terminal.backend().buffer();
         let footer = tests::footer_text(&row(&terminal, size.1 - 1));
-        assert!(footer.contains("EDIT   enter next field  ←/→ cursor  esc save"));
+        assert!(footer.contains("EDIT   enter next field  ←/→ cursor  ctrl+w  save  esc cancel"));
         assert!(footer.trim_end().ends_with("11/80"));
         assert_eq!(buffer[(1, size.1 - 1)].bg, theme().pending);
         assert!(buffer[(4, 2)].modifier.contains(Modifier::DIM));
@@ -159,7 +170,10 @@ fn edit_focus_has_amber_cues_muted_navigation_and_a_footer_counter() -> Result {
         let footer = tests::footer_text(&row(&terminal, size.1 - 1));
         assert!(footer.contains("←/→ policy"));
         assert!(!footer.contains("/80") && !footer.contains("/100"));
-        press(&mut state, &workspace, &[KeyCode::Esc]);
+        state.handle_event(
+            Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+            &workspace,
+        );
         let terminal = draw(&mut state, size)?;
         assert!(!row(&terminal, size.1 - 1).contains("EDIT"));
         assert!(
@@ -187,7 +201,10 @@ fn an_empty_condition_keeps_editing_and_colors_its_footer_count_red() -> Result 
             ],
         );
         press(&mut state, &workspace, &[KeyCode::Delete; 80]);
-        press(&mut state, &workspace, &[KeyCode::Esc]);
+        state.handle_event(
+            Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+            &workspace,
+        );
         assert!(state.taxonomies.editing());
         let terminal = draw(&mut state, size)?;
         let footer = row(&terminal, size.1 - 1);

@@ -1547,7 +1547,11 @@ mod tests {
             assert!(!warning.contains("quit"), "{warning}");
             assert!(
                 shell
-                    .handle_event(key(KeyCode::Esc), &services, &[])
+                    .handle_event(
+                        Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+                        &services,
+                        &[]
+                    )
                     .is_none()
             );
             large.draw(|frame| shell.render(frame, &[]))?;
@@ -1559,6 +1563,14 @@ mod tests {
     #[test]
     fn hidden_config_edit_pauses_escape() -> Result<(), Box<dyn std::error::Error>> {
         hidden_config_edit_pauses(key(KeyCode::Esc))
+    }
+
+    #[test]
+    fn hidden_config_edit_pauses_save() -> Result<(), Box<dyn std::error::Error>> {
+        hidden_config_edit_pauses(Event::Key(KeyEvent::new(
+            KeyCode::Char('w'),
+            KeyModifiers::CONTROL,
+        )))
     }
 
     #[test]

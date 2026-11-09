@@ -779,7 +779,6 @@ impl LibraryDraft {
         self.records().iter().find(|record| record.id() == name)
     }
 
-    /// Whether a new node has no text or children and can be cancelled without saving.
     /// A policy selection alone does not keep a blank new property in creation.
     #[must_use]
     pub fn blank_creation(&self, id: &NodeId) -> bool {
