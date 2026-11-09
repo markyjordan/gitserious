@@ -518,3 +518,45 @@ fn a_retry_after_a_partial_initialization_writes_only_the_project() -> Result<()
         &initializer,
     )
 }
+
+struct RepeatInitializationUi<'a>(&'a Path);
+
+impl InteractiveUi for RepeatInitializationUi<'_> {
+    fn run(&self, workspace: &dyn InteractiveWorkspace, _: &[HelpPage]) -> Result<(), String> {
+        workspace.initialize(&built_ins()?)?;
+        let policy = self.0.join("gitserious.toml");
+        let before = fs::read(&policy).map_err(|error| error.to_string())?;
+        assert!(workspace.initialize(&built_ins()?).is_err());
+        assert_eq!(fs::read(policy).map_err(|error| error.to_string())?, before);
+        assert!(matches!(workspace.home(), HomeState::Initialized { .. }));
+        Ok(())
+    }
+}
+
+#[test]
+fn interactive_initialization_in_an_existing_repository_never_reinitializes_git()
+-> Result<(), Box<dyn Error>> {
+    let repository = support::repository()?;
+    let initializer = CountingInitializer(Cell::new(0));
+    run_home_with(
+        repository.path(),
+        &RepeatInitializationUi(repository.path()),
+        &initializer,
+    )?;
+    assert_eq!(initializer.0.get(), 0);
+    support::assert_project_shape(repository.path(), &[])?;
+    Ok(())
+}
+
+#[test]
+fn a_broken_repository_does_not_call_the_initializer_or_write_project_state()
+-> Result<(), Box<dyn Error>> {
+    let temp = tempfile::TempDir::new()?;
+    fs::write(temp.path().join(".git"), "not a gitdir pointer\n")?;
+    let initializer = CountingInitializer(Cell::new(0));
+    run_home_with(temp.path(), &BlockedGitUi(temp.path()), &initializer)?;
+    assert_eq!(initializer.0.get(), 0);
+    assert!(!temp.path().join(".gitserious").exists());
+    assert!(!temp.path().join("gitserious.toml").exists());
+    Ok(())
+}
