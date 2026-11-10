@@ -7,7 +7,9 @@
 //! active edit and writes nothing. Ctrl+W finishes that edit only after storage succeeds.
 //! At most one taxonomy root is expanded, while type expansion can be remembered independently.
 //! The existing breadth-first runner deduplicates snapshots and reports shortest counterexamples.
-//! Mouse, resize, write failures and the embedded shell are covered by interaction tests.
+//! Every seed starts from the Config page as the shell embeds it. Keys the shell takes first
+//! still reach it here. Mouse, resize, write failures and the shell are covered by interaction
+//! tests.
 
 use crate::library_lookup::LibraryLookup;
 use std::collections::{HashMap, HashSet};
@@ -1355,7 +1357,7 @@ fn selected_policy(snapshot: &Snapshot) -> Option<String> {
 /// Replays `keys` from a fresh workspace. Returns `None` when the last key quit the editor.
 fn replay(seed: &Seed, keys: &[usize]) -> Result<Option<Snapshot>, String> {
     let workspace = (seed.workspace)()?;
-    let mut state = State::new(&workspace);
+    let mut state = ConfigView::new(&workspace).state;
     let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))
         .map_err(|error| error.to_string())?;
     let mut draw = |state: &mut State| {

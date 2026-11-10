@@ -271,3 +271,48 @@ fn project_browsing_expands_real_nodes_and_never_offers_or_performs_mutations() 
     assert!(!view.dirty());
     Ok(())
 }
+
+#[test]
+fn an_uninitialized_project_hands_initialization_to_the_shell_and_stages_nothing() -> Result {
+    let workspace = Workspace::new();
+    let mut view = ConfigView::new(&workspace);
+    let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+    let before = rendered(&mut view, &mut terminal)?;
+    assert!(before.contains("initialize gitserious"));
+    for code in [
+        KeyCode::Char('e'),
+        KeyCode::Char('f'),
+        KeyCode::Char('n'),
+        KeyCode::Char('d'),
+        KeyCode::Char('l'),
+        KeyCode::Char('c'),
+    ] {
+        press(&mut view, &workspace, code);
+    }
+    assert!(
+        view.handle_event(
+            Event::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
+            &workspace
+        )
+        .is_none()
+    );
+    assert_eq!(before, rendered(&mut view, &mut terminal)?);
+    assert!(matches!(
+        view.handle_event(
+            Event::Key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE)),
+            &workspace
+        ),
+        Some(ConfigRequest::Initialize)
+    ));
+    assert!(matches!(view.state.screen, Screen::Home));
+    assert!(
+        view.state
+            .project
+            .as_ref()
+            .is_some_and(|session| session.project_draft().is_none()),
+        "initialization is the shell's, not a staged Config draft"
+    );
+    assert!(!view.dirty());
+    assert_eq!(workspace.saves(), 0);
+    Ok(())
+}
