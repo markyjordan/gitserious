@@ -12,6 +12,7 @@
 )]
 
 mod confirmation;
+mod help;
 mod home;
 mod navigation;
 mod runtime;
@@ -19,4 +20,5 @@ mod shell;
 mod taxonomy_config;
 mod theme;
 
-pub use shell::{Capabilities, HelpPage, InitialPage, RatatuiInteractiveUi};
+pub use help::HelpPage;
+pub use shell::{Capabilities, InitialPage, RatatuiInteractiveUi};

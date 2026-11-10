@@ -9,7 +9,7 @@ use gitserious_app::{
     ProjectWorkspace, RepositoryRoot, RepositoryStatus,
 };
 
-use super::help_page::{HelpLine, HelpSpan};
+use crate::help::{HelpLine, HelpSpan};
 use crate::home;
 use gitserious_core::TaxonomyVersion;
 use ratatui::{Terminal, backend::TestBackend};

@@ -5,8 +5,13 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Padding, Paragraph};
 
-use super::HelpPage;
 use crate::theme::theme;
+
+mod page;
+
+pub use page::HelpPage;
+#[cfg(test)]
+pub(crate) use page::{HelpLine, HelpSpan};
 
 /// The labels of the digit keys that jump to a page, by page count.
 const JUMP: [&str; 9] = ["1", "1-2", "1-3", "1-4", "1-5", "1-6", "1-7", "1-8", "1-9"];
@@ -23,7 +28,7 @@ enum HelpFocus {
 
 /// The Help section's chosen page, reading position, and focus.
 #[derive(Debug, Default)]
-pub(super) struct HelpView {
+pub(crate) struct HelpView {
     page: usize,
     scroll: u16,
     focus: HelpFocus,
@@ -35,7 +40,7 @@ pub(super) struct HelpView {
 
 impl HelpView {
     /// Help on `page`, in the sidebar.
-    pub(super) fn at(page: usize) -> Self {
+    pub(crate) fn at(page: usize) -> Self {
         Self {
             page,
             ..Self::default()
@@ -43,7 +48,7 @@ impl HelpView {
     }
 
     /// Arriving at Help always starts in the sidebar, on the page left last.
-    pub(super) fn enter(&mut self) {
+    pub(crate) fn enter(&mut self) {
         self.focus = HelpFocus::Pages;
     }
 
@@ -54,7 +59,7 @@ impl HelpView {
         }
     }
 
-    pub(super) fn key(&mut self, code: KeyCode, count: usize) {
+    pub(crate) fn key(&mut self, code: KeyCode, count: usize) {
         let Some(last) = count.checked_sub(1) else {
             return;
         };
@@ -87,7 +92,7 @@ impl HelpView {
         }
     }
 
-    pub(super) fn click(&mut self, column: u16, row: u16) {
+    pub(crate) fn click(&mut self, column: u16, row: u16) {
         if let Some(page) = self
             .rows
             .iter()
@@ -98,7 +103,7 @@ impl HelpView {
         }
     }
 
-    pub(super) fn hints(&self, count: usize) -> Vec<(&'static str, &'static str)> {
+    pub(crate) fn hints(&self, count: usize) -> Vec<(&'static str, &'static str)> {
         match self.focus {
             HelpFocus::Pages => [("→", "read"), ("↑↓", "pages")]
                 .into_iter()
@@ -113,7 +118,7 @@ impl HelpView {
         }
     }
 
-    pub(super) fn render(&mut self, frame: &mut Frame<'_>, area: Rect, pages: &[HelpPage]) {
+    pub(crate) fn render(&mut self, frame: &mut Frame<'_>, area: Rect, pages: &[HelpPage]) {
         let text = Style::new().fg(theme().text);
         let dim = Style::new().fg(theme().dim);
         let digits = pages.len().to_string().len();
