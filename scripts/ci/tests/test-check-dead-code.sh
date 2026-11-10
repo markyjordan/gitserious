@@ -59,6 +59,22 @@ pub fn unreached() -> u8 {
 pub fn attempt() -> Result<u8, Failure<u8>> {
     Err(Failure(3))
 }
+
+pub trait Capability {
+    fn answer(&self) -> u8;
+}
+
+struct Answer;
+
+impl Capability for Answer {
+    fn answer(&self) -> u8 {
+        4
+    }
+}
+
+pub fn capability() -> &'static dyn Capability {
+    &Answer
+}
 EOF
 cat >"$repo/crates/gitserious-core/src/values.rs" <<'EOF'
 pub struct Failure<E>(pub E);
@@ -69,7 +85,9 @@ EOF
 cat >"$repo/crates/gitserious-app/src/lib.rs" <<'EOF'
 pub fn run() -> u8 {
     let _ = (gitserious_core::Grouped, gitserious_core::Listed, gitserious_core::Generated);
-    gitserious_core::reached() + gitserious_core::attempt().unwrap_or(0)
+    gitserious_core::reached()
+        + gitserious_core::attempt().unwrap_or(0)
+        + gitserious_core::capability().answer()
 }
 EOF
 printf '\n' >"$repo/crates/gitserious-tui/src/lib.rs"
@@ -109,7 +127,7 @@ expect_fail_naming() {
 expect_fail_naming "a public function no target calls" \
   "crates/gitserious-core/src/lib.rs declares unreached, which no workspace target uses" \
   "crates/gitserious-core/src/values.rs declares Unlisted, which no workspace target uses"
-for used in reached Grouped Listed Generated Failure attempt; do
+for used in reached Grouped Listed Generated Failure attempt Capability capability; do
   if grep -qF "declares $used," "$fixture_dir/stderr"; then
     echo "A used item was reported as unused: $used" >&2
     exit 1
@@ -124,7 +142,7 @@ printf '#[allow(dead_code)]\nfn hidden() {}\n' >>"$repo/crates/gitserious-app/sr
 expect_fail_naming "a dead-code suppression in crate sources" \
   "crates/gitserious-app/src/lib.rs suppresses a dead-code warning (allow(dead_code) fn hidden() {})"
 
-printf 'pub fn run() -> u8 {\n    let _ = (gitserious_core::Grouped, gitserious_core::Listed, gitserious_core::Generated, gitserious_core::Unlisted);\n    gitserious_core::reached() + gitserious_core::unreached() + gitserious_core::attempt().unwrap_or(0)\n}\n' \
+printf 'pub fn run() -> u8 {\n    let _ = (gitserious_core::Grouped, gitserious_core::Listed, gitserious_core::Generated, gitserious_core::Unlisted);\n    gitserious_core::reached() + gitserious_core::unreached() + gitserious_core::attempt().unwrap_or(0) + gitserious_core::capability().answer()\n}\n' \
   >"$repo/crates/gitserious-app/src/lib.rs"
 expect_fail_naming "allowlist entries that no longer offend" \
   "lists unreached in crates/gitserious-core/src/lib.rs, which no longer offends" \
