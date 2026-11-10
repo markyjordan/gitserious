@@ -2108,6 +2108,248 @@ mod tests {
         );
     }
 
+    /// A workspace whose staged changes are ready to author.
+    struct Ready;
+
+    impl ConfigurationWorkspace for Ready {
+        fn load_library(&self) -> Result<LibraryDraft, String> {
+            Services.load_library()
+        }
+        fn save_library(&self, library: &LibraryDraft) -> Result<LibraryDraft, String> {
+            Services.save_library(library)
+        }
+        fn load_project(&self) -> Result<ProjectSnapshot, String> {
+            Services.load_project()
+        }
+        fn library_taxonomies(&self) -> Result<Vec<gitserious_core::Taxonomy>, String> {
+            Services.library_taxonomies()
+        }
+        fn library_path(&self) -> std::path::PathBuf {
+            Services.library_path()
+        }
+    }
+
+    impl ProjectWorkspace for Ready {
+        fn overview(&self) -> ProjectOverview {
+            Services.overview()
+        }
+        fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
+            Services.initialize(configuration)
+        }
+    }
+
+    impl CommitWorkspace for Ready {
+        fn repository_status(&self) -> Result<RepositoryStatus, String> {
+            Services.repository_status()
+        }
+        fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
+            commit::reviewed_submission().map(|(context, _, _)| context)
+        }
+        fn submit_commit(
+            &self,
+            authored: &gitserious_app::AuthoredCommit,
+        ) -> Result<CommitOutput, String> {
+            Services.submit_commit(authored)
+        }
+    }
+
+    const OPEN: [&str; 4] = ["Open Home", "Open Commit", "Open Config", "Open Help"];
+
+    fn palette(shell: &Shell) -> Vec<String> {
+        shell
+            .commands()
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect()
+    }
+
+    fn listing(extra: &[&str]) -> Vec<String> {
+        OPEN.iter()
+            .chain(extra)
+            .chain(&["Quit"])
+            .map(|label| (*label).to_owned())
+            .collect()
+    }
+
+    /// Runs the palette command whose label contains `query`.
+    fn run(
+        shell: &mut Shell,
+        workspace: &(impl CommitWorkspace + ConfigurationWorkspace + ProjectWorkspace),
+        query: &str,
+    ) -> Option<Action> {
+        shell.handle_event(key(KeyCode::Char('/')), of(workspace), &[]);
+        shell.handle_event(Event::Paste(query.into()), of(workspace), &[]);
+        shell.handle_event(key(KeyCode::Enter), of(workspace), &[])
+    }
+
+    /// A shell on Commit that retains a rejected review, with `workspace` behind it.
+    fn rejected_review_with(
+        workspace: &(impl CommitWorkspace + ConfigurationWorkspace + ProjectWorkspace),
+    ) -> Result<Shell, Box<dyn std::error::Error>> {
+        let (context, _, checkpoint) = commit::reviewed_submission()?;
+        let mut shell = Shell::new(InitialPage::Commit, of(workspace), &[]);
+        shell.commit.conclude_authoring(
+            workspace,
+            Some((context, checkpoint, Err("hook rejected".into()))),
+        );
+        Ok(shell)
+    }
+
+    #[test]
+    fn the_palette_lists_open_commands_then_the_pages_own_then_quit() {
+        let uninitialized = Shell::new(InitialPage::Home, of(&Services), &[]);
+        assert_eq!(palette(&uninitialized), listing(&["Initialize gitserious"]));
+
+        let workspace = HomeWorkspace::new(ProjectOverview::NoRepository {
+            directory: fresh_root().as_path().to_path_buf(),
+        });
+        let no_repository = Shell::new(InitialPage::Home, of(&workspace), &[]);
+        assert_eq!(palette(&no_repository), listing(&["Initialize gitserious"]));
+
+        let workspace = HomeWorkspace::new(ProjectOverview::Initialized {
+            root: fresh_root(),
+            default: gitserious_core::built_in_taxonomies()[0].id().clone(),
+            version: Some(TaxonomyVersion::V1),
+            policy_untracked: false,
+        });
+        let initialized = Shell::new(InitialPage::Home, of(&workspace), &[]);
+        assert_eq!(palette(&initialized), listing(&[]));
+
+        let help = Shell::new(InitialPage::Help { command: None }, of(&Services), &[]);
+        assert_eq!(palette(&help), listing(&[]));
+    }
+
+    #[test]
+    fn the_commit_palette_follows_the_blocker_the_last_result_and_the_pending_review()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let missing = Shell::new(InitialPage::Commit, of(&Unavailable), &[]);
+        assert_eq!(palette(&missing), listing(&["Refresh repository"]));
+        let unstaged = Shell::new(InitialPage::Commit, of(&Services), &[]);
+        assert_eq!(palette(&unstaged), listing(&["Refresh repository"]));
+
+        let mut ready = Shell::new(InitialPage::Commit, of(&Ready), &[]);
+        assert_eq!(
+            palette(&ready),
+            listing(&["Refresh repository", "Start commit"])
+        );
+        let (context, _, checkpoint) = commit::reviewed_submission()?;
+        let created = CommitOutput::new(b"created\n".to_vec(), Vec::new());
+        ready
+            .commit
+            .conclude_authoring(&Ready, Some((context, checkpoint, Ok(created))));
+        assert_eq!(
+            palette(&ready),
+            listing(&["Refresh repository", "View last Git result", "Start commit"])
+        );
+
+        assert_eq!(
+            palette(&rejected_review_with(&Ready)?),
+            listing(&[
+                "Refresh repository",
+                "View last Git result",
+                "Start commit",
+                "Resume review"
+            ])
+        );
+        assert_eq!(
+            palette(&rejected_review_with(&Services)?),
+            listing(&[
+                "Refresh repository",
+                "View last Git result",
+                "Resume review"
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn each_palette_command_does_what_its_label_says() -> Result<(), Box<dyn std::error::Error>> {
+        let mut shell = rejected_review_with(&Ready)?;
+        assert_eq!(
+            run(&mut shell, &Ready, "Start commit"),
+            Some(Action::Author)
+        );
+        assert_eq!(
+            run(&mut shell, &Ready, "Resume review"),
+            Some(Action::Resume)
+        );
+
+        assert_eq!(run(&mut shell, &Ready, "View last Git result"), None);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        let text = rendered(&terminal);
+        assert!(text.contains("Commit failed: hook rejected"), "{text}");
+        assert!(text.contains("pgup/pgdn"), "{text}");
+        shell.handle_event(key(KeyCode::Esc), of(&Ready), &[]);
+
+        assert_eq!(run(&mut shell, &Ready, "Refresh repository"), None);
+        assert!(!palette(&shell).contains(&"View last Git result".to_owned()));
+        assert!(shell.commit.has_pending_review());
+
+        // Config answers `/` with its own palette, so it is opened last.
+        for section in [
+            Section::Home,
+            Section::Help,
+            Section::Commit,
+            Section::Config,
+        ] {
+            assert_eq!(
+                run(&mut shell, &Ready, &format!("Open {}", section.label())),
+                None
+            );
+            assert_eq!(shell.section, section);
+        }
+
+        shell.execute(Action::Select(Section::Commit), of(&Ready));
+        assert_eq!(run(&mut shell, &Ready, "Quit"), None);
+        assert_eq!(
+            shell.handle_event(key(KeyCode::Char('y')), of(&Ready), &[]),
+            Some(Action::Quit)
+        );
+
+        let mut home = Shell::new(InitialPage::Home, of(&Services), &[]);
+        assert_eq!(run(&mut home, &Services, "Initialize gitserious"), None);
+        assert_eq!(home.section, Section::Home);
+        assert!(home.home.editing());
+        Ok(())
+    }
+
+    #[test]
+    fn ctrl_c_and_esc_reach_quit_from_every_page() -> Result<(), Box<dyn std::error::Error>> {
+        let control_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        for section in Section::ALL {
+            let mut shell = Shell::new(InitialPage::Home, of(&Services), &[]);
+            shell.execute(Action::Select(section), of(&Services));
+            assert_eq!(
+                shell.handle_event(control_c.clone(), of(&Services), &[]),
+                Some(Action::Quit),
+                "{section:?}"
+            );
+
+            shell.execute(Action::Select(section), of(&Services));
+            let escaped = shell.handle_event(key(KeyCode::Esc), of(&Services), &[]);
+            if section == Section::Home {
+                assert_eq!(escaped, Some(Action::Quit));
+            } else {
+                assert_eq!(escaped, None, "{section:?}");
+                assert_eq!(shell.section, Section::Home, "{section:?}");
+            }
+
+            let mut pending = rejected_review_on(section)?;
+            assert_eq!(
+                pending.handle_event(control_c.clone(), of(&Services), &[]),
+                None,
+                "{section:?}"
+            );
+            assert_eq!(
+                pending.handle_event(key(KeyCode::Char('y')), of(&Services), &[]),
+                Some(Action::Quit),
+                "{section:?}"
+            );
+        }
+        Ok(())
+    }
+
     /// A shell on `section` that retains a reviewed commit Git rejected.
     fn rejected_review_on(section: Section) -> Result<Shell, Box<dyn std::error::Error>> {
         let (context, _, checkpoint) = commit::reviewed_submission()?;
