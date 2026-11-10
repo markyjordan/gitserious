@@ -1,5 +1,6 @@
 mod commands;
 mod navigation;
+mod overlay;
 
 use std::io;
 
@@ -8,29 +9,21 @@ use ratatui::crossterm::event::{
     Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Clear, Paragraph};
+use ratatui::style::Style;
+use ratatui::widgets::{Block, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::commit::CommitView;
 use crate::config::{ConfigRequest, ConfigView, ShellKeys};
-use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT};
+use crate::confirmation::ConfirmDialog;
 use crate::help::{HelpPage, HelpView};
 use crate::home::{HomeAction, HomeOutcome, HomePage};
 use crate::theme::{
-    FOOTER_HEIGHT, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, SHELL_HINTS, centered_rect,
-    frame_style, normalize_background, render_footer, render_footer_block, theme,
+    FOOTER_HEIGHT, MINIMUM_HEIGHT, MINIMUM_WIDTH, SHELL_HINTS, centered_rect, normalize_background,
+    render_footer, render_footer_block, theme,
 };
-use commands::{Palette, Step};
 use navigation::{Section, Tabs};
-
-fn quit_question() -> Confirmation<'static> {
-    Confirmation {
-        title: "Quit",
-        message: "Discard unapplied changes and quit?".into(),
-        choices: DISCARD_AND_QUIT,
-    }
-}
+use overlay::Overlay;
 
 /// The page a unified session shows first.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -73,10 +66,6 @@ enum Action {
     Quit,
 }
 
-enum Overlay {
-    Palette(Palette),
-    QuitConfirm,
-}
 pub(crate) struct Shell {
     section: Section,
     config: ConfigView,
@@ -337,27 +326,6 @@ impl Shell {
         None
     }
 
-    fn open_palette(&mut self) {
-        self.overlay = Some(Overlay::Palette(Palette::default()));
-    }
-
-    fn handle_overlay(&mut self, event: Event, capabilities: Capabilities<'_>) -> Option<Action> {
-        let overlay = self.overlay.take()?;
-        match overlay {
-            Overlay::QuitConfirm => match self.quit_dialog.handle_event(DISCARD_AND_QUIT, &event) {
-                Some(Answer::Confirm) => return Some(Action::Quit),
-                Some(Answer::Keep | Answer::Alternate) => self.quit_dialog.invalidate(),
-                None => self.overlay = Some(Overlay::QuitConfirm),
-            },
-            Overlay::Palette(mut palette) => match palette.event(event, self.commands()) {
-                Step::Keep => self.overlay = Some(Overlay::Palette(palette)),
-                Step::Close => {}
-                Step::Run(action) => return self.execute(action, capabilities),
-            },
-        }
-        None
-    }
-
     pub(crate) fn render(&mut self, frame: &mut Frame<'_>, help: &[HelpPage]) {
         let area = frame.area();
         self.too_small = area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT;
@@ -408,16 +376,6 @@ impl Shell {
             }
         }
         self.render_overlay(frame, area);
-        if matches!(self.overlay, Some(Overlay::QuitConfirm)) {
-            let footer = Rect::new(
-                area.x,
-                area.bottom().saturating_sub(FOOTER_HEIGHT),
-                area.width,
-                FOOTER_HEIGHT,
-            );
-            let footer = render_footer_block(frame, footer);
-            render_footer(frame, footer, &confirmation::hints(DISCARD_AND_QUIT), &[]);
-        }
         normalize_background(frame, area);
     }
 
@@ -427,32 +385,6 @@ impl Shell {
         let version = format!("gitserious v{} ", env!("CARGO_PKG_VERSION"));
         frame.render_widget(Paragraph::new(version).style(band).right_aligned(), area);
         self.tabs.render(frame, area, self.section);
-    }
-
-    fn render_overlay(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        self.quit_dialog.invalidate();
-        if matches!(self.overlay, Some(Overlay::QuitConfirm)) {
-            self.quit_dialog.render(frame, &quit_question());
-            return;
-        }
-        let commands = self.commands();
-        if self.overlay.is_none() && !self.commit.modal() {
-            return;
-        }
-        let popup = centered_rect(54, 13.min(area.height), area);
-        frame.render_widget(Clear, popup);
-        frame.render_widget(
-            Block::bordered()
-                .border_style(frame_style())
-                .style(Style::default().fg(Color::White).bg(JET_BLACK)),
-            popup,
-        );
-        let inner = Block::bordered().inner(popup);
-        match &mut self.overlay {
-            None => self.commit.render_modal(frame, inner),
-            Some(Overlay::QuitConfirm) => {}
-            Some(Overlay::Palette(palette)) => palette.render(frame, inner, commands),
-        }
     }
 }
 
