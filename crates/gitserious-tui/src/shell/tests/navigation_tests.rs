@@ -526,3 +526,30 @@ fn an_open_palette_takes_every_key_and_ignores_clicks() -> Result<(), Box<dyn st
     }
     Ok(())
 }
+
+#[test]
+fn every_initial_page_draws_what_selecting_it_draws() -> Result<(), Box<dyn std::error::Error>> {
+    let help = pages(3);
+    for (start, section) in [
+        (InitialPage::Home, Section::Home),
+        (InitialPage::Commit, Section::Commit),
+        (InitialPage::Config, Section::Config),
+        (InitialPage::Help { command: None }, Section::Help),
+    ] {
+        let from = if section == Section::Home {
+            InitialPage::Commit
+        } else {
+            InitialPage::Home
+        };
+        let mut opened = Shell::new(start, of(&Services), &help);
+        let mut visited = Shell::new(from, of(&Services), &help);
+        visited.execute(Action::Select(section), of(&Services));
+        assert_eq!(opened.section, section);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| opened.render(frame, &help))?;
+        let opened_frame = terminal.backend().buffer().clone();
+        terminal.draw(|frame| visited.render(frame, &help))?;
+        assert_eq!(&opened_frame, terminal.backend().buffer(), "{section:?}");
+    }
+    Ok(())
+}
