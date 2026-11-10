@@ -17,9 +17,9 @@ mod resolve_global_paths;
 mod storage_directory;
 
 pub use commit::{
-    AuthoredCommit, BranchState, CommitAuthoringContext, CommitDraftAuthorOutcome, CommitOutput,
-    CommitServices, CommitTaxonomy, CommitWorkspace, CommitWriter, RepositoryStatus,
-    RepositoryStatusReader, StatusEntry, prepare_commit_with_taxonomy, validate_reviewed_commit,
+    AuthoredCommit, BranchState, CommitAuthoringContext, CommitOutput, CommitServices,
+    CommitTaxonomy, CommitWorkspace, CommitWriter, RepositoryStatus, RepositoryStatusReader,
+    StatusEntry, prepare_commit_with_taxonomy, validate_reviewed_commit,
 };
 pub use config::{
     Collision, ConfigurationDestination, ConfigurationEditor, ConfigurationError,

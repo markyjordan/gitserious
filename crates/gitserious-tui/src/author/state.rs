@@ -1,6 +1,6 @@
 use crate::confirmation::{Answer, ConfirmDialog, DISCARD};
 use crate::theme::ACCENT;
-use gitserious_app::{CommitAuthoringContext, CommitDraftAuthorOutcome, CommitTaxonomy};
+use gitserious_app::{CommitAuthoringContext, CommitTaxonomy};
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
     ConditionalApplicability, PropertyKey, PropertyRequirement, PropertyResponse,
@@ -12,6 +12,15 @@ use ratatui::crossterm::event::{
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use tui_textarea::{AtomicRange, CursorMove, CursorRenderMode, Input, TextArea, WrapMode};
+
+/// What the editor hands back when the user leaves it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AuthoringOutcome {
+    /// The reviewed draft, approved for submission.
+    Authored(CommitDraft),
+    /// The user left without approving a draft.
+    Cancelled,
+}
 
 pub(crate) const SCOPE_VALUE_LINE: usize = 2;
 
@@ -1046,9 +1055,9 @@ impl<'a> AuthoringSession<'a> {
         session
     }
 
-    pub(crate) fn request_cancel(&mut self) -> Option<CommitDraftAuthorOutcome> {
+    pub(crate) fn request_cancel(&mut self) -> Option<AuthoringOutcome> {
         match self.visible_stage() {
-            Stage::SelectType => Some(CommitDraftAuthorOutcome::Cancelled),
+            Stage::SelectType => Some(AuthoringOutcome::Cancelled),
             Stage::Compose => {
                 self.request_confirmation(ConfirmationAction::Cancel, ResumeStage::Compose)
             }
@@ -1144,7 +1153,7 @@ impl<'a> AuthoringSession<'a> {
         }
     }
 
-    pub(crate) fn handle_event(&mut self, event: Event) -> Option<CommitDraftAuthorOutcome> {
+    pub(crate) fn handle_event(&mut self, event: Event) -> Option<AuthoringOutcome> {
         if self.stage == Stage::Confirm {
             return self.handle_confirmation_event(event);
         }
@@ -1188,7 +1197,7 @@ impl<'a> AuthoringSession<'a> {
         }
     }
 
-    fn handle_too_small(&mut self, event: &Event) -> Option<CommitDraftAuthorOutcome> {
+    fn handle_too_small(&mut self, event: &Event) -> Option<AuthoringOutcome> {
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 if self.stage == Stage::Confirm {
@@ -1206,7 +1215,7 @@ impl<'a> AuthoringSession<'a> {
         }
     }
 
-    fn handle_mouse(&mut self, mouse: MouseEvent) -> Option<CommitDraftAuthorOutcome> {
+    fn handle_mouse(&mut self, mouse: MouseEvent) -> Option<AuthoringOutcome> {
         if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return None;
         }
@@ -1224,7 +1233,7 @@ impl<'a> AuthoringSession<'a> {
         None
     }
 
-    fn handle_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
+    fn handle_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
         match self.stage {
             Stage::SelectType => self.handle_picker_key(key),
             Stage::Compose => self.handle_composer_key(key),
@@ -1233,7 +1242,7 @@ impl<'a> AuthoringSession<'a> {
         }
     }
 
-    fn handle_picker_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
+    fn handle_picker_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
         match key.code {
             KeyCode::Up => {
                 self.selected_type = if self.selected_type == 0 {
@@ -1253,15 +1262,15 @@ impl<'a> AuthoringSession<'a> {
                 self.stage = Stage::Compose;
             }
             KeyCode::Esc | KeyCode::Char('q') => {
-                return Some(CommitDraftAuthorOutcome::Cancelled);
+                return Some(AuthoringOutcome::Cancelled);
             }
-            _ if control(key, 'c') => return Some(CommitDraftAuthorOutcome::Cancelled),
+            _ if control(key, 'c') => return Some(AuthoringOutcome::Cancelled),
             _ => {}
         }
         None
     }
 
-    fn handle_composer_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
+    fn handle_composer_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
         if key.modifiers.contains(KeyModifiers::ALT)
             && matches!(key.code, KeyCode::Char('a' | 'n'))
             && let Some(FieldId::Property(definition_index)) =
@@ -1380,12 +1389,12 @@ impl<'a> AuthoringSession<'a> {
             });
     }
 
-    fn handle_review_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
+    fn handle_review_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
         match key.code {
             KeyCode::Enter => {
                 let review = self.review.take()?;
                 self.approved_message = Some(review.message);
-                return Some(CommitDraftAuthorOutcome::Authored(review.draft));
+                return Some(AuthoringOutcome::Authored(review.draft));
             }
             KeyCode::Esc => {
                 self.review = None;
@@ -1430,11 +1439,11 @@ impl<'a> AuthoringSession<'a> {
         None
     }
 
-    fn handle_confirmation_key(&mut self, key: KeyEvent) -> Option<CommitDraftAuthorOutcome> {
+    fn handle_confirmation_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
         self.handle_confirmation_event(Event::Key(key))
     }
 
-    fn handle_confirmation_event(&mut self, event: Event) -> Option<CommitDraftAuthorOutcome> {
+    fn handle_confirmation_event(&mut self, event: Event) -> Option<AuthoringOutcome> {
         match self.discard_dialog.handle_event(DISCARD, &event)? {
             Answer::Confirm => self.confirm_discard(),
             Answer::Keep | Answer::Alternate => {
@@ -1444,10 +1453,10 @@ impl<'a> AuthoringSession<'a> {
         }
     }
 
-    fn confirm_discard(&mut self) -> Option<CommitDraftAuthorOutcome> {
+    fn confirm_discard(&mut self) -> Option<AuthoringOutcome> {
         self.discard_dialog.invalidate();
         match self.confirmation {
-            ConfirmationAction::Cancel => Some(CommitDraftAuthorOutcome::Cancelled),
+            ConfirmationAction::Cancel => Some(AuthoringOutcome::Cancelled),
             ConfirmationAction::ChangeType => {
                 self.composer = ComposerState::new(self.definition());
                 self.review = None;
@@ -1469,10 +1478,10 @@ impl<'a> AuthoringSession<'a> {
         &mut self,
         action: ConfirmationAction,
         resume: ResumeStage,
-    ) -> Option<CommitDraftAuthorOutcome> {
+    ) -> Option<AuthoringOutcome> {
         if !self.composer.dirty() {
             return match action {
-                ConfirmationAction::Cancel => Some(CommitDraftAuthorOutcome::Cancelled),
+                ConfirmationAction::Cancel => Some(AuthoringOutcome::Cancelled),
                 ConfirmationAction::ChangeType => {
                     self.composer = ComposerState::new(self.definition());
                     self.review = None;
@@ -1556,7 +1565,7 @@ mod confirmation_tests {
                 let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
                 assert!(matches!(
                     session.handle_event(click(buttons.confirm)),
-                    Some(CommitDraftAuthorOutcome::Cancelled)
+                    Some(AuthoringOutcome::Cancelled)
                 ));
                 assert!(session.discard_dialog.buttons.is_none());
             }
@@ -1666,7 +1675,7 @@ mod tests {
             .ok_or("missing review")?
             .message
             .clone();
-        let Some(CommitDraftAuthorOutcome::Authored(draft)) = session.handle_event(Event::Key(
+        let Some(AuthoringOutcome::Authored(draft)) = session.handle_event(Event::Key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         )) else {
             return Err("submission did not return authored draft".into());
