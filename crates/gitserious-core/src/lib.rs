@@ -28,14 +28,12 @@ pub use commit_message::{
 };
 pub use commit_type::{CommitTypeDefinition, CommitTypeDefinitionError};
 pub use configured_taxonomy::{Taxonomy, TaxonomyError, TaxonomyLineage, built_in_taxonomies};
-pub use description::{Description, DescriptionError};
+pub use description::Description;
 pub use fingerprint::Fingerprint;
-pub use identifier::{
-    CommitTypeId, ConditionId, IdentifierError, LabelError, PropertyKey, TaxonomyId,
-};
+pub use identifier::{CommitTypeId, ConditionId, LabelError, PropertyKey, TaxonomyId};
 pub use property::{
     PropertyCondition, PropertyConditionError, PropertyDefinition, PropertyDefinitionError,
-    PropertyRequirement, PropertyValue, PropertyValueError,
+    PropertyRequirement, PropertyValue,
 };
 pub use property_validation::{
     ConditionalApplicability, PropertyResponse, PropertyValidationIssue,

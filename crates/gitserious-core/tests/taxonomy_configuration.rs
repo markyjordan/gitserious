@@ -2,10 +2,10 @@ use std::error::Error;
 
 use gitserious_core::{
     CommitDraft, CommitSubject, CommitTypeDefinition, CommitTypeId, CommitValidationError,
-    ConditionId, ConditionalApplicability, Description, DescriptionError, PropertyCondition,
-    PropertyDefinition, PropertyKey, PropertyRequirement, PropertyResponse,
-    PropertyValidationIssueKind, PropertyValue, SchemaVersion, Taxonomy, TaxonomyError, TaxonomyId,
-    TaxonomyVersion, built_in_commit_types, validate_commit_draft,
+    ConditionId, ConditionalApplicability, Description, PropertyCondition, PropertyDefinition,
+    PropertyKey, PropertyRequirement, PropertyResponse, PropertyValidationIssueKind, PropertyValue,
+    SchemaVersion, Taxonomy, TaxonomyError, TaxonomyId, TaxonomyVersion, built_in_commit_types,
+    validate_commit_draft,
 };
 
 fn commit_type(
@@ -45,8 +45,10 @@ fn descriptions_preserve_text_and_reject_blank_values() -> Result<(), Box<dyn Er
     let value = Description::new("  Durable meaning 🦀  ")?;
     assert_eq!(value.as_str(), "  Durable meaning 🦀  ");
     assert_eq!(value.to_string(), "  Durable meaning 🦀  ");
-    assert_eq!(Description::new(" \n"), Err(DescriptionError));
-    assert!(!DescriptionError.to_string().is_empty());
+    let blank = Description::new(" \n")
+        .err()
+        .ok_or("a blank description was accepted")?;
+    assert!(!blank.to_string().is_empty());
     Ok(())
 }
 

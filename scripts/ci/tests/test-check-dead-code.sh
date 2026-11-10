@@ -75,6 +75,22 @@ impl Capability for Answer {
 pub fn capability() -> &'static dyn Capability {
     &Answer
 }
+
+pub struct Circle;
+
+impl Circle {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+pub struct Square;
+
+impl Square {
+    pub fn new() -> Self {
+        Self
+    }
+}
 EOF
 cat >"$repo/crates/gitserious-core/src/values.rs" <<'EOF'
 pub struct Failure<E>(pub E);
@@ -85,6 +101,7 @@ EOF
 cat >"$repo/crates/gitserious-app/src/lib.rs" <<'EOF'
 pub fn run() -> u8 {
     let _ = (gitserious_core::Grouped, gitserious_core::Listed, gitserious_core::Generated);
+    let _ = (gitserious_core::Circle::new(), gitserious_core::Circle::new(), gitserious_core::Square);
     gitserious_core::reached()
         + gitserious_core::attempt().unwrap_or(0)
         + gitserious_core::capability().answer()
@@ -126,15 +143,16 @@ expect_fail_naming() {
 
 expect_fail_naming "a public function no target calls" \
   "crates/gitserious-core/src/lib.rs declares unreached, which no workspace target uses" \
-  "crates/gitserious-core/src/values.rs declares Unlisted, which no workspace target uses"
-for used in reached Grouped Listed Generated Failure attempt Capability capability; do
+  "crates/gitserious-core/src/values.rs declares Unlisted, which no workspace target uses" \
+  "crates/gitserious-core/src/lib.rs declares new, which no workspace target uses"
+for used in reached Grouped Listed Generated Failure attempt Capability capability Circle Square; do
   if grep -qF "declares $used," "$fixture_dir/stderr"; then
     echo "A used item was reported as unused: $used" >&2
     exit 1
   fi
 done
 
-printf 'crates/gitserious-core/src/%s\t%s\n' lib.rs Unlisted lib.rs unreached values.rs Unlisted \
+printf 'crates/gitserious-core/src/%s\t%s\n' lib.rs Unlisted lib.rs new lib.rs unreached values.rs Unlisted \
   >"$repo/scripts/ci/dead-code-allowlist.txt"
 expect_pass "the unused function is allowlisted"
 
