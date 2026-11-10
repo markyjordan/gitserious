@@ -36,7 +36,7 @@ pub use interactive::{
 };
 pub use project::{
     InitOutcome, InitStatus, InitializeProjectError, ProjectOverview, ProjectServices,
-    initialize_project,
+    ProjectWorkspace, initialize_project,
 };
 pub use repository_locator::{
     RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryRootError,

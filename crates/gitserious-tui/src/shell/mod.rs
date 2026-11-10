@@ -190,7 +190,7 @@ impl Shell {
             section,
             config: ConfigView::new(workspace.configuration()),
             commit: CommitView::default(),
-            home: workspace.home(),
+            home: workspace.project().overview(),
             init_editor: None,
             home_error: None,
             pending_author: None,
@@ -210,7 +210,7 @@ impl Shell {
         match section {
             Section::Commit => self.commit.refresh(workspace.commit()),
             Section::Home => {
-                self.home = workspace.home();
+                self.home = workspace.project().overview();
                 self.home_error = None;
                 if !HomeAction::of(&self.home).is_some_and(HomeAction::initializes) {
                     self.init_editor = None;
@@ -411,7 +411,7 @@ impl Shell {
         match self.config.handle_event(event, workspace.configuration()) {
             Some(ConfigRequest::Quit) => return self.execute(Action::Quit, workspace),
             Some(ConfigRequest::Initialize) => {
-                self.home = workspace.home();
+                self.home = workspace.project().overview();
                 if HomeAction::of(&self.home).is_some_and(HomeAction::initializes) {
                     return self.execute(Action::Initialize, workspace);
                 }
@@ -427,7 +427,7 @@ impl Shell {
         workspace: &dyn InteractiveWorkspace,
         configuration: &ProjectConfiguration,
     ) {
-        match workspace.initialize(configuration) {
+        match workspace.project().initialize(configuration) {
             Ok(()) => {
                 self.init_editor = None;
                 self.home_error = None;
@@ -436,7 +436,7 @@ impl Shell {
             }
             Err(error) => self.home_error = Some(error),
         }
-        self.home = workspace.home();
+        self.home = workspace.project().overview();
     }
 
     fn open_palette(&mut self) {
@@ -807,8 +807,8 @@ mod tests {
 
     use gitserious_app::{
         BranchState, CommitOutput, CommitWorkspace, ConfigurationWorkspace, GlobalConfiguration,
-        HelpLine, HelpSpan, LibraryDraft, ProjectConfiguration, ProjectSnapshot, RepositoryRoot,
-        RepositoryStatus,
+        HelpLine, HelpSpan, LibraryDraft, ProjectConfiguration, ProjectSnapshot, ProjectWorkspace,
+        RepositoryRoot, RepositoryStatus,
     };
     use gitserious_core::TaxonomyVersion;
     use ratatui::{Terminal, backend::TestBackend};
@@ -838,12 +838,18 @@ mod tests {
             "/home/tester/.config/gitserious/config.toml".into()
         }
     }
-    impl InteractiveWorkspace for Services {
-        fn home(&self) -> ProjectOverview {
+    impl ProjectWorkspace for Services {
+        fn overview(&self) -> ProjectOverview {
             ProjectOverview::Uninitialized { root: fresh_root() }
         }
         fn initialize(&self, _: &ProjectConfiguration) -> Result<(), String> {
             Err("test initialize unavailable".into())
+        }
+    }
+
+    impl InteractiveWorkspace for Services {
+        fn project(&self) -> &dyn ProjectWorkspace {
+            self
         }
         fn configuration(&self) -> &dyn ConfigurationWorkspace {
             self
@@ -892,12 +898,18 @@ mod tests {
         }
     }
 
-    impl InteractiveWorkspace for Unavailable {
-        fn home(&self) -> ProjectOverview {
-            Services.home()
+    impl ProjectWorkspace for Unavailable {
+        fn overview(&self) -> ProjectOverview {
+            Services.overview()
         }
         fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
             Services.initialize(configuration)
+        }
+    }
+
+    impl InteractiveWorkspace for Unavailable {
+        fn project(&self) -> &dyn ProjectWorkspace {
+            self
         }
         fn configuration(&self) -> &dyn ConfigurationWorkspace {
             self
@@ -975,8 +987,8 @@ mod tests {
         }
     }
 
-    impl InteractiveWorkspace for HomeWorkspace {
-        fn home(&self) -> ProjectOverview {
+    impl ProjectWorkspace for HomeWorkspace {
+        fn overview(&self) -> ProjectOverview {
             self.state.borrow().clone()
         }
         fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
@@ -991,6 +1003,12 @@ mod tests {
             };
             *self.created.borrow_mut() = Some(configuration.clone());
             Ok(())
+        }
+    }
+
+    impl InteractiveWorkspace for HomeWorkspace {
+        fn project(&self) -> &dyn ProjectWorkspace {
+            self
         }
         fn configuration(&self) -> &dyn ConfigurationWorkspace {
             self

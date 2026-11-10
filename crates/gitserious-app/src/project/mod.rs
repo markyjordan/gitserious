@@ -6,4 +6,4 @@ pub use initialize_taxonomy_project::{
     InitOutcome, InitStatus, InitializeProjectError, initialize_project,
 };
 pub use overview::ProjectOverview;
-pub use project_services::ProjectServices;
+pub use project_services::{ProjectServices, ProjectWorkspace};

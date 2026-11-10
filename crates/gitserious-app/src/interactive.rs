@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::{
     CommitServices, CommitWorkspace, CommitWriter, ConfigurationServices, ConfigurationWorkspace,
-    GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore, ProjectOverview,
-    ProjectServices, RepositoryInitializer, RepositoryLocator, RepositoryStatusReader,
+    GlobalConfigurationStore, ProjectConfigurationStore, ProjectServices, ProjectWorkspace,
+    RepositoryInitializer, RepositoryLocator, RepositoryStatusReader,
 };
 
 /// A run of help text; `strong` marks a heading or a command or flag name.
@@ -59,12 +59,9 @@ impl Debug for HelpPage {
 
 /// Application services available to an interactive session.
 pub trait InteractiveWorkspace {
-    fn home(&self) -> ProjectOverview;
-    /// Creates the project from `configuration`, and the Git repository first when there is
-    /// none; an existing project is never rewritten.
-    fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String>;
     fn configuration(&self) -> &dyn ConfigurationWorkspace;
     fn commit(&self) -> &dyn CommitWorkspace;
+    fn project(&self) -> &dyn ProjectWorkspace;
 }
 
 /// Terminal adapter for the unified application.
@@ -120,19 +117,15 @@ where
     W: CommitWriter + ?Sized,
     W::Error: Display,
 {
-    fn home(&self) -> ProjectOverview {
-        self.project.overview()
-    }
-
-    fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
-        self.project.initialize(configuration)
-    }
-
     fn configuration(&self) -> &dyn ConfigurationWorkspace {
         &self.config
     }
 
     fn commit(&self) -> &dyn CommitWorkspace {
         &self.commit
+    }
+
+    fn project(&self) -> &dyn ProjectWorkspace {
+        &self.project
     }
 }

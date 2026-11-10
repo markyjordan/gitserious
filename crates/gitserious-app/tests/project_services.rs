@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use gitserious_app::{
     BranchState, ProjectConfiguration, ProjectConfigurationStore, ProjectOverview, ProjectRevision,
-    ProjectServices, RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryStatus,
-    RepositoryStatusReader, StatusEntry, StoredProject,
+    ProjectServices, ProjectWorkspace, RepositoryInitializer, RepositoryLocator, RepositoryRoot,
+    RepositoryStatus, RepositoryStatusReader, StatusEntry, StoredProject,
 };
 use gitserious_core::{TaxonomyId, TaxonomyVersion, built_in_taxonomies};
 

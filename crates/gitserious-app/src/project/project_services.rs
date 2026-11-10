@@ -9,6 +9,15 @@ use crate::{
 /// The project file every gitserious repository commits.
 const POLICY_FILE: &str = "gitserious.toml";
 
+/// Application operations exposed to Home and initialization.
+pub trait ProjectWorkspace {
+    /// The repository and project that contain the start directory.
+    fn overview(&self) -> ProjectOverview;
+    /// Creates the project from `configuration`, and the Git repository first when there is
+    /// none; an existing project is never rewritten.
+    fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String>;
+}
+
 /// Project operations over the repository that contains `start`.
 pub struct ProjectServices<'a, L: ?Sized, S: ?Sized> {
     locator: &'a L,
@@ -40,9 +49,16 @@ where
             start,
         }
     }
+}
 
-    /// The repository and project that contain the start directory.
-    pub fn overview(&self) -> ProjectOverview {
+impl<L, S> ProjectWorkspace for ProjectServices<'_, L, S>
+where
+    L: RepositoryLocator + ?Sized,
+    L::Error: Display,
+    S: ProjectConfigurationStore + ?Sized,
+    S::Error: Display,
+{
+    fn overview(&self) -> ProjectOverview {
         let directory = self.start.to_path_buf();
         let root = match self.locator.locate(self.start) {
             Ok(root) => root,
@@ -91,9 +107,7 @@ where
         }
     }
 
-    /// Creates the project from `configuration`, and the Git repository first when there is
-    /// none; an existing project is never rewritten.
-    pub fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
+    fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
         let locate = || self.locator.locate(self.start);
         let root = match locate() {
             Ok(root) => root,
