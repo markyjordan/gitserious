@@ -1,6 +1,5 @@
 use std::error::Error;
 
-use gitserious_app::CommitDraftAuthorOutcome;
 use gitserious_core::{
     COMMIT_MESSAGE_WIDTH, CommitTypeDefinition, CommitTypeId, ConditionId, PropertyCondition,
     PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion, built_in_commit_types,
@@ -30,8 +29,8 @@ mod author_harness {
 
 use author_harness::render::render;
 use author_harness::state::{
-    AuthoringSession, ConfirmationAction, FieldId, FieldStatus, Stage, TypeCatalogKind,
-    ValidationIssue,
+    AuthoringOutcome, AuthoringSession, ConfirmationAction, FieldId, FieldStatus, Stage,
+    TypeCatalogKind, ValidationIssue,
 };
 
 const JET_BLACK: Color = Color::Rgb(0, 0, 0);
@@ -163,7 +162,7 @@ fn context_review_includes_provenance_and_returns_the_latest_approved_bytes()
         .clone();
     let outcome = session.handle_event(key(KeyCode::Enter));
     assert!(
-        matches!(outcome, Some(CommitDraftAuthorOutcome::Authored(draft)) if draft.subject().as_str() == "revise the message")
+        matches!(outcome, Some(AuthoringOutcome::Authored(draft)) if draft.subject().as_str() == "revise the message")
     );
     assert_eq!(session.approved_message, Some(expected));
     Ok(())
@@ -626,12 +625,12 @@ fn picker_navigation_wraps_selects_and_cancels() {
     let mut cancelled = AuthoringSession::new(definitions, None);
     assert_eq!(
         cancelled.handle_event(key(KeyCode::Char('q'))),
-        Some(CommitDraftAuthorOutcome::Cancelled)
+        Some(AuthoringOutcome::Cancelled)
     );
     let mut cancelled = AuthoringSession::new(definitions, None);
     assert_eq!(
         cancelled.handle_event(modified_key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
-        Some(CommitDraftAuthorOutcome::Cancelled)
+        Some(AuthoringOutcome::Cancelled)
     );
 }
 
@@ -804,7 +803,7 @@ fn review_is_exact_backtracking_is_lossless_and_enter_returns_the_typed_draft()
     let outcome = session
         .handle_event(key(KeyCode::Enter))
         .ok_or("review confirmation did not finish")?;
-    let CommitDraftAuthorOutcome::Authored(draft) = outcome else {
+    let AuthoringOutcome::Authored(draft) = outcome else {
         return Err("review unexpectedly cancelled".into());
     };
     assert_eq!(
@@ -1439,7 +1438,7 @@ fn untouched_and_dirty_cancellation_follow_distinct_confirmation_paths() {
     let mut pinned = AuthoringSession::new(definitions, Some(0));
     assert_eq!(
         pinned.handle_event(key(KeyCode::Esc)),
-        Some(CommitDraftAuthorOutcome::Cancelled)
+        Some(AuthoringOutcome::Cancelled)
     );
     let mut pinned = AuthoringSession::new(definitions, Some(0));
     paste(&mut pinned, "dirty");
@@ -1447,7 +1446,7 @@ fn untouched_and_dirty_cancellation_follow_distinct_confirmation_paths() {
     assert_eq!(pinned.confirmation, ConfirmationAction::Cancel);
     assert_eq!(
         pinned.handle_event(key(KeyCode::Char('y'))),
-        Some(CommitDraftAuthorOutcome::Cancelled)
+        Some(AuthoringOutcome::Cancelled)
     );
 }
 
@@ -1645,7 +1644,7 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
         .ok_or("missing rerendered hitboxes")?;
     assert_eq!(
         review.handle_event(left_click(buttons.confirm.x, buttons.confirm.y)),
-        Some(CommitDraftAuthorOutcome::Cancelled)
+        Some(AuthoringOutcome::Cancelled)
     );
 
     for (width, height) in [(59, 24), (100, 17), (60, 21)] {
@@ -1664,7 +1663,7 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
         assert_black_canvas(&buffer);
         assert_eq!(
             too_small.handle_event(key(KeyCode::Esc)),
-            Some(CommitDraftAuthorOutcome::Cancelled)
+            Some(AuthoringOutcome::Cancelled)
         );
     }
 
@@ -2551,7 +2550,7 @@ fn compose_review_and_final_encoding_share_the_80_column_boundary() -> Result<()
     let outcome = session
         .handle_event(key(KeyCode::Enter))
         .ok_or("review confirmation did not finish")?;
-    let CommitDraftAuthorOutcome::Authored(draft) = outcome else {
+    let AuthoringOutcome::Authored(draft) = outcome else {
         return Err("review unexpectedly cancelled".into());
     };
     assert_eq!(draft.properties()[0].value().as_str(), intent);

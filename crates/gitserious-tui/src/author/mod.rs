@@ -3,11 +3,11 @@ mod state;
 
 use std::io;
 
-use gitserious_app::{AuthoredCommit, CommitAuthoringContext, CommitDraftAuthorOutcome};
+use gitserious_app::{AuthoredCommit, CommitAuthoringContext};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event;
 
-use self::state::AuthoringSession;
+use self::state::{AuthoringOutcome, AuthoringSession};
 
 /// Author within the already initialized shell terminal and retain an owned review checkpoint.
 pub(crate) fn embedded_author(
@@ -22,8 +22,8 @@ pub(crate) fn embedded_author(
     loop {
         terminal.draw(|frame| render::render(frame, &mut session))?;
         match session.handle_event(event::read()?) {
-            Some(CommitDraftAuthorOutcome::Cancelled) => return Ok(None),
-            Some(CommitDraftAuthorOutcome::Authored(draft)) => {
+            Some(AuthoringOutcome::Cancelled) => return Ok(None),
+            Some(AuthoringOutcome::Authored(draft)) => {
                 let message = session
                     .approved_message
                     .clone()
