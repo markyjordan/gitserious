@@ -503,7 +503,7 @@ fn hint(key: &'static str, label: &'static str) -> Line<'static> {
 
 #[cfg(test)]
 mod tests {
-    use crate::library_lookup::LibraryLookup;
+    use gitserious_app::test_support::LibraryLookup;
 
     use super::wrap;
 

@@ -1,4 +1,4 @@
-use crate::library_lookup::LibraryLookup;
+use gitserious_app::test_support::LibraryLookup;
 use std::cell::{Cell, RefCell};
 
 use gitserious_app::{DraftField, GlobalConfiguration, RepositoryRoot};

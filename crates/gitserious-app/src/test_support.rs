@@ -1,4 +1,6 @@
-use gitserious_app::{LibraryDraft, NodeId};
+//! Test fixtures that other workspace crates share, behind `test-support`.
+
+use crate::{LibraryDraft, NodeId};
 
 /// Name-based lookup for tests; production navigation uses stable node ids.
 pub trait LibraryLookup {

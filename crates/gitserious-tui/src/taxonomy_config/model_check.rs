@@ -10,7 +10,7 @@
 //! Keys the shell takes before Config still reach it here. Mouse, resize, write failures and the shell are covered by interaction
 //! tests.
 
-use crate::library_lookup::LibraryLookup;
+use gitserious_app::test_support::LibraryLookup;
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::panic::{self, AssertUnwindSafe};

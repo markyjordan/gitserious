@@ -11,10 +11,6 @@
     clippy::unused_self
 )]
 
-#[cfg(test)]
-#[path = "../../gitserious-app/tests/support/library_lookup.rs"]
-mod library_lookup;
-
 mod author;
 mod confirmation;
 mod navigation;

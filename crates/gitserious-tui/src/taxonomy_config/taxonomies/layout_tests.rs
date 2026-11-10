@@ -1,5 +1,5 @@
-use crate::library_lookup::LibraryLookup;
 use crate::theme::theme;
+use gitserious_app::test_support::LibraryLookup;
 use gitserious_app::{GlobalConfiguration, LibraryDraft};
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
