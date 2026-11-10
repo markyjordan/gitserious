@@ -6,8 +6,8 @@ mod init_editor;
 use std::io::{self, IsTerminal};
 
 use gitserious_app::{
-    CommitAuthoringContext, CommitOutput, HelpPage, HomeState, InteractiveUi, InteractiveWorkspace,
-    ProjectConfiguration,
+    CommitAuthoringContext, CommitOutput, CommitWorkspace, HelpPage, HomeState, InteractiveUi,
+    InteractiveWorkspace, ProjectConfiguration,
 };
 use gitserious_core::built_in_taxonomies;
 use ratatui::crossterm::event::{
@@ -86,7 +86,11 @@ impl InteractiveUi for RatatuiInteractiveUi {
                         return Ok(());
                     }
                     if matches!(action, Action::Author | Action::Resume) {
-                        shell.author(terminal, workspace, matches!(action, Action::Resume))?;
+                        shell.author(
+                            terminal,
+                            workspace.commit(),
+                            matches!(action, Action::Resume),
+                        )?;
                     }
                 }
             }
@@ -538,10 +542,10 @@ impl Shell {
     fn author(
         &mut self,
         terminal: &mut DefaultTerminal,
-        workspace: &dyn InteractiveWorkspace,
+        commit: &dyn CommitWorkspace,
         resume: bool,
     ) -> io::Result<()> {
-        self.commit.refresh(workspace.commit());
+        self.commit.refresh(commit);
         let pending = if resume {
             self.pending_author.take()
         } else {
@@ -550,7 +554,7 @@ impl Shell {
         let (context, checkpoint) = if let Some(pending) = pending {
             (pending.context, Some(pending.checkpoint))
         } else {
-            match workspace.prepare_commit() {
+            match commit.prepare_commit() {
                 Ok(context) => (context, None),
                 Err(error) => {
                     self.commit.notice = error;
@@ -559,18 +563,18 @@ impl Shell {
             }
         };
         let Some((authored, checkpoint)) = embedded_author(terminal, &context, checkpoint)? else {
-            self.conclude_authoring(workspace, None);
+            self.conclude_authoring(commit, None);
             return Ok(());
         };
-        let result = crate::runtime::suspended(terminal, || workspace.submit_commit(&authored))?;
-        self.conclude_authoring(workspace, Some((context, checkpoint, result)));
+        let result = crate::runtime::suspended(terminal, || commit.submit_commit(&authored))?;
+        self.conclude_authoring(commit, Some((context, checkpoint, result)));
         Ok(())
     }
 
     /// Applies the editor's outcome. Cancellation leaves the Commit page as it was.
     fn conclude_authoring(
         &mut self,
-        workspace: &dyn InteractiveWorkspace,
+        commit: &dyn CommitWorkspace,
         outcome: Option<(
             CommitAuthoringContext,
             crate::author::AuthoringCheckpoint,
@@ -600,7 +604,7 @@ impl Shell {
                 });
             }
         }
-        self.commit.refresh(workspace.commit());
+        self.commit.refresh(commit);
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, help: &[HelpPage]) {
