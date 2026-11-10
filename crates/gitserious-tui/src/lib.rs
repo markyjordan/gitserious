@@ -15,7 +15,6 @@ mod commit;
 mod confirmation;
 mod help;
 mod home;
-mod navigation;
 mod runtime;
 mod shell;
 mod taxonomy_config;
