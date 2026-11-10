@@ -851,18 +851,6 @@ mod tests {
         fn commit(&self) -> &dyn CommitWorkspace {
             self
         }
-        fn repository_status(&self) -> Result<RepositoryStatus, String> {
-            CommitWorkspace::repository_status(self)
-        }
-        fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
-            CommitWorkspace::prepare_commit(self)
-        }
-        fn submit_commit(
-            &self,
-            authored: &gitserious_app::AuthoredCommit,
-        ) -> Result<CommitOutput, String> {
-            CommitWorkspace::submit_commit(self, authored)
-        }
     }
     impl CommitWorkspace for Services {
         fn repository_status(&self) -> Result<RepositoryStatus, String> {
@@ -916,18 +904,6 @@ mod tests {
         }
         fn commit(&self) -> &dyn CommitWorkspace {
             self
-        }
-        fn repository_status(&self) -> Result<RepositoryStatus, String> {
-            CommitWorkspace::repository_status(self)
-        }
-        fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
-            CommitWorkspace::prepare_commit(self)
-        }
-        fn submit_commit(
-            &self,
-            authored: &gitserious_app::AuthoredCommit,
-        ) -> Result<CommitOutput, String> {
-            CommitWorkspace::submit_commit(self, authored)
         }
     }
 
@@ -1033,18 +1009,6 @@ mod tests {
         }
         fn commit(&self) -> &dyn CommitWorkspace {
             &Services
-        }
-        fn repository_status(&self) -> Result<RepositoryStatus, String> {
-            CommitWorkspace::repository_status(&Services)
-        }
-        fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
-            CommitWorkspace::prepare_commit(&Services)
-        }
-        fn submit_commit(
-            &self,
-            authored: &gitserious_app::AuthoredCommit,
-        ) -> Result<CommitOutput, String> {
-            CommitWorkspace::submit_commit(&Services, authored)
         }
     }
 
