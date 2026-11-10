@@ -314,22 +314,37 @@ where
     G: GlobalConfigurationStore + ?Sized,
     G::Error: Display,
 {
-    editor.edit(&Workspace {
-        locator,
-        project,
-        global,
-        start,
-    })
+    editor.edit(&ConfigurationServices::new(locator, project, global, start))
 }
 
-pub(crate) struct Workspace<'a, L: ?Sized, S: ?Sized, G: ?Sized> {
+/// Configuration operations over the Library and the repository that contains `start`.
+pub struct ConfigurationServices<'a, L: ?Sized, S: ?Sized, G: ?Sized> {
     pub(crate) locator: &'a L,
     pub(crate) project: &'a S,
     pub(crate) global: &'a G,
     pub(crate) start: &'a Path,
 }
 
-impl<L, S, G> ConfigurationWorkspace for Workspace<'_, L, S, G>
+impl<'a, L, S, G> ConfigurationServices<'a, L, S, G>
+where
+    L: RepositoryLocator + ?Sized,
+    L::Error: Display,
+    S: ProjectConfigurationStore + ?Sized,
+    S::Error: Display,
+    G: GlobalConfigurationStore + ?Sized,
+    G::Error: Display,
+{
+    pub const fn new(locator: &'a L, project: &'a S, global: &'a G, start: &'a Path) -> Self {
+        Self {
+            locator,
+            project,
+            global,
+            start,
+        }
+    }
+}
+
+impl<L, S, G> ConfigurationWorkspace for ConfigurationServices<'_, L, S, G>
 where
     L: RepositoryLocator + ?Sized,
     L::Error: Display,
