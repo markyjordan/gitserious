@@ -5,11 +5,8 @@ use std::sync::Arc;
 use crate::{
     CommitServices, CommitWorkspace, CommitWriter, ConfigurationServices, ConfigurationWorkspace,
     GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore, ProjectOverview,
-    RepositoryInitializer, RepositoryLocator, RepositoryStatusReader,
+    ProjectServices, RepositoryInitializer, RepositoryLocator, RepositoryStatusReader,
 };
-
-/// The project file every gitserious repository commits.
-const POLICY_FILE: &str = "gitserious.toml";
 
 /// A run of help text; `strong` marks a heading or a command or flag name.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -100,7 +97,7 @@ where
 {
     let workspace = InteractiveServices {
         config: ConfigurationServices::new(locator, store, global, start),
-        status,
+        project: ProjectServices::new(locator, store, status, start),
         initializer,
         commit: CommitServices::new(locator, store, status, writer, start),
     };
@@ -109,7 +106,7 @@ where
 
 struct InteractiveServices<'a, L: ?Sized, S: ?Sized, G: ?Sized, W: ?Sized> {
     config: ConfigurationServices<'a, L, S, G>,
-    status: &'a dyn RepositoryStatusReader,
+    project: ProjectServices<'a, L, S>,
     initializer: &'a dyn RepositoryInitializer,
     commit: CommitServices<'a, L, S, W>,
 }
@@ -126,52 +123,7 @@ where
     W::Error: Display,
 {
     fn home(&self) -> ProjectOverview {
-        let directory = self.config.start.to_path_buf();
-        let root = match self.config.locator.locate(self.config.start) {
-            Ok(root) => root,
-            Err(error) if L::is_not_repository(&error) => {
-                return ProjectOverview::NoRepository { directory };
-            }
-            Err(error) => {
-                return ProjectOverview::Unavailable {
-                    directory,
-                    error: error.to_string(),
-                };
-            }
-        };
-        let stored = match self.config.project.load(&root) {
-            Ok(Some(stored)) => stored,
-            Ok(None) => return ProjectOverview::Uninitialized { root },
-            Err(error) => {
-                return ProjectOverview::Unavailable {
-                    directory,
-                    error: error.to_string(),
-                };
-            }
-        };
-        let default = stored.configuration.default_taxonomy().clone();
-        let Some(version) = stored
-            .configuration
-            .find(&default)
-            .map(gitserious_core::Taxonomy::version)
-        else {
-            return ProjectOverview::Unavailable {
-                directory,
-                error: format!("{POLICY_FILE} names a missing default taxonomy {default}."),
-            };
-        };
-        let policy_untracked = self.status.read(&root).is_ok_and(|status| {
-            status
-                .entries
-                .iter()
-                .any(|entry| entry.untracked && entry.path == Path::new(POLICY_FILE))
-        });
-        ProjectOverview::Initialized {
-            root,
-            default,
-            version,
-            policy_untracked,
-        }
+        self.project.overview()
     }
 
     fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {

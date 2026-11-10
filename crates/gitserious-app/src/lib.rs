@@ -35,7 +35,8 @@ pub use interactive::{
     HelpLine, HelpPage, HelpSpan, InteractiveUi, InteractiveWorkspace, run_interactive,
 };
 pub use project::{
-    InitOutcome, InitStatus, InitializeProjectError, ProjectOverview, initialize_project,
+    InitOutcome, InitStatus, InitializeProjectError, ProjectOverview, ProjectServices,
+    initialize_project,
 };
 pub use repository_locator::{
     RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryRootError,
