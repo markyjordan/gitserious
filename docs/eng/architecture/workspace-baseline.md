@@ -56,4 +56,4 @@ PYTHON
 
 Cargo edges preserve the intended hexagonal direction. They do not prove that each type belongs to its current layer. App currently defines Help layout and UI-launch contracts despite having no adapter dependency. Relative source inclusions used by tests also do not appear as Cargo edges. The consumer inventory records those separately.
 
-This document adds no dependency check or source-text enforcement. Automated fitness checks belong to the later architectural-enforcement workstream.
+`scripts/ci/check-crate-dependencies.py` now enforces the permitted workspace edges, keeps presentation crates out of Core and App, and rejects a source inclusion that leaves its crate. `run-rust-quality.sh check` runs it on the Linux and macOS legs.

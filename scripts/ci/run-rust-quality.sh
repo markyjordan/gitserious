@@ -21,10 +21,14 @@ run_check() {
     --message-format=json-render-diagnostics >"$messages"
   case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*)
-      # Unix-only modules such as platform/xdg.rs never compile here.
-      echo "Skipping the compiled-sources check on Windows."
+      # Unix-only modules such as platform/xdg.rs never compile here, and
+      # crate metadata is the same on every leg.
+      echo "Skipping the compiled-sources and crate-dependency checks on Windows."
       ;;
-    *) bash scripts/ci/check-compiled-sources.sh "$messages" ;;
+    *)
+      bash scripts/ci/check-compiled-sources.sh "$messages"
+      CARGO="$CARGO" python3 scripts/ci/check-crate-dependencies.py
+      ;;
   esac
   rm -f "$messages"
   case "$(uname -s)" in

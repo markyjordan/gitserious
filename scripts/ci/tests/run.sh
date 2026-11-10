@@ -7,6 +7,7 @@ fixtures=(
   test-zizmor-runner.sh
   test-check-compiled-sources.sh
   test-check-dead-code.sh
+  test-check-crate-dependencies.sh
   test-strict-workflows.sh
   test-prerequisite-errors.sh
   test-rust-setup-workflows.sh
