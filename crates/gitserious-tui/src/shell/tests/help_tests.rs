@@ -447,11 +447,7 @@ fn returning_to_help_starts_in_the_sidebar_on_the_page_left_last()
         Section::Home,
         "tab still leaves while reading"
     );
-    shell.handle_event(
-        click(shell.root_areas[Section::Help.index()]),
-        of(&services),
-        &help,
-    );
+    shell.handle_event(click(shell.tabs.area(Section::Help)), of(&services), &help);
     terminal.draw(|frame| shell.render(frame, &help))?;
     assert!(footer(&terminal).contains("→ read  ↑↓ pages  1-4 jump"));
     shell.handle_event(key(KeyCode::Right), of(&services), &help);

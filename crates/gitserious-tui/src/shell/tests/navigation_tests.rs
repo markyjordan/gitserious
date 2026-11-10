@@ -265,7 +265,7 @@ fn tab_and_shift_tab_switch_sections_in_one_press_and_arrows_never_do()
     let version = format!("gitserious v{} ", env!("CARGO_PKG_VERSION"));
     assert!(header.starts_with(" Home  Commit  Config  Help "));
     assert!(header.ends_with(&version));
-    let original = shell.root_areas;
+    let original = shell.tabs;
 
     for expected in [
         Section::Commit,
@@ -276,7 +276,7 @@ fn tab_and_shift_tab_switch_sections_in_one_press_and_arrows_never_do()
         shell.handle_event(key(KeyCode::Tab), of(&services), &[]);
         assert_eq!(shell.section, expected, "one tab moves one section");
         terminal.draw(|frame| shell.render(frame, &[]))?;
-        let active = shell.root_areas[expected.index()];
+        let active = shell.tabs.area(expected);
         let cell = terminal.backend().buffer()[(active.x, 0)].clone();
         assert_eq!(cell.fg, theme().text);
         assert!(
@@ -307,8 +307,8 @@ fn tab_and_shift_tab_switch_sections_in_one_press_and_arrows_never_do()
     terminal.backend_mut().resize(66, 18);
     terminal.resize(Rect::new(0, 0, 66, 18))?;
     terminal.draw(|frame| shell.render(frame, &[]))?;
-    assert_eq!(shell.root_areas, original, "tabs stay left-aligned");
-    let help = shell.root_areas[Section::Help.index()];
+    assert_eq!(shell.tabs, original, "tabs stay left-aligned");
+    let help = shell.tabs.area(Section::Help);
     shell.handle_event(click(help), of(&services), &[]);
     assert_eq!(shell.section, Section::Help);
     Ok(())

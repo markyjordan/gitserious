@@ -123,8 +123,8 @@ fn the_config_tab_has_no_library_change_badge() -> Result<(), Box<dyn std::error
         .unwrap_or_default()
         .to_owned();
     assert!(header.contains(" Config  Help "), "{header:?}");
-    let config = shell.root_areas[Section::Config.index()];
-    let help = shell.root_areas[Section::Help.index()];
+    let config = shell.tabs.area(Section::Config);
+    let help = shell.tabs.area(Section::Help);
     assert_eq!(config.width, 6);
     assert_eq!(help.x, config.right() + 2);
     assert_eq!(
