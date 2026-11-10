@@ -168,11 +168,11 @@ impl AuthoredCommit {
     }
 }
 
-/// Result of a taxonomy-aware authoring interaction.
+/// The user's result from one complete commit-draft authoring interaction.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CommitAuthoringOutcome {
-    /// Continue with the selected taxonomy and draft.
-    Authored(AuthoredCommit),
-    /// Leave the repository unchanged.
+pub enum CommitDraftAuthorOutcome {
+    /// Continue the commit workflow with the authored structured draft.
+    Authored(CommitDraft),
+    /// Stop the commit workflow without creating a commit.
     Cancelled,
 }

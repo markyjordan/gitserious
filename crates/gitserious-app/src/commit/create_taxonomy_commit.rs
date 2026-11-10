@@ -4,19 +4,7 @@ use std::path::Path;
 
 use gitserious_core::{CommitTypeDefinition, CommitTypeId, CommitValidationErrors, TaxonomyId};
 
-use crate::{
-    CommitAuthoringContext, CommitAuthoringOutcome, CommitDraftAuthor, CommitOutput, CommitWriter,
-    ProjectConfigurationStore, RepositoryLocator,
-};
-
-/// Result of an interactive commit workflow.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CommitOutcome {
-    /// Git created the commit.
-    Created(CommitOutput),
-    /// The user cancelled authoring.
-    Cancelled,
-}
+use crate::{CommitAuthoringContext, ProjectConfigurationStore, RepositoryLocator};
 
 /// A project-policy condition that prevents safe authoring.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -66,9 +54,6 @@ pub enum CreateCommitError<LocatorError, StoreError, AuthorError, WriterError> {
     InvalidDraft(CommitValidationErrors),
     Writer(WriterError),
 }
-
-pub type CreateCommitResult<LocatorError, StoreError, AuthorError, WriterError> =
-    Result<CommitOutcome, CreateCommitError<LocatorError, StoreError, AuthorError, WriterError>>;
 
 /// Policy snapshot preparation with the same typed errors as commit creation.
 pub type CommitPreparationResult<L, S, A, W> =
@@ -128,37 +113,6 @@ fn display_ids<T: Display>(ids: &[T]) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-/// Authors from the project default taxonomy.
-pub fn create_commit_with_taxonomy<L, S, A, W>(
-    locator: &L,
-    store: &S,
-    author: &A,
-    writer: &W,
-    start: &Path,
-) -> CreateCommitResult<L::Error, S::Error, A::Error, W::Error>
-where
-    L: RepositoryLocator + ?Sized,
-    S: ProjectConfigurationStore + ?Sized,
-    A: CommitDraftAuthor + ?Sized,
-    W: CommitWriter + ?Sized,
-{
-    let (root, context) =
-        prepare_commit_with_taxonomy::<L, S, A::Error, W::Error>(locator, store, start)?;
-    let authored = match author
-        .author_with_context(&context)
-        .map_err(CreateCommitError::Author)?
-    {
-        CommitAuthoringOutcome::Authored(authored) => authored,
-        CommitAuthoringOutcome::Cancelled => return Ok(CommitOutcome::Cancelled),
-    };
-    let reviewed =
-        validate_reviewed_commit::<L::Error, S::Error, A::Error, W::Error>(&context, &authored)?;
-    let output = writer
-        .commit(&root, &reviewed)
-        .map_err(CreateCommitError::Writer)?;
-    Ok(CommitOutcome::Created(output))
 }
 
 /// Loads persisted project policy without opening a UI or writing to Git.
