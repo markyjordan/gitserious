@@ -10,10 +10,10 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
 
 use crate::commit::CommitView;
+use crate::config::{ConfigRequest, ConfigView, ShellKeys};
 use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT};
 use crate::help::{HelpPage, HelpView};
 use crate::home::{HomeAction, HomeOutcome, HomePage};
-use crate::taxonomy_config::{ConfigRequest, ConfigView, ShellKeys};
 use crate::theme::{
     FOOTER_HEIGHT, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, SHELL_HINTS, block_title,
     centered_rect, command_hints, frame_style, navigation_key_style, normalize_background,
