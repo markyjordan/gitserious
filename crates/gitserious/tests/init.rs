@@ -211,6 +211,35 @@ fn unavailable_git_fails_before_creating_project_state() -> Result<(), Box<dyn E
     Ok(())
 }
 
+// Windows resolves the Library under its own platform paths, not `Home::library_path`.
+#[cfg(unix)]
+#[test]
+fn an_unreadable_library_fails_init_without_writing_project_state() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    let home = Home::new()?;
+    let library = home.library_path();
+    fs::create_dir_all(library.parent().ok_or("library path has no parent")?)?;
+    fs::write(&library, "config-version = [\n")?;
+
+    let output = home.run(repository.path(), &["init"])?;
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stdout(&output).is_empty());
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "error: invalid global configuration {}: TOML parse error at line 1, column 19\n  \
+             |\n1 | config-version = [\n  |                   ^\nunclosed array, expected `]`\n\n",
+            library.display()
+        )
+    );
+    let entries: Vec<_> = fs::read_dir(repository.path())?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<Result<_, _>>()?;
+    assert_eq!(entries, [".git"]);
+    Ok(())
+}
+
 #[test]
 fn help_version_and_usage_exit_codes_match_the_public_contract() -> Result<(), Box<dyn Error>> {
     let directory = tempfile::tempdir()?;
