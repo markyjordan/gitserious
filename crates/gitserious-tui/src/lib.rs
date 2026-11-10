@@ -12,6 +12,7 @@
 )]
 
 mod confirmation;
+mod home;
 mod navigation;
 mod runtime;
 mod shell;

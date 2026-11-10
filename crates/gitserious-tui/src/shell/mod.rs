@@ -1,8 +1,6 @@
 mod commit;
 mod help_page;
 mod help_view;
-mod home;
-mod init_editor;
 
 use std::io::{self, IsTerminal};
 
@@ -16,6 +14,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT};
+use crate::home::{HomeAction, HomeOutcome, HomePage};
 use crate::taxonomy_config::{ConfigRequest, ConfigView, ShellKeys};
 use crate::theme::{
     FOOTER_HEIGHT, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, SHELL_HINTS, block_title,
@@ -25,7 +24,6 @@ use crate::theme::{
 use commit::CommitView;
 pub use help_page::HelpPage;
 use help_view::HelpView;
-use home::{HomeAction, HomeOutcome, HomePage};
 
 fn quit_question() -> Confirmation<'static> {
     Confirmation {
