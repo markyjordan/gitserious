@@ -25,9 +25,9 @@ impl Display for CommitPolicyError {
 
 impl Error for CommitPolicyError {}
 
-/// Failure to author or create a commit.
+/// Failure to prepare a commit or to accept its reviewed message.
 #[derive(Debug)]
-pub enum CreateCommitError<LocatorError, StoreError, AuthorError, WriterError> {
+pub enum CreateCommitError<LocatorError, StoreError> {
     MissingReviewedMessage,
     ReviewedMessageMismatch,
     UnknownTaxonomy {
@@ -42,7 +42,6 @@ pub enum CreateCommitError<LocatorError, StoreError, AuthorError, WriterError> {
     Repository(LocatorError),
     Store(StoreError),
     Policy(CommitPolicyError),
-    Author(AuthorError),
     UnknownCommitType {
         requested: CommitTypeId,
         available: Vec<CommitTypeId>,
@@ -52,14 +51,13 @@ pub enum CreateCommitError<LocatorError, StoreError, AuthorError, WriterError> {
         actual: CommitTypeId,
     },
     InvalidDraft(CommitValidationErrors),
-    Writer(WriterError),
 }
 
-/// Policy snapshot preparation with the same typed errors as commit creation.
-pub type CommitPreparationResult<L, S, A, W> =
-    Result<(crate::RepositoryRoot, CommitAuthoringContext), CreateCommitError<L, S, A, W>>;
+/// Policy snapshot preparation with the same typed errors as reviewed-message validation.
+pub type CommitPreparationResult<L, S> =
+    Result<(crate::RepositoryRoot, CommitAuthoringContext), CreateCommitError<L, S>>;
 
-impl<L: Display, S: Display, A: Display, W: Display> Display for CreateCommitError<L, S, A, W> {
+impl<L: Display, S: Display> Display for CreateCommitError<L, S> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingReviewedMessage => {
@@ -84,7 +82,6 @@ impl<L: Display, S: Display, A: Display, W: Display> Display for CreateCommitErr
             Self::Repository(error) => Display::fmt(error, formatter),
             Self::Store(error) => Display::fmt(error, formatter),
             Self::Policy(error) => Display::fmt(error, formatter),
-            Self::Author(error) => Display::fmt(error, formatter),
             Self::UnknownCommitType {
                 requested,
                 available,
@@ -98,15 +95,11 @@ impl<L: Display, S: Display, A: Display, W: Display> Display for CreateCommitErr
                 "authored type \"{actual}\" does not match requested type \"{expected}\""
             ),
             Self::InvalidDraft(error) => Display::fmt(error, formatter),
-            Self::Writer(error) => Display::fmt(error, formatter),
         }
     }
 }
 
-impl<L: Error + 'static, S: Error + 'static, A: Error + 'static, W: Error + 'static> Error
-    for CreateCommitError<L, S, A, W>
-{
-}
+impl<L: Error + 'static, S: Error + 'static> Error for CreateCommitError<L, S> {}
 
 fn display_ids<T: Display>(ids: &[T]) -> String {
     ids.iter()
@@ -116,11 +109,11 @@ fn display_ids<T: Display>(ids: &[T]) -> String {
 }
 
 /// Loads persisted project policy without opening a UI or writing to Git.
-pub fn prepare_commit_with_taxonomy<L, S, A, W>(
+pub fn prepare_commit_with_taxonomy<L, S>(
     locator: &L,
     store: &S,
     start: &Path,
-) -> CommitPreparationResult<L::Error, S::Error, A, W>
+) -> CommitPreparationResult<L::Error, S::Error>
 where
     L: RepositoryLocator + ?Sized,
     S: ProjectConfigurationStore + ?Sized,
@@ -143,10 +136,10 @@ where
 }
 
 /// Checks that the bytes approved in review exactly match the captured policy.
-pub fn validate_reviewed_commit<L, S, A, W>(
+pub fn validate_reviewed_commit<L, S>(
     context: &CommitAuthoringContext,
     authored: &crate::AuthoredCommit,
-) -> Result<gitserious_core::CommitMessage, CreateCommitError<L, S, A, W>> {
+) -> Result<gitserious_core::CommitMessage, CreateCommitError<L, S>> {
     let taxonomy = context.find_taxonomy(authored.taxonomy()).ok_or_else(|| {
         CreateCommitError::UnknownTaxonomy {
             requested: authored.taxonomy().clone(),
@@ -171,7 +164,7 @@ pub fn validate_reviewed_commit<L, S, A, W>(
             });
         }
     }
-    find_definition::<L, S, A, W>(taxonomy.definitions(), authored.draft().commit_type())?;
+    find_definition::<L, S>(taxonomy.definitions(), authored.draft().commit_type())?;
     let message = taxonomy
         .validate(authored.draft())
         .into_message()
@@ -185,10 +178,10 @@ pub fn validate_reviewed_commit<L, S, A, W>(
     Ok(reviewed.clone())
 }
 
-fn find_definition<'a, L, S, A, W>(
+fn find_definition<'a, L, S>(
     definitions: &'a [CommitTypeDefinition],
     requested: &CommitTypeId,
-) -> Result<&'a CommitTypeDefinition, CreateCommitError<L, S, A, W>> {
+) -> Result<&'a CommitTypeDefinition, CreateCommitError<L, S>> {
     definitions
         .iter()
         .find(|definition| definition.id() == requested)

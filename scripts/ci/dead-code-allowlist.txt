@@ -1,10 +1,3 @@
 # Dead code that check-dead-code.sh accepts, one tab-separated "file<TAB>item"
 # row each. Add a row only with an issue that decides it; the check fails on
 # new offenders and on stale entries.
-#
-# The retired captured-policy use case left the Author and Writer error
-# variants, and with them the crate-root CreateCommitError export, without a
-# producer or an outside user.
-crates/gitserious-app/src/commit/create_taxonomy_commit.rs	Author
-crates/gitserious-app/src/commit/create_taxonomy_commit.rs	Writer
-crates/gitserious-app/src/lib.rs	CreateCommitError

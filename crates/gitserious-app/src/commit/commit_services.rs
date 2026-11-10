@@ -1,4 +1,3 @@
-use std::convert::Infallible;
 use std::fmt::Display;
 use std::path::Path;
 
@@ -77,22 +76,16 @@ where
         if !snapshot.has_staged_changes() {
             return Err("Stage changes with Git, then refresh to start a commit.".into());
         }
-        prepare_commit_with_taxonomy::<L, S, Infallible, Infallible>(
-            self.locator,
-            self.store,
-            self.start,
-        )
-        .map(|(_, context)| context)
-        .map_err(|error| error.to_string())
+        prepare_commit_with_taxonomy(self.locator, self.store, self.start)
+            .map(|(_, context)| context)
+            .map_err(|error| error.to_string())
     }
 
     fn submit_commit(&self, authored: &AuthoredCommit) -> Result<CommitOutput, String> {
         // Reload persisted policy on submission; unapplied Config drafts never influence authoring.
         let context = self.prepare_commit()?;
-        let message = validate_reviewed_commit::<Infallible, Infallible, Infallible, Infallible>(
-            &context, authored,
-        )
-        .map_err(|error| error.to_string())?;
+        let message = validate_reviewed_commit::<L::Error, S::Error>(&context, authored)
+            .map_err(|error| error.to_string())?;
         let root = self
             .locator
             .locate(self.start)
