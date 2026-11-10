@@ -1,3 +1,5 @@
+mod author;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::io;
@@ -12,8 +14,11 @@ use ratatui::style::Style;
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::author::{AuthoringCheckpoint, embedded_author};
 use crate::theme::{block_title, frame_style, navigation_key_style, section_heading_style};
+
+#[cfg(test)]
+pub(super) use author::reviewed_submission;
+use author::{AuthoringCheckpoint, embedded_author};
 
 #[derive(Clone)]
 struct TreeRow {

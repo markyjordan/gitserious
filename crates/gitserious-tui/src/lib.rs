@@ -11,7 +11,6 @@
     clippy::unused_self
 )]
 
-mod author;
 mod confirmation;
 mod navigation;
 mod runtime;

@@ -1,4 +1,4 @@
-mod commit_view;
+mod commit;
 mod help_page;
 mod help_view;
 mod home;
@@ -22,7 +22,7 @@ use crate::theme::{
     centered_rect, command_hints, frame_style, navigation_key_style, normalize_background,
     render_footer, render_footer_block, theme,
 };
-use commit_view::CommitView;
+use commit::CommitView;
 pub use help_page::HelpPage;
 use help_view::HelpView;
 use home::{HomeAction, HomeOutcome, HomePage};
@@ -2110,7 +2110,7 @@ mod tests {
 
     /// A shell on `section` that retains a reviewed commit Git rejected.
     fn rejected_review_on(section: Section) -> Result<Shell, Box<dyn std::error::Error>> {
-        let (context, _, checkpoint) = crate::author::reviewed_submission()?;
+        let (context, _, checkpoint) = commit::reviewed_submission()?;
         let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
         shell.commit.conclude_authoring(
             &Services,
@@ -2268,7 +2268,7 @@ mod tests {
     #[test]
     fn a_created_commit_returns_to_commit_and_a_rejected_one_keeps_the_review()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (context, _, checkpoint) = crate::author::reviewed_submission()?;
+        let (context, _, checkpoint) = commit::reviewed_submission()?;
         let created = CommitOutput::new(b"created\n".to_vec(), b"hook note\n".to_vec());
         let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
 
@@ -2282,7 +2282,7 @@ mod tests {
         assert!(shell.commit.notice.contains("created"));
         assert!(shell.commit.notice.contains("hook note"));
 
-        let (context, _, checkpoint) = crate::author::reviewed_submission()?;
+        let (context, _, checkpoint) = commit::reviewed_submission()?;
         shell.commit.conclude_authoring(
             &Services,
             Some((context, checkpoint, Err("hook rejected".into()))),
@@ -2303,7 +2303,7 @@ mod tests {
     #[test]
     fn a_failed_review_survives_navigation_refresh_and_cancelling_new_authoring()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (context, _, checkpoint) = crate::author::reviewed_submission()?;
+        let (context, _, checkpoint) = commit::reviewed_submission()?;
         let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
         shell.commit.conclude_authoring(
             &Services,
@@ -2351,7 +2351,7 @@ mod tests {
     #[test]
     fn a_pending_review_requires_confirmation_before_quitting()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (context, _, checkpoint) = crate::author::reviewed_submission()?;
+        let (context, _, checkpoint) = commit::reviewed_submission()?;
         let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
         shell.commit.conclude_authoring(
             &Services,
@@ -2384,7 +2384,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
         for rejection in ["first hook rejection", "second hook rejection"] {
-            let (context, _, checkpoint) = crate::author::reviewed_submission()?;
+            let (context, _, checkpoint) = commit::reviewed_submission()?;
             shell.commit.conclude_authoring(
                 &Services,
                 Some((context, checkpoint, Err(rejection.into()))),
@@ -2398,7 +2398,7 @@ mod tests {
             );
         }
 
-        let (context, _, checkpoint) = crate::author::reviewed_submission()?;
+        let (context, _, checkpoint) = commit::reviewed_submission()?;
         shell.commit.conclude_authoring(
             &Services,
             Some((
