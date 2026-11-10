@@ -592,6 +592,16 @@ where
 }
 
 #[test]
+fn the_workspace_offers_the_librarys_custom_taxonomies() -> Result<(), Box<dyn Error>> {
+    let store = FakeGlobalStore::new(library(vec![custom("team")])?);
+    edit_global(&store, |workspace| {
+        assert_eq!(workspace.library_taxonomies()?, vec![custom("team")]);
+        Ok(())
+    })?;
+    Ok(())
+}
+
+#[test]
 fn the_workspace_names_the_library_file() -> Result<(), Box<dyn Error>> {
     let store = FakeGlobalStore::new(GlobalConfiguration::default());
     edit_global(&store, |workspace| {

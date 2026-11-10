@@ -29,6 +29,9 @@ impl ConfigurationWorkspace for Store {
     fn load_project(&self) -> std::result::Result<gitserious_app::ProjectSnapshot, String> {
         self.inner.load_project()
     }
+    fn library_taxonomies(&self) -> std::result::Result<Vec<gitserious_core::Taxonomy>, String> {
+        self.inner.library_taxonomies()
+    }
     fn library_path(&self) -> std::path::PathBuf {
         self.inner.library_path()
     }

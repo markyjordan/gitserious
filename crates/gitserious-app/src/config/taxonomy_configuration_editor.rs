@@ -1,6 +1,8 @@
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 
+use gitserious_core::Taxonomy;
+
 use crate::{
     GlobalConfigurationStore, LibraryDraft, Problem, ProjectConfiguration,
     ProjectConfigurationStore, RepositoryLocator, RepositoryRoot,
@@ -50,6 +52,8 @@ pub trait ConfigurationWorkspace {
     /// returns the Library as saved.
     fn save_library(&self, library: &LibraryDraft) -> Result<LibraryDraft, String>;
     fn load_project(&self) -> Result<ProjectSnapshot, String>;
+    /// The Library's custom taxonomies a project can include, those with at least one type.
+    fn library_taxonomies(&self) -> Result<Vec<Taxonomy>, String>;
     /// The file the Library loads from and saves to.
     fn library_path(&self) -> PathBuf;
 }
@@ -124,6 +128,15 @@ where
             root,
             stored.map(|stored| stored.configuration),
         ))
+    }
+
+    fn library_taxonomies(&self) -> Result<Vec<Taxonomy>, String> {
+        let library = self.global.load().map_err(|error| error.to_string())?;
+        Ok(library
+            .custom_taxonomies()
+            .iter()
+            .filter_map(crate::LibraryTaxonomy::usable)
+            .collect())
     }
 
     fn library_path(&self) -> PathBuf {
