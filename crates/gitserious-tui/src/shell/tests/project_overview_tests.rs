@@ -62,7 +62,7 @@ fn project_enter_opens_the_same_editor_as_home_and_cancel_writes_nothing()
         assert_eq!(&project_frame, terminal.backend().buffer());
         assert!(workspace.created.borrow().is_none());
         project.handle_event(key(KeyCode::Esc), of(&workspace), &[]);
-        assert!(project.init_editor.is_none());
+        assert!(!project.home.editing());
         assert!(workspace.created.borrow().is_none());
         project.execute(Action::Select(Section::Config), of(&workspace));
         project.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
@@ -76,7 +76,7 @@ fn project_enter_opens_the_same_editor_as_home_and_cancel_writes_nothing()
             project.handle_event(key(KeyCode::Down), of(&workspace), &[]);
         }
         project.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
-        assert!(project.init_editor.is_none());
+        assert!(!project.home.editing());
         let configuration = workspace
             .created
             .borrow()
@@ -128,7 +128,7 @@ fn the_project_initialize_row_and_palette_share_the_editor_and_its_errors()
     let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
     terminal.draw(|frame| shell.render(frame, &[]))?;
     shell.handle_event(click(Rect::new(14, 7, 73, 1)), of(&workspace), &[]);
-    assert!(shell.init_editor.is_some());
+    assert!(shell.home.editing());
     shell.handle_event(key(KeyCode::Esc), of(&workspace), &[]);
     shell.execute(Action::Select(Section::Config), of(&workspace));
     shell.handle_event(key(KeyCode::Char('/')), of(&workspace), &[]);
@@ -138,14 +138,14 @@ fn the_project_initialize_row_and_palette_share_the_editor_and_its_errors()
     assert!(!text.contains("Review changes"));
     shell.handle_event(Event::Paste("initialize".into()), of(&workspace), &[]);
     shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
-    assert!(shell.init_editor.is_some());
+    assert!(shell.home.editing());
     for _ in 0..3 {
         shell.handle_event(key(KeyCode::Down), of(&workspace), &[]);
     }
     shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
     terminal.draw(|frame| shell.render(frame, &[]))?;
     assert!(rendered(&terminal).contains("The project file appeared on disk."));
-    assert!(shell.init_editor.is_some());
+    assert!(shell.home.editing());
     assert!(workspace.created.borrow().is_none());
     Ok(())
 }

@@ -1,13 +1,15 @@
 use std::path::Path;
 
-use gitserious_app::ProjectOverview;
-use gitserious_core::TaxonomyReference;
+use gitserious_app::{ConfigurationWorkspace, ProjectOverview, ProjectWorkspace};
+use gitserious_core::{TaxonomyReference, built_in_taxonomies};
 use ratatui::Frame;
+use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
+use super::init_editor::{EditorOutcome, InitEditor};
 use crate::theme::theme;
 
 const WORDMARK: [&str; 5] = [
@@ -64,13 +66,119 @@ impl HomeAction {
     }
 }
 
+/// The project overview Home shows, and the editor that initializes the project.
+pub(super) struct HomePage {
+    overview: ProjectOverview,
+    /// Open while the user chooses the new project's taxonomies.
+    editor: Option<InitEditor>,
+    /// Why the last initialization from Home failed.
+    error: Option<String>,
+}
+
+/// What a key on the initialization editor did, for the root to follow up.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum HomeOutcome {
+    Stay,
+    Initialized,
+}
+
+impl HomePage {
+    pub(super) fn new(project: &dyn ProjectWorkspace) -> Self {
+        Self {
+            overview: project.overview(),
+            editor: None,
+            error: None,
+        }
+    }
+
+    /// Rereads the overview, and closes the editor once there is nothing to initialize.
+    pub(super) fn enter(&mut self, project: &dyn ProjectWorkspace) {
+        self.refresh(project);
+        self.error = None;
+        if !self.action().is_some_and(HomeAction::initializes) {
+            self.editor = None;
+        }
+    }
+
+    pub(super) fn refresh(&mut self, project: &dyn ProjectWorkspace) {
+        self.overview = project.overview();
+    }
+
+    pub(super) fn action(&self) -> Option<HomeAction> {
+        HomeAction::of(&self.overview)
+    }
+
+    pub(super) fn editing(&self) -> bool {
+        self.editor.is_some()
+    }
+
+    /// Opens the editor on the built-in taxonomies and the Library's.
+    pub(super) fn offer_initialization(&mut self, config: &dyn ConfigurationWorkspace) {
+        let library = config.library_taxonomies().unwrap_or_else(|error| {
+            self.error = Some(format!("Library taxonomies are unavailable: {error}"));
+            Vec::new()
+        });
+        let creates_repository = matches!(self.overview, ProjectOverview::NoRepository { .. });
+        self.editor = Some(InitEditor::new(
+            built_in_taxonomies(),
+            &library,
+            creates_repository,
+        ));
+    }
+
+    /// Hands `key` to the open editor.
+    pub(super) fn key(&mut self, key: KeyEvent, project: &dyn ProjectWorkspace) -> HomeOutcome {
+        let Some(editor) = &mut self.editor else {
+            return HomeOutcome::Stay;
+        };
+        match editor.key(key) {
+            EditorOutcome::Stay => HomeOutcome::Stay,
+            EditorOutcome::Back => {
+                self.editor = None;
+                self.error = None;
+                HomeOutcome::Stay
+            }
+            EditorOutcome::Initialize(configuration) => {
+                let outcome = match project.initialize(&configuration) {
+                    Ok(()) => {
+                        self.editor = None;
+                        self.error = None;
+                        HomeOutcome::Initialized
+                    }
+                    Err(error) => {
+                        self.error = Some(error);
+                        HomeOutcome::Stay
+                    }
+                };
+                self.refresh(project);
+                outcome
+            }
+        }
+    }
+
+    pub(super) fn render(&self, frame: &mut Frame<'_>, area: Rect) {
+        let error = self.error.as_deref();
+        match (&self.editor, &self.overview) {
+            (Some(editor), ProjectOverview::Uninitialized { root }) => {
+                editor.render(frame, area, root.as_path(), error);
+            }
+            (Some(editor), ProjectOverview::NoRepository { directory }) => {
+                editor.render(frame, area, directory, error);
+            }
+            _ => render(frame, area, &self.overview, error),
+        }
+    }
+
+    pub(super) fn hints(&self) -> Vec<(&'static str, &'static str)> {
+        self.editor.as_ref().map_or_else(
+            || self.action().map(HomeAction::hint).into_iter().collect(),
+            InitEditor::hints,
+        )
+    }
+}
+
 /// Draws the wordmark, the tagline, where gitserious runs, and the next step, centered in `area`.
-pub(super) fn render(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    state: &ProjectOverview,
-    error: Option<&str>,
-) {
+fn render(frame: &mut Frame<'_>, area: Rect, state: &ProjectOverview, error: Option<&str>) {
     let text = Style::new().fg(theme().text);
     let dim = Style::new().fg(theme().dim);
     let bold = text.add_modifier(Modifier::BOLD);
