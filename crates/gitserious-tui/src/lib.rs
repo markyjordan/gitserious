@@ -17,10 +17,10 @@ mod config;
 mod confirmation;
 mod help;
 mod home;
+mod root;
 mod runtime;
-mod shell;
 mod theme;
 
 pub use adapter::RatatuiInteractiveUi;
 pub use help::HelpPage;
-pub use shell::{Capabilities, InitialPage};
+pub use root::{Capabilities, InitialPage};
