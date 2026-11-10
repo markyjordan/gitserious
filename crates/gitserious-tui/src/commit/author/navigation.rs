@@ -6,14 +6,14 @@ use ratatui::widgets::Paragraph;
 
 use crate::theme::navigation_key_style;
 
-pub(crate) const COMMIT_STEPS: [&str; 3] = [
+const COMMIT_STEPS: [&str; 3] = [
     "select taxonomy and type",
     "compose message",
     "review and submit",
 ];
 
 /// Keep the clickable parent visible and horizontally reveal the active step on narrow terminals.
-pub(crate) fn commit_breadcrumb(frame: &mut Frame<'_>, area: Rect, active: usize) -> Rect {
+pub(super) fn commit_breadcrumb(frame: &mut Frame<'_>, area: Rect, active: usize) -> Rect {
     let parent_width = u16::try_from(Line::from("Commit").width())
         .unwrap_or(0)
         .min(area.width);

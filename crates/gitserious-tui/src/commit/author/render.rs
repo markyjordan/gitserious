@@ -1207,7 +1207,7 @@ fn text_button_width(label: &str) -> u16 {
 }
 
 fn render_stage_header(frame: &mut Frame<'_>, area: Rect, step: usize) -> Rect {
-    crate::navigation::commit_breadcrumb(frame, area, step - 1)
+    super::navigation::commit_breadcrumb(frame, area, step - 1)
 }
 
 fn navigation_key_style() -> Style {

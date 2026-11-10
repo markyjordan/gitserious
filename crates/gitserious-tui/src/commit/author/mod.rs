@@ -1,3 +1,4 @@
+mod navigation;
 mod render;
 mod state;
 #[cfg(test)]
