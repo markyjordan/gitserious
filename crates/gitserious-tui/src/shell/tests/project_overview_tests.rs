@@ -149,3 +149,39 @@ fn the_project_initialize_row_and_palette_share_the_editor_and_its_errors()
     assert!(workspace.created.borrow().is_none());
     Ok(())
 }
+
+#[test]
+fn config_reloads_instead_of_initializing_once_the_project_exists()
+-> Result<(), Box<dyn std::error::Error>> {
+    let workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
+    let mut stale = Shell::new(InitialPage::Config, of(&workspace), &[]);
+    let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
+    terminal.draw(|frame| stale.render(frame, &[]))?;
+    assert!(!rendered(&terminal).contains("▸ conventional"));
+
+    let (mut home, _) = home_screen(&workspace, 87, 40)?;
+    home.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+    for _ in 0..3 {
+        home.handle_event(key(KeyCode::Down), of(&workspace), &[]);
+    }
+    home.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+    let created = workspace
+        .created
+        .borrow()
+        .clone()
+        .ok_or("not initialized")?;
+
+    assert_eq!(
+        stale.handle_event(key(KeyCode::Enter), of(&workspace), &[]),
+        None
+    );
+    assert_eq!(stale.section, Section::Config);
+    assert!(!stale.home.editing());
+    assert_eq!(workspace.created.borrow().as_ref(), Some(&created));
+    terminal.draw(|frame| stale.render(frame, &[]))?;
+    let text = rendered(&terminal);
+    for name in ["conventional", "research", "infra-ops"] {
+        assert!(text.contains(&format!("▸ {name}")), "{name}: {text}");
+    }
+    Ok(())
+}
