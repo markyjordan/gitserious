@@ -121,20 +121,10 @@ impl CommitAuthoringContext {
 pub struct AuthoredCommit {
     taxonomy: TaxonomyId,
     draft: CommitDraft,
-    reviewed: Option<CommitMessage>,
+    reviewed: CommitMessage,
 }
 
 impl AuthoredCommit {
-    /// Records a draft without certified reviewed bytes.
-    #[must_use]
-    pub const fn new(taxonomy: TaxonomyId, draft: CommitDraft) -> Self {
-        Self {
-            taxonomy,
-            draft,
-            reviewed: None,
-        }
-    }
-
     /// Records exactly the message approved by the user.
     #[must_use]
     pub const fn reviewed(
@@ -145,14 +135,14 @@ impl AuthoredCommit {
         Self {
             taxonomy,
             draft,
-            reviewed: Some(message),
+            reviewed: message,
         }
     }
 
     /// Returns the approved message.
     #[must_use]
-    pub const fn reviewed_message(&self) -> Option<&CommitMessage> {
-        self.reviewed.as_ref()
+    pub const fn reviewed_message(&self) -> &CommitMessage {
+        &self.reviewed
     }
 
     /// Returns the selected taxonomy.
