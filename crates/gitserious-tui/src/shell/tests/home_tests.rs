@@ -373,3 +373,40 @@ fn home_draws_a_static_wordmark_and_tagline_in_bone() -> Result<(), Box<dyn std:
     }
     Ok(())
 }
+
+#[test]
+fn the_open_home_editor_leaves_q_slash_and_ctrl_c_to_the_root()
+-> Result<(), Box<dyn std::error::Error>> {
+    let workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
+    let (mut shell, _) = home_screen(&workspace, 87, 40)?;
+    shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+    assert!(shell.home.editing());
+    shell.handle_event(key(KeyCode::Char('/')), of(&workspace), &[]);
+    assert!(matches!(shell.overlay, Some(Overlay::Palette(_))));
+    shell.handle_event(key(KeyCode::Esc), of(&workspace), &[]);
+    assert!(shell.overlay.is_none());
+    assert!(
+        shell.home.editing(),
+        "esc closed the palette, not the editor"
+    );
+    for code in [KeyCode::Char('r'), KeyCode::Char('c'), KeyCode::Char('o')] {
+        assert_eq!(
+            shell.handle_event(key(code), of(&workspace), &[]),
+            None,
+            "{code:?}"
+        );
+        assert_eq!(shell.section, Section::Home);
+        assert!(shell.home.editing(), "{code:?} reached the editor");
+    }
+    let control_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert_eq!(
+        shell.handle_event(control_c, of(&workspace), &[]),
+        Some(Action::Quit)
+    );
+    assert_eq!(
+        shell.handle_event(key(KeyCode::Char('q')), of(&workspace), &[]),
+        Some(Action::Quit)
+    );
+    assert!(workspace.created.borrow().is_none());
+    Ok(())
+}
