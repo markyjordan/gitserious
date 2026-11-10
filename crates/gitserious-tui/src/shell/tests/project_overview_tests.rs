@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn an_uninitialized_project_matches_the_open_bone_overview()
 -> Result<(), Box<dyn std::error::Error>> {
-    let workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
+    let workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
     let mut shell = Shell::new(InitialPage::Config, &workspace, &[]);
     for (width, height) in [(87, 40), (100, 30), (125, 51), (66, 18)] {
         let mut terminal = Terminal::new(TestBackend::new(width, height))?;
@@ -49,7 +49,7 @@ fn an_uninitialized_project_matches_the_open_bone_overview()
 fn project_enter_opens_the_same_editor_as_home_and_cancel_writes_nothing()
 -> Result<(), Box<dyn std::error::Error>> {
     for (width, height) in [(87, 40), (100, 30), (125, 51), (66, 18)] {
-        let workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
+        let workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
         let mut project = Shell::new(InitialPage::Config, &workspace, &[]);
         let mut home = Shell::new(InitialPage::Home, &workspace, &[]);
         let mut terminal = Terminal::new(TestBackend::new(width, height))?;
@@ -122,7 +122,7 @@ fn project_enter_opens_the_same_editor_as_home_and_cancel_writes_nothing()
 #[test]
 fn the_project_initialize_row_and_palette_share_the_editor_and_its_errors()
 -> Result<(), Box<dyn std::error::Error>> {
-    let mut workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
+    let mut workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
     workspace.failure = Some("The project file appeared on disk.");
     let mut shell = Shell::new(InitialPage::Config, &workspace, &[]);
     let mut terminal = Terminal::new(TestBackend::new(87, 40))?;

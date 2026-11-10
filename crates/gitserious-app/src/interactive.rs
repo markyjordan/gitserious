@@ -1,13 +1,11 @@
 use std::fmt::{self, Debug, Display, Formatter};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-
-use gitserious_core::{TaxonomyId, TaxonomyVersion};
 
 use crate::{
     CommitServices, CommitWorkspace, CommitWriter, ConfigurationServices, ConfigurationWorkspace,
-    GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore,
-    RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryStatusReader,
+    GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore, ProjectOverview,
+    RepositoryInitializer, RepositoryLocator, RepositoryStatusReader,
 };
 
 /// The project file every gitserious repository commits.
@@ -62,28 +60,9 @@ impl Debug for HelpPage {
     }
 }
 
-/// What Home shows about the directory gitserious started in.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum HomeState {
-    /// No Git worktree contains the directory.
-    NoRepository { directory: PathBuf },
-    /// A Git worktree without a gitserious project.
-    Uninitialized { root: RepositoryRoot },
-    /// A gitserious project and the taxonomy commits start from.
-    Initialized {
-        root: RepositoryRoot,
-        default: TaxonomyId,
-        version: Option<TaxonomyVersion>,
-        /// Git does not track `gitserious.toml` yet, so the policy stays local.
-        policy_untracked: bool,
-    },
-    /// Git or the project file could not be read.
-    Unavailable { directory: PathBuf, error: String },
-}
-
 /// Application services available to an interactive session.
 pub trait InteractiveWorkspace {
-    fn home(&self) -> HomeState;
+    fn home(&self) -> ProjectOverview;
     /// Creates the project from `configuration`, and the Git repository first when there is
     /// none; an existing project is never rewritten.
     fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String>;
@@ -146,15 +125,15 @@ where
     W: CommitWriter + ?Sized,
     W::Error: Display,
 {
-    fn home(&self) -> HomeState {
+    fn home(&self) -> ProjectOverview {
         let directory = self.config.start.to_path_buf();
         let root = match self.config.locator.locate(self.config.start) {
             Ok(root) => root,
             Err(error) if L::is_not_repository(&error) => {
-                return HomeState::NoRepository { directory };
+                return ProjectOverview::NoRepository { directory };
             }
             Err(error) => {
-                return HomeState::Unavailable {
+                return ProjectOverview::Unavailable {
                     directory,
                     error: error.to_string(),
                 };
@@ -162,9 +141,9 @@ where
         };
         let stored = match self.config.project.load(&root) {
             Ok(Some(stored)) => stored,
-            Ok(None) => return HomeState::Uninitialized { root },
+            Ok(None) => return ProjectOverview::Uninitialized { root },
             Err(error) => {
-                return HomeState::Unavailable {
+                return ProjectOverview::Unavailable {
                     directory,
                     error: error.to_string(),
                 };
@@ -176,7 +155,7 @@ where
             .find(&default)
             .map(gitserious_core::Taxonomy::version)
         else {
-            return HomeState::Unavailable {
+            return ProjectOverview::Unavailable {
                 directory,
                 error: format!("{POLICY_FILE} names a missing default taxonomy {default}."),
             };
@@ -187,7 +166,7 @@ where
                 .iter()
                 .any(|entry| entry.untracked && entry.path == Path::new(POLICY_FILE))
         });
-        HomeState::Initialized {
+        ProjectOverview::Initialized {
             root,
             default,
             version,

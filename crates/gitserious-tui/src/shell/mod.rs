@@ -6,8 +6,8 @@ mod init_editor;
 use std::io::{self, IsTerminal};
 
 use gitserious_app::{
-    CommitAuthoringContext, CommitOutput, CommitWorkspace, HelpPage, HomeState, InteractiveUi,
-    InteractiveWorkspace, ProjectConfiguration,
+    CommitAuthoringContext, CommitOutput, CommitWorkspace, HelpPage, InteractiveUi,
+    InteractiveWorkspace, ProjectConfiguration, ProjectOverview,
 };
 use gitserious_core::built_in_taxonomies;
 use ratatui::crossterm::event::{
@@ -158,7 +158,7 @@ struct Shell {
     section: Section,
     config: ConfigView,
     commit: CommitView,
-    home: HomeState,
+    home: ProjectOverview,
     /// Open while the user chooses the new project's taxonomies.
     init_editor: Option<InitEditor>,
     /// Why the last initialization from Home failed.
@@ -234,7 +234,7 @@ impl Shell {
                             Some(format!("Library taxonomies are unavailable: {error}"));
                         Vec::new()
                     });
-                let creates_repository = matches!(self.home, HomeState::NoRepository { .. });
+                let creates_repository = matches!(self.home, ProjectOverview::NoRepository { .. });
                 self.init_editor = Some(InitEditor::new(
                     built_in_taxonomies(),
                     &library,
@@ -642,18 +642,18 @@ impl Shell {
                         .areas(body);
                 let footer = render_footer_block(frame, footer);
                 match self.section {
-                    Section::Home => match (&self.init_editor, &self.home) {
-                        (Some(editor), HomeState::Uninitialized { root }) => editor.render(
-                            frame,
-                            content,
-                            root.as_path(),
-                            self.home_error.as_deref(),
-                        ),
-                        (Some(editor), HomeState::NoRepository { directory }) => {
-                            editor.render(frame, content, directory, self.home_error.as_deref())
+                    Section::Home => {
+                        match (&self.init_editor, &self.home) {
+                            (Some(editor), ProjectOverview::Uninitialized { root }) => editor
+                                .render(frame, content, root.as_path(), self.home_error.as_deref()),
+                            (Some(editor), ProjectOverview::NoRepository { directory }) => {
+                                editor.render(frame, content, directory, self.home_error.as_deref())
+                            }
+                            _ => {
+                                home::render(frame, content, &self.home, self.home_error.as_deref())
+                            }
                         }
-                        _ => home::render(frame, content, &self.home, self.home_error.as_deref()),
-                    },
+                    }
                     Section::Commit => {
                         self.commit
                             .render(frame, content, self.pending_author.is_some())
@@ -839,8 +839,8 @@ mod tests {
         }
     }
     impl InteractiveWorkspace for Services {
-        fn home(&self) -> HomeState {
-            HomeState::Uninitialized { root: fresh_root() }
+        fn home(&self) -> ProjectOverview {
+            ProjectOverview::Uninitialized { root: fresh_root() }
         }
         fn initialize(&self, _: &ProjectConfiguration) -> Result<(), String> {
             Err("test initialize unavailable".into())
@@ -893,7 +893,7 @@ mod tests {
     }
 
     impl InteractiveWorkspace for Unavailable {
-        fn home(&self) -> HomeState {
+        fn home(&self) -> ProjectOverview {
             Services.home()
         }
         fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
@@ -934,14 +934,14 @@ mod tests {
 
     /// A workspace whose Home state follows initialization.
     struct HomeWorkspace {
-        state: RefCell<HomeState>,
+        state: RefCell<ProjectOverview>,
         created: RefCell<Option<ProjectConfiguration>>,
         failure: Option<&'static str>,
         library: Result<Vec<gitserious_core::Taxonomy>, String>,
     }
 
     impl HomeWorkspace {
-        fn new(state: HomeState) -> Self {
+        fn new(state: ProjectOverview) -> Self {
             Self {
                 state: RefCell::new(state),
                 created: RefCell::new(None),
@@ -961,9 +961,8 @@ mod tests {
         fn load_project(&self) -> Result<ProjectSnapshot, String> {
             let state = self.state.borrow();
             let root = match &*state {
-                HomeState::Uninitialized { root } | HomeState::Initialized { root, .. } => {
-                    root.clone()
-                }
+                ProjectOverview::Uninitialized { root }
+                | ProjectOverview::Initialized { root, .. } => root.clone(),
                 _ => return Err("No Git repository.".into()),
             };
             Ok(ProjectSnapshot::new(root, self.created.borrow().clone()))
@@ -977,14 +976,14 @@ mod tests {
     }
 
     impl InteractiveWorkspace for HomeWorkspace {
-        fn home(&self) -> HomeState {
+        fn home(&self) -> ProjectOverview {
             self.state.borrow().clone()
         }
         fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
             if let Some(failure) = self.failure {
                 return Err(failure.into());
             }
-            *self.state.borrow_mut() = HomeState::Initialized {
+            *self.state.borrow_mut() = ProjectOverview::Initialized {
                 root: fresh_root(),
                 default: configuration.default_taxonomy().clone(),
                 version: Some(TaxonomyVersion::V1),
@@ -1021,14 +1020,14 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let root = fresh_root();
         let path = root.as_path().display().to_string();
-        let initialized = |policy_untracked| HomeState::Initialized {
+        let initialized = |policy_untracked| ProjectOverview::Initialized {
             root: fresh_root(),
             default: gitserious_core::built_in_taxonomies()[0].id().clone(),
             version: Some(TaxonomyVersion::V1),
             policy_untracked,
         };
         for (width, height) in [(87, 40), (100, 30)] {
-            let workspace = HomeWorkspace::new(HomeState::NoRepository {
+            let workspace = HomeWorkspace::new(ProjectOverview::NoRepository {
                 directory: root.as_path().to_path_buf(),
             });
             let (_, terminal) = home_screen(&workspace, width, height)?;
@@ -1063,7 +1062,8 @@ mod tests {
                     .starts_with(" enter initialize")
             );
 
-            let workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
+            let workspace =
+                HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
             let (_, terminal) = home_screen(&workspace, width, height)?;
             let text = rendered(&terminal);
             let rows: Vec<&str> = text.lines().collect();
@@ -1120,7 +1120,7 @@ mod tests {
             assert!(!text.contains("untracked"));
             assert_eq!(row_of(&text, " Go to Commit "), Some(done + 2));
 
-            let workspace = HomeWorkspace::new(HomeState::Unavailable {
+            let workspace = HomeWorkspace::new(ProjectOverview::Unavailable {
                 directory: root.as_path().to_path_buf(),
                 error: "git is not installed".into(),
             });
@@ -1149,7 +1149,7 @@ mod tests {
     #[test]
     fn enter_opens_the_editor_whose_initialize_row_writes_the_chosen_taxonomies()
     -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
+        let workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
         let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;
         shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
@@ -1196,7 +1196,7 @@ mod tests {
             ["conventional-v1", "research-v1", "infra-ops-v1"]
         );
         assert_eq!(shell.section, Section::Home);
-        assert!(matches!(shell.home, HomeState::Initialized { .. }));
+        assert!(matches!(shell.home, ProjectOverview::Initialized { .. }));
         shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
         assert_eq!(shell.section, Section::Commit);
         Ok(())
@@ -1213,7 +1213,8 @@ mod tests {
             None,
             built_in.commit_types()[..3].to_vec(),
         )?;
-        let mut workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
+        let mut workspace =
+            HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
         workspace.library = Ok(vec![team]);
         let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;
         shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
@@ -1256,7 +1257,8 @@ mod tests {
             ]
         );
 
-        let mut workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
+        let mut workspace =
+            HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
         workspace.library = Err("config.toml is not valid TOML".into());
         let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;
         shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
@@ -1276,7 +1278,8 @@ mod tests {
     #[test]
     fn a_failed_initialization_shows_why_and_keeps_the_offer()
     -> Result<(), Box<dyn std::error::Error>> {
-        let mut workspace = HomeWorkspace::new(HomeState::Uninitialized { root: fresh_root() });
+        let mut workspace =
+            HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
         workspace.failure = Some("gitserious.toml already exists");
         let (mut shell, mut terminal) = home_screen(&workspace, 100, 30)?;
         shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
@@ -1300,7 +1303,7 @@ mod tests {
             "a revisit starts clean"
         );
 
-        let workspace = HomeWorkspace::new(HomeState::Unavailable {
+        let workspace = HomeWorkspace::new(ProjectOverview::Unavailable {
             directory: fresh_root().as_path().to_path_buf(),
             error: "git is not installed".into(),
         });
@@ -1309,7 +1312,7 @@ mod tests {
         assert_eq!(shell.section, Section::Home);
         assert!(shell.init_editor.is_none(), "enter has no step to take");
 
-        let workspace = HomeWorkspace::new(HomeState::NoRepository {
+        let workspace = HomeWorkspace::new(ProjectOverview::NoRepository {
             directory: fresh_root().as_path().to_path_buf(),
         });
         let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;

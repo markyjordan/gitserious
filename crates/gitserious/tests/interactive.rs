@@ -9,8 +9,8 @@ use std::process::{Command, Output};
 
 use gitserious_app::{
     AuthoredCommit, CommitServices, CommitWorkspace, GlobalConfiguration, GlobalConfigurationStore,
-    HelpPage, HomeState, InteractiveUi, InteractiveWorkspace, LibraryTaxonomy,
-    ProjectConfiguration, RepositoryInitializer, initialize_project, run_interactive,
+    HelpPage, InteractiveUi, InteractiveWorkspace, LibraryTaxonomy, ProjectConfiguration,
+    ProjectOverview, RepositoryInitializer, initialize_project, run_interactive,
 };
 use gitserious_core::{
     CommitDraft, CommitSubject, CommitTypeDefinition, CommitTypeId, Description, SchemaVersion,
@@ -255,12 +255,12 @@ impl InteractiveUi for HomeUi<'_> {
         let fail = |error: Box<dyn Error>| error.to_string();
         assert_eq!(
             workspace.home(),
-            HomeState::NoRepository {
+            ProjectOverview::NoRepository {
                 directory: self.0.to_path_buf()
             }
         );
         git(self.0, &["init", "-b", "main"]).map_err(fail)?;
-        let HomeState::Uninitialized { root } = workspace.home() else {
+        let ProjectOverview::Uninitialized { root } = workspace.home() else {
             return Err(format!(
                 "expected an uninitialized repository: {:?}",
                 workspace.home()
@@ -282,7 +282,7 @@ impl InteractiveUi for HomeUi<'_> {
         assert!(self.0.join(".gitserious").is_dir());
         assert_eq!(
             workspace.home(),
-            HomeState::Initialized {
+            ProjectOverview::Initialized {
                 root: root.clone(),
                 default: TaxonomyId::new("conventional").map_err(|error| error.to_string())?,
                 version: Some(TaxonomyVersion::V1),
@@ -302,7 +302,7 @@ impl InteractiveUi for HomeUi<'_> {
         git(self.0, &["add", "gitserious.toml"]).map_err(fail)?;
         assert!(matches!(
             workspace.home(),
-            HomeState::Initialized {
+            ProjectOverview::Initialized {
                 policy_untracked: false,
                 ..
             }
@@ -310,7 +310,7 @@ impl InteractiveUi for HomeUi<'_> {
 
         fs::write(self.0.join("gitserious.toml"), "not = [toml")
             .map_err(|error| error.to_string())?;
-        let HomeState::Unavailable { error, .. } = workspace.home() else {
+        let ProjectOverview::Unavailable { error, .. } = workspace.home() else {
             return Err(format!(
                 "expected an unreadable project: {:?}",
                 workspace.home()
@@ -398,7 +398,10 @@ fn initialization_offers_only_library_taxonomies_that_have_types() -> Result<(),
 struct PlainDirectoryUi<'a>(&'a Path);
 impl InteractiveUi for PlainDirectoryUi<'_> {
     fn run(&self, workspace: &dyn InteractiveWorkspace, _: &[HelpPage]) -> Result<(), String> {
-        assert!(matches!(workspace.home(), HomeState::NoRepository { .. }));
+        assert!(matches!(
+            workspace.home(),
+            ProjectOverview::NoRepository { .. }
+        ));
         workspace.initialize(&built_ins()?)?;
         support::assert_project_shape(self.0, &[]).map_err(|error| error.to_string())?;
         assert!(
@@ -408,7 +411,7 @@ impl InteractiveUi for PlainDirectoryUi<'_> {
         assert!(self.0.join("gitserious.toml").is_file());
         assert!(matches!(
             workspace.home(),
-            HomeState::Initialized {
+            ProjectOverview::Initialized {
                 policy_untracked: true,
                 ..
             }
@@ -486,12 +489,18 @@ impl InteractiveUi for RecoveryUi<'_> {
         );
         assert!(self.0.join(".git").is_dir(), "git init already ran");
         assert!(!self.0.join("gitserious.toml").exists());
-        assert!(matches!(workspace.home(), HomeState::Uninitialized { .. }));
+        assert!(matches!(
+            workspace.home(),
+            ProjectOverview::Uninitialized { .. }
+        ));
 
         fs::remove_file(&blocker).map_err(|error| error.to_string())?;
         workspace.initialize(&built_ins()?)?;
         assert_eq!(self.1.0.get(), 1, "the retry writes only the project");
-        assert!(matches!(workspace.home(), HomeState::Initialized { .. }));
+        assert!(matches!(
+            workspace.home(),
+            ProjectOverview::Initialized { .. }
+        ));
         Ok(())
     }
 }
@@ -517,7 +526,10 @@ impl InteractiveUi for RepeatInitializationUi<'_> {
         let before = fs::read(&policy).map_err(|error| error.to_string())?;
         assert!(workspace.initialize(&built_ins()?).is_err());
         assert_eq!(fs::read(policy).map_err(|error| error.to_string())?, before);
-        assert!(matches!(workspace.home(), HomeState::Initialized { .. }));
+        assert!(matches!(
+            workspace.home(),
+            ProjectOverview::Initialized { .. }
+        ));
         Ok(())
     }
 }
