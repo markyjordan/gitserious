@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use gitserious_app::{
-    AuthoredCommit, GlobalConfiguration, GlobalConfigurationStore, HelpPage, HomeState,
-    InteractiveUi, InteractiveWorkspace, LibraryTaxonomy, ProjectConfiguration,
+    AuthoredCommit, CommitServices, GlobalConfiguration, GlobalConfigurationStore, HelpPage,
+    HomeState, InteractiveUi, InteractiveWorkspace, LibraryTaxonomy, ProjectConfiguration,
     RepositoryInitializer, initialize_project, run_interactive,
 };
 use gitserious_core::{
@@ -51,103 +51,103 @@ fn git(directory: &Path, arguments: &[&str]) -> Result<Output, Box<dyn Error>> {
     Ok(output)
 }
 
-struct ExerciseUi<'a>(&'a Path);
-impl InteractiveUi for ExerciseUi<'_> {
-    fn run(&self, workspace: &dyn InteractiveWorkspace, _: &[HelpPage]) -> Result<(), String> {
-        assert!(workspace.prepare_commit().is_err());
-        git(self.0, &["add", "file"]).map_err(|error| error.to_string())?;
-        let context = workspace.prepare_commit()?;
-        let draft = CommitDraft::new(
-            CommitTypeId::new("note").map_err(|error| error.to_string())?,
-            None,
-            CommitSubject::new("exact reviewed bytes").map_err(|error| error.to_string())?,
-            Vec::new(),
-        )
+type GitCommitServices<'a> =
+    CommitServices<'a, GitRepositoryLocator, TomlProjectStore, GitCommitWriter>;
+
+fn exercise(commit: &GitCommitServices<'_>, directory: &Path) -> Result<(), String> {
+    assert!(commit.prepare_commit().is_err());
+    git(directory, &["add", "file"]).map_err(|error| error.to_string())?;
+    let context = commit.prepare_commit()?;
+    let draft = CommitDraft::new(
+        CommitTypeId::new("note").map_err(|error| error.to_string())?,
+        None,
+        CommitSubject::new("exact reviewed bytes").map_err(|error| error.to_string())?,
+        Vec::new(),
+    )
+    .map_err(|error| error.to_string())?;
+    let taxonomy = context.initial_taxonomy();
+    let message = taxonomy
+        .validate(&draft)
+        .into_message()
         .map_err(|error| error.to_string())?;
-        let taxonomy = context.initial_taxonomy();
-        let message = taxonomy
-            .validate(&draft)
+    let unreviewed = AuthoredCommit::new(taxonomy.id().clone(), draft.clone());
+    assert!(commit.submit_commit(&unreviewed).is_err());
+    let other_draft = CommitDraft::new(
+        draft.commit_type().clone(),
+        None,
+        CommitSubject::new("different bytes").map_err(|error| error.to_string())?,
+        Vec::new(),
+    )
+    .map_err(|error| error.to_string())?;
+    let mismatch = AuthoredCommit::reviewed(
+        taxonomy.id().clone(),
+        draft.clone(),
+        taxonomy
+            .validate(&other_draft)
             .into_message()
+            .map_err(|error| error.to_string())?,
+    );
+    assert!(commit.submit_commit(&mismatch).is_err());
+    let authored = AuthoredCommit::reviewed(taxonomy.id().clone(), draft, message.clone());
+    // A normal Git hook rejects submission; the same reviewed object can then be retried.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let hook = directory.join(".git/hooks/pre-commit");
+        fs::write(&hook, "#!/bin/sh\necho test-hook-rejected >&2\nexit 1\n")
             .map_err(|error| error.to_string())?;
-        let unreviewed = AuthoredCommit::new(taxonomy.id().clone(), draft.clone());
-        assert!(workspace.submit_commit(&unreviewed).is_err());
-        let other_draft = CommitDraft::new(
-            draft.commit_type().clone(),
-            None,
-            CommitSubject::new("different bytes").map_err(|error| error.to_string())?,
-            Vec::new(),
-        )
-        .map_err(|error| error.to_string())?;
-        let mismatch = AuthoredCommit::reviewed(
-            taxonomy.id().clone(),
-            draft.clone(),
-            taxonomy
-                .validate(&other_draft)
-                .into_message()
-                .map_err(|error| error.to_string())?,
-        );
-        assert!(workspace.submit_commit(&mismatch).is_err());
-        let authored = AuthoredCommit::reviewed(taxonomy.id().clone(), draft, message.clone());
-        // A normal Git hook rejects submission; the same reviewed object can then be retried.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let hook = self.0.join(".git/hooks/pre-commit");
-            fs::write(&hook, "#!/bin/sh\necho test-hook-rejected >&2\nexit 1\n")
-                .map_err(|error| error.to_string())?;
-            fs::set_permissions(&hook, fs::Permissions::from_mode(0o755))
-                .map_err(|error| error.to_string())?;
-            let staged_before = git(self.0, &["diff", "--cached", "--binary"])
-                .map_err(|error| error.to_string())?
-                .stdout;
-            let error = workspace
-                .submit_commit(&authored)
-                .err()
-                .ok_or("hook did not reject commit")?;
-            assert!(error.contains("test-hook-rejected"));
-            assert!(
-                !support::head_exists(self.0).map_err(|error| error.to_string())?,
-                "a rejected first commit must leave HEAD unborn"
-            );
-            assert!(workspace.repository_status()?.has_staged_changes());
-            assert_eq!(
-                git(self.0, &["diff", "--cached", "--binary"])
-                    .map_err(|error| error.to_string())?
-                    .stdout,
-                staged_before
-            );
-            assert!(
-                git(self.0, &["ls-files", "untracked"])
-                    .map_err(|error| error.to_string())?
-                    .stdout
-                    .is_empty()
-            );
-            fs::remove_file(hook).map_err(|error| error.to_string())?;
-        }
-        workspace.submit_commit(&authored)?;
-        let count =
-            git(self.0, &["rev-list", "--count", "HEAD"]).map_err(|error| error.to_string())?;
-        assert_eq!(String::from_utf8_lossy(&count.stdout).trim(), "1");
-        let stored =
-            git(self.0, &["log", "-1", "--format=%B"]).map_err(|error| error.to_string())?;
-        // Git log adds its own terminating newline after the stored commit message.
-        assert_eq!(
-            stored.stdout,
-            format!("{}\n", message.as_str()).into_bytes()
-        );
-        assert!(!workspace.repository_status()?.has_staged_changes());
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755))
+            .map_err(|error| error.to_string())?;
+        let staged_before = git(directory, &["diff", "--cached", "--binary"])
+            .map_err(|error| error.to_string())?
+            .stdout;
+        let error = commit
+            .submit_commit(&authored)
+            .err()
+            .ok_or("hook did not reject commit")?;
+        assert!(error.contains("test-hook-rejected"));
         assert!(
-            git(self.0, &["ls-files", "untracked"])
+            !support::head_exists(directory).map_err(|error| error.to_string())?,
+            "a rejected first commit must leave HEAD unborn"
+        );
+        assert!(commit.repository_status()?.has_staged_changes());
+        assert_eq!(
+            git(directory, &["diff", "--cached", "--binary"])
+                .map_err(|error| error.to_string())?
+                .stdout,
+            staged_before
+        );
+        assert!(
+            git(directory, &["ls-files", "untracked"])
                 .map_err(|error| error.to_string())?
                 .stdout
                 .is_empty()
         );
-        Ok(())
+        fs::remove_file(hook).map_err(|error| error.to_string())?;
     }
+    commit.submit_commit(&authored)?;
+    let count =
+        git(directory, &["rev-list", "--count", "HEAD"]).map_err(|error| error.to_string())?;
+    assert_eq!(String::from_utf8_lossy(&count.stdout).trim(), "1");
+    let stored =
+        git(directory, &["log", "-1", "--format=%B"]).map_err(|error| error.to_string())?;
+    // Git log adds its own terminating newline after the stored commit message.
+    assert_eq!(
+        stored.stdout,
+        format!("{}\n", message.as_str()).into_bytes()
+    );
+    assert!(!commit.repository_status()?.has_staged_changes());
+    assert!(
+        git(directory, &["ls-files", "untracked"])
+            .map_err(|error| error.to_string())?
+            .stdout
+            .is_empty()
+    );
+    Ok(())
 }
 
 #[test]
-fn shell_services_gate_staging_validate_review_and_retry_git_rejection()
+fn commit_services_gate_staging_validate_review_and_retry_git_rejection()
 -> Result<(), Box<dyn Error>> {
     let temp = tempfile::TempDir::new()?;
     git(temp.path(), &["init", "-b", "main"])?;
@@ -183,52 +183,40 @@ fn shell_services_gate_staging_validate_review_and_retry_git_rejection()
     )?;
     fs::write(temp.path().join("file"), "staged later\n")?;
     fs::write(temp.path().join("untracked"), "leave me alone\n")?;
-    run_interactive(
-        &GitRepositoryLocator,
-        &TomlProjectStore,
-        &Library(global),
-        &GitRepositoryStatusReader,
-        &GitRepositoryInitializer,
-        &GitCommitWriter,
+    exercise(
+        &CommitServices::new(
+            &GitRepositoryLocator,
+            &TomlProjectStore,
+            &GitRepositoryStatusReader,
+            &GitCommitWriter,
+            temp.path(),
+        ),
         temp.path(),
-        &ExerciseUi(temp.path()),
-        &[],
     )?;
     Ok(())
 }
 
-struct BlockedUi<'a>(&'a str);
-impl InteractiveUi for BlockedUi<'_> {
-    fn run(&self, workspace: &dyn InteractiveWorkspace, _: &[HelpPage]) -> Result<(), String> {
-        let error = workspace
-            .prepare_commit()
-            .err()
-            .ok_or("expected a policy blocker")?;
-        assert!(error.contains(self.0), "unexpected blocker: {error}");
-        Ok(())
-    }
-}
-
 #[test]
-fn shell_services_reject_absent_and_invalid_policy() -> Result<(), Box<dyn Error>> {
+fn commit_services_reject_absent_and_invalid_policy() -> Result<(), Box<dyn Error>> {
     let temp = tempfile::TempDir::new()?;
     git(temp.path(), &["init", "-b", "main"])?;
     fs::write(temp.path().join("file"), "staged\n")?;
     git(temp.path(), &["add", "file"])?;
     let global = GlobalConfiguration::default();
-    let library = Library(global.clone());
-    let check = |expected: &str| {
-        run_interactive(
-            &GitRepositoryLocator,
-            &TomlProjectStore,
-            &library,
-            &GitRepositoryStatusReader,
-            &GitRepositoryInitializer,
-            &GitCommitWriter,
-            temp.path(),
-            &BlockedUi(expected),
-            &[],
-        )
+    let commit = CommitServices::new(
+        &GitRepositoryLocator,
+        &TomlProjectStore,
+        &GitRepositoryStatusReader,
+        &GitCommitWriter,
+        temp.path(),
+    );
+    let check = |expected: &str| -> Result<(), String> {
+        let error = commit
+            .prepare_commit()
+            .err()
+            .ok_or("expected a policy blocker")?;
+        assert!(error.contains(expected), "unexpected blocker: {error}");
+        Ok(())
     };
     check("not initialized")?;
     initialize_project(
