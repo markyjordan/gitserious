@@ -6,8 +6,8 @@ use gitserious_core::{Taxonomy, TaxonomyId, TaxonomyVersion};
 
 use crate::config::Workspace;
 use crate::{
-    AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitServices, CommitWriter,
-    ConfigurationWorkspace, GlobalConfigurationStore, ProjectConfiguration,
+    AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitServices, CommitWorkspace,
+    CommitWriter, ConfigurationWorkspace, GlobalConfigurationStore, ProjectConfiguration,
     ProjectConfigurationStore, RepositoryInitializer, RepositoryLocator, RepositoryRoot,
     RepositoryStatus, RepositoryStatusReader,
 };
@@ -92,6 +92,7 @@ pub trait InteractiveWorkspace {
     /// The Library's custom taxonomies a project can include, those with at least one type.
     fn library_taxonomies(&self) -> Result<Vec<Taxonomy>, String>;
     fn configuration(&self) -> &dyn ConfigurationWorkspace;
+    fn commit(&self) -> &dyn CommitWorkspace;
     fn repository_status(&self) -> Result<RepositoryStatus, String>;
     fn prepare_commit(&self) -> Result<CommitAuthoringContext, String>;
     fn submit_commit(&self, authored: &AuthoredCommit) -> Result<CommitOutput, String>;
@@ -242,6 +243,10 @@ where
 
     fn configuration(&self) -> &dyn ConfigurationWorkspace {
         &self.config
+    }
+
+    fn commit(&self) -> &dyn CommitWorkspace {
+        &self.commit
     }
 
     fn repository_status(&self) -> Result<RepositoryStatus, String> {

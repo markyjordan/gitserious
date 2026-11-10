@@ -4,10 +4,11 @@ use std::path::{Path, PathBuf};
 
 use gitserious_app::{
     AuthoredCommit, BranchState, CommitAuthoringContext, CommitOutput, CommitServices,
-    CommitWriter, ConfigurationDestination, GlobalConfiguration, GlobalConfigurationStore,
-    HelpPage, InteractiveUi, InteractiveWorkspace, ProjectConfiguration, ProjectConfigurationStore,
-    ProjectRevision, RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryStatus,
-    RepositoryStatusReader, StatusEntry, StoredProject, run_interactive,
+    CommitWorkspace, CommitWriter, ConfigurationDestination, GlobalConfiguration,
+    GlobalConfigurationStore, HelpPage, InteractiveUi, InteractiveWorkspace, ProjectConfiguration,
+    ProjectConfigurationStore, ProjectRevision, RepositoryInitializer, RepositoryLocator,
+    RepositoryRoot, RepositoryStatus, RepositoryStatusReader, StatusEntry, StoredProject,
+    run_interactive,
 };
 use gitserious_core::{
     CommitDraft, CommitMessage, CommitSubject, CommitTypeDefinition, CommitTypeId, Description,

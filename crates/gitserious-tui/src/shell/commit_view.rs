@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use gitserious_app::{BranchState, InteractiveWorkspace, RepositoryStatus, StatusEntry};
+use gitserious_app::{BranchState, CommitWorkspace, RepositoryStatus, StatusEntry};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
@@ -36,11 +36,11 @@ pub(super) struct CommitView {
 }
 
 impl CommitView {
-    pub(super) fn refresh(&mut self, workspace: &dyn InteractiveWorkspace) {
-        match workspace.repository_status() {
+    pub(super) fn refresh(&mut self, commit: &dyn CommitWorkspace) {
+        match commit.repository_status() {
             Ok(snapshot) => {
                 self.snapshot = Some(snapshot);
-                self.blocker = workspace.prepare_commit().err();
+                self.blocker = commit.prepare_commit().err();
             }
             Err(error) => {
                 self.snapshot = None;

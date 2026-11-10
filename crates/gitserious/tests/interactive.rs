@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use gitserious_app::{
-    AuthoredCommit, CommitServices, GlobalConfiguration, GlobalConfigurationStore, HelpPage,
-    HomeState, InteractiveUi, InteractiveWorkspace, LibraryTaxonomy, ProjectConfiguration,
-    RepositoryInitializer, initialize_project, run_interactive,
+    AuthoredCommit, CommitServices, CommitWorkspace, GlobalConfiguration, GlobalConfigurationStore,
+    HelpPage, HomeState, InteractiveUi, InteractiveWorkspace, LibraryTaxonomy,
+    ProjectConfiguration, RepositoryInitializer, initialize_project, run_interactive,
 };
 use gitserious_core::{
     CommitDraft, CommitSubject, CommitTypeDefinition, CommitTypeId, Description, SchemaVersion,
