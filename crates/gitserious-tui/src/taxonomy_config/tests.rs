@@ -135,6 +135,21 @@ impl ConfigurationWorkspace for Workspace {
         Ok(self.project.borrow().clone())
     }
 
+    fn library_taxonomies(&self) -> Result<Vec<Taxonomy>, String> {
+        Ok(self
+            .global
+            .borrow()
+            .persisted()
+            .map(|library| {
+                library
+                    .custom_taxonomies()
+                    .iter()
+                    .filter_map(gitserious_app::LibraryTaxonomy::usable)
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     fn library_path(&self) -> PathBuf {
         self.library_path.clone()
     }

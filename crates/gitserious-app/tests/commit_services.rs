@@ -509,7 +509,10 @@ fn a_changed_library_does_not_replace_project_owned_commit_policy() -> Result<()
             vec![changed.id().clone()],
             vec![changed.clone().into()],
         )?;
-        assert_eq!(workspace.library_taxonomies()?, vec![changed]);
+        assert_eq!(
+            workspace.configuration().library_taxonomies()?,
+            vec![changed]
+        );
         workspace.commit().submit_commit(&authored)?;
         assert_eq!(
             session.writer.0.borrow().as_slice(),

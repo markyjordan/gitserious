@@ -226,10 +226,14 @@ impl Shell {
             Action::Select(section) => self.enter(section, workspace),
             Action::Initialize => {
                 self.section = Section::Home;
-                let library = workspace.library_taxonomies().unwrap_or_else(|error| {
-                    self.home_error = Some(format!("Library taxonomies are unavailable: {error}"));
-                    Vec::new()
-                });
+                let library = workspace
+                    .configuration()
+                    .library_taxonomies()
+                    .unwrap_or_else(|error| {
+                        self.home_error =
+                            Some(format!("Library taxonomies are unavailable: {error}"));
+                        Vec::new()
+                    });
                 let creates_repository = matches!(self.home, HomeState::NoRepository { .. });
                 self.init_editor = Some(InitEditor::new(
                     built_in_taxonomies(),
@@ -827,6 +831,9 @@ mod tests {
                 None,
             ))
         }
+        fn library_taxonomies(&self) -> Result<Vec<gitserious_core::Taxonomy>, String> {
+            Ok(Vec::new())
+        }
         fn library_path(&self) -> std::path::PathBuf {
             "/home/tester/.config/gitserious/config.toml".into()
         }
@@ -837,9 +844,6 @@ mod tests {
         }
         fn initialize(&self, _: &ProjectConfiguration) -> Result<(), String> {
             Err("test initialize unavailable".into())
-        }
-        fn library_taxonomies(&self) -> Result<Vec<gitserious_core::Taxonomy>, String> {
-            Ok(Vec::new())
         }
         fn configuration(&self) -> &dyn ConfigurationWorkspace {
             self
@@ -880,6 +884,9 @@ mod tests {
         fn load_project(&self) -> Result<ProjectSnapshot, String> {
             Services.load_project()
         }
+        fn library_taxonomies(&self) -> Result<Vec<gitserious_core::Taxonomy>, String> {
+            Services.library_taxonomies()
+        }
         fn library_path(&self) -> std::path::PathBuf {
             Services.library_path()
         }
@@ -891,9 +898,6 @@ mod tests {
         }
         fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
             Services.initialize(configuration)
-        }
-        fn library_taxonomies(&self) -> Result<Vec<gitserious_core::Taxonomy>, String> {
-            Services.library_taxonomies()
         }
         fn configuration(&self) -> &dyn ConfigurationWorkspace {
             self
@@ -964,6 +968,9 @@ mod tests {
             };
             Ok(ProjectSnapshot::new(root, self.created.borrow().clone()))
         }
+        fn library_taxonomies(&self) -> Result<Vec<gitserious_core::Taxonomy>, String> {
+            self.library.clone()
+        }
         fn library_path(&self) -> std::path::PathBuf {
             Services.library_path()
         }
@@ -985,9 +992,6 @@ mod tests {
             };
             *self.created.borrow_mut() = Some(configuration.clone());
             Ok(())
-        }
-        fn library_taxonomies(&self) -> Result<Vec<gitserious_core::Taxonomy>, String> {
-            self.library.clone()
         }
         fn configuration(&self) -> &dyn ConfigurationWorkspace {
             self

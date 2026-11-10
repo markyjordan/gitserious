@@ -343,6 +343,7 @@ struct LibraryUi;
 impl InteractiveUi for LibraryUi {
     fn run(&self, workspace: &dyn InteractiveWorkspace, _: &[HelpPage]) -> Result<(), String> {
         let offered = workspace
+            .configuration()
             .library_taxonomies()?
             .iter()
             .map(|taxonomy| taxonomy.reference().to_string())
