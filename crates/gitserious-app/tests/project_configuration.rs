@@ -6,10 +6,10 @@ use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
 use gitserious_app::{
-    ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
+    ConfigurationDestination, ConfigurationServices, ConfigurationSession, ConfigurationWorkspace,
     DraftEdit, DraftField, GlobalConfiguration, GlobalConfigurationStore, ProjectConfiguration,
     ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject,
-    edit_configuration, initial_project_configuration,
+    initial_project_configuration,
 };
 use gitserious_core::{
     Taxonomy, TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
@@ -209,29 +209,17 @@ impl ProjectConfigurationStore for Project {
     }
 }
 
-struct Script<F>(F);
-
-impl<F> ConfigurationEditor for Script<F>
-where
-    F: Fn(&dyn ConfigurationWorkspace) -> Result<(), String>,
-{
-    fn edit(&self, workspace: &dyn ConfigurationWorkspace) -> Result<(), String> {
-        (self.0)(workspace)
-    }
-}
-
 /// Edits the project while the Library store is unreadable, so any Library read fails the edit.
 fn edit_project<F>(project: &Project, script: F) -> Result<(), String>
 where
     F: Fn(&dyn ConfigurationWorkspace) -> Result<(), String>,
 {
-    edit_configuration(
+    script(&ConfigurationServices::new(
         &Locator,
         project,
         &BrokenLibrary,
         Path::new("."),
-        &Script(script),
-    )
+    ))
 }
 
 #[test]

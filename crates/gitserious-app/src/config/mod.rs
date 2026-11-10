@@ -10,10 +10,9 @@ pub use library_draft::{
     Problem, ProblemKind, ProblemSite, PropertyNode, TaxonomyNode, TypeNode,
 };
 pub use library_taxonomy::LibraryTaxonomy;
-pub(crate) use taxonomy_configuration_editor::Workspace;
 pub use taxonomy_configuration_editor::{
-    ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
-    Review, edit_configuration,
+    ConfigurationDestination, ConfigurationEditor, ConfigurationServices, ConfigurationSession,
+    ConfigurationWorkspace, Review, edit_configuration,
 };
 pub use taxonomy_date::TaxonomyDate;
 pub use taxonomy_policy::{

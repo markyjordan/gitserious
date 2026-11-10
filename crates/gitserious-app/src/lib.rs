@@ -23,11 +23,12 @@ pub use commit::{
 };
 pub use config::{
     Collision, ConfigurationDestination, ConfigurationEditor, ConfigurationError,
-    ConfigurationSession, ConfigurationWorkspace, CopyIn, DraftEdit, DraftField, EditRefusal,
-    GlobalConfiguration, GlobalConfigurationStore, LibraryDraft, LibraryTaxonomy, NodeId, NodeRef,
-    Policy, Problem, ProblemKind, ProblemSite, ProjectConfiguration, ProjectConfigurationStore,
-    ProjectRevision, PropertyNode, Review, StoredProject, TaxonomyCatalog, TaxonomyDate,
-    TaxonomyNode, TaxonomyOrigin, TypeNode, edit_configuration, fingerprint_taxonomy,
+    ConfigurationServices, ConfigurationSession, ConfigurationWorkspace, CopyIn, DraftEdit,
+    DraftField, EditRefusal, GlobalConfiguration, GlobalConfigurationStore, LibraryDraft,
+    LibraryTaxonomy, NodeId, NodeRef, Policy, Problem, ProblemKind, ProblemSite,
+    ProjectConfiguration, ProjectConfigurationStore, ProjectRevision, PropertyNode, Review,
+    StoredProject, TaxonomyCatalog, TaxonomyDate, TaxonomyNode, TaxonomyOrigin, TypeNode,
+    edit_configuration, fingerprint_taxonomy,
 };
 pub use directory_creator::DirectoryCreator;
 pub use global_path_resolver::GlobalPathResolver;

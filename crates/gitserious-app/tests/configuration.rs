@@ -10,11 +10,11 @@ use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
 use gitserious_app::{
-    ConfigurationDestination, ConfigurationEditor, ConfigurationError, ConfigurationSession,
+    ConfigurationDestination, ConfigurationError, ConfigurationServices, ConfigurationSession,
     ConfigurationWorkspace, DraftEdit, DraftField, EditRefusal, GlobalConfiguration,
     GlobalConfigurationStore, LibraryDraft, NodeId, ProblemKind, ProjectConfiguration,
     ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject,
-    TaxonomyCatalog, TaxonomyOrigin, edit_configuration,
+    TaxonomyCatalog, TaxonomyOrigin,
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
@@ -613,28 +613,16 @@ impl ProjectConfigurationStore for NoProject {
     }
 }
 
-struct Script<F>(F);
-
-impl<F> ConfigurationEditor for Script<F>
-where
-    F: Fn(&dyn ConfigurationWorkspace) -> Result<(), String>,
-{
-    fn edit(&self, workspace: &dyn ConfigurationWorkspace) -> Result<(), String> {
-        (self.0)(workspace)
-    }
-}
-
 fn edit_global<F>(store: &FakeGlobalStore, script: F) -> Result<(), String>
 where
     F: Fn(&dyn ConfigurationWorkspace) -> Result<(), String>,
 {
-    edit_configuration(
+    script(&ConfigurationServices::new(
         &NoRepository,
         &NoProject,
         store,
         Path::new("."),
-        &Script(script),
-    )
+    ))
 }
 
 #[test]

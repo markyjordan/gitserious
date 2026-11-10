@@ -4,9 +4,8 @@ use std::sync::Arc;
 
 use gitserious_core::{Taxonomy, TaxonomyId, TaxonomyVersion};
 
-use crate::config::Workspace;
 use crate::{
-    CommitServices, CommitWorkspace, CommitWriter, ConfigurationWorkspace,
+    CommitServices, CommitWorkspace, CommitWriter, ConfigurationServices, ConfigurationWorkspace,
     GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore,
     RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryStatusReader,
 };
@@ -123,12 +122,7 @@ where
     W::Error: Display,
 {
     let workspace = InteractiveServices {
-        config: Workspace {
-            locator,
-            project: store,
-            global,
-            start,
-        },
+        config: ConfigurationServices::new(locator, store, global, start),
         status,
         initializer,
         commit: CommitServices::new(locator, store, status, writer, start),
@@ -137,7 +131,7 @@ where
 }
 
 struct InteractiveServices<'a, L: ?Sized, S: ?Sized, G: ?Sized, W: ?Sized> {
-    config: Workspace<'a, L, S, G>,
+    config: ConfigurationServices<'a, L, S, G>,
     status: &'a dyn RepositoryStatusReader,
     initializer: &'a dyn RepositoryInitializer,
     commit: CommitServices<'a, L, S, W>,
