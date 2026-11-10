@@ -13,7 +13,7 @@ use ratatui::style::Style;
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::commit::CommitView;
+use crate::commit::{CommitRequest, CommitView};
 use crate::config::{ConfigRequest, ConfigView, ShellKeys};
 use crate::confirmation::ConfirmDialog;
 use crate::help::{HelpPage, HelpView};
@@ -59,10 +59,7 @@ pub(crate) enum SessionRequest {
 enum Action {
     Select(Section),
     Home(HomeRequest),
-    Refresh,
-    Result,
-    Author,
-    Resume,
+    Commit(CommitRequest),
     Initialize,
     Quit,
 }
@@ -136,12 +133,12 @@ impl Shell {
                 self.section = Section::Home;
                 self.home.offer_initialization(capabilities.config);
             }
-            Action::Refresh => {
-                self.commit.notice.clear();
-                self.commit.refresh(capabilities.commit);
+            Action::Commit(request) => {
+                return self
+                    .commit
+                    .run(request, capabilities.commit)
+                    .map(Action::Commit);
             }
-            Action::Result => self.commit.show_result(),
-            Action::Author | Action::Resume => return Some(action),
             Action::Quit => {
                 if self.commit.has_pending_review() {
                     self.overlay = Some(Overlay::QuitConfirm);
@@ -162,13 +159,9 @@ impl Shell {
     ) -> Option<SessionRequest> {
         match self.handle_event(event, capabilities, help)? {
             Action::Quit => Some(SessionRequest::Quit),
-            Action::Author => Some(SessionRequest::Author { resume: false }),
-            Action::Resume => Some(SessionRequest::Author { resume: true }),
-            Action::Select(_)
-            | Action::Home(_)
-            | Action::Refresh
-            | Action::Result
-            | Action::Initialize => None,
+            Action::Commit(CommitRequest::Author) => Some(SessionRequest::Author { resume: false }),
+            Action::Commit(CommitRequest::Resume) => Some(SessionRequest::Author { resume: true }),
+            Action::Select(_) | Action::Home(_) | Action::Commit(_) | Action::Initialize => None,
         }
     }
 
@@ -274,30 +267,10 @@ impl Shell {
                         let request = self.home.key(*key, capabilities.project)?;
                         return self.execute(Action::Home(request), capabilities);
                     }
-                    Section::Commit => match key.code {
-                        KeyCode::Char('r') => return self.execute(Action::Refresh, capabilities),
-                        KeyCode::Char('o') if !self.commit.notice.is_empty() => {
-                            return self.execute(Action::Result, capabilities);
-                        }
-                        KeyCode::Enter => {
-                            return self.execute(
-                                if self.commit.has_pending_review() {
-                                    Action::Resume
-                                } else {
-                                    Action::Author
-                                },
-                                capabilities,
-                            );
-                        }
-                        KeyCode::Char('c') => return self.execute(Action::Author, capabilities),
-                        KeyCode::Up | KeyCode::Down => {
-                            self.commit.move_selection(key.code == KeyCode::Down)
-                        }
-                        KeyCode::Left | KeyCode::Right => {
-                            self.commit.directory(key.code == KeyCode::Right)
-                        }
-                        _ => {}
-                    },
+                    Section::Commit => {
+                        let request = self.commit.key(key.code)?;
+                        return self.execute(Action::Commit(request), capabilities);
+                    }
                     Section::Help => self.help.key(key.code, help.len()),
                     Section::Config => {}
                 }
@@ -362,10 +335,11 @@ impl Shell {
                     Section::Help => self.help.render(frame, content, help),
                     Section::Config => {}
                 }
+                let commit_hints = self.commit.hints();
                 let home_hints = self.home.hints();
                 let help_hints = self.help.hints(help.len());
                 let hints: &[(&str, &str)] = match self.section {
-                    Section::Commit => &[("↑/↓", "move"), ("←/→", "tree"), ("r", "refresh")],
+                    Section::Commit => &commit_hints,
                     Section::Help => &help_hints,
                     Section::Home => &home_hints,
                     Section::Config => &[],

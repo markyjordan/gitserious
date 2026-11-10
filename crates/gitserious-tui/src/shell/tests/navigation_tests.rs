@@ -146,11 +146,11 @@ fn each_palette_command_does_what_its_label_says() -> Result<(), Box<dyn std::er
     let mut shell = rejected_review_with(&Ready)?;
     assert_eq!(
         run(&mut shell, &Ready, "Start commit"),
-        Some(Action::Author)
+        Some(Action::Commit(CommitRequest::Author))
     );
     assert_eq!(
         run(&mut shell, &Ready, "Resume review"),
-        Some(Action::Resume)
+        Some(Action::Commit(CommitRequest::Resume))
     );
 
     assert_eq!(run(&mut shell, &Ready, "View last Git result"), None);
@@ -387,7 +387,7 @@ fn key_releases_change_nothing_on_any_page_or_overlay() -> Result<(), Box<dyn st
     }
 
     let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
-    shell.commit.notice.push_str("hook rejected");
+    shell.commit.notice_mut().push_str("hook rejected");
     shell.handle_event(key(KeyCode::Char('o')), of(&Services), &[]);
     for code in codes {
         assert_eq!(shell.handle_event(release(code), of(&Services), &[]), None);
@@ -458,7 +458,7 @@ fn ctrl_c_waits_while_the_git_result_or_a_hidden_config_edit_is_open()
 -> Result<(), Box<dyn std::error::Error>> {
     let control_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
     let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
-    shell.commit.notice.push_str("hook rejected");
+    shell.commit.notice_mut().push_str("hook rejected");
     shell.handle_event(key(KeyCode::Char('o')), of(&Services), &[]);
     assert!(shell.commit.modal());
     assert_eq!(
