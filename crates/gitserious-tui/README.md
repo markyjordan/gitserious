@@ -59,8 +59,8 @@ to Home and back. Clicking a tab opens it.
 above the configuration Menu and its Project and Library widgets, described
 under Configuration. From the Project or Library browser, Tab and Shift+Tab
 switch sections, Esc returns to Home, and `q` quits. Every other key, including `/` and `?`, reaches the
-configuration interface. Config selections survive section visits. Library EDIT keeps focus inside Config until Esc validates and
-saves the item. Tab, root-row clicks, and quit cannot leave EDIT. A retained Commit review
+configuration interface. Config selections survive section visits. Library EDIT keeps focus inside Config until Ctrl+W
+saves the item or Esc discards the edit. Tab, root-row clicks, and quit cannot leave EDIT. A retained Commit review
 keeps its discard confirmation.
 
 The Commit overview shows repository/branch identity and directory trees for
@@ -161,8 +161,8 @@ contrasting bone cursor bar; EDIT also marks the current policy in bold with
 an underline.
 
 In EDIT, Enter advances through fields, Up and Down move between fields, and
-Left and Right move the text cursor or cycle property policy. Esc validates
-and saves the item. Amber gutters mark the selected node and focused field.
+Left and Right move the text cursor or cycle property policy. Ctrl+W
+validates and saves the item, and Esc discards the edit. Amber gutters mark the selected node and focused field.
 The surrounding navigation dims, and EDIT appears in the Inspector and footer.
 The footer shows only the focused text field's character count, in coral when
 that field is invalid. Browsing has no mode badge.
