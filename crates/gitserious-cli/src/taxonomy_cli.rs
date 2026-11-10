@@ -103,28 +103,61 @@ pub trait ShellLauncher {
     fn open(&self, start: ShellStart, directory: &Path, help: &[HelpPage]) -> Result<(), String>;
 }
 
-/// Where a parsed command goes, once help flags have been answered.
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum Launch {
-    Shell(ShellStart),
-    /// Bare `gitserious` with no terminal.
-    ConciseHelp,
+/// What an argument list asks gitserious to do.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Invocation {
+    /// Open the unified shell on this page.
+    Open(ShellStart),
+    /// Initialize the project that contains the start directory.
     Init,
+    /// Help for a terminal, shown through the pager.
+    Page(String),
+    /// Help or the version, written to stdout.
+    Print(String),
+    /// A usage error: clap's message for stderr and the exit code it chose.
+    Reject { message: String, code: ExitCode },
 }
 
-/// Chooses where `command` goes. `shell` says a launcher is configured.
-/// `terminal` says stdin and stdout are both terminals.
-fn launch(command: Option<&Command>, shell: bool, terminal: bool) -> Result<Launch, &'static str> {
-    match command {
-        Some(Command::Help { .. }) => unreachable!("help is answered before launch"),
-        None if !terminal => Ok(Launch::ConciseHelp),
-        None | Some(Command::Commit | Command::Config) if !shell => {
-            Err("interactive shell is not configured")
+/// Parses `arguments` for a session whose stdin and stdout are both `terminal`s or not.
+pub fn parse<I, T>(arguments: I, terminal: bool) -> Invocation
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    let matches = match root().try_get_matches_from(arguments) {
+        Ok(matches) => matches,
+        Err(error) if error.kind() == ErrorKind::DisplayHelp => {
+            return help(HelpRequest::Concise(printed(&error.render())), terminal);
         }
-        None => Ok(Launch::Shell(ShellStart::Home)),
-        Some(Command::Init) => Ok(Launch::Init),
-        Some(Command::Config) => Ok(Launch::Shell(ShellStart::Config)),
-        Some(Command::Commit) => Ok(Launch::Shell(ShellStart::Commit)),
+        Err(error) => return rejected(&error),
+    };
+    let cli = match Cli::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(error) => return rejected(&error),
+    };
+    if cli.full {
+        let command = matches.subcommand_name().map(str::to_owned);
+        return help(HelpRequest::Full(command), terminal);
+    }
+    match cli.command {
+        Some(Command::Help { command }) => help(HelpRequest::Topic(command), terminal),
+        None if !terminal => Invocation::Print(printed(&concise_help(root()))),
+        None => Invocation::Open(ShellStart::Home),
+        Some(Command::Init) => Invocation::Init,
+        Some(Command::Config) => Invocation::Open(ShellStart::Config),
+        Some(Command::Commit) => Invocation::Open(ShellStart::Commit),
+    }
+}
+
+/// Clap reports the version as an error that belongs on stdout.
+fn rejected(error: &clap::Error) -> Invocation {
+    if error.use_stderr() {
+        Invocation::Reject {
+            message: error.to_string(),
+            code: exit_code(error.exit_code()),
+        }
+    } else {
+        Invocation::Print(error.to_string())
     }
 }
 
@@ -281,43 +314,15 @@ where
     Err: Write + ?Sized,
 {
     let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-    let open_shell = |page: ShellStart| {
-        adapters
-            .shell
-            .ok_or_else(|| "interactive shell is not configured".to_owned())?
-            .open(page, start, &interactive_help())
-    };
-    let matches = match root().try_get_matches_from(arguments) {
-        Ok(matches) => matches,
-        Err(error) if error.kind() == ErrorKind::DisplayHelp => {
-            let request = HelpRequest::Concise(printed(&error.render()));
-            return answer(route(request, terminal), stdout, stderr, open_shell);
-        }
-        Err(error) => return write_clap_error(stdout, stderr, &error),
-    };
-    let cli = match Cli::from_arg_matches(&matches) {
-        Ok(cli) => cli,
-        Err(error) => return write_clap_error(stdout, stderr, &error),
-    };
-    if cli.full {
-        let request = HelpRequest::Full(matches.subcommand_name().map(str::to_owned));
-        return answer(route(request, terminal), stdout, stderr, open_shell);
-    }
-    if let Some(Command::Help { command }) = &cli.command {
-        return answer(
-            route(HelpRequest::Topic(command.clone()), terminal),
-            stdout,
-            stderr,
-            open_shell,
-        );
-    }
-    match launch(cli.command.as_ref(), adapters.shell.is_some(), terminal) {
-        Ok(Launch::ConciseHelp) => write_all(stdout, &printed(&concise_help(root()))),
-        Ok(Launch::Shell(page)) => open_shell(page).map_or_else(
-            |error| operational_error(stderr, error),
-            |()| ExitCode::SUCCESS,
-        ),
-        Ok(Launch::Init) => {
+    match parse(arguments, terminal) {
+        Invocation::Open(page) => match adapters.shell {
+            Some(shell) => shell.open(page, start, &interactive_help()).map_or_else(
+                |error| operational_error(stderr, error),
+                |()| ExitCode::SUCCESS,
+            ),
+            None => operational_error(stderr, "interactive shell is not configured"),
+        },
+        Invocation::Init => {
             let global = match global.load() {
                 Ok(value) => value,
                 Err(error) => return operational_error(stderr, error),
@@ -327,7 +332,15 @@ where
                 Err(error) => operational_error(stderr, error),
             }
         }
-        Err(message) => operational_error(stderr, message),
+        Invocation::Page(text) if page(&text).is_ok() => ExitCode::SUCCESS,
+        Invocation::Page(text) | Invocation::Print(text) => write_all(stdout, &text),
+        Invocation::Reject { message, code } => {
+            if stderr.write_all(message.as_bytes()).is_ok() {
+                code
+            } else {
+                ExitCode::FAILURE
+            }
+        }
     }
 }
 
@@ -401,45 +414,18 @@ enum HelpRequest {
     Topic(Option<String>),
 }
 
-/// How the CLI answers a help request.
-#[derive(Debug, Eq, PartialEq)]
-enum HelpOutcome {
-    /// Open the shell at Help, on the named command's page.
-    Tui(Option<String>),
-    /// Write the help through the pager.
-    Page(String),
-    /// Write the help to stdout.
-    Print(String),
-}
-
 /// Answers `request` for a session whose stdin and stdout are both `terminal`s or not.
-fn route(request: HelpRequest, terminal: bool) -> HelpOutcome {
+fn help(request: HelpRequest, terminal: bool) -> Invocation {
     match (request, terminal) {
-        (HelpRequest::Concise(text), true) => HelpOutcome::Page(text),
-        (HelpRequest::Concise(text), false) => HelpOutcome::Print(text),
+        (HelpRequest::Concise(text), true) => Invocation::Page(text),
+        (HelpRequest::Concise(text), false) => Invocation::Print(text),
         (HelpRequest::Full(command) | HelpRequest::Topic(command), true) => {
-            HelpOutcome::Tui(command)
+            Invocation::Open(ShellStart::Help { command })
         }
-        (HelpRequest::Full(None), false) => HelpOutcome::Print(printed(&concise_help(root()))),
+        (HelpRequest::Full(None), false) => Invocation::Print(printed(&concise_help(root()))),
         (HelpRequest::Full(command) | HelpRequest::Topic(command), false) => {
-            HelpOutcome::Print(printed(&detailed_help(root(), command.as_deref())))
+            Invocation::Print(printed(&detailed_help(root(), command.as_deref())))
         }
-    }
-}
-
-fn answer(
-    outcome: HelpOutcome,
-    stdout: &mut (impl Write + ?Sized),
-    stderr: &mut (impl Write + ?Sized),
-    interactive: impl FnOnce(ShellStart) -> Result<(), String>,
-) -> ExitCode {
-    match outcome {
-        HelpOutcome::Tui(command) => interactive(ShellStart::Help { command }).map_or_else(
-            |error| operational_error(stderr, error),
-            |()| ExitCode::SUCCESS,
-        ),
-        HelpOutcome::Page(text) if page(&text).is_ok() => ExitCode::SUCCESS,
-        HelpOutcome::Page(text) | HelpOutcome::Print(text) => write_all(stdout, &text),
     }
 }
 
@@ -469,23 +455,6 @@ fn page(text: &str) -> std::io::Result<()> {
 fn write_all(stdout: &mut (impl Write + ?Sized), text: &str) -> ExitCode {
     if stdout.write_all(text.as_bytes()).is_ok() {
         ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    }
-}
-
-fn write_clap_error(
-    stdout: &mut (impl Write + ?Sized),
-    stderr: &mut (impl Write + ?Sized),
-    error: &clap::Error,
-) -> ExitCode {
-    let result = if error.use_stderr() {
-        write!(stderr, "{error}")
-    } else {
-        write!(stdout, "{error}")
-    };
-    if result.is_ok() {
-        exit_code(error.exit_code())
     } else {
         ExitCode::FAILURE
     }
@@ -626,116 +595,117 @@ mod tests {
         }
     }
 
-    fn parsed(arguments: &[&str]) -> Cli {
-        Cli::from_arg_matches(&root().get_matches_from(arguments))
-            .unwrap_or_else(|_| unreachable!("the arguments are a valid command"))
+    fn invocations(arguments: &[&str]) -> [Invocation; 2] {
+        let arguments = || std::iter::once("gitserious").chain(arguments.iter().copied());
+        [parse(arguments(), true), parse(arguments(), false)]
+    }
+
+    fn shell(page: ShellStart) -> Invocation {
+        Invocation::Open(page)
+    }
+
+    fn help_on(command: Option<&str>) -> Invocation {
+        shell(ShellStart::Help {
+            command: command.map(str::to_owned),
+        })
+    }
+
+    fn printed_long(command: Option<&str>) -> Invocation {
+        Invocation::Print(printed(&detailed_help(root(), command)))
     }
 
     #[test]
     fn commands_select_a_shell_page_and_commit_does_not_author() {
-        let page = |arguments, shell, terminal| {
-            launch(parsed(arguments).command.as_ref(), shell, terminal)
-        };
-        assert_eq!(
-            page(&["gitserious"], true, true),
-            Ok(Launch::Shell(ShellStart::Home))
-        );
-        assert_eq!(page(&["gitserious"], true, false), Ok(Launch::ConciseHelp));
-        assert_eq!(
-            page(&["gitserious"], false, true),
-            Err("interactive shell is not configured")
-        );
-        assert_eq!(
-            page(&["gitserious", "commit"], true, true),
-            Ok(Launch::Shell(ShellStart::Commit))
-        );
-        assert_eq!(
-            page(&["gitserious", "commit"], true, false),
-            Ok(Launch::Shell(ShellStart::Commit)),
-            "a missing terminal is the shell's concern, not a second author"
-        );
-        assert_eq!(
-            page(&["gitserious", "commit"], false, false),
-            Err("interactive shell is not configured")
-        );
-        assert_eq!(
-            page(&["gitserious", "config"], true, false),
-            Ok(Launch::Shell(ShellStart::Config))
-        );
-        assert_eq!(
-            page(&["gitserious", "config"], false, true),
-            Err("interactive shell is not configured")
-        );
-        assert_eq!(
-            page(&["gitserious", "init"], false, false),
-            Ok(Launch::Init)
-        );
+        let concise = Invocation::Print(printed(&concise_help(root())));
+        let table = [
+            (&[][..], [shell(ShellStart::Home), concise]),
+            (&["init"], [Invocation::Init, Invocation::Init]),
+            (
+                &["config"],
+                [shell(ShellStart::Config), shell(ShellStart::Config)],
+            ),
+            (
+                &["commit"],
+                [shell(ShellStart::Commit), shell(ShellStart::Commit)],
+            ),
+        ];
+
+        for (arguments, expected) in table {
+            assert_eq!(invocations(arguments), expected, "{arguments:?}");
+        }
     }
 
     #[test]
     fn help_opens_the_shell_on_a_terminal_and_prints_when_redirected() {
-        let clap_rendered = "Usage: gitserious config [OPTIONS]\n".to_owned();
-        let concise = HelpOutcome::Print(printed(&concise_help(root())));
-        let long = |command| HelpOutcome::Print(printed(&detailed_help(root(), command)));
-        let named = |command: &str| Some(command.to_owned());
+        let concise = Invocation::Print(printed(&concise_help(root())));
         let table = [
+            (&["--help"][..], [help_on(None), concise]),
             (
-                HelpRequest::Concise(clap_rendered.clone()),
-                HelpOutcome::Page(clap_rendered.clone()),
-                HelpOutcome::Print(clap_rendered),
+                &["config", "--help"],
+                [help_on(Some("config")), printed_long(Some("config"))],
             ),
-            (HelpRequest::Full(None), HelpOutcome::Tui(None), concise),
+            (&["help"], [help_on(None), printed_long(None)]),
             (
-                HelpRequest::Full(named("config")),
-                HelpOutcome::Tui(named("config")),
-                long(Some("config")),
+                &["help", "config"],
+                [help_on(Some("config")), printed_long(Some("config"))],
             ),
             (
-                HelpRequest::Topic(named("config")),
-                HelpOutcome::Tui(named("config")),
-                long(Some("config")),
-            ),
-            (HelpRequest::Topic(None), HelpOutcome::Tui(None), long(None)),
-            (
-                HelpRequest::Topic(named("help")),
-                HelpOutcome::Tui(named("help")),
-                long(Some("help")),
+                &["help", "help"],
+                [help_on(Some("help")), printed_long(Some("help"))],
             ),
         ];
 
-        for (request, terminal, redirected) in table {
-            assert_eq!(route(request.clone(), true), terminal, "{request:?}");
-            assert_eq!(route(request.clone(), false), redirected, "{request:?}");
+        for (arguments, expected) in table {
+            assert_eq!(invocations(arguments), expected, "{arguments:?}");
         }
         assert_ne!(
-            route(HelpRequest::Full(None), false),
-            route(HelpRequest::Topic(None), false),
+            invocations(&["--help"])[1],
+            invocations(&["help"])[1],
             "redirected `--help` is concise and `help` is long"
         );
     }
 
     #[test]
-    fn terminal_help_launch_failures_report_stderr_without_printing_help() {
-        for command in [None, Some("commit")] {
-            let requested = command.map(str::to_owned);
-            let mut opened = Vec::new();
-            let mut stdout = Vec::new();
-            let mut stderr = Vec::new();
+    fn concise_help_pages_on_a_terminal_and_prints_when_redirected() {
+        for arguments in [&["-h"][..], &["config", "-h"], &["commit", "-h"]] {
+            let [Invocation::Page(paged), Invocation::Print(printed)] = invocations(arguments)
+            else {
+                unreachable!("{arguments:?} is concise help");
+            };
+            assert_eq!(paged, printed, "{arguments:?}");
+            assert!(printed.contains("Usage: gitserious"), "{printed}");
+        }
+        assert_eq!(
+            invocations(&["-h"])[1],
+            Invocation::Print(printed(&concise_help(root())))
+        );
+    }
 
-            let exit = answer(
-                route(HelpRequest::Topic(requested.clone()), true),
-                &mut stdout,
-                &mut stderr,
-                |page| {
-                    opened.push(page);
-                    Err("help shell rejected".into())
-                },
-            );
+    #[test]
+    fn the_version_prints_on_stdout_whatever_the_terminal() {
+        let version = Invocation::Print(format!("gitserious {}\n", env!("CARGO_PKG_VERSION")));
 
-            assert_eq!(exit, ExitCode::FAILURE);
-            assert_eq!(opened, [ShellStart::Help { command: requested }]);
-            assert!(stdout.is_empty());
-            assert_eq!(stderr, b"error: help shell rejected\n");
+        assert_eq!(invocations(&["--version"]), [version.clone(), version]);
+    }
+
+    #[test]
+    fn usage_errors_reject_with_the_clap_message_and_code_two() {
+        for arguments in [
+            &["unknown"][..],
+            &["init", "extra"],
+            &["init", "--taxonomy", "research"],
+            &["commit", "--type", "feat"],
+            &["commit", "--template", "default"],
+            &["config", "fork"],
+            &["help", "unknown"],
+        ] {
+            for invocation in invocations(arguments) {
+                let Invocation::Reject { message, code } = invocation else {
+                    unreachable!("{arguments:?} is a usage error");
+                };
+                assert_eq!(code, ExitCode::from(2), "{arguments:?}");
+                assert!(message.starts_with("error: "), "{message}");
+            }
         }
     }
 
