@@ -12,12 +12,12 @@
 )]
 
 mod commit;
+mod config;
 mod confirmation;
 mod help;
 mod home;
 mod runtime;
 mod shell;
-mod taxonomy_config;
 mod theme;
 
 pub use help::HelpPage;
