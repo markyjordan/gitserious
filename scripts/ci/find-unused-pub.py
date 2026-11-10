@@ -99,6 +99,7 @@ class Scan:
         self.sources = sorted((work / "crates" / crate / "src").rglob("*.rs"))
         self.prefix = ("crates", crate)
         self.original = {}
+        self.this_round = set()
         for path in self.sources:
             text = split_use_groups(path.read_text())
             self.original[path.relative_to(work)] = text.split("\n")
@@ -109,9 +110,15 @@ class Scan:
         lines = path.read_text().split("\n")
         original = self.original[rel]
         restored = 0
-        for index in (number - 1 for number in numbers):
+        for number in numbers:
+            index = number - 1
             if index < len(original) and lines[index] != original[index]:
                 lines[index] = original[index]
+                self.this_round.add((rel, number))
+                restored += 1
+            elif (rel, number) in self.this_round:
+                # An earlier error this round restored the line; the next
+                # check says whether that was enough.
                 restored += 1
         path.write_text("\n".join(lines))
         return restored
@@ -136,6 +143,7 @@ class Scan:
         return 0
 
     def resolve(self, errors):
+        self.this_round = set()
         restored = 0
         for error in errors:
             by_file = {}
