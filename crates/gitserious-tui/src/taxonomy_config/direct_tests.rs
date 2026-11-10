@@ -423,44 +423,41 @@ fn zero_type_entry_reopens_unlocks_until_eligible_and_stays_locked_after_last_ty
     assert!(!record.name_locked());
     assert!(record.usable().is_none());
     assert!(frame(&mut state, 87, 40)?.contains("▲ invalid"));
-    for embedded in [false, true] {
-        state.embedded = embedded;
-        for width in [MINIMUM_WIDTH, 87, 140] {
-            let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
-            terminal.draw(|frame| state.render(frame))?;
-            let outline = state.taxonomies.observe(state.library()).outline_area;
-            let buffer = terminal.backend().buffer();
-            let mut count = 0;
-            for y in 0..40 {
-                let row = (0..width)
-                    .map(|x| buffer[(x, y)].symbol())
-                    .collect::<String>();
-                if let Some(start) = row.find("▲ invalid") {
-                    let x = u16::try_from(row[..start].chars().count())?;
-                    if outline.contains(Position::new(x, y)) {
-                        // The outline keeps the origin beside the status, on the focused cursor.
-                        let entry = row
-                            .chars()
-                            .skip(usize::from(outline.x))
-                            .take(usize::from(outline.width))
-                            .collect::<String>();
-                        assert!(entry.contains(" work-in-progress "), "{row}");
-                        assert!(entry.contains(" custom "), "{row}");
-                        let cell = &buffer[(x, y)];
-                        assert_eq!((cell.fg, cell.bg), (theme().ground, theme().cursor));
-                    } else {
-                        // The Inspector's badge is plain red text, right-aligned on its heading.
-                        assert!(row.trim_end().ends_with("▲ invalid"), "{row}");
-                        for dx in 0.."▲ invalid".chars().count() {
-                            let cell = &buffer[(x + u16::try_from(dx)?, y)];
-                            assert_eq!((cell.fg, cell.bg), (theme().blocks, theme().ground));
-                        }
+    for width in [MINIMUM_WIDTH, 87, 140] {
+        let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
+        terminal.draw(|frame| state.render(frame))?;
+        let outline = state.taxonomies.observe(state.library()).outline_area;
+        let buffer = terminal.backend().buffer();
+        let mut count = 0;
+        for y in 0..40 {
+            let row = (0..width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>();
+            if let Some(start) = row.find("▲ invalid") {
+                let x = u16::try_from(row[..start].chars().count())?;
+                if outline.contains(Position::new(x, y)) {
+                    // The outline keeps the origin beside the status, on the focused cursor.
+                    let entry = row
+                        .chars()
+                        .skip(usize::from(outline.x))
+                        .take(usize::from(outline.width))
+                        .collect::<String>();
+                    assert!(entry.contains(" work-in-progress "), "{row}");
+                    assert!(entry.contains(" custom "), "{row}");
+                    let cell = &buffer[(x, y)];
+                    assert_eq!((cell.fg, cell.bg), (theme().ground, theme().cursor));
+                } else {
+                    // The Inspector's badge is plain red text, right-aligned on its heading.
+                    assert!(row.trim_end().ends_with("▲ invalid"), "{row}");
+                    for dx in 0.."▲ invalid".chars().count() {
+                        let cell = &buffer[(x + u16::try_from(dx)?, y)];
+                        assert_eq!((cell.fg, cell.bg), (theme().blocks, theme().ground));
                     }
-                    count += 1;
                 }
+                count += 1;
             }
-            assert_eq!(count, 2);
         }
+        assert_eq!(count, 2);
     }
     let mut state = State::new(&store);
     press(&mut state, &store, KeyCode::Char('2'));

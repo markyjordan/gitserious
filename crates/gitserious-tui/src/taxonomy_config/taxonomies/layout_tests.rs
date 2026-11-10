@@ -325,7 +325,7 @@ fn focused_fields_and_their_errors_remain_visible_in_short_inspectors() -> Resul
 fn footer_keys_have_balanced_padding_and_a_separate_label_gap() -> Result {
     let (view, library) = fixture()?;
     for width in [64, 85, 138] {
-        let line = view.status_line(Some(&library), true, width);
+        let line = view.status_line(Some(&library), width);
         for spans in line.spans.windows(2) {
             let [chip, label] = spans else { unreachable!() };
             if chip.style == footer_key_style() {

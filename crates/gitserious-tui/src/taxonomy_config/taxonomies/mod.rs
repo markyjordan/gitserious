@@ -745,12 +745,7 @@ impl TaxonomiesView {
         panes.lead
     }
 
-    pub(super) fn status_line(
-        &self,
-        library: Option<&LibraryDraft>,
-        embedded: bool,
-        width: u16,
-    ) -> Line<'static> {
+    pub(super) fn status_line(&self, library: Option<&LibraryDraft>, width: u16) -> Line<'static> {
         if let Some(hints) = self.picker_hints() {
             return footer_hints(&hints).style(footer_label_style());
         }
@@ -777,7 +772,7 @@ impl TaxonomiesView {
         } else {
             vec![("/", "commands"), ("q", "quit")]
         };
-        if embedded && !editing {
+        if !editing {
             trailing.insert(0, ("tab", "nav bar"));
         }
         if matches!(row, Some(Row::NewTaxonomy)) {

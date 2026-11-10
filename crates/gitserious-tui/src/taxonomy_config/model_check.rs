@@ -7,8 +7,7 @@
 //! active edit and writes nothing. Ctrl+W finishes that edit only after storage succeeds.
 //! At most one taxonomy root is expanded, while type expansion can be remembered independently.
 //! The existing breadth-first runner deduplicates snapshots and reports shortest counterexamples.
-//! Every seed starts from the Config page as the shell embeds it. Keys the shell takes first
-//! still reach it here. Mouse, resize, write failures and the shell are covered by interaction
+//! Keys the shell takes before Config still reach it here. Mouse, resize, write failures and the shell are covered by interaction
 //! tests.
 
 use crate::library_lookup::LibraryLookup;
@@ -499,7 +498,6 @@ struct Snapshot {
     active_scope: ConfigurationDestination,
     taxonomies: Observation,
     overlay: Option<String>,
-    project_scroll: u16,
     status: Option<String>,
     global: Option<ConfigurationSession>,
     project: Option<ConfigurationSession>,
@@ -528,7 +526,6 @@ impl Snapshot {
                 .home_overlay
                 .as_ref()
                 .map(|overlay| format!("{overlay:?}")),
-            project_scroll: state.project_scroll,
             status: state.status.as_ref().map(|notice| match notice {
                 Notice::Error(message) => format!("error: {message}"),
             }),
@@ -1330,7 +1327,7 @@ fn selected_policy(snapshot: &Snapshot) -> Option<String> {
 /// Replays `keys` from a fresh workspace. Returns `None` when the last key quit the editor.
 fn replay(seed: &Seed, keys: &[usize]) -> Result<Option<Snapshot>, String> {
     let workspace = (seed.workspace)()?;
-    let mut state = ConfigView::new(&workspace).state;
+    let mut state = State::new(&workspace);
     let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))
         .map_err(|error| error.to_string())?;
     let mut draw = |state: &mut State| {

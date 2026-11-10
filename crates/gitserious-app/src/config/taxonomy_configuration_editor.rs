@@ -107,13 +107,6 @@ impl ConfigurationSession {
         }
     }
 
-    /// Returns the configuration Apply would write, or none before initialization or while the
-    /// draft has problems.
-    #[must_use]
-    pub fn project_config(&self) -> Option<ProjectConfiguration> {
-        self.project_draft()?.build_project().ok()
-    }
-
     /// Returns the applied project configuration, or none before the first Apply.
     #[must_use]
     pub fn persisted_project_config(&self) -> Option<&ProjectConfiguration> {

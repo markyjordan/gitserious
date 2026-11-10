@@ -1,10 +1,7 @@
 use crate::library_lookup::LibraryLookup;
 use std::cell::{Cell, RefCell};
 
-use gitserious_app::{
-    DraftField, GlobalConfiguration, ProjectConfiguration, ProjectRevision, RepositoryRoot,
-    StoredProject, initial_project_configuration,
-};
+use gitserious_app::{DraftField, GlobalConfiguration, RepositoryRoot};
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
     PropertyRequirement, SchemaVersion, TaxonomyVersion,
@@ -143,20 +140,7 @@ impl ConfigurationWorkspace for Workspace {
                 *self.global.borrow_mut() = saved.clone();
                 Ok(saved)
             }
-            Some(root) => {
-                let configuration = session
-                    .project_config()
-                    .ok_or("project initialization has not been staged")?;
-                let saved = ConfigurationSession::open_project(
-                    root.clone(),
-                    Some(StoredProject {
-                        configuration,
-                        revision: ProjectRevision::of_bytes(b"saved"),
-                    }),
-                );
-                *self.project.borrow_mut() = saved.clone();
-                Ok(saved)
-            }
+            Some(_) => Err("the Config page never saves a Project".into()),
         }
     }
 
@@ -245,9 +229,12 @@ fn row_text(terminal: &Terminal<TestBackend>, x: u16, y: u16, width: u16) -> Str
 }
 
 #[test]
-fn project_shows_sections_files_and_initialize() -> Result<(), Box<dyn std::error::Error>> {
+fn an_unloadable_project_shows_its_sections_beside_the_error()
+-> Result<(), Box<dyn std::error::Error>> {
     let workspace = Workspace::new();
     let mut state = State::new(&workspace);
+    state.project = None;
+    state.project_error = "project load failed".into();
     let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
     terminal.draw(|frame| state.render(frame))?;
     let home = text(&terminal);
@@ -257,16 +244,6 @@ fn project_shows_sections_files_and_initialize() -> Result<(), Box<dyn std::erro
     assert!(home.contains("Commit"));
     assert!(home.contains("Taxonomies"));
     assert!(home.contains("Files"));
-    assert!(home.contains("Not initialized"));
-    assert!(home.contains("Press i to initialize"));
-    assert!(
-        state
-            .project
-            .as_ref()
-            .ok_or("missing project")?
-            .project_config()
-            .is_none()
-    );
     let buffer = terminal.backend().buffer();
     assert_eq!(row_text(&terminal, 0, 0, RAIL_WIDTH), " ".repeat(13));
     for y in 0..29 {
@@ -286,7 +263,7 @@ fn project_shows_sections_files_and_initialize() -> Result<(), Box<dyn std::erro
             project_columns[1].y + 1,
             project_columns[1].width - 2,
         )
-        .starts_with("Commit taxonomy")
+        .starts_with("project load failed")
     );
     assert_eq!(row_text(&terminal, 0, 1, RAIL_WIDTH), " 1  Project  ");
     for x in 0..RAIL_WIDTH {
@@ -307,62 +284,6 @@ fn project_shows_sections_files_and_initialize() -> Result<(), Box<dyn std::erro
         assert_eq!(buffer[(x, 29)].fg, theme().dim);
         assert_eq!(buffer[(x, 29)].bg, theme().band);
     }
-
-    state.handle_event(key(KeyCode::Right), &workspace);
-    state.handle_event(key(KeyCode::Down), &workspace);
-    assert_eq!(state.project_section, ProjectSection::Taxonomies);
-    terminal.draw(|frame| state.render(frame))?;
-    assert!(text(&terminal).contains("Taxonomies"));
-    assert!(state.project_detail().contains("Not initialized"));
-    state.handle_event(key(KeyCode::Down), &workspace);
-    assert_eq!(state.project_section, ProjectSection::Files);
-    terminal.draw(|frame| state.render(frame))?;
-    let files = text(&terminal);
-    assert!(files.contains("Project configuration"));
-    assert!(state.project_detail().contains("gitserious.toml"));
-    assert!(!state.project_detail().contains("gitserious.lock"));
-    assert!(files.contains("Absent"));
-    Ok(())
-}
-
-#[test]
-fn project_panels_show_only_the_embedded_policy() -> Result<(), Box<dyn std::error::Error>> {
-    let workspace = Workspace::new();
-    let mut state = State::new(&workspace);
-    let root = RepositoryRoot::new(std::env::temp_dir())?;
-    let mut authored = ConfigurationSession::open_global(GlobalConfiguration::default());
-    fork_as(&mut authored, "conventional", "team")?;
-    let authored = authored
-        .library()
-        .and_then(|library| library.build().ok())
-        .ok_or("the fork builds")?;
-    let team = authored
-        .catalog()?
-        .find(&TaxonomyId::new("team")?)
-        .cloned()
-        .ok_or("the fork is in the catalog")?;
-    let research =
-        initial_project_configuration(&GlobalConfiguration::default())?.taxonomies()[1].clone();
-    let project = ProjectConfiguration::new(1, team.id().clone(), vec![team, research])?;
-    state.project = Some(ConfigurationSession::open_project(
-        root,
-        Some(StoredProject {
-            configuration: project,
-            revision: ProjectRevision::of_bytes(b"opened"),
-        }),
-    ));
-    state.global = None;
-    state.global_error = "the Library is corrupt".into();
-
-    let commit = state.project_detail();
-    assert!(commit.contains("Commit taxonomy\n  team"));
-    assert!(commit.contains("Available taxonomies\n  team, research"));
-    assert!(commit.contains("the Library is not consulted"));
-    assert!(commit.contains("Valid"));
-    state.project_section = ProjectSection::Taxonomies;
-    let taxonomies = state.project_detail();
-    assert!(taxonomies.contains("team\n"));
-    assert!(taxonomies.contains("Types: feat, fix"));
     Ok(())
 }
 
@@ -473,47 +394,44 @@ fn outline_lists_every_taxonomy_and_the_inspector_describes_the_selection()
 #[test]
 fn custom_origin_is_a_plain_word_in_the_outline_and_no_badge_in_the_inspector()
 -> Result<(), Box<dyn std::error::Error>> {
-    for embedded in [false, true] {
-        for width in [MINIMUM_WIDTH, 87, 140] {
-            let (workspace, _) = custom_workspace()?;
-            let mut state = State::new(&workspace);
-            state.embedded = embedded;
-            state.handle_event(key(KeyCode::Char('2')), &workspace);
-            let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
-            for selected in [false, true] {
-                if selected {
-                    select_taxonomy(&mut state, 3);
+    for width in [MINIMUM_WIDTH, 87, 140] {
+        let (workspace, _) = custom_workspace()?;
+        let mut state = State::new(&workspace);
+        state.handle_event(key(KeyCode::Char('2')), &workspace);
+        let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
+        for selected in [false, true] {
+            if selected {
+                select_taxonomy(&mut state, 3);
+            }
+            terminal.draw(|frame| state.render(frame))?;
+            let outline = state.taxonomies.observe(state.library()).outline_area;
+            let buffer = terminal.backend().buffer();
+            let mut words = 0;
+            for (y, row) in rows(&terminal).iter().enumerate() {
+                for (start, _) in row.match_indices(" custom ") {
+                    let x = u16::try_from(row[..start].chars().count())?;
+                    let y = u16::try_from(y)?;
+                    assert!(outline.contains(Position::new(x, y)), "{row}");
+                    // The selected row is the focused cursor bar.
+                    let (fg, bg) = if selected {
+                        (theme().ground, theme().cursor)
+                    } else {
+                        (theme().text, theme().ground)
+                    };
+                    let cell = &buffer[(x + 1, y)];
+                    assert_eq!((cell.fg, cell.bg), (fg, bg));
+                    assert!(cell.modifier.contains(Modifier::BOLD));
+                    words += 1;
                 }
-                terminal.draw(|frame| state.render(frame))?;
-                let outline = state.taxonomies.observe(state.library()).outline_area;
-                let buffer = terminal.backend().buffer();
-                let mut words = 0;
-                for (y, row) in rows(&terminal).iter().enumerate() {
-                    for (start, _) in row.match_indices(" custom ") {
-                        let x = u16::try_from(row[..start].chars().count())?;
-                        let y = u16::try_from(y)?;
-                        assert!(outline.contains(Position::new(x, y)), "{row}");
-                        // The selected row is the focused cursor bar.
-                        let (fg, bg) = if selected {
-                            (theme().ground, theme().cursor)
-                        } else {
-                            (theme().text, theme().ground)
-                        };
-                        let cell = &buffer[(x + 1, y)];
-                        assert_eq!((cell.fg, cell.bg), (fg, bg));
-                        assert!(cell.modifier.contains(Modifier::BOLD));
-                        words += 1;
-                    }
-                }
-                assert_eq!(words, 1);
-                if selected {
-                    let area = state.taxonomies.observe(state.library()).inspector_area;
-                    let heading = text_in(&terminal, area)
-                        .into_iter()
-                        .next()
-                        .ok_or("Inspector")?;
-                    assert_eq!(heading.trim(), "Taxonomy original");
-                }
+            }
+            assert_eq!(words, 1);
+            if selected {
+                let area = state.taxonomies.observe(state.library()).inspector_area;
+                let heading = text_in(&terminal, area)
+                    .into_iter()
+                    .next()
+                    .ok_or("Inspector")?;
+                assert_eq!(heading.trim(), "Taxonomy original");
             }
         }
     }
@@ -523,74 +441,71 @@ fn custom_origin_is_a_plain_word_in_the_outline_and_no_badge_in_the_inspector()
 #[test]
 fn built_in_origin_stays_on_roots_and_read_only_stays_in_the_inspector()
 -> Result<(), Box<dyn std::error::Error>> {
-    for embedded in [false, true] {
-        for width in [MINIMUM_WIDTH, 87, 140] {
-            let workspace = Workspace::new();
-            let mut state = State::new(&workspace);
-            state.embedded = embedded;
-            state.handle_event(key(KeyCode::Char('2')), &workspace);
-            let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
-            for next in [
-                None,
-                Some(KeyCode::Enter),
-                Some(KeyCode::Down),
-                Some(KeyCode::Enter),
-                Some(KeyCode::Down),
-            ] {
-                if let Some(next) = next {
-                    state.handle_event(key(next), &workspace);
-                }
-                terminal.draw(|frame| state.render(frame))?;
-                let observation = state.taxonomies.observe(state.library());
-                let area = observation.outline_area;
-                for (index, id) in observation.visible.iter().enumerate() {
-                    let row = row_text(
-                        &terminal,
-                        area.x,
-                        area.y + u16::try_from(index)?,
-                        area.width,
-                    );
-                    let root = id
-                        .as_ref()
-                        .and_then(|id| state.library()?.node(id))
-                        .is_some_and(|node| matches!(node, NodeRef::Taxonomy(_)));
-                    assert_eq!(row.contains(" built-in "), root, "{row}");
-                    assert!(!row.contains("read-only"), "{row}");
-                }
-                let screen = rows(&terminal);
-                assert_eq!(
-                    screen
-                        .iter()
-                        .filter(|row| row.contains("◇ read-only"))
-                        .count(),
-                    1
+    for width in [MINIMUM_WIDTH, 87, 140] {
+        let workspace = Workspace::new();
+        let mut state = State::new(&workspace);
+        state.handle_event(key(KeyCode::Char('2')), &workspace);
+        let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
+        for next in [
+            None,
+            Some(KeyCode::Enter),
+            Some(KeyCode::Down),
+            Some(KeyCode::Enter),
+            Some(KeyCode::Down),
+        ] {
+            if let Some(next) = next {
+                state.handle_event(key(next), &workspace);
+            }
+            terminal.draw(|frame| state.render(frame))?;
+            let observation = state.taxonomies.observe(state.library());
+            let area = observation.outline_area;
+            for (index, id) in observation.visible.iter().enumerate() {
+                let row = row_text(
+                    &terminal,
+                    area.x,
+                    area.y + u16::try_from(index)?,
+                    area.width,
                 );
-                let buffer = terminal.backend().buffer();
-                // The outline names a built-in origin as a word, never as a chip.
-                for (y, line) in screen.iter().enumerate() {
-                    for (start, _) in line.match_indices(" built-in ") {
-                        let x = u16::try_from(line[..start].chars().count() + 1)?;
-                        let cell = &buffer[(x, u16::try_from(y)?)];
-                        assert_ne!(cell.bg, Color::Rgb(211, 211, 211));
-                        assert!(cell.modifier.contains(Modifier::BOLD));
+                let root = id
+                    .as_ref()
+                    .and_then(|id| state.library()?.node(id))
+                    .is_some_and(|node| matches!(node, NodeRef::Taxonomy(_)));
+                assert_eq!(row.contains(" built-in "), root, "{row}");
+                assert!(!row.contains("read-only"), "{row}");
+            }
+            let screen = rows(&terminal);
+            assert_eq!(
+                screen
+                    .iter()
+                    .filter(|row| row.contains("◇ read-only"))
+                    .count(),
+                1
+            );
+            let buffer = terminal.backend().buffer();
+            // The outline names a built-in origin as a word, never as a chip.
+            for (y, line) in screen.iter().enumerate() {
+                for (start, _) in line.match_indices(" built-in ") {
+                    let x = u16::try_from(line[..start].chars().count() + 1)?;
+                    let cell = &buffer[(x, u16::try_from(y)?)];
+                    assert_ne!(cell.bg, Color::Rgb(211, 211, 211));
+                    assert!(cell.modifier.contains(Modifier::BOLD));
+                }
+            }
+            // The Inspector's badge is plain dim text, right-aligned on its heading.
+            for (y, line) in screen.iter().enumerate() {
+                for (start, _) in line.match_indices("◇ read-only") {
+                    assert!(line.trim_end().ends_with("◇ read-only"), "{line}");
+                    let x = line[..start].chars().count();
+                    for dx in 0.."◇ read-only".chars().count() {
+                        let cell = &buffer[(u16::try_from(x + dx)?, u16::try_from(y)?)];
+                        assert_eq!((cell.fg, cell.bg), (theme().dim, theme().ground));
+                        assert_eq!(cell.modifier, Modifier::empty());
                     }
                 }
-                // The Inspector's badge is plain dim text, right-aligned on its heading.
-                for (y, line) in screen.iter().enumerate() {
-                    for (start, _) in line.match_indices("◇ read-only") {
-                        assert!(line.trim_end().ends_with("◇ read-only"), "{line}");
-                        let x = line[..start].chars().count();
-                        for dx in 0.."◇ read-only".chars().count() {
-                            let cell = &buffer[(u16::try_from(x + dx)?, u16::try_from(y)?)];
-                            assert_eq!((cell.fg, cell.bg), (theme().dim, theme().ground));
-                            assert_eq!(cell.modifier, Modifier::empty());
-                        }
-                    }
-                }
-                let footer = row_text(&terminal, 0, 38, width);
-                for label in ["built-in", "read-only", "e edit", "c copy", "d delete"] {
-                    assert!(!footer.contains(label), "{footer}");
-                }
+            }
+            let footer = row_text(&terminal, 0, 38, width);
+            for label in ["built-in", "read-only", "e edit", "c copy", "d delete"] {
+                assert!(!footer.contains(label), "{footer}");
             }
         }
     }
@@ -1100,7 +1015,6 @@ fn footer_commands_start_at_the_left_and_keep_the_edit_badge()
 fn embedded_footer_ends_with_the_shell_keys() -> Result<(), Box<dyn std::error::Error>> {
     let workspace = Workspace::new();
     let mut state = State::new(&workspace);
-    state.embedded = true;
     state.handle_event(key(KeyCode::Char('2')), &workspace);
     let mut terminal = Terminal::new(TestBackend::new(87, 36))?;
     terminal.draw(|frame| state.render(frame))?;
@@ -1122,42 +1036,39 @@ fn embedded_footer_ends_with_the_shell_keys() -> Result<(), Box<dyn std::error::
 fn taxonomy_footer_keeps_open_and_close_shortcuts_at_compact_widths()
 -> Result<(), Box<dyn std::error::Error>> {
     for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (87, 40)] {
-        for embedded in [false, true] {
-            for (taxonomy, commit_type) in [
-                ("conventional", None),
-                ("conventional", Some("feat")),
-                ("original", None),
-                ("original", Some("existing")),
+        for (taxonomy, commit_type) in [
+            ("conventional", None),
+            ("conventional", Some("feat")),
+            ("original", None),
+            ("original", Some("existing")),
+        ] {
+            let (workspace, _) = custom_workspace()?;
+            let mut state = State::new(&workspace);
+            state.handle_event(key(KeyCode::Char('2')), &workspace);
+            let parent = library(&state)?
+                .find_path(&[taxonomy])
+                .ok_or("missing taxonomy")?;
+            state.taxonomies.select(parent);
+            if let Some(commit_type) = commit_type {
+                state.handle_event(key(KeyCode::Enter), &workspace);
+                let node = library(&state)?
+                    .find_path(&[taxonomy, commit_type])
+                    .ok_or("missing type")?;
+                state.taxonomies.select(node);
+            }
+            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+            for (shortcut, absent, next) in [
+                ("enter open", "enter close", KeyCode::Enter),
+                ("enter close", "enter open", KeyCode::Enter),
+                ("enter open", "enter close", KeyCode::Enter),
             ] {
-                let (workspace, _) = custom_workspace()?;
-                let mut state = State::new(&workspace);
-                state.embedded = embedded;
-                state.handle_event(key(KeyCode::Char('2')), &workspace);
-                let parent = library(&state)?
-                    .find_path(&[taxonomy])
-                    .ok_or("missing taxonomy")?;
-                state.taxonomies.select(parent);
-                if let Some(commit_type) = commit_type {
-                    state.handle_event(key(KeyCode::Enter), &workspace);
-                    let node = library(&state)?
-                        .find_path(&[taxonomy, commit_type])
-                        .ok_or("missing type")?;
-                    state.taxonomies.select(node);
-                }
-                let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-                for (shortcut, absent, next) in [
-                    ("enter open", "enter close", KeyCode::Enter),
-                    ("enter close", "enter open", KeyCode::Enter),
-                    ("enter open", "enter close", KeyCode::Enter),
-                ] {
-                    terminal.draw(|frame| state.render(frame))?;
-                    let footer = row_text(&terminal, 0, height - 1, width);
-                    assert!(footer.contains(shortcut), "{footer}");
-                    assert!(!footer.contains(absent), "{footer}");
-                    assert!(!footer.contains('…'), "{footer}");
-                    assert!(!footer.contains("? help"), "{footer}");
-                    state.handle_event(key(next), &workspace);
-                }
+                terminal.draw(|frame| state.render(frame))?;
+                let footer = row_text(&terminal, 0, height - 1, width);
+                assert!(footer.contains(shortcut), "{footer}");
+                assert!(!footer.contains(absent), "{footer}");
+                assert!(!footer.contains('…'), "{footer}");
+                assert!(!footer.contains("? help"), "{footer}");
+                state.handle_event(key(next), &workspace);
             }
         }
     }
@@ -1166,52 +1077,49 @@ fn taxonomy_footer_keeps_open_and_close_shortcuts_at_compact_widths()
 
 #[test]
 fn library_footer_omits_node_context_in_nav_and_edit() -> Result<(), Box<dyn std::error::Error>> {
-    for embedded in [false, true] {
-        for width in [MINIMUM_WIDTH, 87, 140] {
-            for path in [
-                vec!["original"],
-                vec!["original", "existing"],
-                vec!["original", "existing", "notes"],
-            ] {
-                let (workspace, _) = custom_workspace()?;
-                let mut state = State::new(&workspace);
-                state.embedded = embedded;
-                state.handle_event(key(KeyCode::Char('2')), &workspace);
-                for depth in 1..=path.len() {
-                    let node = library(&state)?.find_path(&path[..depth]).ok_or("node")?;
-                    state.taxonomies.select(node);
-                    if depth < path.len() {
-                        state.handle_event(key(KeyCode::Enter), &workspace);
-                    }
+    for width in [MINIMUM_WIDTH, 87, 140] {
+        for path in [
+            vec!["original"],
+            vec!["original", "existing"],
+            vec!["original", "existing", "notes"],
+        ] {
+            let (workspace, _) = custom_workspace()?;
+            let mut state = State::new(&workspace);
+            state.handle_event(key(KeyCode::Char('2')), &workspace);
+            for depth in 1..=path.len() {
+                let node = library(&state)?.find_path(&path[..depth]).ok_or("node")?;
+                state.taxonomies.select(node);
+                if depth < path.len() {
+                    state.handle_event(key(KeyCode::Enter), &workspace);
                 }
-                let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
-                for editing in [false, true] {
-                    if editing {
-                        state.handle_event(key(KeyCode::Char('e')), &workspace);
-                    }
-                    terminal.draw(|frame| state.render(frame))?;
-                    let footer = row_text(&terminal, 0, 39, width);
-                    for context in ["· taxonomy", "· type", "· property"] {
-                        assert!(!footer.contains(context), "{footer}");
-                    }
-                    if editing {
+            }
+            let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
+            for editing in [false, true] {
+                if editing {
+                    state.handle_event(key(KeyCode::Char('e')), &workspace);
+                }
+                terminal.draw(|frame| state.render(frame))?;
+                let footer = row_text(&terminal, 0, 39, width);
+                for context in ["· taxonomy", "· type", "· property"] {
+                    assert!(!footer.contains(context), "{footer}");
+                }
+                if editing {
+                    assert!(
+                        footer.contains("EDIT")
+                            && footer.contains("enter next")
+                            && footer.contains("ctrl+w")
+                            && footer.contains("save")
+                            && footer.contains("esc")
+                            && footer.contains("cancel"),
+                        "{footer}"
+                    );
+                } else {
+                    assert!(!footer.contains(" NAV ") && footer.contains("←/→ focus"));
+                    if width >= 87 {
                         assert!(
-                            footer.contains("EDIT")
-                                && footer.contains("enter next")
-                                && footer.contains("ctrl+w")
-                                && footer.contains("save")
-                                && footer.contains("esc")
-                                && footer.contains("cancel"),
+                            footer.contains("e edit") && footer.contains("d delete"),
                             "{footer}"
                         );
-                    } else {
-                        assert!(!footer.contains(" NAV ") && footer.contains("←/→ focus"));
-                        if width >= 87 {
-                            assert!(
-                                footer.contains("e edit") && footer.contains("d delete"),
-                                "{footer}"
-                            );
-                        }
                     }
                 }
             }
@@ -1222,56 +1130,51 @@ fn library_footer_omits_node_context_in_nav_and_edit() -> Result<(), Box<dyn std
 
 #[test]
 fn taxonomy_footer_orders_focus_move_enter_and_actions() -> Result<(), Box<dyn std::error::Error>> {
-    for embedded in [false, true] {
-        let (workspace, _) = custom_workspace()?;
-        let mut state = State::new(&workspace);
-        state.embedded = embedded;
-        state.handle_event(key(KeyCode::Char('2')), &workspace);
-        select_taxonomy(&mut state, 3);
-        for next in [None, Some(KeyCode::Enter), Some(KeyCode::Down)] {
-            if let Some(next) = next {
-                state.handle_event(key(next), &workspace);
-            }
-            let footer = state
-                .taxonomies
-                .status_line(state.library(), embedded, 138)
-                .to_string();
-            let footer = footer_text(&footer);
-            let enter = if next == Some(KeyCode::Enter) {
-                "enter close"
-            } else {
-                "enter open"
-            };
-            let mut end = 0;
-            for hint in [
-                "←/→ focus",
-                "↑/↓ move",
-                enter,
-                "f fork",
-                "n new",
-                "e edit",
-                "d delete",
-            ] {
-                let at = footer
-                    .find(hint)
-                    .ok_or(format!("missing {hint}: {footer}"))?;
-                assert!(at >= end, "{footer}");
-                end = at + hint.len();
-            }
-            for width in MINIMUM_WIDTH..=140 {
-                let line = state
-                    .taxonomies
-                    .status_line(state.library(), embedded, width - 2);
-                assert_eq!(line.width(), usize::from(width - 2));
-                let compact = footer_text(&line.to_string());
-                assert!(
-                    compact.trim_start().starts_with("←/→ focus  ↑/↓ move"),
-                    "{compact}"
-                );
-                assert!(!compact.contains("menu"), "{compact}");
-                assert!(compact.contains(enter), "{compact}");
-                assert!(!compact.contains('…'), "{compact}");
-            }
+    let (workspace, _) = custom_workspace()?;
+    let mut state = State::new(&workspace);
+    state.handle_event(key(KeyCode::Char('2')), &workspace);
+    select_taxonomy(&mut state, 3);
+    for next in [None, Some(KeyCode::Enter), Some(KeyCode::Down)] {
+        if let Some(next) = next {
+            state.handle_event(key(next), &workspace);
+        }
+        let footer = state
+            .taxonomies
+            .status_line(state.library(), 138)
+            .to_string();
+        let footer = footer_text(&footer);
+        let enter = if next == Some(KeyCode::Enter) {
+            "enter close"
+        } else {
+            "enter open"
+        };
+        let mut end = 0;
+        for hint in [
+            "←/→ focus",
+            "↑/↓ move",
+            enter,
+            "f fork",
+            "n new",
+            "e edit",
+            "d delete",
+        ] {
+            let at = footer
+                .find(hint)
+                .ok_or(format!("missing {hint}: {footer}"))?;
+            assert!(at >= end, "{footer}");
+            end = at + hint.len();
+        }
+        for width in MINIMUM_WIDTH..=140 {
+            let line = state.taxonomies.status_line(state.library(), width - 2);
+            assert_eq!(line.width(), usize::from(width - 2));
+            let compact = footer_text(&line.to_string());
+            assert!(
+                compact.trim_start().starts_with("←/→ focus  ↑/↓ move"),
+                "{compact}"
+            );
+            assert!(!compact.contains("menu"), "{compact}");
+            assert!(compact.contains(enter), "{compact}");
+            assert!(!compact.contains('…'), "{compact}");
         }
     }
     Ok(())
@@ -1513,7 +1416,7 @@ fn home_arrows_switch_tabs_and_m_does_nothing_at_compact_and_wide_widths()
         let mut terminal = Terminal::new(TestBackend::new(width, height))?;
         terminal.draw(|frame| state.render(frame))?;
         let footer = row_text(&terminal, 0, height - 1, width);
-        assert!(footer.starts_with(" ←/→ focus  ↑/↓ move  / commands"));
+        assert!(footer.starts_with(" enter initialize  ←/→ focus"));
         assert!(!footer.contains('|'));
         state.handle_event(key(KeyCode::Tab), &workspace);
         state.handle_event(key(KeyCode::BackTab), &workspace);
@@ -1581,32 +1484,29 @@ fn question_mark_has_no_navigation_action_or_footer_hint() -> Result<(), Box<dyn
 {
     let workspace = Workspace::new();
     for category in Category::ALL {
-        for embedded in [false, true] {
-            let mut state = State::new(&workspace);
-            state.category = category;
-            state.embedded = embedded;
-            for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
-                state.handle_event(
-                    Event::Key(KeyEvent::new(KeyCode::Char('?'), modifiers)),
-                    &workspace,
-                );
-                assert!(state.home_overlay.is_none());
-                assert_eq!(state.category, category);
-            }
-            let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
-            terminal.draw(|frame| state.render(frame))?;
-            assert!(!row_text(&terminal, 0, 28, 100).contains("help"));
-            state.handle_event(key(KeyCode::Char('/')), &workspace);
-            state.handle_event(Event::Paste("help".into()), &workspace);
-            assert!(
-                state
-                    .home_overlay
-                    .as_ref()
-                    .ok_or("palette")?
-                    .visible(category)
-                    .is_empty()
+        let mut state = State::new(&workspace);
+        state.category = category;
+        for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+            state.handle_event(
+                Event::Key(KeyEvent::new(KeyCode::Char('?'), modifiers)),
+                &workspace,
             );
+            assert!(state.home_overlay.is_none());
+            assert_eq!(state.category, category);
         }
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| state.render(frame))?;
+        assert!(!row_text(&terminal, 0, 28, 100).contains("help"));
+        state.handle_event(key(KeyCode::Char('/')), &workspace);
+        state.handle_event(Event::Paste("help".into()), &workspace);
+        assert!(
+            state
+                .home_overlay
+                .as_ref()
+                .ok_or("palette")?
+                .visible(category)
+                .is_empty()
+        );
     }
     Ok(())
 }
@@ -1818,20 +1718,18 @@ fn too_small_view_blocks_hidden_actions() -> Result<(), Box<dyn std::error::Erro
     let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH - 1, MINIMUM_HEIGHT))?;
     terminal.draw(|frame| state.render(frame))?;
     assert!(text(&terminal).contains("Terminal too small"));
-    let before = state.project_section;
     state.handle_event(key(KeyCode::Down), &workspace);
-    assert_eq!(state.project_section, before);
+    assert_eq!(state.category, Category::Project);
     let mut short = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT - 1))?;
     short.draw(|frame| state.render(frame))?;
     assert!(text(&short).contains("Terminal too small"));
     let mut minimum = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
     minimum.draw(|frame| state.render(frame))?;
     assert!(text(&minimum).contains("Project"));
+    assert!(text(&minimum).contains("initialize gitserious"));
     let buffer = minimum.backend().buffer();
     assert_eq!(buffer[(RAIL_WIDTH, 0)].symbol(), "│");
     assert_eq!(buffer[(RAIL_WIDTH, 16)].symbol(), "│");
-    assert_eq!(buffer[(CONTENT_X, 0)].symbol(), "┌");
-    assert_eq!(buffer[(CONTENT_X, 16)].symbol(), "└");
     Ok(())
 }
 
@@ -1994,70 +1892,67 @@ fn open_notes(state: &mut State, workspace: &Workspace) {
 fn property_navigation_keeps_policy_and_the_rule_dim_in_nav_and_edit()
 -> Result<(), Box<dyn std::error::Error>> {
     use gitserious_app::Policy;
-    for embedded in [false, true] {
-        for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (87, 40)] {
-            let (workspace, _) = custom_workspace()?;
-            let mut state = State::new(&workspace);
-            state.embedded = embedded;
-            open_notes(&mut state, &workspace);
-            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-            let policy = |state: &State| -> Result<Policy, Box<dyn std::error::Error>> {
-                let library = library(state)?;
-                let id = library
-                    .find_path(&["original", "existing", "notes"])
-                    .ok_or("notes")?;
-                match library.node(&id) {
-                    Some(NodeRef::Property { property, .. }) => Ok(property.policy()),
-                    _ => Err("notes property".into()),
-                }
-            };
-            let initial = policy(&state)?;
-            press(&mut state, &workspace, &[KeyCode::Left]);
-            assert_eq!(cursor(&state), ["original", "existing", "notes"]);
-            assert_eq!(policy(&state)?, initial);
-            assert_eq!(state.home_focus, HomeFocus::Menu);
-            press(&mut state, &workspace, &[KeyCode::Right]);
-            terminal.draw(|frame| state.render(frame))?;
-            let footer = row_text(&terminal, 0, height - 1, width);
-            assert!(
-                footer.contains("e edit")
-                    && footer.contains("c copy property")
-                    && footer.contains("d delete"),
-                "{footer}"
-            );
-            assert!(!footer.contains("policy"));
-            let rule = rule_row(&terminal);
-            assert!(rule.is_some());
-            assert_eq!(
-                state.taxonomies.observe(state.library()).inspector_offset,
-                0
-            );
-            press(&mut state, &workspace, &[KeyCode::Left]);
-            assert_eq!(cursor(&state), ["original", "existing", "notes"]);
-            assert_eq!(state.home_focus, HomeFocus::Menu);
-            press(&mut state, &workspace, &[KeyCode::Right]);
-            assert_eq!(policy(&state)?, initial);
-            press(
-                &mut state,
-                &workspace,
-                &[KeyCode::Char('e'), KeyCode::Enter, KeyCode::Enter],
-            );
-            assert_eq!(field(&state), Some(DraftField::Policy));
-            let mut reached = std::collections::BTreeSet::new();
-            for _ in 0..4 {
-                reached.insert(policy(&state)?.label());
-                press(&mut state, &workspace, &[KeyCode::Right]);
-                terminal.draw(|frame| state.render(frame))?;
-                assert_eq!(rule_row(&terminal), rule);
+    for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (87, 40)] {
+        let (workspace, _) = custom_workspace()?;
+        let mut state = State::new(&workspace);
+        open_notes(&mut state, &workspace);
+        let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+        let policy = |state: &State| -> Result<Policy, Box<dyn std::error::Error>> {
+            let library = library(state)?;
+            let id = library
+                .find_path(&["original", "existing", "notes"])
+                .ok_or("notes")?;
+            match library.node(&id) {
+                Some(NodeRef::Property { property, .. }) => Ok(property.policy()),
+                _ => Err("notes property".into()),
             }
-            assert_eq!(reached.len(), 4);
-            press(&mut state, &workspace, &[KeyCode::Esc]);
-            terminal.draw(|frame| state.render(frame))?;
-            assert_eq!(rule_row(&terminal), rule);
-            state.home_focus = HomeFocus::Menu;
+        };
+        let initial = policy(&state)?;
+        press(&mut state, &workspace, &[KeyCode::Left]);
+        assert_eq!(cursor(&state), ["original", "existing", "notes"]);
+        assert_eq!(policy(&state)?, initial);
+        assert_eq!(state.home_focus, HomeFocus::Menu);
+        press(&mut state, &workspace, &[KeyCode::Right]);
+        terminal.draw(|frame| state.render(frame))?;
+        let footer = row_text(&terminal, 0, height - 1, width);
+        assert!(
+            footer.contains("e edit")
+                && footer.contains("c copy property")
+                && footer.contains("d delete"),
+            "{footer}"
+        );
+        assert!(!footer.contains("policy"));
+        let rule = rule_row(&terminal);
+        assert!(rule.is_some());
+        assert_eq!(
+            state.taxonomies.observe(state.library()).inspector_offset,
+            0
+        );
+        press(&mut state, &workspace, &[KeyCode::Left]);
+        assert_eq!(cursor(&state), ["original", "existing", "notes"]);
+        assert_eq!(state.home_focus, HomeFocus::Menu);
+        press(&mut state, &workspace, &[KeyCode::Right]);
+        assert_eq!(policy(&state)?, initial);
+        press(
+            &mut state,
+            &workspace,
+            &[KeyCode::Char('e'), KeyCode::Enter, KeyCode::Enter],
+        );
+        assert_eq!(field(&state), Some(DraftField::Policy));
+        let mut reached = std::collections::BTreeSet::new();
+        for _ in 0..4 {
+            reached.insert(policy(&state)?.label());
+            press(&mut state, &workspace, &[KeyCode::Right]);
             terminal.draw(|frame| state.render(frame))?;
             assert_eq!(rule_row(&terminal), rule);
         }
+        assert_eq!(reached.len(), 4);
+        press(&mut state, &workspace, &[KeyCode::Esc]);
+        terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(rule_row(&terminal), rule);
+        state.home_focus = HomeFocus::Menu;
+        terminal.draw(|frame| state.render(frame))?;
+        assert_eq!(rule_row(&terminal), rule);
     }
     Ok(())
 }
@@ -2065,82 +1960,77 @@ fn property_navigation_keeps_policy_and_the_rule_dim_in_nav_and_edit()
 #[test]
 fn property_commands_fit_resize_and_stay_out_of_editing() -> Result<(), Box<dyn std::error::Error>>
 {
-    for embedded in [false, true] {
-        for create in [false, true] {
-            let (workspace, _) = custom_workspace()?;
-            let mut state = State::new(&workspace);
-            state.embedded = embedded;
-            open_notes(&mut state, &workspace);
-            if create {
-                press(&mut state, &workspace, &[KeyCode::Down, KeyCode::Enter]);
-            } else {
-                press(&mut state, &workspace, &[KeyCode::Char('e')]);
-            }
-            for character in "ecd".chars() {
-                press(&mut state, &workspace, &[KeyCode::Char(character)]);
-            }
-            let name = if create { "ecd" } else { "notesecd" };
-            assert_eq!(
-                text_of(&state, &["original", "existing", name], DraftField::Name)?,
-                name
-            );
-            assert!(matches!(state.screen, Screen::Home));
-            assert!(state.confirmation().is_none());
-            if create {
-                press(&mut state, &workspace, &[KeyCode::Enter]);
-                state.handle_event(Event::Paste("Property purpose".into()), &workspace);
-            }
-            state.handle_event(ctrl(KeyCode::Char('w')), &workspace);
-            for width in MINIMUM_WIDTH..=140 {
-                let line = state
-                    .taxonomies
-                    .status_line(state.library(), embedded, width - 2);
-                assert_eq!(line.width(), usize::from(width - 2));
-                let footer = footer_text(&line.to_string());
-                assert!(
-                    footer.trim_start().starts_with("←/→ focus  ↑/↓ move"),
-                    "{footer}"
-                );
-                assert!(
-                    footer.contains("e edit  c copy property") && footer.contains("d delete"),
-                    "{footer}"
-                );
-                assert!(!footer.contains('…'), "{footer}");
-                if embedded && footer.contains("/ commands") {
-                    assert!(footer.contains("tab nav bar"), "{footer}");
-                }
-            }
+    for create in [false, true] {
+        let (workspace, _) = custom_workspace()?;
+        let mut state = State::new(&workspace);
+        open_notes(&mut state, &workspace);
+        if create {
+            press(&mut state, &workspace, &[KeyCode::Down, KeyCode::Enter]);
+        } else {
             press(&mut state, &workspace, &[KeyCode::Char('e')]);
-            for width in [MINIMUM_WIDTH, 87, 140, MINIMUM_WIDTH, 140] {
-                let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
-                terminal.draw(|frame| state.render(frame))?;
-                let footer = row_text(&terminal, 0, 39, width);
-                assert!(
-                    footer.contains("EDIT")
-                        && footer.contains("enter next")
-                        && footer.contains("ctrl+w")
-                        && footer.contains("save")
-                        && footer.contains("esc")
-                        && footer.contains("cancel"),
-                    "{footer}"
-                );
-                for label in ["e edit", "c copy", "d delete"] {
-                    assert!(!footer.contains(label), "{footer}");
-                }
-                press(&mut state, &workspace, &[KeyCode::Esc]);
-                terminal.draw(|frame| state.render(frame))?;
-                let footer = row_text(&terminal, 0, 39, width);
-                assert!(
-                    !footer.contains(" NAV ") && footer.contains("←/→ focus"),
-                    "{footer}"
-                );
-                assert!(footer.contains("d delete"), "{footer}");
-                assert!(!footer.contains('…'), "{footer}");
-                assert_eq!(footer.contains("to other types"), width == 140, "{footer}");
-                assert!(!footer.contains("? help"), "{footer}");
-                assert!(footer.starts_with(' ') && footer.ends_with(' '));
-                press(&mut state, &workspace, &[KeyCode::Char('e')]);
+        }
+        for character in "ecd".chars() {
+            press(&mut state, &workspace, &[KeyCode::Char(character)]);
+        }
+        let name = if create { "ecd" } else { "notesecd" };
+        assert_eq!(
+            text_of(&state, &["original", "existing", name], DraftField::Name)?,
+            name
+        );
+        assert!(matches!(state.screen, Screen::Home));
+        assert!(state.confirmation().is_none());
+        if create {
+            press(&mut state, &workspace, &[KeyCode::Enter]);
+            state.handle_event(Event::Paste("Property purpose".into()), &workspace);
+        }
+        state.handle_event(ctrl(KeyCode::Char('w')), &workspace);
+        for width in MINIMUM_WIDTH..=140 {
+            let line = state.taxonomies.status_line(state.library(), width - 2);
+            assert_eq!(line.width(), usize::from(width - 2));
+            let footer = footer_text(&line.to_string());
+            assert!(
+                footer.trim_start().starts_with("←/→ focus  ↑/↓ move"),
+                "{footer}"
+            );
+            assert!(
+                footer.contains("e edit  c copy property") && footer.contains("d delete"),
+                "{footer}"
+            );
+            assert!(!footer.contains('…'), "{footer}");
+            if footer.contains("/ commands") {
+                assert!(footer.contains("tab nav bar"), "{footer}");
             }
+        }
+        press(&mut state, &workspace, &[KeyCode::Char('e')]);
+        for width in [MINIMUM_WIDTH, 87, 140, MINIMUM_WIDTH, 140] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 40))?;
+            terminal.draw(|frame| state.render(frame))?;
+            let footer = row_text(&terminal, 0, 39, width);
+            assert!(
+                footer.contains("EDIT")
+                    && footer.contains("enter next")
+                    && footer.contains("ctrl+w")
+                    && footer.contains("save")
+                    && footer.contains("esc")
+                    && footer.contains("cancel"),
+                "{footer}"
+            );
+            for label in ["e edit", "c copy", "d delete"] {
+                assert!(!footer.contains(label), "{footer}");
+            }
+            press(&mut state, &workspace, &[KeyCode::Esc]);
+            terminal.draw(|frame| state.render(frame))?;
+            let footer = row_text(&terminal, 0, 39, width);
+            assert!(
+                !footer.contains(" NAV ") && footer.contains("←/→ focus"),
+                "{footer}"
+            );
+            assert!(footer.contains("d delete"), "{footer}");
+            assert!(!footer.contains('…'), "{footer}");
+            assert_eq!(footer.contains("to other types"), width == 140, "{footer}");
+            assert!(!footer.contains("? help"), "{footer}");
+            assert!(footer.starts_with(' ') && footer.ends_with(' '));
+            press(&mut state, &workspace, &[KeyCode::Char('e')]);
         }
     }
     Ok(())

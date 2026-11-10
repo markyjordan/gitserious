@@ -129,7 +129,6 @@ fn saved_taxonomy_dates_appear_only_while_inspecting() -> Result {
 fn edit_focus_has_amber_cues_muted_navigation_and_a_footer_counter() -> Result {
     for size in SIZES {
         let (workspace, mut state) = property()?;
-        state.embedded = true;
         let browsing = draw(&mut state, size)?;
         let footer = tests::footer_text(&row(&browsing, size.1 - 1));
         assert!(!footer.contains("NAV") && !footer.contains("EDIT"));
