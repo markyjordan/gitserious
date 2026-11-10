@@ -1,3 +1,4 @@
+mod commands;
 mod navigation;
 
 use std::io;
@@ -8,7 +9,7 @@ use ratatui::crossterm::event::{
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::commit::CommitView;
@@ -17,10 +18,10 @@ use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, DISCARD_AND
 use crate::help::{HelpPage, HelpView};
 use crate::home::{HomeAction, HomeOutcome, HomePage};
 use crate::theme::{
-    FOOTER_HEIGHT, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, SHELL_HINTS, block_title,
-    centered_rect, command_hints, frame_style, navigation_key_style, normalize_background,
-    render_footer, render_footer_block, theme,
+    FOOTER_HEIGHT, JET_BLACK, MINIMUM_HEIGHT, MINIMUM_WIDTH, SHELL_HINTS, centered_rect,
+    frame_style, normalize_background, render_footer, render_footer_block, theme,
 };
+use commands::{Palette, Step};
 use navigation::{Section, Tabs};
 
 fn quit_question() -> Confirmation<'static> {
@@ -72,11 +73,6 @@ enum Action {
     Quit,
 }
 
-struct Palette {
-    query: String,
-    selected: usize,
-    list: ListState,
-}
 enum Overlay {
     Palette(Palette),
     QuitConfirm,
@@ -342,36 +338,7 @@ impl Shell {
     }
 
     fn open_palette(&mut self) {
-        self.overlay = Some(Overlay::Palette(Palette {
-            query: String::new(),
-            selected: 0,
-            list: ListState::default(),
-        }));
-    }
-
-    fn commands(&self) -> Vec<(String, Action)> {
-        let mut commands: Vec<_> = Section::ALL
-            .into_iter()
-            .map(|section| (format!("Open {}", section.label()), Action::Select(section)))
-            .collect();
-        if self.section == Section::Home && self.home.action().is_some_and(HomeAction::initializes)
-        {
-            commands.push(("Initialize gitserious".into(), Action::Initialize));
-        }
-        if self.section == Section::Commit {
-            commands.push(("Refresh repository".into(), Action::Refresh));
-            if !self.commit.notice.is_empty() {
-                commands.push(("View last Git result".into(), Action::Result));
-            }
-            if self.commit.blocker.is_none() {
-                commands.push(("Start commit".into(), Action::Author));
-            }
-            if self.commit.has_pending_review() {
-                commands.push(("Resume review".into(), Action::Resume));
-            }
-        }
-        commands.push(("Quit".into(), Action::Quit));
-        commands
+        self.overlay = Some(Overlay::Palette(Palette::default()));
     }
 
     fn handle_overlay(&mut self, event: Event, capabilities: Capabilities<'_>) -> Option<Action> {
@@ -382,45 +349,11 @@ impl Shell {
                 Some(Answer::Keep | Answer::Alternate) => self.quit_dialog.invalidate(),
                 None => self.overlay = Some(Overlay::QuitConfirm),
             },
-            Overlay::Palette(mut palette) => {
-                if let Event::Key(key) = event {
-                    let commands: Vec<_> = self
-                        .commands()
-                        .into_iter()
-                        .filter(|(label, _)| {
-                            label.to_lowercase().contains(&palette.query.to_lowercase())
-                        })
-                        .collect();
-                    match key.code {
-                        KeyCode::Esc => return None,
-                        KeyCode::Up => palette.selected = palette.selected.saturating_sub(1),
-                        KeyCode::Down => {
-                            palette.selected =
-                                (palette.selected + 1).min(commands.len().saturating_sub(1))
-                        }
-                        KeyCode::Enter => {
-                            if let Some((_, action)) = commands.get(palette.selected) {
-                                return self.execute(*action, capabilities);
-                            }
-                        }
-                        KeyCode::Backspace => {
-                            palette.query.pop();
-                            palette.selected = 0;
-                        }
-                        KeyCode::Char(character)
-                            if !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            palette.query.push(character);
-                            palette.selected = 0;
-                        }
-                        _ => {}
-                    }
-                } else if let Event::Paste(text) = event {
-                    palette.query.push_str(&text);
-                    palette.selected = 0;
-                }
-                self.overlay = Some(Overlay::Palette(palette));
-            }
+            Overlay::Palette(mut palette) => match palette.event(event, self.commands()) {
+                Step::Keep => self.overlay = Some(Overlay::Palette(palette)),
+                Step::Close => {}
+                Step::Run(action) => return self.execute(action, capabilities),
+            },
         }
         None
     }
@@ -518,43 +451,7 @@ impl Shell {
         match &mut self.overlay {
             None => self.commit.render_modal(frame, inner),
             Some(Overlay::QuitConfirm) => {}
-            Some(Overlay::Palette(palette)) => {
-                let [search, list, footer] = Layout::vertical([
-                    Constraint::Length(3),
-                    Constraint::Min(1),
-                    Constraint::Length(1),
-                ])
-                .areas(inner);
-                frame.render_widget(
-                    Paragraph::new(format!("/ {}", palette.query))
-                        .block(Block::bordered().title(block_title("Search"))),
-                    search,
-                );
-                let rows: Vec<_> = commands
-                    .into_iter()
-                    .filter(|(label, _)| {
-                        label.to_lowercase().contains(&palette.query.to_lowercase())
-                    })
-                    .map(|(label, _)| ListItem::new(label))
-                    .collect();
-                palette.selected = palette.selected.min(rows.len().saturating_sub(1));
-                palette
-                    .list
-                    .select((!rows.is_empty()).then_some(palette.selected));
-                frame.render_stateful_widget(
-                    List::new(rows).highlight_style(navigation_key_style()),
-                    list,
-                    &mut palette.list,
-                );
-                frame.render_widget(
-                    Paragraph::new(command_hints(&[
-                        ("↑/↓", "select"),
-                        ("enter", "run"),
-                        ("esc", "close"),
-                    ])),
-                    footer,
-                );
-            }
+            Some(Overlay::Palette(palette)) => palette.render(frame, inner, commands),
         }
     }
 }
