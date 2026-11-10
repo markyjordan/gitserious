@@ -4,12 +4,29 @@ use library_lookup::LibraryLookup;
 
 use gitserious_core::{
     CommitTypeId, ConditionId, Description, LabelError, PropertyCondition, PropertyKey,
-    SchemaVersion, TaxonomyId,
+    SchemaVersion, Taxonomy, TaxonomyId,
 };
 
 use super::*;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+/// A Library draft of `configuration`'s taxonomies under another default and available list.
+fn selected(
+    configuration: &GlobalConfiguration,
+    default: &str,
+    available: &[&str],
+) -> Result<LibraryDraft, Box<dyn std::error::Error>> {
+    Ok(LibraryDraft::from_configuration(GlobalConfiguration::new(
+        1,
+        TaxonomyId::new(default)?,
+        available
+            .iter()
+            .map(|id| TaxonomyId::new(*id))
+            .collect::<Result<_, _>>()?,
+        configuration.custom_taxonomies().to_vec(),
+    )?))
+}
 
 fn team() -> Result<GlobalConfiguration, Box<dyn std::error::Error>> {
     let release = CommitTypeDefinition::new(
@@ -374,10 +391,13 @@ fn problems_name_every_field_that_does_not_build() -> TestResult {
 #[test]
 fn removing_a_selected_taxonomy_is_a_selection_problem() -> TestResult {
     let configuration = team()?;
-    let mut available = configuration.available_taxonomies().to_vec();
-    available.push(TaxonomyId::new("team")?);
-    let mut draft = LibraryDraft::from_configuration(configuration.clone());
-    draft.select(TaxonomyId::new("team")?, available);
+    let mut available = configuration
+        .available_taxonomies()
+        .iter()
+        .map(TaxonomyId::as_str)
+        .collect::<Vec<_>>();
+    available.push("team");
+    let mut draft = selected(&configuration, "team", &available)?;
     assert!(draft.problems().is_empty());
     draft.edit(&find(&draft, &["team"])?, DraftEdit::Remove)?;
     assert!(matches!(
@@ -520,18 +540,15 @@ fn edited_prose_builds_trimmed_and_loaded_prose_stays_byte_for_byte() -> TestRes
 
 #[test]
 fn removing_the_default_or_an_available_taxonomy_names_the_selection_error() -> TestResult {
-    let mut draft = LibraryDraft::from_configuration(team()?);
-    draft.select(TaxonomyId::new("team")?, vec![TaxonomyId::new("team")?]);
+    let configuration = team()?;
+    let draft = selected(&configuration, "team", &["team"])?;
     let team = find(&draft, &["team"])?;
     assert_eq!(
         draft.removal_blocker(&team).map(|error| error.to_string()),
         Some("taxonomy \"team\" is not installed".into())
     );
-    draft.select(
-        TaxonomyId::new("conventional")?,
-        vec![TaxonomyId::new("conventional")?, TaxonomyId::new("zeta")?],
-    );
-    assert_eq!(draft.removal_blocker(&team), None);
+    let draft = selected(&configuration, "conventional", &["conventional", "zeta"])?;
+    assert_eq!(draft.removal_blocker(&find(&draft, &["team"])?), None);
     assert_eq!(
         draft
             .removal_blocker(&find(&draft, &["zeta"])?)
@@ -806,7 +823,7 @@ fn new_and_forked_library_entries_get_their_own_saved_dates() -> TestResult {
     let policy = source.usable();
     assert_eq!(source.clone().with_dates(None, None).usable(), policy);
     let fork2 = draft.fork(&fork)?;
-    let mut draft = draft
+    let draft = draft
         .saved_on(next)
         .map_err(|problems| format!("{problems:?}"))?;
     assert_eq!(
@@ -817,42 +834,11 @@ fn new_and_forked_library_entries_get_their_own_saved_dates() -> TestResult {
         draft.saved_taxonomy(&fork2).ok_or("fork2")?.created_on(),
         Some(next)
     );
-    let source = &built_in_taxonomies()[1];
-    let replacement = Taxonomy::new(
-        TaxonomyId::new("imported")?,
-        Some(TaxonomyVersion::V1),
-        source.description().clone(),
-        None,
-        source.commit_types().to_vec(),
-    )?;
-    let target = draft.copy_in(&replacement, CopyIn::New)?;
-    let mut draft = draft
-        .saved_on(next)
-        .map_err(|problems| format!("{problems:?}"))?;
-    assert_eq!(
-        draft.saved_taxonomy(&target).ok_or("copy")?.created_on(),
-        Some(next)
-    );
-    let replacement = Taxonomy::new(
-        replacement.id().clone(),
-        Some(TaxonomyVersion::V1),
-        Description::new("Replacement content")?,
-        None,
-        replacement.commit_types().to_vec(),
-    )?;
-    draft.copy_in(&replacement, CopyIn::Replace)?;
-    let later = "2026-11-09".parse()?;
-    let draft = draft
-        .saved_on(later)
-        .map_err(|problems| format!("{problems:?}"))?;
-    let record = draft.saved_taxonomy(&target).ok_or("replaced")?;
-    assert_eq!(record.created_on(), Some(next));
-    assert_eq!(record.modified_on(), Some(later));
     Ok(())
 }
 
 #[test]
-fn selection_changes_and_reverted_edits_keep_library_dates() -> TestResult {
+fn reverted_edits_keep_library_dates() -> TestResult {
     let day = "2026-11-07".parse()?;
     let mut draft = LibraryDraft::from_configuration(team()?);
     let id = find(&draft, &["team"])?;
@@ -861,10 +847,6 @@ fn selection_changes_and_reverted_edits_keep_library_dates() -> TestResult {
         &id,
         DraftEdit::Text(DraftField::Description, "Team taxonomy"),
     )?;
-    draft.select(
-        TaxonomyId::new("research")?,
-        vec![TaxonomyId::new("research")?],
-    );
     let saved = draft
         .saved_on(day)
         .map_err(|problems| format!("{problems:?}"))?;

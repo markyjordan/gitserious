@@ -1,14 +1,11 @@
 use std::path::PathBuf;
 
-use crate::confirmation::{
-    self, APPLY_OR_DISCARD, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT, REMOVE,
-    REPLACE_OR_COPY,
-};
+use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, REMOVE};
 use gitserious_app::{
-    ConfigurationDestination, ConfigurationSession, ConfigurationWorkspace, CopyIn, DraftEdit,
-    EditRefusal, LibraryDraft, NodeId, NodeRef, ProjectConfiguration, RepositoryRoot,
-    TaxonomyOrigin,
+    ConfigurationDestination, ConfigurationSession, ConfigurationWorkspace, DraftEdit, EditRefusal,
+    LibraryDraft, NodeId, NodeRef, ProjectConfiguration, RepositoryRoot, TaxonomyOrigin,
 };
+#[cfg(test)]
 use gitserious_core::{Taxonomy, TaxonomyId};
 use ratatui::Frame;
 use ratatui::crossterm::event::{
@@ -23,8 +20,8 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 
 use crate::theme::{
     FOOTER_HEIGHT, MINIMUM_HEIGHT, MINIMUM_WIDTH, SHELL_HINTS, block_title, centered_rect,
-    focus_frame_style, frame_style, navigation_key_style, render_footer, render_footer_block,
-    render_navigation_row, row_style, section_heading_style, selected_style, theme,
+    focus_frame_style, frame_style, render_footer, render_footer_block, render_navigation_row,
+    section_heading_style, selected_style, theme,
 };
 
 #[cfg(test)]
@@ -34,7 +31,6 @@ mod copy_tests;
 #[cfg(test)]
 mod direct_tests;
 mod home_overlay;
-mod library_copy;
 #[cfg(test)]
 mod library_edit_tests;
 mod library_header;
@@ -47,12 +43,9 @@ mod library_type_tests;
 #[cfg(test)]
 mod model_check;
 mod naming;
-#[cfg(test)]
-mod project_editor_tests;
 mod project_overview;
 #[cfg(test)]
 mod project_preview_tests;
-mod review;
 mod taxonomies;
 #[cfg(test)]
 mod tests;
@@ -104,17 +97,6 @@ impl ConfigView {
     pub(crate) fn modal(&self) -> bool {
         self.state.home_overlay.is_some() || self.state.editor_view().editing()
     }
-
-    /// Seed a pending standalone-adapter review to exercise the shell's discard boundary.
-    #[cfg(test)]
-    pub(crate) fn stage_legacy_project_review(&mut self) {
-        self.state
-            .request_project_action(PendingAction::InitializeProject);
-    }
-
-    pub(crate) fn dirty(&self) -> bool {
-        self.state.any_dirty() || self.state.settings.is_some()
-    }
 }
 
 /// Actions the unified configuration view delegates to the shell.
@@ -162,9 +144,9 @@ impl Category {
     }
 
     /// The rail row: the location underlined, or the filled cursor while the rail has focus.
-    fn rail_row(self, here: bool, focused: bool, pending: bool) -> Paragraph<'static> {
+    fn rail_row(self, here: bool, focused: bool) -> Paragraph<'static> {
         let label = format!(" {}  {}", self.index() + 1, self.label());
-        let mut line = match (here, focused) {
+        let line = match (here, focused) {
             (true, false) => Line::from(vec![
                 Span::raw(" "),
                 Span::styled(
@@ -176,9 +158,6 @@ impl Category {
             ]),
             _ => Line::from(label),
         };
-        if pending {
-            line.push_span(Span::styled(" ●", Style::new().fg(theme().pending)));
-        }
         Paragraph::new(line).style(match (here, focused) {
             (true, true) => Style::new()
                 .fg(theme().ground)
@@ -223,13 +202,6 @@ impl ProjectSection {
     }
 }
 
-/// What Config > Project shows: its sections, or the outline over its own taxonomies.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ProjectView {
-    Sections,
-    Outline,
-}
-
 /// Which draft the taxonomy outline edits.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Editor {
@@ -239,45 +211,25 @@ enum Editor {
 
 #[derive(Clone, Copy, Debug)]
 enum PendingAction {
-    EditProject,
-    InitializeProject,
-    ReviewProject,
     Library(LibraryAction),
     Delete,
 }
 
 enum Notice {
     Error(String),
-    Info(String),
 }
 
 impl Notice {
     fn error(message: String) -> Self {
         Self::Error(sentence(&message))
     }
-
-    fn info(message: String) -> Self {
-        Self::Info(sentence(&message))
-    }
 }
 
 #[derive(Clone, Debug)]
 enum Screen {
     Home,
-    Settings(ConfigurationDestination),
-    Review(ConfigurationDestination),
-    Leave,
-    ScopeChange(PendingAction),
     /// Asks before a taxonomy, type, or property leaves the Library.
     ConfirmRemove(NodeId),
-    /// Lists the Library's taxonomies to copy into the project.
-    Import {
-        selected: usize,
-    },
-    /// Asks whether a Library taxonomy replaces the project's different copy or joins as new.
-    ImportConflict(TaxonomyId),
-    /// Asks whether a project taxonomy replaces the Library's different one or joins as new.
-    ExportConflict(TaxonomyId),
 }
 
 /// The Config rail's width at every terminal size, before the rule that ends it.
@@ -293,13 +245,6 @@ fn content_padding(terminal: Rect) -> u16 {
     u16::from(terminal.height >= PADDED_HEIGHT)
 }
 
-#[derive(Clone, Debug)]
-struct SettingsDraft {
-    selected: usize,
-    default: TaxonomyId,
-    available: Vec<TaxonomyId>,
-}
-
 struct State {
     embedded: bool,
     global: Option<ConfigurationSession>,
@@ -310,17 +255,14 @@ struct State {
     category: Category,
     home_focus: HomeFocus,
     taxonomies: TaxonomiesView,
-    /// The outline over the project's own taxonomies, shown while `project_view` is `Outline`.
+    /// The read-only outline over the project's installed taxonomies.
     project_taxonomies: TaxonomiesView,
-    project_view: ProjectView,
     project_section: ProjectSection,
     screen: Screen,
     home_overlay: Option<CommandPaletteState>,
-    scroll: u16,
     project_scroll: u16,
     status: Option<Notice>,
     dialog: ConfirmDialog,
-    settings: Option<SettingsDraft>,
     too_small: bool,
     shell_request: Option<ConfigRequest>,
     project_area: Rect,
@@ -347,15 +289,12 @@ impl State {
             home_focus: HomeFocus::Menu,
             taxonomies: TaxonomiesView::default(),
             project_taxonomies: TaxonomiesView::default(),
-            project_view: ProjectView::Sections,
             project_section: ProjectSection::Commit,
             screen: Screen::Home,
             home_overlay: None,
-            scroll: 0,
             project_scroll: 0,
             status: None,
             dialog: ConfirmDialog::default(),
-            settings: None,
             too_small: false,
             shell_request: None,
             project_area: Rect::default(),
@@ -373,15 +312,10 @@ impl State {
         let (title, message, choices) = match &self.screen {
             Screen::ConfirmRemove(node) => {
                 let library = self.editor_draft()?;
-                let owner = if library.is_project() {
-                    "this project"
-                } else {
-                    "the Library"
-                };
                 match library.node(node)? {
                     NodeRef::Taxonomy(taxonomy) => (
                         "Delete Taxonomy",
-                        format!("Delete taxonomy \"{}\" from {owner}?", taxonomy.name()),
+                        format!("Delete taxonomy \"{}\" from the Library?", taxonomy.name()),
                         REMOVE,
                     ),
                     NodeRef::Type { commit_type, .. } => (
@@ -404,31 +338,7 @@ impl State {
                     ),
                 }
             }
-            Screen::Leave => (
-                "Quit",
-                "Discard unapplied changes and quit?".to_owned(),
-                DISCARD_AND_QUIT,
-            ),
-            Screen::ImportConflict(id) => (
-                "Different Taxonomy",
-                format!(
-                    "This project's \"{id}\" differs from the Library's. Replace the project copy, or add the Library's as a new taxonomy?"
-                ),
-                REPLACE_OR_COPY,
-            ),
-            Screen::ExportConflict(id) => (
-                "Different Taxonomy",
-                format!(
-                    "The Library's \"{id}\" differs from this project's. Replace the Library's, or add the project's as a new taxonomy?"
-                ),
-                REPLACE_OR_COPY,
-            ),
-            Screen::ScopeChange(_) => (
-                "Unapplied Changes",
-                "This project has unapplied changes. Apply or discard them first?".into(),
-                APPLY_OR_DISCARD,
-            ),
-            _ => return None,
+            Screen::Home => return None,
         };
         Some(Confirmation {
             title,
@@ -441,7 +351,6 @@ impl State {
         &mut self,
         choices: &[confirmation::Choice],
         event: &Event,
-        workspace: &dyn ConfigurationWorkspace,
     ) -> bool {
         let Some(answer) = self.dialog.handle_event(choices, event) else {
             return false;
@@ -449,38 +358,21 @@ impl State {
         self.dialog.invalidate();
         match (self.screen.clone(), answer) {
             (Screen::ConfirmRemove(node), Answer::Confirm) => self.remove(&node),
-            (Screen::ImportConflict(id), Answer::Confirm) => {
-                self.copy_into_project(&id, CopyIn::Replace);
-            }
-            (Screen::ImportConflict(id), Answer::Alternate) => {
-                self.copy_into_project(&id, CopyIn::Renamed);
-            }
-            (Screen::ExportConflict(_), Answer::Confirm) => self.resolve_export(CopyIn::Replace),
-            (Screen::ExportConflict(_), Answer::Alternate) => self.resolve_export(CopyIn::Renamed),
-            (Screen::Leave, Answer::Confirm) => return true,
-            (Screen::ScopeChange(action), Answer::Confirm) => {
-                self.apply_scope_then(action, workspace)
-            }
-            (Screen::ScopeChange(action), Answer::Alternate) => {
-                self.discard_scope_then(action, workspace);
-            }
             _ => self.screen = Screen::Home,
         }
         false
     }
 
-    /// The active outline: Library, the shell's installed project preview, or the standalone
-    /// adapter's project editor while its taxonomies are open.
+    /// The active outline: Library, or the shell's installed project preview.
     fn editor(&self) -> Option<Editor> {
         match self.category {
             Category::Taxonomies => Some(Editor::Library),
             Category::Project
-                if (self.embedded
+                if self.embedded
                     && self
                         .project
                         .as_ref()
-                        .is_some_and(|session| session.persisted_project_config().is_some()))
-                    || (!self.embedded && self.project_view == ProjectView::Outline) =>
+                        .is_some_and(|session| session.persisted_project_config().is_some()) =>
             {
                 Some(Editor::Project)
             }
@@ -549,12 +441,10 @@ impl State {
                 }
                 self.taxonomies.finish_edit();
                 self.status = None;
-                if !self.scope_dirty(ConfigurationDestination::Project) {
-                    self.replace_session(
-                        ConfigurationDestination::Project,
-                        workspace.load(ConfigurationDestination::Project),
-                    );
-                }
+                self.replace_session(
+                    ConfigurationDestination::Project,
+                    workspace.load(ConfigurationDestination::Project),
+                );
             }
             Err(error) => self.status = Some(Notice::error(error)),
         }
@@ -591,12 +481,10 @@ impl State {
                         *library = candidate;
                     }
                     self.status = None;
-                    if !self.scope_dirty(ConfigurationDestination::Project) {
-                        self.replace_session(
-                            ConfigurationDestination::Project,
-                            workspace.load(ConfigurationDestination::Project),
-                        );
-                    }
+                    self.replace_session(
+                        ConfigurationDestination::Project,
+                        workspace.load(ConfigurationDestination::Project),
+                    );
                 }
                 Err(error) => {
                     self.global = before_global;
@@ -618,7 +506,7 @@ impl State {
             return self.handle_home_overlay(event, workspace);
         }
         if let Some(question) = self.confirmation() {
-            return self.handle_confirmation_event(question.choices, &event, workspace);
+            return self.handle_confirmation_event(question.choices, &event);
         }
         if matches!(event, Event::Resize(_, _)) {
             self.dialog.invalidate();
@@ -663,7 +551,6 @@ impl State {
                     }
                 } else if matches!(self.screen, Screen::Home)
                     && self.category == Category::Project
-                    && self.project_view == ProjectView::Sections
                     && self.editor().is_none()
                     && contains(self.project_area, mouse.column, mouse.row)
                 {
@@ -695,21 +582,11 @@ impl State {
         }
         match self.screen.clone() {
             Screen::Home => self.home_key(key, workspace),
-            Screen::Settings(destination) => self.settings_key(key, destination),
-            Screen::Review(destination) => self.review_key(key, destination, workspace),
             Screen::ConfirmRemove(_) => {
                 // The node is gone, so there is nothing left to confirm.
                 self.screen = Screen::Home;
                 false
             }
-            Screen::Import { selected } => {
-                self.import_key(key, selected);
-                false
-            }
-            Screen::Leave
-            | Screen::ScopeChange(_)
-            | Screen::ImportConflict(_)
-            | Screen::ExportConflict(_) => false,
         }
     }
 
@@ -785,15 +662,10 @@ impl State {
         workspace: &dyn ConfigurationWorkspace,
     ) -> bool {
         match command {
-            HomeCommand::Configure => self.request_project_action(PendingAction::EditProject),
-            HomeCommand::Initialize if self.empty_project_overview() => {
-                self.shell_request = Some(ConfigRequest::Initialize);
-            }
             HomeCommand::Initialize => {
-                self.request_project_action(PendingAction::InitializeProject);
-            }
-            HomeCommand::ReviewProject => {
-                self.request_project_action(PendingAction::ReviewProject);
+                if self.empty_project_overview() {
+                    self.shell_request = Some(ConfigRequest::Initialize);
+                }
             }
             HomeCommand::New => {
                 self.request_global_action(PendingAction::Library(LibraryAction::Create));
@@ -863,10 +735,6 @@ impl State {
         {
             match view.key(key, library) {
                 Nav::Handled => return false,
-                Nav::Sidebar if editor == Editor::Project && !self.embedded => {
-                    self.project_view = ProjectView::Sections;
-                    return false;
-                }
                 Nav::Sidebar => {
                     self.home_focus = HomeFocus::Menu;
                     return false;
@@ -931,22 +799,6 @@ impl State {
             KeyCode::PageDown if self.category == Category::Project && !self.embedded => {
                 self.project_scroll = self.project_scroll.saturating_add(8);
             }
-            KeyCode::Enter if self.category == Category::Project && !self.embedded => match self
-                .project_section
-            {
-                ProjectSection::Commit => self.request_project_action(PendingAction::EditProject),
-                ProjectSection::Taxonomies => self.open_project_taxonomies(),
-                ProjectSection::Files => {}
-            },
-            KeyCode::Char('i') if editor == Some(Editor::Project) && key.modifiers.is_empty() => {
-                self.open_import();
-            }
-            KeyCode::Char('l') if editor == Some(Editor::Project) && key.modifiers.is_empty() => {
-                self.copy_to_library();
-            }
-            KeyCode::Char('i') if self.category == Category::Project => {
-                self.request_project_action(PendingAction::InitializeProject);
-            }
             KeyCode::Char(letter @ ('e' | 'f' | 'n' | 'd')) if key.modifiers.is_empty() => {
                 if let Some(editor) = editor {
                     self.request_editor_action(
@@ -960,166 +812,7 @@ impl State {
                     );
                 }
             }
-            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if self.category == Category::Project {
-                    self.request_project_action(PendingAction::ReviewProject);
-                }
-            }
-            KeyCode::Esc | KeyCode::Char('q') => {
-                if self.any_dirty() {
-                    self.screen = Screen::Leave;
-                } else {
-                    return true;
-                }
-            }
-            _ => {}
-        }
-        false
-    }
-
-    fn request_project_action(&mut self, action: PendingAction) {
-        self.status = None;
-        let Some(session) = &self.project else {
-            self.status = Some(Notice::error(self.project_error.clone()));
-            return;
-        };
-        match action {
-            PendingAction::EditProject if session.project_config().is_none() => {
-                self.status = Some(Notice::error(
-                    "Initialize the project before editing.".into(),
-                ));
-                return;
-            }
-            PendingAction::InitializeProject if session.project_config().is_some() => {
-                self.status = Some(Notice::info("Project is already initialized.".into()));
-                return;
-            }
-            _ => {}
-        }
-        self.perform_pending_action(action);
-    }
-
-    fn open_settings(&mut self, destination: ConfigurationDestination) {
-        let Some(session) = self.session(destination) else {
-            return;
-        };
-        let (default, available) = match destination {
-            ConfigurationDestination::Global => {
-                let Some(library) = session.library() else {
-                    return;
-                };
-                (
-                    library.default_taxonomy().clone(),
-                    library.available_taxonomies().to_vec(),
-                )
-            }
-            ConfigurationDestination::Project => {
-                let Some(config) = session.project_config() else {
-                    return;
-                };
-                (
-                    config.default_taxonomy().clone(),
-                    config
-                        .taxonomies()
-                        .iter()
-                        .map(|taxonomy| taxonomy.id().clone())
-                        .collect(),
-                )
-            }
-        };
-        let selected = self
-            .settings_rows(destination)
-            .iter()
-            .position(|taxonomy| taxonomy.id() == &default)
-            .unwrap_or(0);
-        self.settings = Some(SettingsDraft {
-            selected,
-            default,
-            available,
-        });
-        self.screen = Screen::Settings(destination);
-    }
-
-    fn settings_key(&mut self, key: KeyEvent, destination: ConfigurationDestination) -> bool {
-        let rows = self.settings_rows(destination);
-        let count = rows.len();
-        let selected_id = self
-            .settings
-            .as_ref()
-            .and_then(|settings| rows.get(settings.selected))
-            .map(|item| item.id().clone());
-        let Some(settings) = &mut self.settings else {
-            return false;
-        };
-        match key.code {
-            KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => {
-                reorder_available(&mut settings.available, &selected_id, false)
-            }
-            KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT) => {
-                reorder_available(&mut settings.available, &selected_id, true)
-            }
-            KeyCode::Up => settings.selected = settings.selected.saturating_sub(1),
-            KeyCode::Down => {
-                settings.selected = (settings.selected + 1).min(count.saturating_sub(1))
-            }
-            KeyCode::Char(' ') => {
-                if let Some(id) = selected_id {
-                    if id == settings.default {
-                        self.status = Some(Notice::error(
-                            "Choose another default before removing this taxonomy.".into(),
-                        ));
-                    } else if let Some(index) =
-                        settings.available.iter().position(|item| item == &id)
-                    {
-                        settings.available.remove(index);
-                    } else {
-                        settings.available.push(id);
-                    }
-                }
-            }
-            KeyCode::Enter => {
-                if let Some(id) = selected_id {
-                    settings.default = id.clone();
-                    if !settings.available.contains(&id) {
-                        settings.available.push(id);
-                    }
-                }
-            }
-            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let result = match destination {
-                    ConfigurationDestination::Global => self
-                        .global
-                        .as_mut()
-                        .ok_or("global configuration is unavailable".to_owned())
-                        .and_then(|session| {
-                            session.configure_global(
-                                settings.default.clone(),
-                                settings.available.clone(),
-                            )
-                        }),
-                    ConfigurationDestination::Project => self
-                        .project
-                        .as_mut()
-                        .ok_or("project configuration is unavailable".to_owned())
-                        .and_then(|session| {
-                            session.configure_project(settings.default.clone(), &settings.available)
-                        }),
-                };
-                match result {
-                    Ok(()) => {
-                        self.settings = None;
-                        self.screen = Screen::Home;
-                        self.status = Some(Notice::info(
-                            "Configuration change staged. Ctrl+S reviews before applying.".into(),
-                        ));
-                    }
-                    Err(error) => self.status = Some(Notice::error(error)),
-                }
-            }
-            KeyCode::Esc => {
-                self.settings = None;
-                self.screen = Screen::Home;
-            }
+            KeyCode::Esc | KeyCode::Char('q') => return true,
             _ => {}
         }
         false
@@ -1141,38 +834,6 @@ impl State {
         }
     }
 
-    fn apply_scope_then(&mut self, action: PendingAction, workspace: &dyn ConfigurationWorkspace) {
-        let destination = self.active_scope;
-        if self.refuse_apply(destination) {
-            self.screen = Screen::Home;
-            return;
-        }
-        let Some(session) = self.session(destination).cloned() else {
-            return;
-        };
-        match workspace.save(&session) {
-            Ok(saved) => {
-                self.replace_session(destination, Ok(saved));
-                self.screen = Screen::Home;
-                self.perform_pending_action(action);
-            }
-            Err(error) => {
-                self.screen = Screen::Home;
-                self.status = Some(Notice::error(error));
-            }
-        }
-    }
-
-    fn discard_scope_then(
-        &mut self,
-        action: PendingAction,
-        workspace: &dyn ConfigurationWorkspace,
-    ) {
-        self.replace_session(self.active_scope, workspace.load(self.active_scope));
-        self.screen = Screen::Home;
-        self.perform_pending_action(action);
-    }
-
     /// Replaces a reviewed or refreshed Project session.
     fn replace_session(
         &mut self,
@@ -1185,61 +846,11 @@ impl State {
         self.project_error = error;
     }
 
-    /// Routes an outline action to the Library or, while its taxonomies are open, the project.
+    /// Routes an outline action to the Library. The project preview takes none.
     fn request_editor_action(&mut self, editor: Editor, action: PendingAction) {
         match editor {
             Editor::Library => self.request_global_action(action),
-            Editor::Project if !self.embedded => self.project_edit(action),
             Editor::Project => {}
-        }
-    }
-
-    /// Opens the outline over the project's own taxonomies.
-    fn open_project_taxonomies(&mut self) {
-        if self
-            .project
-            .as_ref()
-            .and_then(ConfigurationSession::project_draft)
-            .is_none()
-        {
-            self.status = Some(Notice::error(
-                "Initialize the project before editing its taxonomies.".into(),
-            ));
-            return;
-        }
-        self.active_scope = ConfigurationDestination::Project;
-        self.project_view = ProjectView::Outline;
-        self.home_focus = HomeFocus::Content;
-    }
-
-    /// Stages an outline action on the project draft. Nothing is written until Apply.
-    fn project_edit(&mut self, action: PendingAction) {
-        self.active_scope = ConfigurationDestination::Project;
-        self.status = None;
-        match action {
-            PendingAction::Library(action) => {
-                if let Some((view, draft)) = self.editor_parts_mut()
-                    && let Err(error) = view.act(action, draft)
-                {
-                    self.status = Some(Notice::error(error));
-                }
-            }
-            PendingAction::Delete => {
-                let Some(draft) = self.editor_draft() else {
-                    return;
-                };
-                let Some(node) = self.project_taxonomies.selected(draft) else {
-                    return;
-                };
-                if let Some(blocker) = draft.removal_blocker(node.id()) {
-                    self.status = Some(Notice::error(format!(
-                        "{blocker}. Choose another default before deleting it."
-                    )));
-                    return;
-                }
-                self.screen = Screen::ConfirmRemove(node.id().clone());
-            }
-            _ => {}
         }
     }
 
@@ -1284,48 +895,12 @@ impl State {
             return;
         }
         self.status = None;
-        if self.active_scope == ConfigurationDestination::Project
-            && self.scope_dirty(ConfigurationDestination::Project)
-        {
-            self.screen = Screen::ScopeChange(action);
-            return;
-        }
         self.perform_pending_action(action);
     }
 
     fn perform_pending_action(&mut self, action: PendingAction) {
         self.screen = Screen::Home;
         match action {
-            PendingAction::EditProject => {
-                self.active_scope = ConfigurationDestination::Project;
-                self.open_settings(ConfigurationDestination::Project);
-            }
-            PendingAction::InitializeProject => {
-                self.active_scope = ConfigurationDestination::Project;
-                let Some(library) = self.library().and_then(LibraryDraft::persisted).cloned()
-                else {
-                    self.status = Some(Notice::error(format!(
-                        "Initializing copies taxonomies from the Library. {}",
-                        self.library_error()
-                    )));
-                    return;
-                };
-                let Some(session) = &mut self.project else {
-                    self.status = Some(Notice::error(self.project_error.clone()));
-                    return;
-                };
-                match session
-                    .initialize_project(&library)
-                    .and_then(|()| session.review().map(|_| ()))
-                {
-                    Ok(()) => self.screen = Screen::Review(ConfigurationDestination::Project),
-                    Err(error) => self.status = Some(Notice::error(error)),
-                }
-            }
-            PendingAction::ReviewProject => {
-                self.active_scope = ConfigurationDestination::Project;
-                self.open_review();
-            }
             PendingAction::Library(action) => {
                 self.active_scope = ConfigurationDestination::Global;
                 self.category = Category::Taxonomies;
@@ -1358,32 +933,6 @@ impl State {
         }
     }
 
-    /// The taxonomies a settings screen lists: the Library for Global, the project's own for Project.
-    fn settings_rows(&self, destination: ConfigurationDestination) -> Vec<Taxonomy> {
-        match destination {
-            ConfigurationDestination::Global => self.catalog().unwrap_or_default(),
-            ConfigurationDestination::Project => self
-                .project
-                .as_ref()
-                .and_then(|session| {
-                    session
-                        .persisted_project_config()
-                        .cloned()
-                        .or_else(|| session.project_config())
-                })
-                .map(|config| config.taxonomies().to_vec())
-                .unwrap_or_default(),
-        }
-    }
-
-    fn catalog(&self) -> Option<Vec<Taxonomy>> {
-        self.global
-            .as_ref()?
-            .catalog()
-            .ok()
-            .map(|catalog| catalog.taxonomies().to_vec())
-    }
-
     fn library_error(&self) -> String {
         if self.global_error.is_empty() {
             "The Library is unavailable.".into()
@@ -1400,10 +949,6 @@ impl State {
     fn scope_dirty(&self, destination: ConfigurationDestination) -> bool {
         self.session(destination)
             .is_some_and(ConfigurationSession::is_dirty)
-    }
-
-    fn any_dirty(&self) -> bool {
-        self.scope_dirty(ConfigurationDestination::Project)
     }
 
     #[cfg(test)]
@@ -1487,30 +1032,7 @@ impl State {
                         vec![hints[0], hints[1], ("/", "commands")]
                     }
                 }
-                Screen::Settings(destination) => {
-                    self.render_settings(frame, body, destination);
-                    vec![
-                        ("space", "available"),
-                        ("enter", "default"),
-                        ("alt+↑/↓", "reorder"),
-                        ("ctrl+s", "stage"),
-                        ("esc", "back"),
-                    ]
-                }
-                Screen::Review(destination) => self.render_review(frame, body, destination),
-                Screen::Import { selected } => {
-                    self.render_import(frame, body, selected);
-                    vec![
-                        ("↑/↓", "move"),
-                        ("enter", "copy into project"),
-                        ("esc", "back"),
-                    ]
-                }
-                Screen::Leave
-                | Screen::ScopeChange(_)
-                | Screen::ConfirmRemove(_)
-                | Screen::ImportConflict(_)
-                | Screen::ExportConflict(_) => Vec::new(),
+                Screen::ConfirmRemove(_) => Vec::new(),
             }
         };
         // Screens that draw their own footer leave no hints.
@@ -1532,18 +1054,10 @@ impl State {
         self.tab_areas = [Rect::default(); 2];
         let home = matches!(self.screen, Screen::Home);
         let focused = home && self.home_focus == HomeFocus::Menu;
-        let pending = self.scope_dirty(ConfigurationDestination::Project);
         let top = area.y + content_padding(frame.area());
         for (category, y) in Category::ALL.into_iter().zip(top..area.bottom()) {
             let row = Rect::new(area.x, y, area.width, 1);
-            frame.render_widget(
-                category.rail_row(
-                    category == self.category,
-                    focused,
-                    pending && category == Category::Project,
-                ),
-                row,
-            );
+            frame.render_widget(category.rail_row(category == self.category, focused), row);
             if home {
                 self.tab_areas[category.index()] = row;
             }
@@ -1562,9 +1076,6 @@ impl State {
         let (message, style) = match (&self.status, load_error) {
             (Some(Notice::Error(message)), _) => {
                 (message.clone(), Style::default().fg(theme().pending))
-            }
-            (Some(Notice::Info(message)), _) => {
-                (message.clone(), Style::default().fg(theme().text))
             }
             (None, Some(message)) => (sentence(&message), Style::default().fg(theme().pending)),
             (None, None) => return,
@@ -1828,69 +1339,6 @@ impl State {
             }
         }
     }
-
-    fn render_settings(
-        &self,
-        frame: &mut Frame<'_>,
-        area: Rect,
-        destination: ConfigurationDestination,
-    ) {
-        let Some(settings) = &self.settings else {
-            return;
-        };
-        let items = self.settings_rows(destination);
-        let rows = items
-            .iter()
-            .enumerate()
-            .map(|(index, taxonomy)| {
-                let available = if settings.available.contains(taxonomy.id()) {
-                    "✓"
-                } else {
-                    "○"
-                };
-                let default = if &settings.default == taxonomy.id() {
-                    "default"
-                } else {
-                    ""
-                };
-                let order = settings
-                    .available
-                    .iter()
-                    .position(|id| id == taxonomy.id())
-                    .map_or_else(|| "-".to_owned(), |position| (position + 1).to_string());
-                ListItem::new(format!(
-                    "{available}  {order:>2}  {:<20} {default}",
-                    taxonomy.id()
-                ))
-                .style(row_style(index))
-            })
-            .collect::<Vec<_>>();
-        let mut state = ListState::default();
-        state.select(Some(settings.selected));
-        let inheritance = match destination {
-            ConfigurationDestination::Project => "taxonomies stored in gitserious.toml",
-            ConfigurationDestination::Global => "global commit environment",
-        };
-        let parts = Layout::vertical([Constraint::Length(2), Constraint::Min(1)]).split(area);
-        frame.render_widget(
-            Paragraph::new(inheritance).style(section_heading_style()),
-            parts[0],
-        );
-        frame.render_stateful_widget(
-            List::new(rows)
-                .block(
-                    Block::bordered()
-                        .border_style(frame_style())
-                        .title(block_title(match destination {
-                            ConfigurationDestination::Global => "Global availability",
-                            ConfigurationDestination::Project => "Project availability",
-                        })),
-                )
-                .highlight_style(navigation_key_style()),
-            parts[1],
-            &mut state,
-        );
-    }
 }
 
 /// Wraps each line of `text` at spaces to `width` columns. Wrapped rows start under the line's
@@ -1974,19 +1422,4 @@ fn split_result(
 
 fn contains(area: Rect, x: u16, y: u16) -> bool {
     x >= area.x && x < area.right() && y >= area.y && y < area.bottom()
-}
-
-fn reorder_available(available: &mut [TaxonomyId], selected: &Option<TaxonomyId>, down: bool) {
-    let Some(selected) = selected else {
-        return;
-    };
-    let Some(index) = available.iter().position(|id| id == selected) else {
-        return;
-    };
-    let target = if down {
-        (index + 1).min(available.len().saturating_sub(1))
-    } else {
-        index.saturating_sub(1)
-    };
-    available.swap(index, target);
 }

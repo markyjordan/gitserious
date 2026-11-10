@@ -115,7 +115,6 @@ fn project_enter_opens_the_same_editor_as_home_and_cancel_writes_nothing()
             !text.contains("conventional"),
             "excluded taxonomy must stay absent"
         );
-        assert!(!project.config.dirty());
     }
     Ok(())
 }

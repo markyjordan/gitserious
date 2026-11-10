@@ -244,7 +244,7 @@ impl Shell {
             Action::Result => self.overlay = Some(Overlay::Result(0)),
             Action::Author | Action::Resume => return Some(action),
             Action::Quit => {
-                if self.config.dirty() || self.pending_author.is_some() {
+                if self.pending_author.is_some() {
                     self.overlay = Some(Overlay::QuitConfirm);
                 } else {
                     return Some(Action::Quit);
@@ -427,10 +427,8 @@ impl Shell {
             Ok(()) => {
                 self.init_editor = None;
                 self.home_error = None;
-                // Config loaded the project before it existed; reload it unless it holds drafts.
-                if !self.config.dirty() {
-                    self.config = ConfigView::new(workspace.configuration());
-                }
+                // Config loaded the project before it existed.
+                self.config = ConfigView::new(workspace.configuration());
             }
             Err(error) => self.home_error = Some(error),
         }
@@ -1693,7 +1691,6 @@ mod tests {
         shell.handle_event(key(KeyCode::Esc), &services, &[]);
         assert_eq!(shell.section, Section::Config);
         assert_eq!(shell.config.shell_keys(), ShellKeys::Navigation);
-        assert!(!shell.config.dirty());
         shell.handle_event(key(KeyCode::Tab), &services, &[]);
         assert_eq!(shell.section, Section::Help);
         shell.handle_event(key(KeyCode::BackTab), &services, &[]);
@@ -2203,33 +2200,6 @@ mod tests {
     }
 
     #[test]
-    fn config_drafts_survive_section_visits_and_quit_requires_confirmation() {
-        let services = Services;
-        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
-        shell.config.stage_legacy_project_review();
-        assert!(shell.config.dirty());
-        shell.handle_event(key(KeyCode::Esc), &services, &[]);
-        assert_eq!(shell.config.shell_keys(), ShellKeys::Navigation);
-        shell.handle_event(key(KeyCode::Esc), &services, &[]);
-        assert_eq!(shell.section, Section::Home);
-        shell.handle_event(key(KeyCode::Tab), &services, &[]);
-        assert_eq!(shell.section, Section::Commit);
-        assert!(shell.config.dirty());
-        assert!(
-            shell
-                .handle_event(key(KeyCode::Char('q')), &services, &[])
-                .is_none()
-        );
-        assert!(matches!(shell.overlay, Some(Overlay::QuitConfirm)));
-        shell.handle_event(key(KeyCode::Char('n')), &services, &[]);
-        assert!(shell.config.dirty());
-        shell.handle_event(key(KeyCode::Char('q')), &services, &[]);
-        assert_eq!(
-            shell.handle_event(key(KeyCode::Char('y')), &services, &[]),
-            Some(Action::Quit)
-        );
-    }
-    #[test]
     fn full_git_result_scrolls_and_keeps_navigation_modal() -> Result<(), Box<dyn std::error::Error>>
     {
         use std::fmt::Write as _;
@@ -2252,11 +2222,10 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn config_palette_quit_uses_one_shell_discard_confirmation() {
+    fn config_palette_quit_uses_one_shell_discard_confirmation()
+    -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
-        shell.config.stage_legacy_project_review();
-        shell.handle_event(key(KeyCode::Esc), &services, &[]);
+        let mut shell = rejected_review_on(Section::Config)?;
         shell.handle_event(key(KeyCode::Char('/')), &services, &[]);
         shell.handle_event(Event::Paste("quit".into()), &services, &[]);
         shell.handle_event(key(KeyCode::Enter), &services, &[]);
@@ -2266,15 +2235,39 @@ mod tests {
             shell.handle_event(key(KeyCode::Char('y')), &services, &[]),
             Some(Action::Quit)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn config_palette_quit_without_a_pending_review_quits() {
+        let services = Services;
+        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
+        shell.handle_event(key(KeyCode::Char('/')), &services, &[]);
+        shell.handle_event(Event::Paste("quit".into()), &services, &[]);
+        assert_eq!(
+            shell.handle_event(key(KeyCode::Enter), &services, &[]),
+            Some(Action::Quit)
+        );
+    }
+
+    /// A shell on `section` that retains a reviewed commit Git rejected.
+    fn rejected_review_on(section: Section) -> Result<Shell, Box<dyn std::error::Error>> {
+        let (context, _, checkpoint) = crate::author::reviewed_submission()?;
+        let mut shell = Shell::new(InitialPage::Commit, &Services, &[]);
+        shell.conclude_authoring(
+            &Services,
+            Some((context, checkpoint, Err("hook rejected".into()))),
+        );
+        shell.execute(Action::Select(section), &Services);
+        assert_eq!(shell.section, section);
+        Ok(shell)
     }
 
     #[test]
     fn quit_confirmation_footer_shows_only_the_dialogs_choices()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
-        shell.config.stage_legacy_project_review();
-        shell.handle_event(key(KeyCode::Esc), &services, &[]);
+        let mut shell = rejected_review_on(Section::Config)?;
         shell.handle_event(key(KeyCode::Char('q')), &services, &[]);
         assert!(matches!(shell.overlay, Some(Overlay::QuitConfirm)));
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
@@ -2627,37 +2620,6 @@ mod tests {
                 );
             }
         }
-        Ok(())
-    }
-
-    #[test]
-    fn config_review_survives_root_clicks() -> Result<(), Box<dyn std::error::Error>> {
-        let services = Services;
-        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
-        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        let original_header = shell.root_areas;
-        shell.config.stage_legacy_project_review();
-        assert_eq!(shell.config.shell_keys(), ShellKeys::None);
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert_eq!(shell.root_areas, original_header);
-        let review = rendered(&terminal);
-        assert!(review.contains("Review changes"));
-        shell.handle_event(
-            click(shell.root_areas[Section::Help.index()]),
-            &services,
-            &[],
-        );
-        assert_eq!(shell.section, Section::Help);
-        shell.handle_event(
-            click(shell.root_areas[Section::Config.index()]),
-            &services,
-            &[],
-        );
-        assert_eq!(shell.section, Section::Config);
-        assert_eq!(shell.config.shell_keys(), ShellKeys::None);
-        terminal.draw(|frame| shell.render(frame, &[]))?;
-        assert_eq!(rendered(&terminal), review);
         Ok(())
     }
 }

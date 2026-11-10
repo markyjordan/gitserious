@@ -111,7 +111,7 @@ fn screen(state: &mut State) -> Result<Vec<String>, Box<dyn std::error::Error>> 
 
 fn notice(state: &State) -> Option<&str> {
     match &state.status {
-        Some(Notice::Error(message) | Notice::Info(message)) => Some(message),
+        Some(Notice::Error(message)) => Some(message),
         None => None,
     }
 }

@@ -39,6 +39,8 @@ fn fork_creation_is_separate_from_availability() -> Result<(), Box<dyn Error>> {
         !session
             .library()
             .ok_or("a Global session")?
+            .build()
+            .map_err(|errors| format!("{errors:?}"))?
             .available_taxonomies()
             .contains(&TaxonomyId::new("team")?)
     );
@@ -50,16 +52,20 @@ fn fork_creation_is_separate_from_availability() -> Result<(), Box<dyn Error>> {
 fn a_selected_custom_taxonomy_cannot_be_removed_without_a_problem() -> Result<(), Box<dyn Error>> {
     let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
     let team = TaxonomyId::new("team")?;
-    let fork = fork_team(&mut session)?;
-    let mut available = session
+    fork_team(&mut session)?;
+    let built = session
         .library()
         .ok_or("a Global session")?
-        .available_taxonomies()
-        .to_vec();
+        .build()
+        .map_err(|errors| format!("{errors:?}"))?;
+    let mut available = built.available_taxonomies().to_vec();
     available.push(team.clone());
-    session.configure_global(team, available)?;
+    let selected =
+        GlobalConfiguration::new(1, team, available, built.custom_taxonomies().to_vec())?;
+    let mut session = ConfigurationSession::open_global(selected);
     let library = session.library_mut().ok_or("a Global session")?;
-    library.edit(&fork, DraftEdit::Remove)?;
+    let team = library.find_path(&["team"]).ok_or("team")?;
+    library.edit(&team, DraftEdit::Remove)?;
     let problems = session.library().ok_or("Library")?.problems();
     assert!(
         matches!(

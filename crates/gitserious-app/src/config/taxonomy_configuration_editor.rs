@@ -1,12 +1,10 @@
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 
-use gitserious_core::TaxonomyId;
-
 use crate::{
     GlobalConfiguration, GlobalConfigurationStore, LibraryDraft, Problem, ProjectConfiguration,
     ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject,
-    TaxonomyCatalog, fingerprint_taxonomy, initial_project_configuration,
+    initial_project_configuration,
 };
 
 /// Persistence destination edited by one reviewed session.
@@ -127,18 +125,6 @@ impl ConfigurationSession {
         }
     }
 
-    /// Returns the merged taxonomy library of a Global session.
-    pub fn catalog(&self) -> Result<TaxonomyCatalog, String> {
-        match &self.scope {
-            Scope::Global(library) => library
-                .persisted()
-                .ok_or("a Library session holds the Library")?
-                .catalog()
-                .map_err(|error| error.to_string()),
-            Scope::Project(_) => Err("a Project session does not read the Library".into()),
-        }
-    }
-
     /// Returns whether this draft differs from its persisted baseline.
     #[must_use]
     pub fn is_dirty(&self) -> bool {
@@ -150,49 +136,6 @@ impl ConfigurationSession {
                 (_, None) => false,
             },
         }
-    }
-
-    /// Replaces global selection while retaining the taxonomy library.
-    pub fn configure_global(
-        &mut self,
-        default: TaxonomyId,
-        available: Vec<TaxonomyId>,
-    ) -> Result<(), String> {
-        let Scope::Global(library) = &mut self.scope else {
-            return Err("taxonomy library changes belong to Global configuration".into());
-        };
-        let built = library
-            .build()
-            .map_err(|problems| first_problem(&problems))?;
-        GlobalConfiguration::new(
-            1,
-            default.clone(),
-            available.clone(),
-            built.custom_taxonomies().to_vec(),
-        )
-        .map_err(|error| error.to_string())?;
-        library.select(default, available);
-        Ok(())
-    }
-
-    /// Selects the project default and keeps only the `available` taxonomies, in that order.
-    ///
-    /// Refuses, leaving the draft unchanged, when the result would not apply.
-    pub fn configure_project(
-        &mut self,
-        default: TaxonomyId,
-        available: &[TaxonomyId],
-    ) -> Result<(), String> {
-        let draft = self
-            .project_draft_mut()
-            .ok_or("project changes require an initialized Project")?;
-        let mut candidate = draft.clone();
-        candidate.select_project(default, available)?;
-        candidate
-            .build_project()
-            .map_err(|problems| first_problem(&problems))?;
-        *draft = candidate;
-        Ok(())
     }
 
     /// Stages initialization with copies of the Library's default environment.
@@ -208,74 +151,6 @@ impl ConfigurationSession {
         ));
         Ok(())
     }
-
-    /// The Project changes apply would write.
-    pub fn review(&self) -> Result<Review, String> {
-        let Scope::Project(project) = &self.scope else {
-            return Err("Library edits save directly; only Project changes need review".into());
-        };
-        let draft = project
-            .draft
-            .as_ref()
-            .ok_or("project initialization has not been staged")?;
-        let config = draft
-            .build_project()
-            .map_err(|problems| first_problem(&problems))?;
-        let before = self.persisted_project_config();
-        let changes = taxonomy_changes(before, &config);
-        let was = before
-            .filter(|before| before.default_taxonomy() != config.default_taxonomy())
-            .map_or_else(String::new, |before| {
-                format!(" (was {})", before.default_taxonomy())
-            });
-        Ok(Review {
-            changes: format!(
-                "PROJECT CONFIGURATION\n\nDefault\n  {}{was}\n\nTaxonomies\n  {}\n\nChanges\n{}\n\nFile\n  gitserious.toml holds {} complete taxonomy definitions",
-                config.default_taxonomy(),
-                config
-                    .taxonomies()
-                    .iter()
-                    .map(|taxonomy| taxonomy.id().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                if changes.is_empty() {
-                    "  Selection only".to_owned()
-                } else {
-                    changes.join("\n")
-                },
-                config.taxonomies().len(),
-            ),
-        })
-    }
-}
-
-/// One line per taxonomy that Apply adds, changes, or removes.
-fn taxonomy_changes(
-    before: Option<&ProjectConfiguration>,
-    after: &ProjectConfiguration,
-) -> Vec<String> {
-    let mut lines = Vec::new();
-    for taxonomy in after.taxonomies() {
-        match before.and_then(|before| before.find(taxonomy.id())) {
-            None => lines.push(format!("  + {}", taxonomy.reference())),
-            Some(old) if fingerprint_taxonomy(old) != fingerprint_taxonomy(taxonomy) => {
-                lines.push(format!("  ~ {}", taxonomy.reference()));
-            }
-            Some(_) => {}
-        }
-    }
-    for old in before.map_or(&[][..], ProjectConfiguration::taxonomies) {
-        if after.find(old.id()).is_none() {
-            lines.push(format!("  - {}", old.id()));
-        }
-    }
-    lines
-}
-
-/// The reviewed Project configuration.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Review {
-    pub changes: String,
 }
 
 /// The first problem's text, for the callers that need a draft that builds.

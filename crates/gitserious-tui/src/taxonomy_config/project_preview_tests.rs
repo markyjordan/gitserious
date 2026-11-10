@@ -138,7 +138,7 @@ fn installed_definitions_use_the_library_layout_even_without_a_readable_library(
             assert!(observed.inspector_area.x > observed.outline_area.right());
             assert_eq!(observed.inspector_area.y, 1);
         }
-        assert!(!view.dirty());
+        assert!(!view.state.scope_dirty(ConfigurationDestination::Project));
     }
     // Library has a different default and keeps its built-in/custom origin labels.
     view.state.global = Some(workspace.global.borrow().clone());
@@ -207,7 +207,7 @@ fn project_browsing_expands_real_nodes_and_never_offers_or_performs_mutations() 
     ] {
         assert!(view.handle_event(event, &workspace).is_none());
     }
-    assert!(!view.dirty());
+    assert!(!view.state.scope_dirty(ConfigurationDestination::Project));
     assert_eq!(workspace.saves(), 0);
     assert_eq!(text, rendered(&mut view, &mut terminal)?);
     press(&mut view, &workspace, KeyCode::Enter);
@@ -268,7 +268,7 @@ fn project_browsing_expands_real_nodes_and_never_offers_or_performs_mutations() 
     assert!(!text.contains("+ add"));
     press(&mut view, &workspace, KeyCode::Enter);
     assert!(matches!(view.state.screen, Screen::Home));
-    assert!(!view.dirty());
+    assert!(!view.state.scope_dirty(ConfigurationDestination::Project));
     Ok(())
 }
 
@@ -312,7 +312,7 @@ fn an_uninitialized_project_hands_initialization_to_the_shell_and_stages_nothing
             .is_some_and(|session| session.project_draft().is_none()),
         "initialization is the shell's, not a staged Config draft"
     );
-    assert!(!view.dirty());
+    assert!(!view.state.scope_dirty(ConfigurationDestination::Project));
     assert_eq!(workspace.saves(), 0);
     Ok(())
 }

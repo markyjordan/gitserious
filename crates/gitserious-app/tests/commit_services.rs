@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 
 use gitserious_app::{
     AuthoredCommit, BranchState, CommitAuthoringContext, CommitOutput, CommitServices,
-    CommitTaxonomy, CommitWorkspace, CommitWriter, ConfigurationDestination, GlobalConfiguration,
-    GlobalConfigurationStore, HelpPage, InteractiveUi, InteractiveWorkspace, ProjectConfiguration,
-    ProjectConfigurationStore, ProjectRevision, RepositoryInitializer, RepositoryLocator,
-    RepositoryRoot, RepositoryStatus, RepositoryStatusReader, StatusEntry, StoredProject,
-    initial_project_configuration, run_interactive,
+    CommitTaxonomy, CommitWorkspace, CommitWriter, GlobalConfiguration, GlobalConfigurationStore,
+    HelpPage, InteractiveUi, InteractiveWorkspace, ProjectConfiguration, ProjectConfigurationStore,
+    ProjectRevision, RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryStatus,
+    RepositoryStatusReader, StatusEntry, StoredProject, initial_project_configuration,
+    run_interactive,
 };
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitProvenance, CommitSubject,
@@ -483,43 +483,6 @@ fn persisted_policy_loss_after_approval_prevents_writing() -> Result<(), Box<dyn
         assert!(session.writer.0.borrow().is_empty());
     }
     Ok(())
-}
-
-#[test]
-fn an_unapplied_project_draft_does_not_replace_persisted_commit_policy()
--> Result<(), Box<dyn Error>> {
-    let session = Session::new(vec![entry("file", 'M', '.')])?;
-    session.run(|workspace| {
-        let authored = approved(&workspace.commit().prepare_commit()?)?;
-        let mut draft = workspace
-            .configuration()
-            .load(ConfigurationDestination::Project)?;
-        draft.configure_project(TaxonomyId::new("other")?, &[TaxonomyId::new("other")?])?;
-        assert_eq!(
-            draft
-                .project_config()
-                .ok_or("missing draft")?
-                .taxonomies()
-                .len(),
-            1
-        );
-        workspace.commit().submit_commit(&authored)?;
-        assert_eq!(
-            session.writer.0.borrow().as_slice(),
-            &[(
-                session.locator.root.clone(),
-                authored
-                    .reviewed_message()
-                    .ok_or("no approved bytes")?
-                    .clone()
-            )]
-        );
-        assert_eq!(
-            *session.project.0.borrow(),
-            Ok(Some(project_configuration()?))
-        );
-        Ok(())
-    })
 }
 
 #[test]

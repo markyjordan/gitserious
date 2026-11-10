@@ -7,8 +7,8 @@ use library_lookup::LibraryLookup;
 use std::error::Error;
 
 use gitserious_app::{
-    ConfigurationSession, DraftEdit, DraftField, GlobalConfiguration, LibraryDraft, ProblemKind,
-    ProjectRevision, RepositoryRoot, StoredProject, initial_project_configuration,
+    DraftEdit, DraftField, GlobalConfiguration, LibraryDraft, ProblemKind,
+    initial_project_configuration,
 };
 use gitserious_core::TaxonomyId;
 
@@ -88,37 +88,5 @@ fn forks_and_new_taxonomies_join_the_project_once_they_have_a_type() -> Result<(
     assert!(draft.removal_blocker(&conventional).is_some());
     let research = draft.find_path(&["research"]).ok_or("research")?;
     assert!(draft.removal_blocker(&research).is_none());
-    Ok(())
-}
-
-#[test]
-fn review_names_added_changed_and_removed_taxonomies() -> Result<(), Box<dyn Error>> {
-    let configuration = initial_project_configuration(&GlobalConfiguration::default())?;
-    let mut session = ConfigurationSession::open_project(
-        RepositoryRoot::new(std::env::temp_dir())?,
-        Some(StoredProject {
-            configuration,
-            revision: ProjectRevision::of_bytes(b"opened"),
-        }),
-    );
-    let draft = session.project_draft_mut().ok_or("initialized")?;
-    let fix = draft
-        .find_path(&["conventional", "fix"])
-        .ok_or("conventional has fix")?;
-    draft.edit(
-        &fix,
-        DraftEdit::Text(DraftField::Description, "Repairs a defect."),
-    )?;
-    let infra = draft.find_path(&["infra-ops"]).ok_or("infra-ops")?;
-    draft.edit(&infra, DraftEdit::Remove)?;
-    let conventional = draft.find_path(&["conventional"]).ok_or("conventional")?;
-    draft.fork(&conventional)?;
-
-    let review = session.review()?.changes;
-
-    assert!(review.contains("  ~ conventional-v1"), "{review}");
-    assert!(review.contains("  + conventional-fork"), "{review}");
-    assert!(review.contains("  - infra-ops"), "{review}");
-    assert!(session.is_dirty());
     Ok(())
 }

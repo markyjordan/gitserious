@@ -101,14 +101,6 @@ pub(crate) fn navigation_key_style() -> Style {
     navigation_style().add_modifier(Modifier::BOLD)
 }
 
-pub(crate) fn row_style(index: usize) -> Style {
-    Style::default().bg(if index.is_multiple_of(2) {
-        JET_BLACK
-    } else {
-        ZEBRA_BACKGROUND
-    })
-}
-
 pub(crate) fn selected_style(active: bool) -> Style {
     if active {
         navigation_key_style()

@@ -322,20 +322,6 @@ fn project_shows_sections_files_and_initialize() -> Result<(), Box<dyn std::erro
     assert!(state.project_detail().contains("gitserious.toml"));
     assert!(!state.project_detail().contains("gitserious.lock"));
     assert!(files.contains("Absent"));
-    state.handle_event(key(KeyCode::Up), &workspace);
-    state.handle_event(key(KeyCode::Up), &workspace);
-    state.handle_event(key(KeyCode::Enter), &workspace);
-    assert!(matches!(state.screen, Screen::Home));
-    assert!(matches!(state.status, Some(Notice::Error(_))));
-    state.handle_event(key(KeyCode::Char('i')), &workspace);
-    assert!(matches!(
-        state.screen,
-        Screen::Review(ConfigurationDestination::Project)
-    ));
-    assert_eq!(workspace.saves.get(), 0);
-    state.project_section = ProjectSection::Files;
-    assert!(state.project_detail().contains("Initialization staged"));
-    assert!(state.project_detail().contains("Absent"));
     Ok(())
 }
 
@@ -377,30 +363,6 @@ fn project_panels_show_only_the_embedded_policy() -> Result<(), Box<dyn std::err
     let taxonomies = state.project_detail();
     assert!(taxonomies.contains("team\n"));
     assert!(taxonomies.contains("Types: feat, fix"));
-
-    state.project_section = ProjectSection::Commit;
-    state.handle_event(key(KeyCode::Enter), &workspace);
-    assert!(matches!(
-        state.screen,
-        Screen::Settings(ConfigurationDestination::Project)
-    ));
-    assert_eq!(
-        state
-            .settings_rows(ConfigurationDestination::Project)
-            .iter()
-            .map(|taxonomy| taxonomy.id().as_str())
-            .collect::<Vec<_>>(),
-        ["team", "research"]
-    );
-    state.handle_event(key(KeyCode::Down), &workspace);
-    state.handle_event(key(KeyCode::Enter), &workspace);
-    state.handle_event(ctrl(KeyCode::Char('s')), &workspace);
-    assert!(matches!(state.screen, Screen::Home));
-    let staged = state.project_detail();
-    assert!(staged.contains("Commit taxonomy\n  team"));
-    assert!(staged.contains("Staged\n  Default: research\n  Available: team, research"));
-    assert!(staged.contains("Changes staged"));
-    assert_eq!(workspace.saves.get(), 0);
     Ok(())
 }
 
@@ -1100,49 +1062,6 @@ fn rail_is_thirteen_columns_ruled_off_without_a_box() -> Result<(), Box<dyn std:
 }
 
 #[test]
-fn rail_marks_unapplied_project_changes_until_apply_or_discard()
--> Result<(), Box<dyn std::error::Error>> {
-    for (answer, saves) in [('a', 1), ('d', 0)] {
-        let workspace = Workspace::new();
-        let mut state = State::new(&workspace);
-        let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
-        let project_row = |state: &mut State,
-                           terminal: &mut Terminal<TestBackend>|
-         -> Result<String, Box<dyn std::error::Error>> {
-            terminal.draw(|frame| state.render(frame))?;
-            Ok(row_text(terminal, 0, 1, RAIL_WIDTH))
-        };
-        assert_eq!(project_row(&mut state, &mut terminal)?, " 1  Project  ");
-
-        press(
-            &mut state,
-            &workspace,
-            &[KeyCode::Right, KeyCode::Char('i'), KeyCode::Esc],
-        );
-        assert!(matches!(state.screen, Screen::Home));
-        assert!(state.scope_dirty(ConfigurationDestination::Project));
-        press(&mut state, &workspace, &[KeyCode::Char('2')]);
-        assert_eq!(project_row(&mut state, &mut terminal)?, " 1  Project ●");
-        let dot = &terminal.backend().buffer()[(12, 1)];
-        assert_eq!(dot.fg, theme().pending);
-        assert_eq!(row_text(&terminal, 0, 2, RAIL_WIDTH), " 2  Library  ");
-
-        press(&mut state, &workspace, &[KeyCode::Char('n')]);
-        assert!(matches!(state.screen, Screen::ScopeChange(_)));
-        assert_eq!(project_row(&mut state, &mut terminal)?, " 1  Project ●");
-        press(&mut state, &workspace, &[KeyCode::Char(answer)]);
-        assert_eq!(workspace.saves.get(), saves);
-        assert!(!state.scope_dirty(ConfigurationDestination::Project));
-        assert_eq!(
-            project_row(&mut state, &mut terminal)?,
-            " 1  Project  ",
-            "after {answer}"
-        );
-    }
-    Ok(())
-}
-
-#[test]
 fn footer_commands_start_at_the_left_and_keep_the_edit_badge()
 -> Result<(), Box<dyn std::error::Error>> {
     for width in [MINIMUM_WIDTH, 87, 140] {
@@ -1658,20 +1577,6 @@ fn palette_blocks_underlying_keys_and_reports_unavailable_actions()
 }
 
 #[test]
-fn project_palette_keeps_the_review_boundary() {
-    let workspace = Workspace::new();
-    let mut state = State::new(&workspace);
-    state.handle_event(key(KeyCode::Char('/')), &workspace);
-    state.handle_event(Event::Paste("initialize".into()), &workspace);
-    state.handle_event(key(KeyCode::Enter), &workspace);
-    assert!(matches!(
-        state.screen,
-        Screen::Review(ConfigurationDestination::Project)
-    ));
-    assert_eq!(workspace.saves.get(), 0);
-}
-
-#[test]
 fn question_mark_has_no_navigation_action_or_footer_hint() -> Result<(), Box<dyn std::error::Error>>
 {
     let workspace = Workspace::new();
@@ -1703,29 +1608,6 @@ fn question_mark_has_no_navigation_action_or_footer_hint() -> Result<(), Box<dyn
             );
         }
     }
-    Ok(())
-}
-
-#[test]
-fn palette_library_actions_respect_dirty_project_confirmation()
--> Result<(), Box<dyn std::error::Error>> {
-    let workspace = Workspace::new();
-    let mut state = State::new(&workspace);
-    state
-        .project
-        .as_mut()
-        .ok_or("missing project")?
-        .initialize_project(&GlobalConfiguration::default())?;
-    state.category = Category::Taxonomies;
-    state.home_focus = HomeFocus::Content;
-    state.handle_event(key(KeyCode::Char('/')), &workspace);
-    state.handle_event(Event::Paste("create".into()), &workspace);
-    state.handle_event(key(KeyCode::Enter), &workspace);
-    assert!(matches!(
-        state.screen,
-        Screen::ScopeChange(PendingAction::Library(LibraryAction::Create))
-    ));
-    assert_eq!(workspace.saves.get(), 0);
     Ok(())
 }
 
@@ -1815,13 +1697,9 @@ fn overlay_notices_replace_the_message_row() -> Result<(), Box<dyn std::error::E
     assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().pending);
     assert!(text(&terminal).contains("Invalid selection"));
 
-    state.status = Some(Notice::Info("Configuration applied.".into()));
-    terminal.draw(|frame| state.render(frame))?;
-    assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().text);
-    assert!(text(&terminal).contains("Configuration applied."));
     state.handle_event(key(KeyCode::Down), &workspace);
     terminal.draw(|frame| state.render(frame))?;
-    assert!(!text(&terminal).contains("Configuration applied."));
+    assert!(!text(&terminal).contains("Invalid selection"));
     Ok(())
 }
 
@@ -1836,10 +1714,10 @@ fn load_errors_remain_visible_beneath_transient_notices() -> Result<(), Box<dyn 
     terminal.draw(|frame| state.render(frame))?;
     assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().pending);
 
-    state.status = Some(Notice::Info("Review pending".into()));
+    state.status = Some(Notice::Error("Invalid selection".into()));
     terminal.draw(|frame| state.render(frame))?;
-    assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().text);
-    assert!(text(&terminal).contains("Review pending"));
+    assert!(text(&terminal).contains("Invalid selection"));
+    assert!(!text(&terminal).contains("Project load failed."));
 
     state.status = None;
     state.category = Category::Taxonomies;
@@ -1849,51 +1727,6 @@ fn load_errors_remain_visible_beneath_transient_notices() -> Result<(), Box<dyn 
     terminal.draw(|frame| state.render(frame))?;
     assert_eq!(terminal.backend().buffer()[(45, 27)].fg, theme().pending);
     assert!(text(&terminal).contains("Global load failed."));
-    Ok(())
-}
-
-#[test]
-fn browsing_preserves_project_draft_until_global_action() -> Result<(), Box<dyn std::error::Error>>
-{
-    let workspace = Workspace::new();
-    let mut state = State::new(&workspace);
-    state
-        .project
-        .as_mut()
-        .ok_or("missing project")?
-        .initialize_project(&GlobalConfiguration::default())?;
-    let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
-    terminal.draw(|frame| state.render(frame))?;
-    assert_eq!(
-        row_text(&terminal, 0, 24, CONTENT_X),
-        format!("{}│", " ".repeat(usize::from(RAIL_WIDTH)))
-    );
-    state.handle_event(key(KeyCode::Down), &workspace);
-    assert_eq!(state.category, Category::Taxonomies);
-    terminal.draw(|frame| state.render(frame))?;
-    assert!(text(&terminal).contains("Taxonomy conventional"));
-    assert!(state.scope_dirty(ConfigurationDestination::Project));
-    assert_eq!(workspace.saves.get(), 0);
-    state.handle_event(key(KeyCode::Char('e')), &workspace);
-    assert!(matches!(state.screen, Screen::Home));
-    assert!(matches!(state.status, Some(Notice::Error(_))));
-    assert_eq!(workspace.saves.get(), 0);
-    state.handle_event(key(KeyCode::Char('n')), &workspace);
-    assert!(matches!(
-        state.screen,
-        Screen::ScopeChange(PendingAction::Library(LibraryAction::Create))
-    ));
-    assert_eq!(workspace.saves.get(), 0);
-    state.handle_event(key(KeyCode::Esc), &workspace);
-    assert!(matches!(state.screen, Screen::Home));
-    assert_eq!(state.category, Category::Taxonomies);
-    assert!(state.scope_dirty(ConfigurationDestination::Project));
-    state.handle_event(key(KeyCode::Char('n')), &workspace);
-    state.handle_event(key(KeyCode::Char('a')), &workspace);
-    assert_eq!(workspace.saves.get(), 1);
-    assert!(matches!(state.screen, Screen::Home) && state.taxonomies.editing());
-    assert_eq!(cursor(&state), [""]);
-    assert_eq!(state.active_scope, ConfigurationDestination::Global);
     Ok(())
 }
 
@@ -2025,7 +1858,7 @@ fn remove_dialog_invalidates_mouse_targets_after_resize() -> Result<(), Box<dyn 
     assert!(matches!(state.screen, Screen::ConfirmRemove(_)));
     state.handle_event(key(KeyCode::Esc), &workspace);
     assert!(matches!(state.screen, Screen::Home));
-    assert!(!state.any_dirty());
+    assert!(!state.scope_dirty(ConfigurationDestination::Global));
     assert_eq!(workspace.saves.get(), 0);
     Ok(())
 }
@@ -2141,7 +1974,7 @@ fn text_of(
 
 fn notice(state: &State) -> Option<&str> {
     match &state.status {
-        Some(Notice::Error(message) | Notice::Info(message)) => Some(message),
+        Some(Notice::Error(message)) => Some(message),
         None => None,
     }
 }
@@ -2609,7 +2442,7 @@ fn quitting_after_a_library_save_has_no_discard_prompt() -> Result<(), Box<dyn s
         &[KeyCode::Char('e'), KeyCode::Char('q')],
     );
     state.handle_event(ctrl(KeyCode::Char('w')), &workspace);
-    assert!(!state.any_dirty());
+    assert!(!state.scope_dirty(ConfigurationDestination::Global));
     assert_eq!(workspace.saves(), 1);
     assert!(state.handle_event(key(KeyCode::Char('q')), &workspace));
     assert!(matches!(state.screen, Screen::Home));

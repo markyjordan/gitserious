@@ -60,31 +60,10 @@ impl TaxonomyCatalog {
         Ok(Self { taxonomies })
     }
 
-    /// Returns built-ins followed by custom taxonomies in storage order.
-    #[must_use]
-    pub fn taxonomies(&self) -> &[Taxonomy] {
-        &self.taxonomies
-    }
-
     /// Finds one taxonomy.
     #[must_use]
     pub fn find(&self, id: &TaxonomyId) -> Option<&Taxonomy> {
         self.taxonomies.iter().find(|taxonomy| taxonomy.id() == id)
-    }
-
-    /// Classifies a taxonomy identity.
-    #[must_use]
-    pub fn origin(&self, id: &TaxonomyId) -> Option<TaxonomyOrigin> {
-        self.find(id).map(|_| {
-            if built_in_taxonomies()
-                .iter()
-                .any(|taxonomy| taxonomy.id() == id)
-            {
-                TaxonomyOrigin::BuiltIn
-            } else {
-                TaxonomyOrigin::Custom
-            }
-        })
     }
 }
 
