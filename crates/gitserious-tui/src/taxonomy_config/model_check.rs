@@ -406,7 +406,7 @@ fn empty_library() -> Result<Workspace, String> {
     )
     .map_err(|error| error.to_string())?;
     let default = GlobalConfiguration::default();
-    *workspace.global.borrow_mut() = ConfigurationSession::open_global(
+    *workspace.global.borrow_mut() = LibraryDraft::from_configuration(
         GlobalConfiguration::new(
             1,
             default.default_taxonomy().clone(),
@@ -443,7 +443,7 @@ fn workspace_of(
 ) -> Result<Workspace, String> {
     let workspace = Workspace::new();
     *workspace.global.borrow_mut() =
-        ConfigurationSession::open_global(configuration.map_err(|error| error.to_string())?);
+        LibraryDraft::from_configuration(configuration.map_err(|error| error.to_string())?);
     Ok(workspace)
 }
 
@@ -495,17 +495,17 @@ struct Snapshot {
     category: Category,
     home_focus: HomeFocus,
     project_section: ProjectSection,
-    active_scope: ConfigurationDestination,
     taxonomies: Observation,
     overlay: Option<String>,
     status: Option<String>,
-    global: Option<ConfigurationSession>,
-    project: Option<ConfigurationSession>,
+    global: Option<LibraryDraft>,
+    project: Option<ProjectSnapshot>,
     /// Whether the Library has changes apply would write.
     unapplied: bool,
     /// The count of unapplied changes the shell's Config tab shows.
     load_errors: [String; 2],
-    saved: [ConfigurationSession; 2],
+    /// The Library the fake workspace stores. Config never writes the project.
+    saved: LibraryDraft,
     dialog: String,
     dialog_hints: Option<Vec<String>>,
     too_small: bool,
@@ -520,7 +520,6 @@ impl Snapshot {
             category: state.category,
             home_focus: state.home_focus,
             project_section: state.project_section,
-            active_scope: state.active_scope,
             taxonomies: state.taxonomies.observe(state.library()),
             overlay: state
                 .home_overlay
@@ -531,12 +530,9 @@ impl Snapshot {
             }),
             global: state.global.clone(),
             project: state.project.clone(),
-            unapplied: state.scope_dirty(ConfigurationDestination::Global),
+            unapplied: state.library_dirty(),
             load_errors: [state.global_error.clone(), state.project_error.clone()],
-            saved: [
-                workspace.global.borrow().clone(),
-                workspace.project.borrow().clone(),
-            ],
+            saved: workspace.global.borrow().clone(),
             dialog: format!("{:?}", state.dialog),
             dialog_hints: state
                 .confirmation()
@@ -559,7 +555,7 @@ impl Snapshot {
     }
 
     fn library(&self) -> Option<&LibraryDraft> {
-        self.global.as_ref().and_then(ConfigurationSession::library)
+        self.global.as_ref()
     }
 
     fn footer(&self) -> String {
@@ -572,9 +568,7 @@ impl Snapshot {
 
     /// The Library the fake workspace stores: the last applied session's Library.
     fn stored_library(&self) -> Option<GlobalConfiguration> {
-        self.saved[0]
-            .library()
-            .and_then(|library| library.build().ok())
+        self.saved.build().ok()
     }
 
     /// Whether the Taxonomies outline takes `input` with no overlay in the way.
@@ -1142,7 +1136,7 @@ fn problems_keep_the_saved_library(
     let blocked = before
         .library()
         .is_some_and(|library| !library.problems().is_empty());
-    if blocked && format!("{:?}", after.saved[0]) != format!("{:?}", before.saved[0]) {
+    if blocked && format!("{:?}", after.saved) != format!("{:?}", before.saved) {
         return Err("The saved Library changed while the staged Library had problems.".into());
     }
     Ok(())

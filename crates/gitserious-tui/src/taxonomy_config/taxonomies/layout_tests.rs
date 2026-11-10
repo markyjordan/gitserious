@@ -1,18 +1,17 @@
 use crate::library_lookup::LibraryLookup;
 use crate::theme::theme;
-use gitserious_app::{ConfigurationSession, GlobalConfiguration};
+use gitserious_app::{GlobalConfiguration, LibraryDraft};
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
 use super::*;
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-fn fixture() -> Result<(TaxonomiesView, LibraryDraft)> {
-    let session = ConfigurationSession::open_global(GlobalConfiguration::default());
-    Ok((
+fn fixture() -> (TaxonomiesView, LibraryDraft) {
+    (
         TaxonomiesView::default(),
-        session.library().ok_or("library")?.clone(),
-    ))
+        LibraryDraft::from_configuration(GlobalConfiguration::default()),
+    )
 }
 
 fn draw(view: &mut TaxonomiesView, library: &LibraryDraft, height: u16) -> Result<Buffer> {
@@ -69,7 +68,7 @@ fn text_in(buffer: &Buffer, area: Rect) -> String {
 #[test]
 fn outline_counts_rows_below_in_its_last_row_without_a_box() -> Result {
     for width in [50, 71, 124] {
-        let (mut view, library) = fixture()?;
+        let (mut view, library) = fixture();
         let mut terminal = Terminal::new(TestBackend::new(width, 10))?;
         for loaded in [false, true] {
             if loaded {
@@ -113,7 +112,7 @@ fn outline_counts_rows_below_in_its_last_row_without_a_box() -> Result {
 
 #[test]
 fn opening_collapses_all_other_roots_and_normal_scrolling_keeps_selection_visible() -> Result {
-    let (mut view, library) = fixture()?;
+    let (mut view, library) = fixture();
     let first = open(&mut view, &library, "conventional")?;
     let child = library.find_path(&["conventional", "feat"]).ok_or("feat")?;
     press(&mut view, &library, KeyCode::Down);
@@ -158,7 +157,7 @@ fn opening_collapses_all_other_roots_and_normal_scrolling_keeps_selection_visibl
 
 #[test]
 fn new_fork_and_revealed_children_collapse_all_other_roots() -> Result {
-    let (mut view, mut library) = fixture()?;
+    let (mut view, mut library) = fixture();
     open(&mut view, &library, "conventional")?;
     view.act(LibraryAction::Fork, &mut library)?;
     let fork = view.selected(&library).ok_or("fork")?.id().clone();
@@ -196,7 +195,7 @@ fn new_fork_and_revealed_children_collapse_all_other_roots() -> Result {
 
 #[test]
 fn switching_between_built_in_and_custom_roots_remembers_multiple_open_types() -> Result {
-    let (mut view, mut library) = fixture()?;
+    let (mut view, mut library) = fixture();
     let conventional = open(&mut view, &library, "conventional")?;
     view.act(LibraryAction::Fork, &mut library)?;
     let fork = view.selected(&library).ok_or("fork")?.id().clone();
@@ -255,7 +254,7 @@ fn switching_between_built_in_and_custom_roots_remembers_multiple_open_types() -
 
 #[test]
 fn a_rule_parts_the_outline_and_inspector_sixty_forty_or_below_a_short_outline() -> Result {
-    let (mut view, library) = fixture()?;
+    let (mut view, library) = fixture();
     // From 24 rows a blank row pads the top and the bottom. The outline and the rule take 60%
     // of the rest; three collapsed taxonomies and the new taxonomy row take fewer rows than that.
     for (height, short, long) in [
@@ -286,7 +285,7 @@ fn a_rule_parts_the_outline_and_inspector_sixty_forty_or_below_a_short_outline()
 #[test]
 fn focused_fields_and_their_errors_remain_visible_in_short_inspectors() -> Result {
     use gitserious_app::Policy;
-    let (mut view, mut library) = fixture()?;
+    let (mut view, mut library) = fixture();
     open(&mut view, &library, "conventional")?;
     view.act(LibraryAction::Fork, &mut library)?;
     let property = match view.selected(&library) {
@@ -322,8 +321,8 @@ fn focused_fields_and_their_errors_remain_visible_in_short_inspectors() -> Resul
 }
 
 #[test]
-fn footer_keys_have_balanced_padding_and_a_separate_label_gap() -> Result {
-    let (view, library) = fixture()?;
+fn footer_keys_have_balanced_padding_and_a_separate_label_gap() {
+    let (view, library) = fixture();
     for width in [64, 85, 138] {
         let line = view.status_line(Some(&library), width);
         for spans in line.spans.windows(2) {
@@ -338,14 +337,13 @@ fn footer_keys_have_balanced_padding_and_a_separate_label_gap() -> Result {
             }
         }
     }
-    Ok(())
 }
 
 #[test]
 fn type_rows_omit_property_previews_and_expand_to_real_properties() -> Result {
     for read_only in [false, true] {
         for (width, height) in [(66, 24), (87, 40), (100, 30), (125, 40)] {
-            let (mut view, library) = fixture()?;
+            let (mut view, library) = fixture();
             view.read_only = read_only;
             open(&mut view, &library, "conventional")?;
             let feat = library.find_path(&["conventional", "feat"]).ok_or("type")?;

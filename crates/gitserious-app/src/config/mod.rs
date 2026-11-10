@@ -11,7 +11,7 @@ pub use library_draft::{
 };
 pub use library_taxonomy::LibraryTaxonomy;
 pub use taxonomy_configuration_editor::{
-    ConfigurationDestination, ConfigurationServices, ConfigurationSession, ConfigurationWorkspace,
+    ConfigurationServices, ConfigurationWorkspace, ProjectSnapshot,
 };
 pub use taxonomy_date::TaxonomyDate;
 pub use taxonomy_policy::{

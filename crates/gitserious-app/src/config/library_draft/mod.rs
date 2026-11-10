@@ -547,15 +547,6 @@ impl LibraryDraft {
         }
     }
 
-    /// The project configuration this draft was loaded from; none for a Library draft.
-    #[must_use]
-    pub const fn persisted_project(&self) -> Option<&ProjectConfiguration> {
-        match &self.owner {
-            Owner::Library(_) => None,
-            Owner::Project { configuration, .. } => Some(configuration),
-        }
-    }
-
     /// Whether this draft holds a project's taxonomies rather than the Library.
     #[must_use]
     pub const fn is_project(&self) -> bool {

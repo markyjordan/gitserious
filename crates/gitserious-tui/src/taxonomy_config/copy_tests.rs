@@ -54,7 +54,7 @@ pub(super) fn team() -> Result<Workspace, Box<dyn std::error::Error>> {
     )?;
     let workspace = Workspace::new();
     let conventional = TaxonomyId::new("conventional")?;
-    *workspace.global.borrow_mut() = ConfigurationSession::open_global(GlobalConfiguration::new(
+    *workspace.global.borrow_mut() = LibraryDraft::from_configuration(GlobalConfiguration::new(
         1,
         conventional.clone(),
         vec![conventional],
@@ -172,7 +172,7 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
 
     assert_eq!(cursor(&state), ["team", "feat", "constraints"]);
     assert_eq!(state.taxonomies.shell_keys(), ShellKeys::Navigation);
-    assert!(!state.scope_dirty(ConfigurationDestination::Global));
+    assert!(!state.library_dirty());
     let rows = screen(&mut state)?;
     let fix = rows
         .iter()
@@ -260,11 +260,7 @@ fn c_refuses_a_built_in_a_lone_type_and_a_target_that_has_the_key_with_a_sentenc
     );
     assert_eq!(state.taxonomies.shell_keys(), ShellKeys::Navigation);
 
-    let library = state
-        .global
-        .as_mut()
-        .and_then(ConfigurationSession::library_mut)
-        .ok_or("the Library loads")?;
+    let library = state.global.as_mut().ok_or("the Library loads")?;
     for path in [["team", "fix"], ["team", "docs"]] {
         let commit_type = library.find_path(&path).ok_or("the type exists")?;
         library.edit(&commit_type, DraftEdit::Remove)?;
@@ -313,7 +309,7 @@ fn the_copy_picker_keeps_its_choices_when_the_user_clicks_behind_it() -> TestRes
         assert_eq!(cursor(&state), ["team", "feat", "constraints"]);
     }
     press(&mut state, &workspace, &[KeyCode::Enter]);
-    assert!(!state.scope_dirty(ConfigurationDestination::Global));
+    assert!(!state.library_dirty());
     assert_eq!(
         policy(&state, &["team", "fix", "constraints"]),
         Some(Policy::Conditional)

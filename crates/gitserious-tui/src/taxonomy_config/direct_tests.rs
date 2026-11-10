@@ -17,20 +17,17 @@ struct Store {
 }
 
 impl ConfigurationWorkspace for Store {
-    fn load(
-        &self,
-        destination: ConfigurationDestination,
-    ) -> std::result::Result<ConfigurationSession, String> {
-        self.inner.load(destination)
+    fn load_library(&self) -> std::result::Result<LibraryDraft, String> {
+        self.inner.load_library()
     }
-    fn save(
-        &self,
-        session: &ConfigurationSession,
-    ) -> std::result::Result<ConfigurationSession, String> {
+    fn save_library(&self, library: &LibraryDraft) -> std::result::Result<LibraryDraft, String> {
         if self.fail.get() {
             return Err("could not replace /config/config.toml: disk full".into());
         }
-        self.inner.save(session)
+        self.inner.save_library(library)
+    }
+    fn load_project(&self) -> std::result::Result<gitserious_app::ProjectSnapshot, String> {
+        self.inner.load_project()
     }
     fn library_path(&self) -> std::path::PathBuf {
         self.inner.library_path()
@@ -66,11 +63,7 @@ fn select(state: &mut State, path: &[&str]) -> Result<NodeId> {
         {
             state.taxonomies.key(
                 KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-                state
-                    .global
-                    .as_ref()
-                    .and_then(ConfigurationSession::library)
-                    .ok_or("Library missing")?,
+                state.global.as_ref().ok_or("Library missing")?,
             );
         }
     }
@@ -133,8 +126,7 @@ fn stored(store: &Store) -> Result<GlobalConfiguration> {
         .inner
         .global
         .borrow()
-        .library()
-        .and_then(LibraryDraft::persisted)
+        .persisted()
         .ok_or("stored Library missing")?
         .clone())
 }
@@ -658,7 +650,7 @@ fn copy_reorder_and_delete_rollback_on_failure_and_persist_on_retry() -> Result 
         assert_ne!(stored(&store)?, original, "{operation}");
         assert!(state.status.is_none(), "{operation} retry must be quiet");
         assert!(!frame(&mut state, 87, 40)?.contains("Saved."));
-        assert!(!state.scope_dirty(ConfigurationDestination::Global));
+        assert!(!state.library_dirty());
         assert_eq!(stored(&store)?.custom_taxonomies()[0].version(), None);
     }
     Ok(())

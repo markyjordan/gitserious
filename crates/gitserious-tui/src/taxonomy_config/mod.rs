@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, REMOVE};
 use gitserious_app::{
-    ConfigurationDestination, ConfigurationSession, ConfigurationWorkspace, DraftEdit, EditRefusal,
-    LibraryDraft, NodeId, NodeRef, RepositoryRoot, TaxonomyOrigin,
+    ConfigurationWorkspace, DraftEdit, EditRefusal, LibraryDraft, NodeId, NodeRef, ProjectSnapshot,
+    RepositoryRoot, TaxonomyOrigin,
 };
 #[cfg(test)]
 use gitserious_core::{Taxonomy, TaxonomyId};
@@ -245,11 +245,13 @@ fn content_padding(terminal: Rect) -> u16 {
 }
 
 struct State {
-    global: Option<ConfigurationSession>,
+    /// The working Library; it holds the configuration it was loaded from.
+    global: Option<LibraryDraft>,
     global_error: String,
-    project: Option<ConfigurationSession>,
+    project: Option<ProjectSnapshot>,
+    /// The project's taxonomies as a draft the read-only outline browses.
+    project_outline: Option<LibraryDraft>,
     project_error: String,
-    active_scope: ConfigurationDestination,
     category: Category,
     home_focus: HomeFocus,
     taxonomies: TaxonomiesView,
@@ -271,16 +273,14 @@ struct State {
 
 impl State {
     fn new(workspace: &dyn ConfigurationWorkspace) -> Self {
-        let global_result = workspace.load(ConfigurationDestination::Global);
-        let project_result = workspace.load(ConfigurationDestination::Project);
-        let (global, global_error) = split_result(global_result);
-        let (project, project_error) = split_result(project_result);
+        let (global, global_error) = split_result(workspace.load_library());
+        let (project, project_error) = split_result(workspace.load_project());
         Self {
             global,
             global_error,
+            project_outline: outline(project.as_ref()),
             project,
             project_error,
-            active_scope: ConfigurationDestination::Project,
             category: Category::Project,
             home_focus: HomeFocus::Menu,
             taxonomies: TaxonomiesView::default(),
@@ -362,14 +362,7 @@ impl State {
     fn editor(&self) -> Option<Editor> {
         match self.category {
             Category::Taxonomies => Some(Editor::Library),
-            Category::Project
-                if self
-                    .project
-                    .as_ref()
-                    .is_some_and(|session| session.persisted_project_config().is_some()) =>
-            {
-                Some(Editor::Project)
-            }
+            Category::Project if self.project_outline.is_some() => Some(Editor::Project),
             Category::Project => None,
         }
     }
@@ -384,17 +377,14 @@ impl State {
     fn editor_draft(&self) -> Option<&LibraryDraft> {
         match self.editor()? {
             Editor::Library => self.library(),
-            Editor::Project => self.project.as_ref()?.project_draft(),
+            Editor::Project => self.project_outline.as_ref(),
         }
     }
 
     fn editor_parts_mut(&mut self) -> Option<(&mut TaxonomiesView, &mut LibraryDraft)> {
         match self.editor()? {
-            Editor::Library => Some((&mut self.taxonomies, self.global.as_mut()?.library_mut()?)),
-            Editor::Project => Some((
-                &mut self.project_taxonomies,
-                self.project.as_mut()?.project_draft_mut()?,
-            )),
+            Editor::Library => Some((&mut self.taxonomies, self.global.as_mut()?)),
+            Editor::Project => Some((&mut self.project_taxonomies, self.project_outline.as_mut()?)),
         }
     }
 
@@ -404,16 +394,11 @@ impl State {
             self.status = None;
             return;
         }
-        let Some(session) = self.global.as_ref() else {
+        let Some(library) = self.global.as_ref() else {
             return;
         };
-        let Some(library) = session.library() else {
-            return;
-        };
-        let result = if session.is_dirty() {
-            workspace
-                .save(session)
-                .map(|saved| saved.library().cloned())
+        let result = if library.is_changed() {
+            workspace.save_library(library).map(Some)
         } else {
             library.saved().map(Some).map_err(|problems| {
                 problems
@@ -426,19 +411,13 @@ impl State {
         match result {
             Ok(candidate) => {
                 if let Some(candidate) = candidate
-                    && let Some(library) = self
-                        .global
-                        .as_mut()
-                        .and_then(ConfigurationSession::library_mut)
+                    && let Some(library) = self.global.as_mut()
                 {
                     *library = candidate;
                 }
                 self.taxonomies.finish_edit();
                 self.status = None;
-                self.replace_session(
-                    ConfigurationDestination::Project,
-                    workspace.load(ConfigurationDestination::Project),
-                );
+                self.reload_project(workspace);
             }
             Err(error) => self.status = Some(Notice::error(error)),
         }
@@ -452,33 +431,24 @@ impl State {
         let before_view = self.taxonomies.clone();
         let before_screen = self.screen.clone();
         let quit = self.handle_event_inner(event, workspace);
-        let immediate_change = !before_view.editing()
-            && !self.taxonomies.editing()
-            && self.scope_dirty(ConfigurationDestination::Global);
-        if immediate_change && let Some(session) = self.global.as_ref() {
-            let candidate = session.library().and_then(|library| library.saved().ok());
-            let result = if session.is_dirty() {
-                workspace
-                    .save(session)
-                    .map(|saved| saved.library().cloned())
+        let immediate_change =
+            !before_view.editing() && !self.taxonomies.editing() && self.library_dirty();
+        if immediate_change && let Some(library) = self.global.as_ref() {
+            let candidate = library.saved().ok();
+            let result = if library.is_changed() {
+                workspace.save_library(library).map(Some)
             } else {
                 Ok(candidate)
             };
             match result {
                 Ok(candidate) => {
                     if let Some(candidate) = candidate
-                        && let Some(library) = self
-                            .global
-                            .as_mut()
-                            .and_then(ConfigurationSession::library_mut)
+                        && let Some(library) = self.global.as_mut()
                     {
                         *library = candidate;
                     }
                     self.status = None;
-                    self.replace_session(
-                        ConfigurationDestination::Project,
-                        workspace.load(ConfigurationDestination::Project),
-                    );
+                    self.reload_project(workspace);
                 }
                 Err(error) => {
                     self.global = before_global;
@@ -790,15 +760,11 @@ impl State {
         }
     }
 
-    /// Replaces a reviewed or refreshed Project session.
-    fn replace_session(
-        &mut self,
-        destination: ConfigurationDestination,
-        result: Result<ConfigurationSession, String>,
-    ) {
-        debug_assert_eq!(destination, ConfigurationDestination::Project);
-        let (session, error) = split_result(result);
-        self.project = session;
+    /// Reads the project again, since a Library save can follow another process's init.
+    fn reload_project(&mut self, workspace: &dyn ConfigurationWorkspace) {
+        let (project, error) = split_result(workspace.load_project());
+        self.project_outline = outline(project.as_ref());
+        self.project = project;
         self.project_error = error;
     }
 
@@ -858,20 +824,15 @@ impl State {
         self.screen = Screen::Home;
         match action {
             PendingAction::Library(action) => {
-                self.active_scope = ConfigurationDestination::Global;
                 self.category = Category::Taxonomies;
                 self.home_focus = HomeFocus::Content;
-                if let Some(library) = self
-                    .global
-                    .as_mut()
-                    .and_then(ConfigurationSession::library_mut)
+                if let Some(library) = self.global.as_mut()
                     && let Err(error) = self.taxonomies.act(action, library)
                 {
                     self.status = Some(Notice::error(error));
                 }
             }
             PendingAction::Delete => {
-                self.active_scope = ConfigurationDestination::Global;
                 if let Some(node) = self
                     .library()
                     .and_then(|library| self.taxonomies.selected(library))
@@ -879,13 +840,6 @@ impl State {
                     self.screen = Screen::ConfirmRemove(node.id().clone());
                 }
             }
-        }
-    }
-
-    fn session(&self, destination: ConfigurationDestination) -> Option<&ConfigurationSession> {
-        match destination {
-            ConfigurationDestination::Global => self.global.as_ref(),
-            ConfigurationDestination::Project => self.project.as_ref(),
         }
     }
 
@@ -897,14 +851,14 @@ impl State {
         }
     }
 
-    /// The working Library of the Global session.
+    /// The working Library.
     fn library(&self) -> Option<&LibraryDraft> {
-        self.global.as_ref().and_then(ConfigurationSession::library)
+        self.global.as_ref()
     }
 
-    fn scope_dirty(&self, destination: ConfigurationDestination) -> bool {
-        self.session(destination)
-            .is_some_and(ConfigurationSession::is_dirty)
+    /// Whether the Library differs from what was last loaded or saved.
+    fn library_dirty(&self) -> bool {
+        self.global.as_ref().is_some_and(LibraryDraft::is_changed)
     }
 
     #[cfg(test)]
@@ -1060,7 +1014,7 @@ impl State {
             && self
                 .project
                 .as_ref()
-                .is_some_and(|session| session.persisted_project_config().is_none())
+                .is_some_and(|project| project.configuration().is_none())
     }
 
     fn render_project(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -1084,7 +1038,7 @@ impl State {
         let root = self
             .project
             .as_ref()
-            .and_then(ConfigurationSession::root)
+            .map(ProjectSnapshot::root)
             .map(RepositoryRoot::as_path);
         let name = root.and_then(|path| path.file_name()).map_or_else(
             || "Project".into(),
@@ -1174,10 +1128,7 @@ impl State {
     fn render_taxonomies(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let focused = matches!(self.screen, Screen::Home) && self.home_focus == HomeFocus::Content;
         if self.editor() == Some(Editor::Project) {
-            let draft = self
-                .project
-                .as_ref()
-                .and_then(ConfigurationSession::project_draft);
+            let draft = self.project_outline.as_ref();
             let header =
                 self.project_taxonomies
                     .render(frame, area, library_header::HEIGHT, draft, focused);
@@ -1185,7 +1136,7 @@ impl State {
                 project_overview::render_header(frame, header, session, self.home.as_deref());
             }
         } else {
-            let library = self.global.as_ref().and_then(ConfigurationSession::library);
+            let library = self.global.as_ref();
             let header =
                 self.taxonomies
                     .render(frame, area, library_header::HEIGHT, library, focused);
@@ -1239,13 +1190,19 @@ fn pane_columns(area: Rect) -> std::rc::Rc<[Rect]> {
     Layout::horizontal([Constraint::Length(left), Constraint::Min(1)]).split(area)
 }
 
-fn split_result(
-    result: Result<ConfigurationSession, String>,
-) -> (Option<ConfigurationSession>, String) {
+fn split_result<T>(result: Result<T, String>) -> (Option<T>, String) {
     match result {
         Ok(value) => (Some(value), String::new()),
         Err(error) => (None, error),
     }
+}
+
+/// The draft the read-only project outline browses.
+fn outline(project: Option<&ProjectSnapshot>) -> Option<LibraryDraft> {
+    project?
+        .configuration()
+        .cloned()
+        .map(LibraryDraft::from_project)
 }
 
 fn contains(area: Rect, x: u16, y: u16) -> bool {

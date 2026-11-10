@@ -10,10 +10,10 @@ use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
 use gitserious_app::{
-    ConfigurationDestination, ConfigurationError, ConfigurationServices, ConfigurationSession,
-    ConfigurationWorkspace, DraftEdit, DraftField, EditRefusal, GlobalConfiguration,
-    GlobalConfigurationStore, LibraryDraft, NodeId, ProblemKind, ProjectConfiguration,
-    ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject,
+    ConfigurationError, ConfigurationServices, ConfigurationWorkspace, DraftEdit, DraftField,
+    EditRefusal, GlobalConfiguration, GlobalConfigurationStore, LibraryDraft, NodeId, ProblemKind,
+    ProjectConfiguration, ProjectConfigurationStore, ProjectRevision, RepositoryLocator,
+    RepositoryRoot, StoredProject,
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
@@ -64,18 +64,16 @@ fn library(custom: Vec<Taxonomy>) -> Result<GlobalConfiguration, ConfigurationEr
     )
 }
 
-fn draft(session: &mut ConfigurationSession) -> &mut LibraryDraft {
+fn draft(session: &mut LibraryDraft) -> &mut LibraryDraft {
     session
-        .library_mut()
-        .expect("a Global session holds the Library")
 }
 
-fn node(session: &mut ConfigurationSession, path: &[&str]) -> NodeId {
+fn node(session: &mut LibraryDraft, path: &[&str]) -> NodeId {
     draft(session).find_path(path).expect("the node exists")
 }
 
 /// Forks `source` under the name `target`, as forking and typing a name does.
-fn fork_as(session: &mut ConfigurationSession, source: &str, target: &str) -> NodeId {
+fn fork_as(session: &mut LibraryDraft, source: &str, target: &str) -> NodeId {
     let source = node(session, &[source]);
     let library = draft(session);
     let fork = library.fork(&source).expect("the source forks");
@@ -85,7 +83,7 @@ fn fork_as(session: &mut ConfigurationSession, source: &str, target: &str) -> No
     fork
 }
 
-fn describe(session: &mut ConfigurationSession, taxonomy: &str, description: &str) {
+fn describe(session: &mut LibraryDraft, taxonomy: &str, description: &str) {
     let taxonomy = node(session, &[taxonomy]);
     draft(session)
         .edit(
@@ -95,31 +93,22 @@ fn describe(session: &mut ConfigurationSession, taxonomy: &str, description: &st
         .expect("a custom taxonomy takes a description");
 }
 
-fn problems(session: &ConfigurationSession) -> Vec<ProblemKind> {
+fn problems(session: &LibraryDraft) -> Vec<ProblemKind> {
     session
-        .library()
-        .expect("a Global session holds the Library")
         .problems()
         .into_iter()
         .map(|problem| problem.kind)
         .collect()
 }
 
-fn built(session: &ConfigurationSession) -> GlobalConfiguration {
-    session
-        .library()
-        .and_then(|library| library.build().ok())
-        .expect("the Library builds")
+fn built(session: &LibraryDraft) -> GlobalConfiguration {
+    session.build().expect("the Library builds")
 }
 
 /// The taxonomy `name` in the Library as the session last loaded or saved it.
-fn persisted_find(
-    session: &ConfigurationSession,
-    name: &str,
-) -> Result<Option<Taxonomy>, Box<dyn Error>> {
+fn persisted_find(session: &LibraryDraft, name: &str) -> Result<Option<Taxonomy>, Box<dyn Error>> {
     Ok(session
-        .library()
-        .and_then(LibraryDraft::persisted)
+        .persisted()
         .ok_or("a Global session holds the Library")?
         .catalog()?
         .find(&id(name))
@@ -199,7 +188,7 @@ fn catalog_finds_built_ins_and_custom_taxonomies() -> Result<(), Box<dyn Error>>
 
 #[test]
 fn created_taxonomies_are_queryable_as_custom_library_entries() -> Result<(), Box<dyn Error>> {
-    let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
+    let mut session = LibraryDraft::from_configuration(GlobalConfiguration::default());
     let library = draft(&mut session);
     let team = library.create_taxonomy();
     let release = library.edit(&team, DraftEdit::AddType)?;
@@ -240,13 +229,13 @@ fn created_taxonomies_are_queryable_as_custom_library_entries() -> Result<(), Bo
         Some(&expected)
     );
     assert_eq!(persisted_find(&session, "team")?.as_ref(), None);
-    assert!(session.is_dirty());
+    assert!(session.is_changed());
     Ok(())
 }
 
 #[test]
 fn names_already_in_the_library_are_problems_until_renamed() -> Result<(), Box<dyn Error>> {
-    let mut session = ConfigurationSession::open_global(library(vec![custom("team")])?);
+    let mut session = LibraryDraft::from_configuration(library(vec![custom("team")])?);
 
     for existing in ["team", "research"] {
         let created = draft(&mut session).create_taxonomy();
@@ -260,30 +249,27 @@ fn names_already_in_the_library_are_problems_until_renamed() -> Result<(), Box<d
     let release = node(&mut session, &["team", "feat"]);
     draft(&mut session).edit(&release, DraftEdit::Text(DraftField::Description, " "))?;
     assert_eq!(problems(&session), [ProblemKind::Blank]);
-    assert_eq!(
-        session.library().ok_or("missing Library")?.problems().len(),
-        1
-    );
-    assert!(session.is_dirty());
+    assert_eq!(session.problems().len(), 1);
+    assert!(session.is_changed());
     Ok(())
 }
 
 #[test]
 fn updates_that_change_nothing_leave_the_library_unchanged() -> Result<(), Box<dyn Error>> {
     let original = custom("team");
-    let mut session = ConfigurationSession::open_global(library(vec![original.clone()])?);
+    let mut session = LibraryDraft::from_configuration(library(vec![original.clone()])?);
 
     describe(&mut session, "team", original.description().as_str());
 
     assert_eq!(built(&session), library(vec![original])?);
-    assert!(!session.is_dirty());
+    assert!(!session.is_changed());
     Ok(())
 }
 
 #[test]
 fn edits_in_one_session_keep_custom_taxonomies_unversioned() -> Result<(), Box<dyn Error>> {
     let original = custom("team");
-    let mut session = ConfigurationSession::open_global(library(vec![original.clone()])?);
+    let mut session = LibraryDraft::from_configuration(library(vec![original.clone()])?);
 
     for description in ["First revision.", "Second revision."] {
         describe(&mut session, "team", description);
@@ -295,7 +281,7 @@ fn edits_in_one_session_keep_custom_taxonomies_unversioned() -> Result<(), Box<d
     describe(&mut session, "team", original.description().as_str());
 
     assert_eq!(persisted_find(&session, "team")?.as_ref(), Some(&original));
-    assert!(!session.is_dirty());
+    assert!(!session.is_changed());
     Ok(())
 }
 
@@ -305,12 +291,12 @@ fn each_applied_edit_keeps_custom_taxonomies_unversioned() -> Result<(), Box<dyn
     let store = FakeGlobalStore::new(library(vec![original.clone()])?);
 
     edit_global(&store, |workspace| {
-        let mut session = workspace.load(ConfigurationDestination::Global)?;
+        let mut session = workspace.load_library()?;
         describe(&mut session, "team", "First revision.");
-        let mut session = workspace.save(&session)?;
+        let mut session = workspace.save_library(&session)?;
         describe(&mut session, "team", "Second revision.");
         describe(&mut session, "team", "Third revision.");
-        workspace.save(&session).map(|_| ())
+        workspace.save_library(&session).map(|_| ())
     })?;
 
     assert_eq!(
@@ -322,7 +308,7 @@ fn each_applied_edit_keeps_custom_taxonomies_unversioned() -> Result<(), Box<dyn
 
 #[test]
 fn edits_to_a_taxonomy_created_in_the_session_keep_it_unversioned() -> Result<(), Box<dyn Error>> {
-    let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
+    let mut session = LibraryDraft::from_configuration(GlobalConfiguration::default());
     fork_as(&mut session, "conventional", "team");
 
     describe(&mut session, "team", "Team policy.");
@@ -347,7 +333,7 @@ fn deletes_refuse_built_ins_and_a_selected_taxonomy_does_not_build() -> Result<(
             .map(Into::into)
             .collect(),
     )?;
-    let mut session = ConfigurationSession::open_global(global);
+    let mut session = LibraryDraft::from_configuration(global);
 
     let conventional = node(&mut session, &["conventional"]);
     assert_eq!(
@@ -368,17 +354,8 @@ fn deletes_refuse_built_ins_and_a_selected_taxonomy_does_not_build() -> Result<(
 }
 
 #[test]
-fn library_edits_belong_to_the_global_destination() -> Result<(), Box<dyn Error>> {
-    let root = RepositoryRoot::new(std::env::temp_dir())?;
-    let mut session = ConfigurationSession::open_project(root, None);
-
-    assert!(session.library_mut().is_none());
-    Ok(())
-}
-
-#[test]
 fn fork_copies_a_built_in_under_a_new_identity_with_lineage() -> Result<(), Box<dyn Error>> {
-    let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
+    let mut session = LibraryDraft::from_configuration(GlobalConfiguration::default());
 
     fork_as(&mut session, "research", "lab");
 
@@ -404,7 +381,7 @@ fn fork_copies_a_built_in_under_a_new_identity_with_lineage() -> Result<(), Box<
 
 #[test]
 fn a_fork_takes_its_authored_content_and_refuses_its_source_name() -> Result<(), Box<dyn Error>> {
-    let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
+    let mut session = LibraryDraft::from_configuration(GlobalConfiguration::default());
     let source = &built_in_taxonomies()[0];
 
     let fork = fork_as(&mut session, "conventional", "conventional");
@@ -440,7 +417,7 @@ fn a_fork_takes_its_authored_content_and_refuses_its_source_name() -> Result<(),
 #[test]
 fn fork_names_that_reserved_or_existing_taxonomies_use_are_problems() -> Result<(), Box<dyn Error>>
 {
-    let mut session = ConfigurationSession::open_global(library(vec![custom("team")])?);
+    let mut session = LibraryDraft::from_configuration(library(vec![custom("team")])?);
 
     for target in ["conventional", "infra-ops", "team"] {
         let fork = fork_as(&mut session, "research", target);
@@ -448,7 +425,7 @@ fn fork_names_that_reserved_or_existing_taxonomies_use_are_problems() -> Result<
         draft(&mut session).edit(&fork, DraftEdit::Remove)?;
     }
 
-    assert!(!session.is_dirty());
+    assert!(!session.is_changed());
     Ok(())
 }
 
@@ -463,7 +440,7 @@ fn forks_of_custom_taxonomies_preserve_content_without_version_metadata()
         original.derived_from().cloned(),
         built_in_taxonomies()[2].commit_types().to_vec(),
     )?;
-    let mut session = ConfigurationSession::open_global(library(vec![revised.clone()])?);
+    let mut session = LibraryDraft::from_configuration(library(vec![revised.clone()])?);
 
     fork_as(&mut session, "team", "team-copy");
 
@@ -487,7 +464,7 @@ fn forks_of_custom_taxonomies_preserve_content_without_version_metadata()
 
 #[test]
 fn forks_reject_unavailable_sources() {
-    let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
+    let mut session = LibraryDraft::from_configuration(GlobalConfiguration::default());
     let missing =
         LibraryDraft::from_configuration(library(vec![custom("missing")]).expect("valid"))
             .find_path(&["missing"])
@@ -497,7 +474,7 @@ fn forks_reject_unavailable_sources() {
         draft(&mut session).fork(&missing),
         Err(EditRefusal::Missing)
     );
-    assert!(!session.is_dirty());
+    assert!(!session.is_changed());
 }
 
 #[derive(Debug)]
@@ -633,11 +610,11 @@ fn reviewed_global_sessions_save_one_snapshot_and_reject_concurrent_changes()
     let store = FakeGlobalStore::new(GlobalConfiguration::default());
     let started = gitserious_app::TaxonomyDate::now_utc();
     edit_global(&store, |workspace| {
-        let mut session = workspace.load(ConfigurationDestination::Global)?;
+        let mut session = workspace.load_library()?;
         fork_as(&mut session, "conventional", "team");
-        let saved = workspace.save(&session)?;
-        assert!(!saved.is_dirty());
-        workspace.save(&saved)?;
+        let saved = workspace.save_library(&session)?;
+        assert!(!saved.is_changed());
+        workspace.save_library(&saved)?;
         Ok(())
     })?;
     assert_eq!(store.swaps.get(), 1);
@@ -652,10 +629,10 @@ fn reviewed_global_sessions_save_one_snapshot_and_reject_concurrent_changes()
 
     let stale = FakeGlobalStore::new(GlobalConfiguration::default());
     let error = edit_global(&stale, |workspace| {
-        let mut session = workspace.load(ConfigurationDestination::Global)?;
+        let mut session = workspace.load_library()?;
         *stale.current.borrow_mut() = library(vec![custom("other")]).map_err(|e| e.to_string())?;
         fork_as(&mut session, "conventional", "team");
-        workspace.save(&session).map(|_| ())
+        workspace.save_library(&session).map(|_| ())
     })
     .expect_err("a stale session overwrote a newer library");
     assert!(error.contains("changed while editing"), "{error}");
@@ -672,9 +649,9 @@ fn apply_refuses_while_the_library_has_problems() -> Result<(), Box<dyn Error>> 
     let store = FakeGlobalStore::new(original.clone());
 
     let error = edit_global(&store, |workspace| {
-        let mut session = workspace.load(ConfigurationDestination::Global)?;
+        let mut session = workspace.load_library()?;
         describe(&mut session, "team", " ");
-        workspace.save(&session).map(|_| ())
+        workspace.save_library(&session).map(|_| ())
     })
     .expect_err("a Library with a problem was applied");
 
@@ -690,22 +667,17 @@ fn global_store_failures_are_reported_and_leave_the_library_unchanged() {
     store.fail.set(true);
 
     let error = edit_global(&store, |workspace| {
-        let mut session = workspace.load(ConfigurationDestination::Global)?;
+        let mut session = workspace.load_library()?;
         let node = fork_as(&mut session, "conventional", "team");
-        let result = workspace.save(&session);
+        let result = workspace.save_library(&session);
         let record = session
-            .library()
-            .and_then(|draft| draft.build().ok())
+            .build()
+            .ok()
             .and_then(|config| config.custom_taxonomies().first().cloned())
             .ok_or("draft record")?;
         assert_eq!(record.created_on(), None);
         assert_eq!(record.modified_on(), None);
-        assert!(
-            session
-                .library()
-                .and_then(|draft| draft.node(&node))
-                .is_some()
-        );
+        assert!(session.node(&node).is_some());
         result.map(|_| ())
     })
     .expect_err("a failed save was reported as success");
@@ -718,32 +690,16 @@ fn global_store_failures_are_reported_and_leave_the_library_unchanged() {
 fn saved_library_keeps_node_ids_and_no_op_saves_do_not_write() -> Result<(), Box<dyn Error>> {
     let store = FakeGlobalStore::new(GlobalConfiguration::default());
     edit_global(&store, |workspace| {
-        let mut session = workspace.load(ConfigurationDestination::Global)?;
+        let mut session = workspace.load_library()?;
         let taxonomy = fork_as(&mut session, "conventional", "team");
         let child = node(&mut session, &["team", "feat"]);
-        let saved = workspace.save(&session)?;
-        assert_eq!(
-            saved
-                .library()
-                .and_then(|library| library.find_path(&["team"])),
-            Some(taxonomy.clone())
-        );
-        assert_eq!(
-            saved
-                .library()
-                .and_then(|library| library.find_path(&["team", "feat"])),
-            Some(child)
-        );
-        assert!(!saved.is_dirty());
-        let saved = workspace.save(&saved)?;
+        let saved = workspace.save_library(&session)?;
+        assert_eq!(saved.find_path(&["team"]), Some(taxonomy.clone()));
+        assert_eq!(saved.find_path(&["team", "feat"]), Some(child));
+        assert!(!saved.is_changed());
+        let saved = workspace.save_library(&saved)?;
         assert_eq!(store.swaps.get(), 1);
-        assert_eq!(
-            saved
-                .library()
-                .and_then(|library| library.version(&taxonomy))
-                .map(TaxonomyVersion::get),
-            None
-        );
+        assert_eq!(saved.version(&taxonomy).map(TaxonomyVersion::get), None);
         Ok(())
     })?;
     Ok(())
@@ -756,10 +712,10 @@ fn retired_version_limits_do_not_block_custom_edits() -> Result<(), Box<dyn Erro
     let original = library(vec![last])?;
     let store = FakeGlobalStore::new(original.clone());
     edit_global(&store, |workspace| {
-        let mut session = workspace.load(ConfigurationDestination::Global)?;
-        workspace.save(&session)?;
+        let mut session = workspace.load_library()?;
+        workspace.save_library(&session)?;
         describe(&mut session, "team", "No revision counter");
-        let saved = workspace.save(&session)?;
+        let saved = workspace.save_library(&session)?;
         assert_eq!(built(&saved).custom_taxonomies()[0].version(), None);
         Ok(())
     })?;
@@ -778,27 +734,22 @@ fn a_failed_global_save_retries_the_same_draft_and_preserves_identity() -> Resul
 {
     let store = FakeGlobalStore::new(GlobalConfiguration::default());
     edit_global(&store, |workspace| {
-        let mut session = workspace.load(ConfigurationDestination::Global)?;
+        let mut session = workspace.load_library()?;
         let identity = fork_as(&mut session, "conventional", "team");
         let before = built(&session);
         store.fail.set(true);
         assert_eq!(
-            workspace.save(&session).err().as_deref(),
+            workspace.save_library(&session).err().as_deref(),
             Some("global store failed")
         );
         assert_eq!(built(&session), before);
-        assert!(session.is_dirty());
+        assert!(session.is_changed());
         assert_eq!(*store.current.borrow(), GlobalConfiguration::default());
 
         store.fail.set(false);
-        let saved = workspace.save(&session)?;
-        assert!(!saved.is_dirty());
-        assert_eq!(
-            saved
-                .library()
-                .and_then(|library| library.find_path(&["team"])),
-            Some(identity)
-        );
+        let saved = workspace.save_library(&session)?;
+        assert!(!saved.is_changed());
+        assert_eq!(saved.find_path(&["team"]), Some(identity));
         let stored = store.current.borrow();
         let record = stored.custom_taxonomies().first().ok_or("saved taxonomy")?;
         assert!(record.created_on().is_some());
@@ -816,10 +767,7 @@ fn a_global_load_failure_does_not_attempt_persistence() -> Result<(), Box<dyn Er
     store.load_fail.set(true);
     edit_global(&store, |workspace| {
         assert_eq!(
-            workspace
-                .load(ConfigurationDestination::Global)
-                .err()
-                .as_deref(),
+            workspace.load_library().err().as_deref(),
             Some("global read failed")
         );
         Ok(())

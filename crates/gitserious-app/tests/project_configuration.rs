@@ -6,9 +6,9 @@ use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
 use gitserious_app::{
-    ConfigurationDestination, ConfigurationServices, ConfigurationWorkspace, GlobalConfiguration,
-    GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore, ProjectRevision,
-    RepositoryLocator, RepositoryRoot, StoredProject,
+    ConfigurationServices, ConfigurationWorkspace, GlobalConfiguration, GlobalConfigurationStore,
+    ProjectConfiguration, ProjectConfigurationStore, ProjectRevision, RepositoryLocator,
+    RepositoryRoot, StoredProject,
 };
 use gitserious_core::{TaxonomyId, built_in_taxonomies};
 fn root() -> RepositoryRoot {
@@ -192,10 +192,7 @@ fn a_project_load_failure_does_not_attempt_persistence() -> Result<(), Box<dyn E
     project.load_fail.set(true);
     edit_project(&project, |workspace| {
         assert_eq!(
-            workspace
-                .load(ConfigurationDestination::Project)
-                .err()
-                .as_deref(),
+            workspace.load_project().err().as_deref(),
             Some("project read failed")
         );
         Ok(())
