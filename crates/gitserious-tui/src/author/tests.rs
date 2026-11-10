@@ -17,18 +17,8 @@ use tui_textarea::{CursorMove, CursorRenderMode, TextArea, WrapMode};
 
 use crate::theme::{ACCENT, theme};
 
-mod author_harness {
-    pub(crate) mod state {
-        include!("../../src/author/state.rs");
-    }
-
-    pub(crate) mod render {
-        include!("../../src/author/render.rs");
-    }
-}
-
-use author_harness::render::render;
-use author_harness::state::{
+use super::render::render;
+use super::state::{
     AuthoringOutcome, AuthoringSession, ConfirmationAction, FieldId, FieldStatus, Stage,
     TypeCatalogKind, ValidationIssue,
 };

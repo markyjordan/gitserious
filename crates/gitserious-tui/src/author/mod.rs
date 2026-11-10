@@ -1,5 +1,7 @@
 mod render;
 mod state;
+#[cfg(test)]
+mod tests;
 
 use std::io;
 
