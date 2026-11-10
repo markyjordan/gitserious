@@ -286,7 +286,10 @@ fn zero_types_round_trip_without_entering_the_usable_catalog() -> Result<(), Box
             .find(&TaxonomyId::new("unfinished")?)
             .is_none()
     );
-    assert_eq!(reopened.catalog()?.taxonomies().len(), 3);
+    assert_eq!(
+        reopened.catalog()?,
+        GlobalConfiguration::default().catalog()?
+    );
     let contents = fs::read_to_string(disk.path())?;
     assert!(contents.contains("name-locked = false"));
     assert!(contents.contains("commit-types = []"));

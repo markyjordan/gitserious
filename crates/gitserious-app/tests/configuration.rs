@@ -14,7 +14,6 @@ use gitserious_app::{
     ConfigurationWorkspace, DraftEdit, DraftField, EditRefusal, GlobalConfiguration,
     GlobalConfigurationStore, LibraryDraft, NodeId, ProblemKind, ProjectConfiguration,
     ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject,
-    TaxonomyCatalog, TaxonomyOrigin,
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
@@ -113,11 +112,25 @@ fn built(session: &ConfigurationSession) -> GlobalConfiguration {
         .expect("the Library builds")
 }
 
+/// The taxonomy `name` in the Library as the session last loaded or saved it.
+fn persisted_find(
+    session: &ConfigurationSession,
+    name: &str,
+) -> Result<Option<Taxonomy>, Box<dyn Error>> {
+    Ok(session
+        .library()
+        .and_then(LibraryDraft::persisted)
+        .ok_or("a Global session holds the Library")?
+        .catalog()?
+        .find(&id(name))
+        .cloned())
+}
+
 #[test]
 fn built_in_shadowing_and_duplicate_custom_taxonomies_are_rejected() {
     for reserved in ["conventional", "research", "infra-ops"] {
         assert_eq!(
-            TaxonomyCatalog::new(&[custom(reserved)]).err(),
+            library(vec![custom(reserved)]).err(),
             Some(ConfigurationError::DuplicateOrReservedTaxonomy(id(
                 reserved
             ))),
@@ -125,7 +138,7 @@ fn built_in_shadowing_and_duplicate_custom_taxonomies_are_rejected() {
         );
     }
     assert_eq!(
-        TaxonomyCatalog::new(&[custom("team"), custom("team")]).err(),
+        library(vec![custom("team"), custom("team")]).err(),
         Some(ConfigurationError::DuplicateOrReservedTaxonomy(id("team")))
     );
     assert_eq!(
@@ -174,23 +187,13 @@ fn global_selection_rejects_dangling_and_duplicate_references() {
 }
 
 #[test]
-fn catalog_lists_built_ins_then_custom_taxonomies_in_storage_order() -> Result<(), Box<dyn Error>> {
+fn catalog_finds_built_ins_and_custom_taxonomies() -> Result<(), Box<dyn Error>> {
     let catalog = library(vec![custom("zeta"), custom("alpha")])?.catalog()?;
 
-    assert_eq!(
-        catalog
-            .taxonomies()
-            .iter()
-            .map(|taxonomy| taxonomy.id().as_str())
-            .collect::<Vec<_>>(),
-        ["conventional", "research", "infra-ops", "zeta", "alpha"]
-    );
-    assert_eq!(
-        catalog.origin(&id("research")),
-        Some(TaxonomyOrigin::BuiltIn)
-    );
-    assert_eq!(catalog.origin(&id("alpha")), Some(TaxonomyOrigin::Custom));
-    assert_eq!(catalog.origin(&id("missing")), None);
+    for name in ["conventional", "research", "infra-ops", "zeta", "alpha"] {
+        assert!(catalog.find(&id(name)).is_some(), "{name}");
+    }
+    assert_eq!(catalog.find(&id("missing")), None);
     Ok(())
 }
 
@@ -236,9 +239,8 @@ fn created_taxonomies_are_queryable_as_custom_library_entries() -> Result<(), Bo
         built(&session).catalog()?.find(&id("team")),
         Some(&expected)
     );
-    assert_eq!(session.catalog()?.find(&id("team")), None);
+    assert_eq!(persisted_find(&session, "team")?.as_ref(), None);
     assert!(session.is_dirty());
-    assert!(session.review().is_err());
     Ok(())
 }
 
@@ -292,7 +294,7 @@ fn edits_in_one_session_keep_custom_taxonomies_unversioned() -> Result<(), Box<d
     }
     describe(&mut session, "team", original.description().as_str());
 
-    assert_eq!(session.catalog()?.find(&id("team")), Some(&original));
+    assert_eq!(persisted_find(&session, "team")?.as_ref(), Some(&original));
     assert!(!session.is_dirty());
     Ok(())
 }
@@ -333,8 +335,7 @@ fn edits_to_a_taxonomy_created_in_the_session_keep_it_unversioned() -> Result<()
 }
 
 #[test]
-fn deletes_refuse_built_ins_and_a_selected_taxonomy_does_not_build_until_unselected()
--> Result<(), Box<dyn Error>> {
+fn deletes_refuse_built_ins_and_a_selected_taxonomy_does_not_build() -> Result<(), Box<dyn Error>> {
     let mut available = built_in_ids();
     available.push(id("team"));
     let global = GlobalConfiguration::new(
@@ -363,14 +364,6 @@ fn deletes_refuse_built_ins_and_a_selected_taxonomy_does_not_build_until_unselec
             _
         ))]
     ));
-    assert!(
-        session
-            .configure_global(id("conventional"), built_in_ids())
-            .is_err()
-    );
-
-    draft(&mut session).select(id("conventional"), built_in_ids());
-    assert!(built(&session).custom_taxonomies().is_empty());
     Ok(())
 }
 
@@ -380,10 +373,6 @@ fn library_edits_belong_to_the_global_destination() -> Result<(), Box<dyn Error>
     let mut session = ConfigurationSession::open_project(root, None);
 
     assert!(session.library_mut().is_none());
-    let error = session
-        .configure_global(id("research"), built_in_ids())
-        .expect_err("a project session edited the global library");
-    assert!(error.contains("Global configuration"), "{error}");
     Ok(())
 }
 
@@ -409,7 +398,7 @@ fn fork_copies_a_built_in_under_a_new_identity_with_lineage() -> Result<(), Box<
         fork.derived_from(),
         Some(&TaxonomyLineage::new(id("research"), source.version()))
     );
-    assert_eq!(session.catalog()?.find(&id("research")), Some(source));
+    assert_eq!(persisted_find(&session, "research")?.as_ref(), Some(source));
     Ok(())
 }
 

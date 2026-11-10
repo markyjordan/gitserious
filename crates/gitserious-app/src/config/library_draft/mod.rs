@@ -12,7 +12,7 @@ use std::num::NonZeroU32;
 
 use gitserious_core::{
     CommitTypeDefinition, PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion,
-    Taxonomy, TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
+    TaxonomyId, TaxonomyLineage, TaxonomyVersion, built_in_taxonomies,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -134,7 +134,6 @@ impl DraftField {
 
 const NAME_LIMIT: usize = 80;
 const FORK_SUFFIX: &str = "-fork";
-const COPY_SUFFIX: &str = "-copy";
 
 const TAXONOMY_FIELDS: &[DraftField] = &[DraftField::Name, DraftField::Description];
 const PERSISTED_TAXONOMY_FIELDS: &[DraftField] = &[DraftField::Description];
@@ -582,11 +581,6 @@ impl LibraryDraft {
     }
 
     #[must_use]
-    pub fn available_taxonomies(&self) -> &[TaxonomyId] {
-        &self.available
-    }
-
-    #[must_use]
     pub fn node(&self, id: &NodeId) -> Option<NodeRef<'_>> {
         Some(match self.address(id)? {
             Address::Taxonomy(t) => NodeRef::Taxonomy(&self.taxonomies[t]),
@@ -834,44 +828,6 @@ impl LibraryDraft {
         (!replaced).then(|| ConfigurationError::UnknownTaxonomy(selected.clone()))
     }
 
-    /// Replaces the selection of default and available taxonomies.
-    pub fn select(&mut self, default: TaxonomyId, available: Vec<TaxonomyId>) {
-        self.default = default;
-        self.available = available;
-    }
-
-    /// Keeps only the project taxonomies named in `order`, in that order, and makes `default`
-    /// the project default. A name missing from the draft is restored from the applied file.
-    pub fn select_project(
-        &mut self,
-        default: TaxonomyId,
-        order: &[TaxonomyId],
-    ) -> Result<(), String> {
-        if !self.is_project() {
-            return Err("only a project draft selects its own taxonomies".into());
-        }
-        let mut kept = Vec::with_capacity(order.len());
-        for id in order {
-            let node = self
-                .taxonomies
-                .iter()
-                .find(|node| TaxonomyId::from_label(&node.name).as_ref() == Ok(id))
-                .cloned()
-                .or_else(|| {
-                    self.records()
-                        .iter()
-                        .find(|record| record.id() == id)
-                        .map(|record| TaxonomyNode::new(record, TaxonomyOrigin::Custom))
-                })
-                .ok_or_else(|| format!("taxonomy \"{id}\" is not part of this project"))?;
-            kept.push(node);
-        }
-        self.taxonomies = kept;
-        self.available = order.to_vec();
-        self.default = default;
-        Ok(())
-    }
-
     /// Applies one edit and returns the node a cursor should land on: the edited node, the new
     /// child, or after `Remove` the next sibling, else the previous one, else the parent.
     pub fn edit(&mut self, id: &NodeId, edit: DraftEdit<'_>) -> Result<NodeId, EditRefusal> {
@@ -1098,167 +1054,6 @@ impl LibraryDraft {
         let id = fork.id.clone();
         self.taxonomies.push(fork);
         Ok(id)
-    }
-}
-
-/// How a taxonomy copied in from another owner meets one already here with its identity.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Collision {
-    /// Nothing here has the identity, so the copy can go in as is.
-    Absent,
-    /// A taxonomy here has the identity and the same description and types.
-    Identical,
-    /// A taxonomy here has the identity and different content; only an explicit replace or a
-    /// copy under a new identity may proceed.
-    Differs,
-    /// A read-only built-in has the identity; only a copy under a new identity may proceed.
-    Reserved,
-}
-
-/// What to do with a taxonomy copied in from another owner.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CopyIn {
-    /// Add it under its own identity, which nothing here may already use.
-    New,
-    /// Replace the content of the taxonomy here that has its identity, keeping that
-    /// taxonomy's place and creation history.
-    Replace,
-    /// Add it under `<identity>-copy`, with lineage to the source, ready to rename.
-    Renamed,
-}
-
-impl LibraryDraft {
-    /// How `taxonomy` would meet the taxonomy here that has its identity.
-    #[must_use]
-    pub fn collision(&self, taxonomy: &Taxonomy) -> Collision {
-        let Some(node) = self.named(taxonomy.id()) else {
-            return Collision::Absent;
-        };
-        let same = problems::content(self, node).is_ok_and(|(description, types)| {
-            &description == taxonomy.description() && types == taxonomy.commit_types()
-        });
-        match (same, node.origin) {
-            (true, _) => Collision::Identical,
-            (false, TaxonomyOrigin::BuiltIn) => Collision::Reserved,
-            (false, _) => Collision::Differs,
-        }
-    }
-
-    /// Copies `taxonomy` in from another owner and returns the node it now occupies. The copy
-    /// is independent: nothing links it back to its source.
-    pub fn copy_in(&mut self, taxonomy: &Taxonomy, how: CopyIn) -> Result<NodeId, String> {
-        let collision = self.collision(taxonomy);
-        match (how, collision) {
-            (CopyIn::New, Collision::Absent) => {
-                let node = self.imported(taxonomy, taxonomy.id().to_string(), true, None);
-                let id = node.id.clone();
-                self.taxonomies.push(node);
-                self.adopt(taxonomy.id());
-                Ok(id)
-            }
-            (CopyIn::New, Collision::Identical) => Ok(self
-                .named(taxonomy.id())
-                .map(|node| node.id.clone())
-                .ok_or("the identical taxonomy is missing")?),
-            (CopyIn::Replace, Collision::Differs) => {
-                let index = self
-                    .taxonomies
-                    .iter()
-                    .position(|node| {
-                        TaxonomyId::from_label(&node.name).as_ref() == Ok(taxonomy.id())
-                    })
-                    .ok_or("the taxonomy to replace is missing")?;
-                let mut replacement =
-                    self.imported(taxonomy, taxonomy.id().to_string(), true, None);
-                let current = &self.taxonomies[index];
-                replacement.id.clone_from(&current.id);
-                replacement.baseline.clone_from(&current.baseline);
-                replacement.saved_name.clone_from(&current.saved_name);
-                replacement.created_on = current.created_on;
-                replacement.modified_on = current.modified_on;
-                replacement.derived_from.clone_from(&current.derived_from);
-                self.taxonomies[index] = replacement;
-                Ok(self.taxonomies[index].id.clone())
-            }
-            (CopyIn::Renamed, _) => {
-                let room = NAME_LIMIT - COPY_SUFFIX.len();
-                let name = taxonomy
-                    .id()
-                    .as_str()
-                    .graphemes(true)
-                    .take(room)
-                    .collect::<String>()
-                    + COPY_SUFFIX;
-                let lineage = TaxonomyLineage::new(taxonomy.id().clone(), taxonomy.version());
-                let node = self.imported(taxonomy, name, false, Some(lineage));
-                let id = node.id.clone();
-                if let Ok(name) = TaxonomyId::from_label(&node.name) {
-                    self.adopt(&name);
-                }
-                self.taxonomies.push(node);
-                Ok(id)
-            }
-            (CopyIn::New, Collision::Differs | Collision::Reserved) => Err(format!(
-                "a different taxonomy \"{}\" is already here; replace it or copy under a new name",
-                taxonomy.id()
-            )),
-            (CopyIn::Replace, Collision::Reserved) => Err(format!(
-                "\"{}\" is a built-in; copy it under a new name instead",
-                taxonomy.id()
-            )),
-            (CopyIn::Replace, Collision::Absent | Collision::Identical) => Err(format!(
-                "there is no different \"{}\" to replace",
-                taxonomy.id()
-            )),
-        }
-    }
-
-    fn named(&self, id: &TaxonomyId) -> Option<&TaxonomyNode> {
-        self.taxonomies
-            .iter()
-            .find(|node| TaxonomyId::from_label(&node.name).as_ref() == Ok(id))
-    }
-
-    /// A project offers every taxonomy it holds, so a new one joins its available list.
-    fn adopt(&mut self, id: &TaxonomyId) {
-        if self.is_project() && !self.available.contains(id) {
-            self.available.push(id.clone());
-        }
-    }
-
-    /// A fresh custom node holding `taxonomy`'s content, with new local ids and no baseline.
-    fn imported(
-        &mut self,
-        taxonomy: &Taxonomy,
-        name: String,
-        name_locked: bool,
-        derived_from: Option<TaxonomyLineage>,
-    ) -> TaxonomyNode {
-        let record: LibraryTaxonomy = if self.is_project() && derived_from.is_none() {
-            taxonomy.clone().into()
-        } else {
-            taxonomy.clone().into_custom().into()
-        };
-        let mut node = TaxonomyNode::new(&record, TaxonomyOrigin::Custom);
-        node.id = self.mint();
-        node.baseline = None;
-        node.saved_name = None;
-        node.name = name;
-        node.name_locked = name_locked;
-        if derived_from.is_some() {
-            node.version = None;
-            node.derived_from = derived_from;
-        }
-        for commit_type in &mut node.types {
-            commit_type.id = self.mint();
-            commit_type.baseline = None;
-            for property in &mut commit_type.properties {
-                property.id = self.mint();
-                property.baseline = None;
-                property.copied_from = None;
-            }
-        }
-        node
     }
 }
 
