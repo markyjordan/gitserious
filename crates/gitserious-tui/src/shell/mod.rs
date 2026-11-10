@@ -52,20 +52,23 @@ pub enum InitialPage {
 }
 
 /// Unified Home, Commit, Config, and Help terminal adapter.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct RatatuiInteractiveUi {
     start: InitialPage,
+    help: Vec<HelpPage>,
 }
 
 impl RatatuiInteractiveUi {
+    /// Opens at `start`, with `help` as the pages of the Help section.
     #[must_use]
-    pub const fn at(start: InitialPage) -> Self {
-        Self { start }
+    pub const fn at(start: InitialPage, help: Vec<HelpPage>) -> Self {
+        Self { start, help }
     }
 }
 
 impl InteractiveUi for RatatuiInteractiveUi {
-    fn run(&self, workspace: &dyn InteractiveWorkspace, help: &[HelpPage]) -> Result<(), String> {
+    fn run(&self, workspace: &dyn InteractiveWorkspace) -> Result<(), String> {
+        let help = &self.help;
         if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
             return Err(match self.start {
                 InitialPage::Config => "configuration editing requires an interactive terminal",
