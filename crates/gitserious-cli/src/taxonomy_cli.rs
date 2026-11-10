@@ -1,17 +1,13 @@
 use std::ffi::OsString;
 use std::fmt::Display;
-use std::io::{IsTerminal, Write};
-use std::path::Path;
+use std::io::Write;
 use std::process::{self, ExitCode, Stdio};
 
 use clap::builder::StyledStr;
 use clap::builder::styling::{Style, Styles};
 use clap::error::ErrorKind;
 use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
-use gitserious_app::{
-    GlobalConfigurationStore, HelpLine, HelpPage, HelpSpan, InitOutcome, InitStatus,
-    ProjectConfigurationStore, RepositoryLocator, initialize_project,
-};
+use gitserious_app::{HelpLine, HelpPage, HelpSpan, InitOutcome, InitStatus};
 use gitserious_core::TaxonomyReference;
 
 const HELP_WIDTH: usize = 100;
@@ -98,11 +94,6 @@ pub enum ShellStart {
     },
 }
 
-/// Opens the unified shell. The composition root supplies the terminal and the use cases.
-pub trait ShellLauncher {
-    fn open(&self, start: ShellStart, directory: &Path, help: &[HelpPage]) -> Result<(), String>;
-}
-
 /// What an argument list asks gitserious to do.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Invocation {
@@ -166,180 +157,6 @@ fn rejected(error: &clap::Error) -> Invocation {
     } else {
         Answer::Print(error.to_string())
     })
-}
-
-/// Concrete interaction adapters required by the binary.
-#[derive(Clone, Copy)]
-pub struct CommitAdapters<'a> {
-    shell: Option<&'a dyn ShellLauncher>,
-}
-
-impl<'a> CommitAdapters<'a> {
-    #[must_use]
-    pub const fn new() -> Self {
-        Self { shell: None }
-    }
-
-    /// Supplies the unified shell.
-    #[must_use]
-    pub fn with_shell(mut self, shell: &'a dyn ShellLauncher) -> Self {
-        self.shell = Some(shell);
-        self
-    }
-}
-
-impl Default for CommitAdapters<'_> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Runs from the process current directory without interactive adapters.
-#[must_use]
-pub fn run<I, T, L, S, G, Out, Err>(
-    arguments: I,
-    locator: &L,
-    store: &S,
-    global: &G,
-    stdout: &mut Out,
-    stderr: &mut Err,
-) -> ExitCode
-where
-    I: IntoIterator<Item = T>,
-    T: Into<OsString> + Clone,
-    L: RepositoryLocator + ?Sized,
-    L::Error: Display,
-    S: ProjectConfigurationStore + ?Sized,
-    S::Error: Display,
-    G: GlobalConfigurationStore + ?Sized,
-    G::Error: Display,
-    Out: Write + ?Sized,
-    Err: Write + ?Sized,
-{
-    run_with_commit(
-        arguments,
-        locator,
-        store,
-        global,
-        &CommitAdapters::new(),
-        stdout,
-        stderr,
-    )
-}
-
-/// Runs from the process current directory with concrete adapters.
-#[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn run_with_commit<I, T, L, S, G, Out, Err>(
-    arguments: I,
-    locator: &L,
-    store: &S,
-    global: &G,
-    adapters: &CommitAdapters<'_>,
-    stdout: &mut Out,
-    stderr: &mut Err,
-) -> ExitCode
-where
-    I: IntoIterator<Item = T>,
-    T: Into<OsString> + Clone,
-    L: RepositoryLocator + ?Sized,
-    L::Error: Display,
-    S: ProjectConfigurationStore + ?Sized,
-    S::Error: Display,
-    G: GlobalConfigurationStore + ?Sized,
-    G::Error: Display,
-    Out: Write + ?Sized,
-    Err: Write + ?Sized,
-{
-    let start = match std::env::current_dir() {
-        Ok(path) => path,
-        Err(error) => return write_error(stderr, error),
-    };
-    run_from_with_commit(
-        arguments, &start, locator, store, global, adapters, stdout, stderr,
-    )
-}
-
-/// Runs from an explicit directory without interactive adapters.
-#[must_use]
-pub fn run_from<I, T, L, S, G, Out, Err>(
-    arguments: I,
-    start: &Path,
-    locator: &L,
-    store: &S,
-    global: &G,
-    stdout: &mut Out,
-    stderr: &mut Err,
-) -> ExitCode
-where
-    I: IntoIterator<Item = T>,
-    T: Into<OsString> + Clone,
-    L: RepositoryLocator + ?Sized,
-    L::Error: Display,
-    S: ProjectConfigurationStore + ?Sized,
-    S::Error: Display,
-    G: GlobalConfigurationStore + ?Sized,
-    G::Error: Display,
-    Out: Write + ?Sized,
-    Err: Write + ?Sized,
-{
-    run_from_with_commit(
-        arguments,
-        start,
-        locator,
-        store,
-        global,
-        &CommitAdapters::new(),
-        stdout,
-        stderr,
-    )
-}
-
-/// Runs from an explicit directory with concrete adapters.
-#[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn run_from_with_commit<I, T, L, S, G, Out, Err>(
-    arguments: I,
-    start: &Path,
-    locator: &L,
-    store: &S,
-    global: &G,
-    adapters: &CommitAdapters<'_>,
-    stdout: &mut Out,
-    stderr: &mut Err,
-) -> ExitCode
-where
-    I: IntoIterator<Item = T>,
-    T: Into<OsString> + Clone,
-    L: RepositoryLocator + ?Sized,
-    L::Error: Display,
-    S: ProjectConfigurationStore + ?Sized,
-    S::Error: Display,
-    G: GlobalConfigurationStore + ?Sized,
-    G::Error: Display,
-    Out: Write + ?Sized,
-    Err: Write + ?Sized,
-{
-    let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-    match parse(arguments, terminal) {
-        Invocation::Open(page) => match adapters.shell {
-            Some(shell) => shell
-                .open(page, start, &interactive_help())
-                .map_or_else(|error| write_error(stderr, error), |()| ExitCode::SUCCESS),
-            None => write_error(stderr, "interactive shell is not configured"),
-        },
-        Invocation::Init => {
-            let global = match global.load() {
-                Ok(value) => value,
-                Err(error) => return write_error(stderr, error),
-            };
-            match initialize_project(locator, store, &global, start) {
-                Ok(outcome) => write_init_outcome(stdout, &outcome),
-                Err(error) => write_error(stderr, error),
-            }
-        }
-        Invocation::Answer(answer) => write_answer(answer, stdout, stderr),
-    }
 }
 
 /// The command line as the CLI parses and prints it, where `help` takes only a command's name.
