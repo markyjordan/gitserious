@@ -7,14 +7,32 @@ use std::io;
 
 use gitserious_app::{
     AuthoredCommit, CommitAuthoringContext, CommitAuthoringOutcome, CommitDraftAuthor,
-    CommitDraftAuthorOutcome, CommitOutcome, create_commit_with_taxonomy,
+    CommitDraftAuthorOutcome, CommitOutcome, CommitServices, CommitWorkspace,
+    create_commit_with_taxonomy,
 };
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitSubject, CommitTypeDefinition, PropertyRequirement,
     PropertyValue, TaxonomyId,
 };
-use gitserious_fs::{GitCommitWriter, GitRepositoryLocator, TomlProjectStore};
+use gitserious_fs::{
+    GitCommitWriter, GitRepositoryLocator, GitRepositoryStatusReader, TomlProjectStore,
+};
 use support::{Home, git, head_exists, repository, stderr, stdout};
+
+const PROJECT_OWNED_CONVENTIONAL: &str = r#"config-version = 1
+default-taxonomy = "conventional"
+
+[[taxonomies]]
+id = "conventional"
+version = 7
+description = "A project-owned conventional taxonomy."
+
+[[taxonomies.commit-types]]
+id = "ship"
+schema-version = 1
+description = "Ships a change."
+properties = []
+"#;
 
 #[derive(Default)]
 struct ReviewedAuthor(RefCell<String>);
@@ -187,20 +205,7 @@ fn project_owned_conventional_replaces_the_built_in_definition() -> Result<(), B
     let repository = repository()?;
     fs::write(
         repository.path().join("gitserious.toml"),
-        r#"config-version = 1
-default-taxonomy = "conventional"
-
-[[taxonomies]]
-id = "conventional"
-version = 7
-description = "A project-owned conventional taxonomy."
-
-[[taxonomies.commit-types]]
-id = "ship"
-schema-version = 1
-description = "Ships a change."
-properties = []
-"#,
+        PROJECT_OWNED_CONVENTIONAL,
     )?;
 
     let author = OfferedTypes::default();
@@ -239,6 +244,116 @@ fn commit_rejects_non_terminal_execution_without_touching_policy_or_git()
     );
     assert_eq!(fs::read(repository.path().join("gitserious.toml"))?, config);
     assert!(!repository.path().join("gitserious.lock").exists());
+    assert!(!head_exists(repository.path())?);
+    Ok(())
+}
+
+fn reviewed_research_fix(
+    context: &CommitAuthoringContext,
+) -> Result<AuthoredCommit, Box<dyn Error>> {
+    let taxonomy = context
+        .find_taxonomy(&TaxonomyId::new("research")?)
+        .ok_or("expected research in project policy")?;
+    let definition = taxonomy
+        .definitions()
+        .iter()
+        .find(|definition| definition.id().as_str() == "fix")
+        .ok_or("expected research fix")?;
+    let properties = definition
+        .properties()
+        .iter()
+        .filter(|property| property.requirement() == &PropertyRequirement::Required)
+        .map(|property| {
+            Ok(AuthoredProperty::new(
+                property.key().clone(),
+                PropertyValue::new(format!("reviewed {}", property.key()))?,
+            ))
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    let draft = CommitDraft::new(
+        definition.id().clone(),
+        None,
+        CommitSubject::new("preserve reviewed research context")?,
+        properties,
+    )?;
+    let message = taxonomy.validate(&draft).into_message()?;
+    Ok(AuthoredCommit::reviewed(
+        taxonomy.id().clone(),
+        draft,
+        message,
+    ))
+}
+
+#[test]
+fn git_stores_the_exact_reviewed_message_from_commit_services() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    let home = Home::new()?;
+    home.init(repository.path())?;
+    let config = fs::read(repository.path().join("gitserious.toml"))?;
+    fs::write(repository.path().join("change.txt"), "reviewed change\n")?;
+    git(repository.path(), &["add", "change.txt"])?;
+    let commit = CommitServices::new(
+        &GitRepositoryLocator,
+        &TomlProjectStore,
+        &GitRepositoryStatusReader,
+        &GitCommitWriter,
+        repository.path(),
+    );
+    let authored = reviewed_research_fix(&commit.prepare_commit()?)?;
+
+    commit.submit_commit(&authored)?;
+
+    let object = stdout(&git(repository.path(), &["cat-file", "commit", "HEAD"])?);
+    let (_, message) = object.split_once("\n\n").ok_or("missing commit body")?;
+    assert_eq!(
+        message,
+        authored
+            .reviewed_message()
+            .ok_or("no approved bytes")?
+            .as_str()
+    );
+    assert!(message.contains("\nsymptom:\nreviewed symptom\n"));
+    assert!(message.contains("Gitserious-Taxonomy: research-v1\n"));
+    assert_eq!(fs::read(repository.path().join("gitserious.toml"))?, config);
+    assert!(!repository.path().join("gitserious.lock").exists());
+    assert_eq!(
+        stdout(&git(
+            repository.path(),
+            &["ls-tree", "--name-only", "HEAD"]
+        )?),
+        "change.txt\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn preparation_offers_only_the_project_owned_conventional_types() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    fs::write(
+        repository.path().join("gitserious.toml"),
+        PROJECT_OWNED_CONVENTIONAL,
+    )?;
+    fs::write(repository.path().join("change.txt"), "staged\n")?;
+    git(repository.path(), &["add", "change.txt"])?;
+
+    let context = CommitServices::new(
+        &GitRepositoryLocator,
+        &TomlProjectStore,
+        &GitRepositoryStatusReader,
+        &GitCommitWriter,
+        repository.path(),
+    )
+    .prepare_commit()?;
+
+    assert_eq!(
+        context
+            .initial_taxonomy()
+            .definitions()
+            .iter()
+            .map(|definition| definition.id().as_str())
+            .collect::<Vec<_>>(),
+        ["ship"]
+    );
     assert!(!head_exists(repository.path())?);
     Ok(())
 }
