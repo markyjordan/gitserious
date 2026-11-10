@@ -3,8 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     GlobalConfiguration, GlobalConfigurationStore, LibraryDraft, Problem, ProjectConfiguration,
-    ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject,
-    initial_project_configuration,
+    ProjectConfigurationStore, RepositoryLocator, RepositoryRoot, StoredProject,
 };
 
 /// Persistence destination edited by one reviewed session.
@@ -24,13 +23,11 @@ enum Scope {
 #[derive(Clone, Debug)]
 struct ProjectScope {
     root: RepositoryRoot,
-    /// The revision Apply must still find on disk; none before initialization.
-    baseline: Option<ProjectRevision>,
-    /// The project's own taxonomies; none until the project is initialized or staged to be.
+    /// The project's own taxonomies; none before initialization.
     draft: Option<LibraryDraft>,
 }
 
-/// One in-memory configuration draft and its guarded baseline.
+/// The working Library, or the project's configuration as loaded.
 #[derive(Clone, Debug)]
 pub struct ConfigurationSession {
     scope: Scope,
@@ -48,18 +45,10 @@ impl ConfigurationSession {
     /// Opens a project snapshot without performing I/O or reading the Library.
     #[must_use]
     pub fn open_project(root: RepositoryRoot, stored: Option<StoredProject>) -> Self {
-        let (baseline, draft) = match stored {
-            Some(stored) => (
-                Some(stored.revision),
-                Some(LibraryDraft::from_project(stored.configuration)),
-            ),
-            None => (None, None),
-        };
         Self {
             scope: Scope::Project(Box::new(ProjectScope {
                 root,
-                baseline,
-                draft,
+                draft: stored.map(|stored| LibraryDraft::from_project(stored.configuration)),
             })),
         }
     }
@@ -107,42 +96,20 @@ impl ConfigurationSession {
         }
     }
 
-    /// Returns the applied project configuration, or none before the first Apply.
+    /// Returns the project's configuration as loaded, or none before initialization.
     #[must_use]
     pub fn persisted_project_config(&self) -> Option<&ProjectConfiguration> {
-        match &self.scope {
-            Scope::Project(project) if project.baseline.is_some() => {
-                project.draft.as_ref()?.persisted_project()
-            }
-            _ => None,
-        }
+        self.project_draft()?.persisted_project()
     }
 
-    /// Returns whether this draft differs from its persisted baseline.
+    /// Returns whether the Library differs from what was last loaded or saved. A Project
+    /// session is never dirty.
     #[must_use]
     pub fn is_dirty(&self) -> bool {
         match &self.scope {
             Scope::Global(library) => library.is_changed(),
-            Scope::Project(project) => match (&project.baseline, &project.draft) {
-                (None, Some(_)) => true,
-                (_, Some(draft)) => draft.is_changed(),
-                (_, None) => false,
-            },
+            Scope::Project(_) => false,
         }
-    }
-
-    /// Stages initialization with copies of the Library's default environment.
-    pub fn initialize_project(&mut self, library: &GlobalConfiguration) -> Result<(), String> {
-        let Scope::Project(project) = &mut self.scope else {
-            return Err("project changes require the Project destination".into());
-        };
-        if project.draft.is_some() {
-            return Err("project is already initialized".into());
-        }
-        project.draft = Some(LibraryDraft::from_project(
-            initial_project_configuration(library).map_err(|error| error.to_string())?,
-        ));
-        Ok(())
     }
 }
 
@@ -234,30 +201,8 @@ where
                     scope: Scope::Global(saved),
                 })
             }
-            Scope::Project(project) => {
-                let ProjectScope {
-                    root,
-                    baseline,
-                    draft,
-                } = project.as_ref();
-                let configuration = draft
-                    .as_ref()
-                    .ok_or("project initialization has not been staged")?
-                    .build_project()
-                    .map_err(|problems| first_problem(&problems))?;
-                let revision = match baseline {
-                    None => self.project.create(root, &configuration),
-                    Some(expected) => self.project.replace(root, *expected, &configuration),
-                }
-                .map_err(|error| error.to_string())?;
-                Ok(ConfigurationSession::open_project(
-                    root.clone(),
-                    Some(StoredProject {
-                        configuration,
-                        revision,
-                    }),
-                ))
-            }
+            // Removed by type when Library and Project get separate session types.
+            Scope::Project(_) => Err("Config does not change a Project".into()),
         }
     }
 

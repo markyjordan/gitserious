@@ -8,15 +8,20 @@ use std::path::{Path, PathBuf};
 use gitserious_app::{
     ConfigurationDestination, ConfigurationServices, ConfigurationWorkspace, GlobalConfiguration,
     GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore, ProjectRevision,
-    RepositoryLocator, RepositoryRoot, StoredProject, initial_project_configuration,
+    RepositoryLocator, RepositoryRoot, StoredProject,
 };
+use gitserious_core::{TaxonomyId, built_in_taxonomies};
 fn root() -> RepositoryRoot {
     RepositoryRoot::new(std::env::temp_dir()).expect("temporary directory is absolute")
 }
 
 fn built_in_project() -> ProjectConfiguration {
-    initial_project_configuration(&GlobalConfiguration::default())
-        .expect("built-ins form a project")
+    ProjectConfiguration::new(
+        1,
+        TaxonomyId::new("conventional").expect("valid identity"),
+        built_in_taxonomies().to_vec(),
+    )
+    .expect("built-ins form a project")
 }
 
 #[derive(Debug)]
