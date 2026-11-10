@@ -7,7 +7,7 @@ use ratatui::crossterm::event::{
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
 
 use crate::commit::CommitView;
 use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT};
@@ -146,7 +146,6 @@ struct Palette {
 enum Overlay {
     Palette(Palette),
     QuitConfirm,
-    Result(u16),
 }
 struct Shell {
     section: Section,
@@ -212,7 +211,7 @@ impl Shell {
                 self.commit.notice.clear();
                 self.commit.refresh(capabilities.commit);
             }
-            Action::Result => self.overlay = Some(Overlay::Result(0)),
+            Action::Result => self.commit.show_result(),
             Action::Author | Action::Resume => return Some(action),
             Action::Quit => {
                 if self.commit.has_pending_review() {
@@ -236,6 +235,10 @@ impl Shell {
         }
         if self.overlay.is_some() {
             return self.handle_overlay(event, capabilities);
+        }
+        if self.commit.modal() {
+            self.commit.modal_event(&event);
+            return None;
         }
         if self.too_small && self.section == Section::Config && self.config.modal() {
             return None;
@@ -413,19 +416,6 @@ impl Shell {
     fn handle_overlay(&mut self, event: Event, capabilities: Capabilities<'_>) -> Option<Action> {
         let overlay = self.overlay.take()?;
         match overlay {
-            Overlay::Result(mut scroll) => {
-                if let Event::Key(key) = event {
-                    match key.code {
-                        KeyCode::Esc | KeyCode::Enter => return None,
-                        KeyCode::Up => scroll = scroll.saturating_sub(1),
-                        KeyCode::Down => scroll = scroll.saturating_add(1),
-                        KeyCode::PageUp => scroll = scroll.saturating_sub(10),
-                        KeyCode::PageDown => scroll = scroll.saturating_add(10),
-                        _ => {}
-                    }
-                }
-                self.overlay = Some(Overlay::Result(scroll));
-            }
             Overlay::QuitConfirm => match self.quit_dialog.handle_event(DISCARD_AND_QUIT, &event) {
                 Some(Answer::Confirm) => return Some(Action::Quit),
                 Some(Answer::Keep | Answer::Alternate) => self.quit_dialog.invalidate(),
@@ -567,9 +557,9 @@ impl Shell {
             return;
         }
         let commands = self.commands();
-        let Some(overlay) = &mut self.overlay else {
+        if self.overlay.is_none() && !self.commit.modal() {
             return;
-        };
+        }
         let popup = centered_rect(54, 13.min(area.height), area);
         frame.render_widget(Clear, popup);
         frame.render_widget(
@@ -579,28 +569,10 @@ impl Shell {
             popup,
         );
         let inner = Block::bordered().inner(popup);
-        match overlay {
-            Overlay::Result(scroll) => {
-                let [text, footer] =
-                    Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
-                let paragraph =
-                    Paragraph::new(self.commit.notice.as_str()).wrap(Wrap { trim: false });
-                let maximum = paragraph
-                    .line_count(text.width)
-                    .saturating_sub(usize::from(text.height));
-                *scroll = (*scroll).min(u16::try_from(maximum).unwrap_or(u16::MAX));
-                frame.render_widget(paragraph.scroll((*scroll, 0)), text);
-                frame.render_widget(
-                    Paragraph::new(command_hints(&[
-                        ("↑/↓", "scroll"),
-                        ("pgup/pgdn", "page"),
-                        ("esc", "close"),
-                    ])),
-                    footer,
-                );
-            }
-            Overlay::QuitConfirm => {}
-            Overlay::Palette(palette) => {
+        match &mut self.overlay {
+            None => self.commit.render_modal(frame, inner),
+            Some(Overlay::QuitConfirm) => {}
+            Some(Overlay::Palette(palette)) => {
                 let [search, list, footer] = Layout::vertical([
                     Constraint::Length(3),
                     Constraint::Min(1),

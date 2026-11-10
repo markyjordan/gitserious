@@ -9,12 +9,15 @@ use gitserious_app::{
     BranchState, CommitAuthoringContext, CommitOutput, CommitWorkspace, RepositoryStatus,
     StatusEntry,
 };
+use ratatui::crossterm::event::{Event, KeyCode};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::theme::{block_title, frame_style, navigation_key_style, section_heading_style};
+use crate::theme::{
+    block_title, command_hints, frame_style, navigation_key_style, section_heading_style,
+};
 
 #[cfg(test)]
 pub(crate) use author::reviewed_submission;
@@ -50,9 +53,59 @@ pub(crate) struct CommitView {
     selected: usize,
     list: ListState,
     list_area: Rect,
+    /// The open Git result view's scroll offset.
+    result: Option<u16>,
 }
 
 impl CommitView {
+    pub(crate) fn show_result(&mut self) {
+        self.result = Some(0);
+    }
+
+    /// Whether the Git result view is open and takes every event.
+    pub(crate) fn modal(&self) -> bool {
+        self.result.is_some()
+    }
+
+    pub(crate) fn modal_event(&mut self, event: &Event) {
+        let Some(scroll) = &mut self.result else {
+            return;
+        };
+        if let Event::Key(key) = event {
+            match key.code {
+                KeyCode::Esc | KeyCode::Enter => self.result = None,
+                KeyCode::Up => *scroll = scroll.saturating_sub(1),
+                KeyCode::Down => *scroll = scroll.saturating_add(1),
+                KeyCode::PageUp => *scroll = scroll.saturating_sub(10),
+                KeyCode::PageDown => *scroll = scroll.saturating_add(10),
+                _ => {}
+            }
+        }
+    }
+
+    /// Draws the Git result view inside the popup the root frames.
+    pub(crate) fn render_modal(&mut self, frame: &mut Frame<'_>, inner: Rect) {
+        let Some(scroll) = &mut self.result else {
+            return;
+        };
+        let [text, footer] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+        let paragraph = Paragraph::new(self.notice.as_str()).wrap(Wrap { trim: false });
+        let maximum = paragraph
+            .line_count(text.width)
+            .saturating_sub(usize::from(text.height));
+        *scroll = (*scroll).min(u16::try_from(maximum).unwrap_or(u16::MAX));
+        frame.render_widget(paragraph.scroll((*scroll, 0)), text);
+        frame.render_widget(
+            Paragraph::new(command_hints(&[
+                ("↑/↓", "scroll"),
+                ("pgup/pgdn", "page"),
+                ("esc", "close"),
+            ])),
+            footer,
+        );
+    }
+
     pub(crate) fn refresh(&mut self, commit: &dyn CommitWorkspace) {
         match commit.repository_status() {
             Ok(snapshot) => {
