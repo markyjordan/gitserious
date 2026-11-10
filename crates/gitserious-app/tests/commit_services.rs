@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 
 use gitserious_app::{
     AuthoredCommit, BranchState, CommitAuthoringContext, CommitOutput, CommitServices,
-    CommitTaxonomy, CommitWorkspace, CommitWriter, GlobalConfiguration, GlobalConfigurationStore,
-    InteractiveUi, InteractiveWorkspace, ProjectConfiguration, ProjectConfigurationStore,
-    ProjectRevision, RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryStatus,
-    RepositoryStatusReader, StatusEntry, StoredProject, run_interactive,
+    CommitTaxonomy, CommitWorkspace, CommitWriter, ConfigurationServices, ConfigurationWorkspace,
+    GlobalConfiguration, GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore,
+    ProjectRevision, RepositoryLocator, RepositoryRoot, RepositoryStatus, RepositoryStatusReader,
+    StatusEntry, StoredProject,
 };
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitProvenance, CommitSubject,
@@ -102,14 +102,6 @@ impl RepositoryStatusReader for Status {
     }
 }
 
-struct Initializer;
-
-impl RepositoryInitializer for Initializer {
-    fn initialize(&self, _: &Path) -> Result<(), String> {
-        Err("unexpected Git initialization".into())
-    }
-}
-
 #[derive(Default)]
 struct Writer(RefCell<Vec<(RepositoryRoot, CommitMessage)>>);
 
@@ -123,17 +115,6 @@ impl CommitWriter for Writer {
     ) -> Result<CommitOutput, Self::Error> {
         self.0.borrow_mut().push((root.clone(), message.clone()));
         Ok(CommitOutput::new(b"created\n".to_vec(), Vec::new()))
-    }
-}
-
-struct Script<F>(F);
-
-impl<F> InteractiveUi for Script<F>
-where
-    F: Fn(&dyn InteractiveWorkspace) -> Result<(), Box<dyn Error>>,
-{
-    fn run(&self, workspace: &dyn InteractiveWorkspace) -> Result<(), String> {
-        (self.0)(workspace).map_err(|error| error.to_string())
     }
 }
 
@@ -164,29 +145,21 @@ impl Session {
         })
     }
 
-    fn run<F>(&self, script: F) -> Result<(), Box<dyn Error>>
-    where
-        F: Fn(&dyn InteractiveWorkspace) -> Result<(), Box<dyn Error>>,
-    {
-        run_interactive(
-            &self.locator,
-            &self.project,
-            &self.library,
-            &self.status,
-            &Initializer,
-            &self.writer,
-            self.locator.root.as_path(),
-            &Script(script),
-        )?;
-        Ok(())
-    }
-
     fn commit(&self) -> CommitServices<'_, Locator, Project, Writer> {
         CommitServices::new(
             &self.locator,
             &self.project,
             &self.status,
             &self.writer,
+            self.locator.root.as_path(),
+        )
+    }
+
+    fn configuration(&self) -> ConfigurationServices<'_, Locator, Project, Library> {
+        ConfigurationServices::new(
+            &self.locator,
+            &self.project,
+            &self.library,
             self.locator.root.as_path(),
         )
     }
@@ -486,36 +459,32 @@ fn a_changed_library_does_not_replace_project_owned_commit_policy() -> Result<()
         vec![TaxonomyId::new("team")?],
         vec![taxonomy("team")?.into()],
     )?;
-    session.run(|workspace| {
-        let authored = approved(&workspace.commit().prepare_commit()?)?;
-        let original = taxonomy("team")?;
-        let changed = Taxonomy::new(
-            original.id().clone(),
-            original.version(),
-            Description::new("The library changed after review.")?,
-            original.derived_from().cloned(),
-            original.commit_types().to_vec(),
-        )?;
-        *session.library.0.borrow_mut() = GlobalConfiguration::new(
-            1,
-            changed.id().clone(),
-            vec![changed.id().clone()],
-            vec![changed.clone().into()],
-        )?;
-        assert_eq!(
-            workspace.configuration().library_taxonomies()?,
-            vec![changed]
-        );
-        workspace.commit().submit_commit(&authored)?;
-        assert_eq!(
-            session.writer.0.borrow().as_slice(),
-            &[(
-                session.locator.root.clone(),
-                authored.reviewed_message().clone()
-            )]
-        );
-        Ok(())
-    })
+    let commit = session.commit();
+    let authored = approved(&commit.prepare_commit()?)?;
+    let original = taxonomy("team")?;
+    let changed = Taxonomy::new(
+        original.id().clone(),
+        original.version(),
+        Description::new("The library changed after review.")?,
+        original.derived_from().cloned(),
+        original.commit_types().to_vec(),
+    )?;
+    *session.library.0.borrow_mut() = GlobalConfiguration::new(
+        1,
+        changed.id().clone(),
+        vec![changed.id().clone()],
+        vec![changed.clone().into()],
+    )?;
+    assert_eq!(session.configuration().library_taxonomies()?, vec![changed]);
+    commit.submit_commit(&authored)?;
+    assert_eq!(
+        session.writer.0.borrow().as_slice(),
+        &[(
+            session.locator.root.clone(),
+            authored.reviewed_message().clone()
+        )]
+    );
+    Ok(())
 }
 
 struct FailingWriter(Cell<usize>);
