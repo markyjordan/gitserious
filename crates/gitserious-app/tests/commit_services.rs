@@ -487,7 +487,7 @@ fn an_unapplied_project_draft_does_not_replace_persisted_commit_policy()
 -> Result<(), Box<dyn Error>> {
     let session = Session::new(vec![entry("file", 'M', '.')])?;
     session.run(|workspace| {
-        let authored = approved(&workspace.prepare_commit()?)?;
+        let authored = approved(&workspace.commit().prepare_commit()?)?;
         let mut draft = workspace
             .configuration()
             .load(ConfigurationDestination::Project)?;
@@ -500,7 +500,7 @@ fn an_unapplied_project_draft_does_not_replace_persisted_commit_policy()
                 .len(),
             1
         );
-        workspace.submit_commit(&authored)?;
+        workspace.commit().submit_commit(&authored)?;
         assert_eq!(
             session.writer.0.borrow().as_slice(),
             &[(
@@ -529,7 +529,7 @@ fn a_changed_library_does_not_replace_project_owned_commit_policy() -> Result<()
         vec![taxonomy("team")?.into()],
     )?;
     session.run(|workspace| {
-        let authored = approved(&workspace.prepare_commit()?)?;
+        let authored = approved(&workspace.commit().prepare_commit()?)?;
         let original = taxonomy("team")?;
         let changed = Taxonomy::new(
             original.id().clone(),
@@ -545,7 +545,7 @@ fn a_changed_library_does_not_replace_project_owned_commit_policy() -> Result<()
             vec![changed.clone().into()],
         )?;
         assert_eq!(workspace.library_taxonomies()?, vec![changed]);
-        workspace.submit_commit(&authored)?;
+        workspace.commit().submit_commit(&authored)?;
         assert_eq!(
             session.writer.0.borrow().as_slice(),
             &[(

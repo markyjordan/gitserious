@@ -6,10 +6,9 @@ use gitserious_core::{Taxonomy, TaxonomyId, TaxonomyVersion};
 
 use crate::config::Workspace;
 use crate::{
-    AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitServices, CommitWorkspace,
-    CommitWriter, ConfigurationWorkspace, GlobalConfigurationStore, ProjectConfiguration,
-    ProjectConfigurationStore, RepositoryInitializer, RepositoryLocator, RepositoryRoot,
-    RepositoryStatus, RepositoryStatusReader,
+    CommitServices, CommitWorkspace, CommitWriter, ConfigurationWorkspace,
+    GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore,
+    RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryStatusReader,
 };
 
 /// The project file every gitserious repository commits.
@@ -93,9 +92,6 @@ pub trait InteractiveWorkspace {
     fn library_taxonomies(&self) -> Result<Vec<Taxonomy>, String>;
     fn configuration(&self) -> &dyn ConfigurationWorkspace;
     fn commit(&self) -> &dyn CommitWorkspace;
-    fn repository_status(&self) -> Result<RepositoryStatus, String>;
-    fn prepare_commit(&self) -> Result<CommitAuthoringContext, String>;
-    fn submit_commit(&self, authored: &AuthoredCommit) -> Result<CommitOutput, String>;
 }
 
 /// Terminal adapter for the unified application.
@@ -247,17 +243,5 @@ where
 
     fn commit(&self) -> &dyn CommitWorkspace {
         &self.commit
-    }
-
-    fn repository_status(&self) -> Result<RepositoryStatus, String> {
-        self.commit.repository_status()
-    }
-
-    fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
-        self.commit.prepare_commit()
-    }
-
-    fn submit_commit(&self, authored: &AuthoredCommit) -> Result<CommitOutput, String> {
-        self.commit.submit_commit(authored)
     }
 }
