@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, REMOVE};
 use gitserious_app::{
     ConfigurationDestination, ConfigurationSession, ConfigurationWorkspace, DraftEdit, EditRefusal,
-    LibraryDraft, NodeId, NodeRef, ProjectConfiguration, RepositoryRoot, TaxonomyOrigin,
+    LibraryDraft, NodeId, NodeRef, RepositoryRoot, TaxonomyOrigin,
 };
 #[cfg(test)]
 use gitserious_core::{Taxonomy, TaxonomyId};
@@ -60,10 +60,9 @@ pub(crate) struct ConfigView {
 
 impl ConfigView {
     pub(crate) fn new(workspace: &dyn ConfigurationWorkspace) -> Self {
-        let mut state = State::new(workspace);
-        state.embedded = true;
-        state.project_taxonomies = TaxonomiesView::read_only();
-        Self { state }
+        Self {
+            state: State::new(workspace),
+        }
     }
 
     pub(crate) fn render(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -246,7 +245,6 @@ fn content_padding(terminal: Rect) -> u16 {
 }
 
 struct State {
-    embedded: bool,
     global: Option<ConfigurationSession>,
     global_error: String,
     project: Option<ConfigurationSession>,
@@ -260,7 +258,6 @@ struct State {
     project_section: ProjectSection,
     screen: Screen,
     home_overlay: Option<CommandPaletteState>,
-    project_scroll: u16,
     status: Option<Notice>,
     dialog: ConfirmDialog,
     too_small: bool,
@@ -279,7 +276,6 @@ impl State {
         let (global, global_error) = split_result(global_result);
         let (project, project_error) = split_result(project_result);
         Self {
-            embedded: false,
             global,
             global_error,
             project,
@@ -288,11 +284,10 @@ impl State {
             category: Category::Project,
             home_focus: HomeFocus::Menu,
             taxonomies: TaxonomiesView::default(),
-            project_taxonomies: TaxonomiesView::default(),
+            project_taxonomies: TaxonomiesView::read_only(),
             project_section: ProjectSection::Commit,
             screen: Screen::Home,
             home_overlay: None,
-            project_scroll: 0,
             status: None,
             dialog: ConfirmDialog::default(),
             too_small: false,
@@ -368,11 +363,10 @@ impl State {
         match self.category {
             Category::Taxonomies => Some(Editor::Library),
             Category::Project
-                if self.embedded
-                    && self
-                        .project
-                        .as_ref()
-                        .is_some_and(|session| session.persisted_project_config().is_some()) =>
+                if self
+                    .project
+                    .as_ref()
+                    .is_some_and(|session| session.persisted_project_config().is_some()) =>
             {
                 Some(Editor::Project)
             }
@@ -503,7 +497,7 @@ impl State {
             return false;
         }
         if self.home_overlay.is_some() {
-            return self.handle_home_overlay(event, workspace);
+            return self.handle_home_overlay(event);
         }
         if let Some(question) = self.confirmation() {
             return self.handle_confirmation_event(question.choices, &event);
@@ -563,7 +557,6 @@ impl State {
                     if let Some(section) = ProjectSection::ALL.get(index) {
                         self.home_focus = HomeFocus::Content;
                         self.project_section = *section;
-                        self.project_scroll = 0;
                     }
                 } else if matches!(self.screen, Screen::Home)
                     && let Some((view, library)) = self.editor_parts_mut()
@@ -590,23 +583,14 @@ impl State {
         }
     }
 
-    fn handle_home_overlay(
-        &mut self,
-        event: Event,
-        workspace: &dyn ConfigurationWorkspace,
-    ) -> bool {
+    fn handle_home_overlay(&mut self, event: Event) -> bool {
         let Some(overlay) = self.home_overlay.take() else {
             return false;
         };
-        self.handle_palette_event(event, workspace, overlay)
+        self.handle_palette_event(event, overlay)
     }
 
-    fn handle_palette_event(
-        &mut self,
-        event: Event,
-        workspace: &dyn ConfigurationWorkspace,
-        mut palette: CommandPaletteState,
-    ) -> bool {
+    fn handle_palette_event(&mut self, event: Event, mut palette: CommandPaletteState) -> bool {
         match event {
             Event::Key(key) => match key.code {
                 KeyCode::Esc => return false,
@@ -621,7 +605,7 @@ impl State {
                 KeyCode::Enter => {
                     if let Some(command) = palette.selected_command(self.category) {
                         self.status = None;
-                        return self.dispatch_home_command(command, workspace);
+                        return self.dispatch_home_command(command);
                     }
                 }
                 KeyCode::Char(character)
@@ -656,11 +640,7 @@ impl State {
         false
     }
 
-    fn dispatch_home_command(
-        &mut self,
-        command: HomeCommand,
-        workspace: &dyn ConfigurationWorkspace,
-    ) -> bool {
+    fn dispatch_home_command(&mut self, command: HomeCommand) -> bool {
         match command {
             HomeCommand::Initialize => {
                 if self.empty_project_overview() {
@@ -678,16 +658,8 @@ impl State {
             }
             HomeCommand::Delete => self.request_global_action(PendingAction::Delete),
             HomeCommand::SwitchTab => self.category = self.category.next(),
-            HomeCommand::Quit => {
-                // The shell confirms every pending draft once, including a retained commit review.
-                if self.embedded {
-                    return true;
-                }
-                return self.home_key(
-                    KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-                    workspace,
-                );
-            }
+            // The shell confirms a retained commit review before it quits.
+            HomeCommand::Quit => return true,
         }
         false
     }
@@ -700,11 +672,10 @@ impl State {
             self.shell_request = Some(ConfigRequest::Initialize);
             return false;
         }
-        if self.embedded && self.category == Category::Project && key.code == KeyCode::Enter {
+        if self.category == Category::Project && key.code == KeyCode::Enter {
             self.home_focus = HomeFocus::Content;
         }
-        if self.embedded
-            && self.category == Category::Project
+        if self.category == Category::Project
             && (matches!(
                 key.code,
                 KeyCode::Char('i' | 'l' | 'e' | 'f' | 'n' | 'd' | 'c')
@@ -749,7 +720,7 @@ impl State {
         match key.code {
             KeyCode::Char('/') if key.modifiers.is_empty() => {
                 self.home_overlay = Some(CommandPaletteState {
-                    project_preview: self.embedded.then(|| !self.empty_project_overview()),
+                    project_preview: Some(!self.empty_project_overview()),
                     ..CommandPaletteState::default()
                 });
             }
@@ -783,21 +754,6 @@ impl State {
                 if self.home_focus == HomeFocus::Menu || self.category == Category::Project =>
             {
                 self.home_focus = HomeFocus::Menu;
-            }
-            KeyCode::Up | KeyCode::Down if self.category == Category::Project && !self.embedded => {
-                let index = self.project_section.index();
-                let index = match key.code {
-                    KeyCode::Up => index.saturating_sub(1),
-                    _ => (index + 1).min(ProjectSection::ALL.len() - 1),
-                };
-                self.project_section = ProjectSection::ALL[index];
-                self.project_scroll = 0;
-            }
-            KeyCode::PageUp if self.category == Category::Project && !self.embedded => {
-                self.project_scroll = self.project_scroll.saturating_sub(8);
-            }
-            KeyCode::PageDown if self.category == Category::Project && !self.embedded => {
-                self.project_scroll = self.project_scroll.saturating_add(8);
             }
             KeyCode::Char(letter @ ('e' | 'f' | 'n' | 'd')) if key.modifiers.is_empty() => {
                 if let Some(editor) = editor {
@@ -1010,11 +966,9 @@ impl State {
             match self.screen.clone() {
                 Screen::Home if self.editor().is_some() => {
                     self.render_taxonomies(frame, body);
-                    let line = self.editor_view().status_line(
-                        self.editor_draft(),
-                        self.embedded,
-                        footer.width,
-                    );
+                    let line = self
+                        .editor_view()
+                        .status_line(self.editor_draft(), footer.width);
                     frame.render_widget(Paragraph::new(line), footer);
                     Vec::new()
                 }
@@ -1025,12 +979,8 @@ impl State {
                     } else {
                         [("←/→", "focus"), ("↑/↓", "move")]
                     };
-                    if self.embedded {
-                        render_footer(frame, footer, &hints, &SHELL_HINTS);
-                        Vec::new()
-                    } else {
-                        vec![hints[0], hints[1], ("/", "commands")]
-                    }
+                    render_footer(frame, footer, &hints, &SHELL_HINTS);
+                    Vec::new()
                 }
                 Screen::ConfirmRemove(_) => Vec::new(),
             }
@@ -1106,8 +1056,7 @@ impl State {
     }
 
     fn empty_project_overview(&self) -> bool {
-        self.embedded
-            && self.category == Category::Project
+        self.category == Category::Project
             && self
                 .project
                 .as_ref()
@@ -1213,96 +1162,13 @@ impl State {
             columns[1].width.saturating_sub(2),
             columns[1].height.saturating_sub(2),
         );
-        let text = self.project_detail();
-        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
-        let total_rows = u16::try_from(paragraph.line_count(detail.width)).unwrap_or(u16::MAX);
-        let max_scroll = total_rows.saturating_sub(detail.height);
-        self.project_scroll = self.project_scroll.min(max_scroll);
-        frame.render_widget(paragraph.scroll((self.project_scroll, 0)), detail);
+        let paragraph = Paragraph::new(self.project_detail()).wrap(Wrap { trim: false });
+        frame.render_widget(paragraph, detail);
     }
 
+    /// The section pane's text. Sections show only while the project cannot load.
     fn project_detail(&self) -> String {
-        let Some(session) = &self.project else {
-            return self.project_error.clone();
-        };
-        let status = project_status(session);
-        let guidance = project_guidance(status);
-        let Some(root) = session.root() else {
-            return "Repository unavailable.".into();
-        };
-        let path = root.as_path().join("gitserious.toml");
-        if session.project_draft().is_none() {
-            return format!(
-                "Commit taxonomy\n  None\n\nProject configuration\n  {}\n  Absent\n\nStatus\n  {status}\n  {guidance}",
-                path.display()
-            );
-        }
-        let Some(config) = session
-            .project_config()
-            .or_else(|| session.persisted_project_config().cloned())
-        else {
-            return format!("Status\n  {status}\n  {guidance}");
-        };
-        let config = &config;
-        let ids = |config: &ProjectConfiguration| {
-            config
-                .taxonomies()
-                .iter()
-                .map(|taxonomy| taxonomy.id().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        match self.project_section {
-            ProjectSection::Commit => {
-                let applied = session.persisted_project_config().unwrap_or(config);
-                let staged = if session.is_dirty() {
-                    format!(
-                        "\n\nStaged\n  Default: {}\n  Available: {}",
-                        config.default_taxonomy(),
-                        ids(config)
-                    )
-                } else {
-                    String::new()
-                };
-                format!(
-                    "Commit taxonomy\n  {}\n\nAvailable taxonomies\n  {}{staged}\n\nSource\n  gitserious.toml only; the Library is not consulted\n\nStatus\n  {status}\n  {guidance}",
-                    applied.default_taxonomy(),
-                    ids(applied),
-                )
-            }
-            ProjectSection::Taxonomies => {
-                let entries = config
-                    .taxonomies()
-                    .iter()
-                    .map(|taxonomy| {
-                        format!(
-                            "{}\n  {}\n  Types: {}",
-                            taxonomy.reference(),
-                            taxonomy.description(),
-                            taxonomy
-                                .commit_types()
-                                .iter()
-                                .map(|definition| definition.id().to_string())
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                format!(
-                    "{entries}\n\nEdit\n  Enter opens these taxonomies; Ctrl+S reviews changes before applying.\n\nStatus\n  {status}"
-                )
-            }
-            ProjectSection::Files => format!(
-                "Project configuration\n  {}\n  {}\n\nStatus\n  {status}\n  {guidance}",
-                path.display(),
-                if session.persisted_project_config().is_some() {
-                    "Present"
-                } else {
-                    "Absent"
-                },
-            ),
-        }
+        self.project_error.clone()
     }
 
     fn render_taxonomies(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -1312,20 +1178,10 @@ impl State {
                 .project
                 .as_ref()
                 .and_then(ConfigurationSession::project_draft);
-            let header = self.project_taxonomies.render(
-                frame,
-                area,
-                if self.embedded {
-                    library_header::HEIGHT
-                } else {
-                    0
-                },
-                draft,
-                focused,
-            );
-            if self.embedded
-                && let Some(session) = &self.project
-            {
+            let header =
+                self.project_taxonomies
+                    .render(frame, area, library_header::HEIGHT, draft, focused);
+            if let Some(session) = &self.project {
                 project_overview::render_header(frame, header, session, self.home.as_deref());
             }
         } else {
@@ -1381,34 +1237,6 @@ fn pane_columns(area: Rect) -> std::rc::Rc<[Rect]> {
         .max(26)
         .min(area.width.saturating_sub(28));
     Layout::horizontal([Constraint::Length(left), Constraint::Min(1)]).split(area)
-}
-
-fn project_status(session: &ConfigurationSession) -> &'static str {
-    if session.persisted_project_config().is_none() {
-        if session.project_config().is_some() {
-            "Initialization staged"
-        } else {
-            "Not initialized"
-        }
-    } else if session.project_config().is_none() {
-        "Invalid"
-    } else if session.is_dirty() {
-        "Changes staged"
-    } else {
-        "Valid"
-    }
-}
-
-fn project_guidance(status: &str) -> &'static str {
-    match status {
-        "Not initialized" => "Press i to initialize and review.",
-        "Initialization staged" => "Review and apply initialization with Ctrl+S.",
-        "Changes staged" => "Review Ctrl+S; commits use gitserious.toml as last applied.",
-        "Invalid" => {
-            "Fix the problems shown in Taxonomies; commits use gitserious.toml as last applied."
-        }
-        _ => "",
-    }
 }
 
 fn split_result(

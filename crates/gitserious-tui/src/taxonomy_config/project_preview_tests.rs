@@ -1,6 +1,6 @@
 use super::tests::Workspace;
 use super::*;
-use gitserious_app::{ProjectRevision, StoredProject};
+use gitserious_app::{ProjectConfiguration, ProjectRevision, StoredProject};
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
     PropertyRequirement, SchemaVersion, TaxonomyVersion,
