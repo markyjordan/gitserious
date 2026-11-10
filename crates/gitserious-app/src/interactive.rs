@@ -1,61 +1,11 @@
-use std::fmt::{self, Debug, Display, Formatter};
+use std::fmt::Display;
 use std::path::Path;
-use std::sync::Arc;
 
 use crate::{
     CommitServices, CommitWorkspace, CommitWriter, ConfigurationServices, ConfigurationWorkspace,
     GlobalConfigurationStore, ProjectConfigurationStore, ProjectServices, ProjectWorkspace,
     RepositoryInitializer, RepositoryLocator, RepositoryStatusReader,
 };
-
-/// A run of help text; `strong` marks a heading or a command or flag name.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HelpSpan {
-    pub text: String,
-    pub strong: bool,
-}
-
-/// One line of help, already wrapped to the width it was rendered at.
-pub type HelpLine = Vec<HelpSpan>;
-
-/// Presentation content supplied by the CLI without a TUI-to-CLI dependency.
-#[derive(Clone)]
-pub struct HelpPage {
-    pub title: String,
-    /// The command whose help the page shows; the overview documents none.
-    pub command: Option<String>,
-    render: Arc<dyn Fn(u16) -> Vec<HelpLine> + Send + Sync>,
-}
-
-impl HelpPage {
-    pub fn new(
-        title: impl Into<String>,
-        command: Option<&str>,
-        render: impl Fn(u16) -> Vec<HelpLine> + Send + Sync + 'static,
-    ) -> Self {
-        Self {
-            title: title.into(),
-            command: command.map(str::to_owned),
-            render: Arc::new(render),
-        }
-    }
-
-    /// The page wrapped to `width` columns.
-    #[must_use]
-    pub fn lines(&self, width: u16) -> Vec<HelpLine> {
-        (self.render)(width)
-    }
-}
-
-impl Debug for HelpPage {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("HelpPage")
-            .field("title", &self.title)
-            .field("command", &self.command)
-            .finish_non_exhaustive()
-    }
-}
 
 /// Application services available to an interactive session.
 pub trait InteractiveWorkspace {

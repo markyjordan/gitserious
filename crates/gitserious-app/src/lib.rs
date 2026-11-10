@@ -31,9 +31,7 @@ pub use config::{
 pub use directory_creator::DirectoryCreator;
 pub use global_path_resolver::GlobalPathResolver;
 pub use global_paths::GlobalPaths;
-pub use interactive::{
-    HelpLine, HelpPage, HelpSpan, InteractiveUi, InteractiveWorkspace, run_interactive,
-};
+pub use interactive::{InteractiveUi, InteractiveWorkspace, run_interactive};
 pub use project::{
     InitOutcome, InitStatus, InitializeProjectError, ProjectOverview, ProjectServices,
     ProjectWorkspace, initialize_project,

@@ -1,8 +1,8 @@
 use std::error::Error;
 use std::process::{Command, Output};
 
-use gitserious_app::{HelpPage, HelpSpan};
-use gitserious_cli::interactive_help;
+use gitserious_cli::{help_topics, styled_help};
+use gitserious_tui::HelpPage;
 
 const DOCUMENTED: [&str; 3] = ["init", "config", "commit"];
 const COMMANDS: [Option<&str>; 5] = [
@@ -331,6 +331,18 @@ fn help_for_an_unknown_command_is_a_usage_error_naming_the_valid_ones() -> Resul
     Ok(())
 }
 
+/// The pages the executable gives the TUI, built from the same two CLI calls.
+fn interactive_help() -> Vec<HelpPage> {
+    help_topics()
+        .into_iter()
+        .map(|topic| {
+            HelpPage::styled(topic.title, topic.command, move |width| {
+                styled_help(topic.command, width)
+            })
+        })
+        .collect()
+}
+
 fn page_text(page: &HelpPage, width: u16) -> String {
     page.lines(width)
         .iter()
@@ -380,7 +392,7 @@ fn each_help_page_shows_what_its_help_command_prints_at_the_same_width()
 #[test]
 fn help_pages_mark_headings_and_names_strong_and_leave_descriptions_plain() {
     for page in interactive_help() {
-        let spans: Vec<HelpSpan> = page.lines(80).concat();
+        let spans = page.lines(80).concat();
         let strong: Vec<_> = spans
             .iter()
             .filter(|span| span.strong)
