@@ -7,8 +7,8 @@ mod init_editor;
 use std::io::{self, IsTerminal};
 
 use gitserious_app::{
-    CommitAuthoringContext, CommitOutput, CommitWorkspace, InteractiveUi, InteractiveWorkspace,
-    ProjectConfiguration, ProjectOverview,
+    CommitAuthoringContext, CommitOutput, CommitWorkspace, ConfigurationWorkspace, InteractiveUi,
+    InteractiveWorkspace, ProjectConfiguration, ProjectOverview, ProjectWorkspace,
 };
 use gitserious_core::built_in_taxonomies;
 use ratatui::crossterm::event::{
@@ -53,6 +53,14 @@ pub enum InitialPage {
     },
 }
 
+/// The application capabilities the unified TUI uses.
+#[derive(Clone, Copy)]
+pub struct Capabilities<'a> {
+    pub commit: &'a dyn CommitWorkspace,
+    pub config: &'a dyn ConfigurationWorkspace,
+    pub project: &'a dyn ProjectWorkspace,
+}
+
 /// Unified Home, Commit, Config, and Help terminal adapter.
 #[derive(Clone, Debug)]
 pub struct RatatuiInteractiveUi {
@@ -81,19 +89,24 @@ impl InteractiveUi for RatatuiInteractiveUi {
             }
             .into());
         }
+        let capabilities = Capabilities {
+            commit: workspace.commit(),
+            config: workspace.configuration(),
+            project: workspace.project(),
+        };
         crate::runtime::run(|terminal| {
-            let mut shell = Shell::new(self.start.clone(), workspace, help);
+            let mut shell = Shell::new(self.start.clone(), capabilities, help);
             loop {
                 terminal.draw(|frame| shell.render(frame, help))?;
                 let event = ratatui::crossterm::event::read()?;
-                if let Some(action) = shell.handle_event(event, workspace, help) {
+                if let Some(action) = shell.handle_event(event, capabilities, help) {
                     if matches!(action, Action::Quit) {
                         return Ok(());
                     }
                     if matches!(action, Action::Author | Action::Resume) {
                         shell.author(
                             terminal,
-                            workspace.commit(),
+                            capabilities.commit,
                             matches!(action, Action::Resume),
                         )?;
                     }
@@ -177,7 +190,7 @@ struct Shell {
 }
 
 impl Shell {
-    fn new(entry: InitialPage, workspace: &dyn InteractiveWorkspace, help: &[HelpPage]) -> Self {
+    fn new(entry: InitialPage, capabilities: Capabilities<'_>, help: &[HelpPage]) -> Self {
         let (section, help) = match entry {
             InitialPage::Home => (Section::Home, HelpView::default()),
             InitialPage::Commit => (Section::Commit, HelpView::default()),
@@ -193,9 +206,9 @@ impl Shell {
         };
         let mut shell = Self {
             section,
-            config: ConfigView::new(workspace.configuration()),
+            config: ConfigView::new(capabilities.config),
             commit: CommitView::default(),
-            home: workspace.project().overview(),
+            home: capabilities.project.overview(),
             init_editor: None,
             home_error: None,
             pending_author: None,
@@ -205,17 +218,17 @@ impl Shell {
             root_areas: [Rect::default(); Section::ALL.len()],
             too_small: false,
         };
-        shell.enter(section, workspace);
+        shell.enter(section, capabilities);
         shell
     }
 
     /// Arrives at `section` the same way a tab, a click, or the launch does.
-    fn enter(&mut self, section: Section, workspace: &dyn InteractiveWorkspace) {
+    fn enter(&mut self, section: Section, capabilities: Capabilities<'_>) {
         self.section = section;
         match section {
-            Section::Commit => self.commit.refresh(workspace.commit()),
+            Section::Commit => self.commit.refresh(capabilities.commit),
             Section::Home => {
-                self.home = workspace.project().overview();
+                self.home = capabilities.project.overview();
                 self.home_error = None;
                 if !HomeAction::of(&self.home).is_some_and(HomeAction::initializes) {
                     self.init_editor = None;
@@ -226,13 +239,13 @@ impl Shell {
         }
     }
 
-    fn execute(&mut self, action: Action, workspace: &dyn InteractiveWorkspace) -> Option<Action> {
+    fn execute(&mut self, action: Action, capabilities: Capabilities<'_>) -> Option<Action> {
         match action {
-            Action::Select(section) => self.enter(section, workspace),
+            Action::Select(section) => self.enter(section, capabilities),
             Action::Initialize => {
                 self.section = Section::Home;
-                let library = workspace
-                    .configuration()
+                let library = capabilities
+                    .config
                     .library_taxonomies()
                     .unwrap_or_else(|error| {
                         self.home_error =
@@ -248,7 +261,7 @@ impl Shell {
             }
             Action::Refresh => {
                 self.commit.notice.clear();
-                self.commit.refresh(workspace.commit());
+                self.commit.refresh(capabilities.commit);
             }
             Action::Result => self.overlay = Some(Overlay::Result(0)),
             Action::Author | Action::Resume => return Some(action),
@@ -266,20 +279,20 @@ impl Shell {
     fn handle_event(
         &mut self,
         event: Event,
-        workspace: &dyn InteractiveWorkspace,
+        capabilities: Capabilities<'_>,
         help: &[HelpPage],
     ) -> Option<Action> {
         if matches!(&event, Event::Key(key) if key.kind == KeyEventKind::Release) {
             return None;
         }
         if self.overlay.is_some() {
-            return self.handle_overlay(event, workspace);
+            return self.handle_overlay(event, capabilities);
         }
         if self.too_small && self.section == Section::Config && self.config.modal() {
             return None;
         }
         if self.section == Section::Config && self.config.modal() {
-            return self.config_event(event, workspace);
+            return self.config_event(event, capabilities);
         }
         if let Event::Mouse(mouse) = &event
             && mouse.kind == MouseEventKind::Down(MouseButton::Left)
@@ -288,7 +301,7 @@ impl Shell {
             if let Some(section) = Section::ALL.into_iter().find(|section| {
                 self.root_areas[section.index()].contains((mouse.column, mouse.row).into())
             }) {
-                return self.execute(Action::Select(section), workspace);
+                return self.execute(Action::Select(section), capabilities);
             }
             match self.section {
                 Section::Commit => self.commit.click(mouse.column, mouse.row),
@@ -299,11 +312,11 @@ impl Shell {
         if let Event::Key(key) = &event {
             let control = key.modifiers.contains(KeyModifiers::CONTROL);
             if control && key.code == KeyCode::Char('c') {
-                return self.execute(Action::Quit, workspace);
+                return self.execute(Action::Quit, capabilities);
             }
             if self.too_small {
                 return if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
-                    self.execute(Action::Quit, workspace)
+                    self.execute(Action::Quit, capabilities)
                 } else {
                     None
                 };
@@ -313,14 +326,14 @@ impl Shell {
                     (ShellKeys::Navigation, KeyCode::Tab | KeyCode::BackTab) => {
                         return self.execute(
                             Action::Select(self.section.next(key.code == KeyCode::BackTab)),
-                            workspace,
+                            capabilities,
                         );
                     }
                     (ShellKeys::Navigation, KeyCode::Esc) => {
-                        return self.execute(Action::Select(Section::Home), workspace);
+                        return self.execute(Action::Select(Section::Home), capabilities);
                     }
                     (ShellKeys::Navigation, KeyCode::Char('q')) => {
-                        return self.execute(Action::Quit, workspace);
+                        return self.execute(Action::Quit, capabilities);
                     }
                     _ => {}
                 }
@@ -339,7 +352,7 @@ impl Shell {
                             self.home_error = None;
                         }
                         EditorOutcome::Initialize(configuration) => {
-                            self.initialize(workspace, &configuration);
+                            self.initialize(capabilities, &configuration);
                         }
                     }
                     return None;
@@ -348,14 +361,14 @@ impl Shell {
                     KeyCode::Tab | KeyCode::BackTab => {
                         return self.execute(
                             Action::Select(self.section.next(key.code == KeyCode::BackTab)),
-                            workspace,
+                            capabilities,
                         );
                     }
                     KeyCode::Esc if self.section != Section::Home => {
-                        return self.execute(Action::Select(Section::Home), workspace);
+                        return self.execute(Action::Select(Section::Home), capabilities);
                     }
                     KeyCode::Char('q') | KeyCode::Esc => {
-                        return self.execute(Action::Quit, workspace);
+                        return self.execute(Action::Quit, capabilities);
                     }
                     KeyCode::Char('/') => {
                         self.open_palette();
@@ -367,16 +380,16 @@ impl Shell {
                     Section::Home if key.code == KeyCode::Enter => {
                         match HomeAction::of(&self.home) {
                             Some(HomeAction::GoToCommit) => {
-                                return self.execute(Action::Select(Section::Commit), workspace);
+                                return self.execute(Action::Select(Section::Commit), capabilities);
                             }
-                            Some(_) => return self.execute(Action::Initialize, workspace),
+                            Some(_) => return self.execute(Action::Initialize, capabilities),
                             None => {}
                         }
                     }
                     Section::Commit => match key.code {
-                        KeyCode::Char('r') => return self.execute(Action::Refresh, workspace),
+                        KeyCode::Char('r') => return self.execute(Action::Refresh, capabilities),
                         KeyCode::Char('o') if !self.commit.notice.is_empty() => {
-                            return self.execute(Action::Result, workspace);
+                            return self.execute(Action::Result, capabilities);
                         }
                         KeyCode::Enter => {
                             return self.execute(
@@ -385,10 +398,10 @@ impl Shell {
                                 } else {
                                     Action::Author
                                 },
-                                workspace,
+                                capabilities,
                             );
                         }
-                        KeyCode::Char('c') => return self.execute(Action::Author, workspace),
+                        KeyCode::Char('c') => return self.execute(Action::Author, capabilities),
                         KeyCode::Up | KeyCode::Down => {
                             self.commit.move_selection(key.code == KeyCode::Down)
                         }
@@ -403,45 +416,37 @@ impl Shell {
             }
         }
         if self.section == Section::Config {
-            return self.config_event(event, workspace);
+            return self.config_event(event, capabilities);
         }
         None
     }
 
-    fn config_event(
-        &mut self,
-        event: Event,
-        workspace: &dyn InteractiveWorkspace,
-    ) -> Option<Action> {
-        match self.config.handle_event(event, workspace.configuration()) {
-            Some(ConfigRequest::Quit) => return self.execute(Action::Quit, workspace),
+    fn config_event(&mut self, event: Event, capabilities: Capabilities<'_>) -> Option<Action> {
+        match self.config.handle_event(event, capabilities.config) {
+            Some(ConfigRequest::Quit) => return self.execute(Action::Quit, capabilities),
             Some(ConfigRequest::Initialize) => {
-                self.home = workspace.project().overview();
+                self.home = capabilities.project.overview();
                 if HomeAction::of(&self.home).is_some_and(HomeAction::initializes) {
-                    return self.execute(Action::Initialize, workspace);
+                    return self.execute(Action::Initialize, capabilities);
                 }
-                self.config = ConfigView::new(workspace.configuration());
+                self.config = ConfigView::new(capabilities.config);
             }
             None => {}
         }
         None
     }
 
-    fn initialize(
-        &mut self,
-        workspace: &dyn InteractiveWorkspace,
-        configuration: &ProjectConfiguration,
-    ) {
-        match workspace.project().initialize(configuration) {
+    fn initialize(&mut self, capabilities: Capabilities<'_>, configuration: &ProjectConfiguration) {
+        match capabilities.project.initialize(configuration) {
             Ok(()) => {
                 self.init_editor = None;
                 self.home_error = None;
                 // Config loaded the project before it existed.
-                self.config = ConfigView::new(workspace.configuration());
+                self.config = ConfigView::new(capabilities.config);
             }
             Err(error) => self.home_error = Some(error),
         }
-        self.home = workspace.project().overview();
+        self.home = capabilities.project.overview();
     }
 
     fn open_palette(&mut self) {
@@ -478,11 +483,7 @@ impl Shell {
         commands
     }
 
-    fn handle_overlay(
-        &mut self,
-        event: Event,
-        workspace: &dyn InteractiveWorkspace,
-    ) -> Option<Action> {
+    fn handle_overlay(&mut self, event: Event, capabilities: Capabilities<'_>) -> Option<Action> {
         let overlay = self.overlay.take()?;
         match overlay {
             Overlay::Result(mut scroll) => {
@@ -521,7 +522,7 @@ impl Shell {
                         }
                         KeyCode::Enter => {
                             if let Some((_, action)) = commands.get(palette.selected) {
-                                return self.execute(*action, workspace);
+                                return self.execute(*action, capabilities);
                             }
                         }
                         KeyCode::Backspace => {
@@ -822,6 +823,17 @@ mod tests {
 
     mod project_overview_tests;
 
+    fn of<T>(services: &T) -> Capabilities<'_>
+    where
+        T: CommitWorkspace + ConfigurationWorkspace + ProjectWorkspace,
+    {
+        Capabilities {
+            commit: services,
+            config: services,
+            project: services,
+        }
+    }
+
     struct Services;
     impl ConfigurationWorkspace for Services {
         fn load_library(&self) -> Result<LibraryDraft, String> {
@@ -854,17 +866,6 @@ mod tests {
         }
     }
 
-    impl InteractiveWorkspace for Services {
-        fn project(&self) -> &dyn ProjectWorkspace {
-            self
-        }
-        fn configuration(&self) -> &dyn ConfigurationWorkspace {
-            self
-        }
-        fn commit(&self) -> &dyn CommitWorkspace {
-            self
-        }
-    }
     impl CommitWorkspace for Services {
         fn repository_status(&self) -> Result<RepositoryStatus, String> {
             Ok(RepositoryStatus {
@@ -911,18 +912,6 @@ mod tests {
         }
         fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
             Services.initialize(configuration)
-        }
-    }
-
-    impl InteractiveWorkspace for Unavailable {
-        fn project(&self) -> &dyn ProjectWorkspace {
-            self
-        }
-        fn configuration(&self) -> &dyn ConfigurationWorkspace {
-            self
-        }
-        fn commit(&self) -> &dyn CommitWorkspace {
-            self
         }
     }
 
@@ -994,6 +983,20 @@ mod tests {
         }
     }
 
+    impl CommitWorkspace for HomeWorkspace {
+        fn repository_status(&self) -> Result<RepositoryStatus, String> {
+            Services.repository_status()
+        }
+        fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
+            Services.prepare_commit()
+        }
+        fn submit_commit(
+            &self,
+            authored: &gitserious_app::AuthoredCommit,
+        ) -> Result<CommitOutput, String> {
+            Services.submit_commit(authored)
+        }
+    }
     impl ProjectWorkspace for HomeWorkspace {
         fn overview(&self) -> ProjectOverview {
             self.state.borrow().clone()
@@ -1013,24 +1016,12 @@ mod tests {
         }
     }
 
-    impl InteractiveWorkspace for HomeWorkspace {
-        fn project(&self) -> &dyn ProjectWorkspace {
-            self
-        }
-        fn configuration(&self) -> &dyn ConfigurationWorkspace {
-            self
-        }
-        fn commit(&self) -> &dyn CommitWorkspace {
-            &Services
-        }
-    }
-
     fn home_screen(
         workspace: &HomeWorkspace,
         width: u16,
         height: u16,
     ) -> Result<(Shell, Terminal<TestBackend>), Box<dyn std::error::Error>> {
-        let mut shell = Shell::new(InitialPage::Home, workspace, &[]);
+        let mut shell = Shell::new(InitialPage::Home, of(workspace), &[]);
         let mut terminal = Terminal::new(TestBackend::new(width, height))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         Ok((shell, terminal))
@@ -1176,12 +1167,12 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
         let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;
-        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let text = rendered(&terminal);
         assert!(text.contains(" initialize fresh"), "{text}");
         assert!(text.contains("esc back  space include  enter default"));
-        shell.handle_event(key(KeyCode::Esc), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Esc), of(&workspace), &[]);
         assert!(workspace.created.borrow().is_none(), "esc writes nothing");
         assert_eq!(
             shell.section,
@@ -1191,21 +1182,21 @@ mod tests {
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(rendered(&terminal).contains(" initialize gitserious "));
 
-        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
-        shell.handle_event(key(KeyCode::Tab), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+        shell.handle_event(key(KeyCode::Tab), of(&workspace), &[]);
         assert_eq!(shell.section, Section::Commit, "tab leaves the open editor");
-        shell.handle_event(key(KeyCode::BackTab), &workspace, &[]);
+        shell.handle_event(key(KeyCode::BackTab), of(&workspace), &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(
             rendered(&terminal).contains(" initialize fresh"),
             "the editor survives a visit to another section"
         );
         for _ in 0..3 {
-            shell.handle_event(key(KeyCode::Down), &workspace, &[]);
+            shell.handle_event(key(KeyCode::Down), of(&workspace), &[]);
         }
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(rendered(&terminal).contains("enter initialize"));
-        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         let created = workspace
             .created
             .borrow()
@@ -1222,7 +1213,7 @@ mod tests {
         );
         assert_eq!(shell.section, Section::Home);
         assert!(matches!(shell.home, ProjectOverview::Initialized { .. }));
-        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         assert_eq!(shell.section, Section::Commit);
         Ok(())
     }
@@ -1242,7 +1233,7 @@ mod tests {
             HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
         workspace.library = Ok(vec![team]);
         let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;
-        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let text = rendered(&terminal);
         let row = text
@@ -1257,12 +1248,12 @@ mod tests {
             KeyCode::Down,
             KeyCode::Char(' '),
         ] {
-            shell.handle_event(key(code), &workspace, &[]);
+            shell.handle_event(key(code), of(&workspace), &[]);
         }
         for _ in 0..4 {
-            shell.handle_event(key(KeyCode::Down), &workspace, &[]);
+            shell.handle_event(key(KeyCode::Down), of(&workspace), &[]);
         }
-        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         let created = workspace
             .created
             .borrow()
@@ -1286,7 +1277,7 @@ mod tests {
             HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
         workspace.library = Err("config.toml is not valid TOML".into());
         let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;
-        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let text = rendered(&terminal);
         assert!(
@@ -1307,21 +1298,21 @@ mod tests {
             HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
         workspace.failure = Some("gitserious.toml already exists");
         let (mut shell, mut terminal) = home_screen(&workspace, 100, 30)?;
-        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         for _ in 0..3 {
-            shell.handle_event(key(KeyCode::Down), &workspace, &[]);
+            shell.handle_event(key(KeyCode::Down), of(&workspace), &[]);
         }
-        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let text = rendered(&terminal);
         assert!(text.contains("✗ gitserious.toml already exists"), "{text}");
         assert!(text.contains(" initialize fresh"), "the editor stays open");
-        shell.handle_event(key(KeyCode::Esc), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Esc), of(&workspace), &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(rendered(&terminal).contains(" initialize gitserious "));
         assert!(workspace.created.borrow().is_none());
-        shell.execute(Action::Select(Section::Help), &workspace);
-        shell.execute(Action::Select(Section::Home), &workspace);
+        shell.execute(Action::Select(Section::Help), of(&workspace));
+        shell.execute(Action::Select(Section::Home), of(&workspace));
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(
             !rendered(&terminal).contains("already exists"),
@@ -1333,7 +1324,7 @@ mod tests {
             error: "git is not installed".into(),
         });
         let (mut shell, _) = home_screen(&workspace, 87, 40)?;
-        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         assert_eq!(shell.section, Section::Home);
         assert!(shell.init_editor.is_none(), "enter has no step to take");
 
@@ -1341,7 +1332,7 @@ mod tests {
             directory: fresh_root().as_path().to_path_buf(),
         });
         let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;
-        shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(
             rendered(&terminal).contains(" initialize fresh"),
@@ -1432,32 +1423,32 @@ mod tests {
     fn config_overview_tab_switches_sections_and_keeps_menu_selection()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
-        shell.handle_event(key(KeyCode::Tab), &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
+        shell.handle_event(key(KeyCode::Tab), of(&services), &[]);
         assert_eq!(shell.section, Section::Commit);
         assert!(shell.commit.blocker.is_some());
-        shell.handle_event(key(KeyCode::Tab), &services, &[]);
+        shell.handle_event(key(KeyCode::Tab), of(&services), &[]);
         assert_eq!(shell.section, Section::Config);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let text = rendered(&terminal);
         assert!(text.contains("1  Project"));
         assert!(text.contains("tab nav bar  / commands  q quit"));
-        shell.handle_event(key(KeyCode::Down), &services, &[]);
+        shell.handle_event(key(KeyCode::Down), of(&services), &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(!rendered(&terminal).contains("saves as you go"));
         assert!(rendered(&terminal).contains("config.toml"));
-        shell.handle_event(key(KeyCode::BackTab), &services, &[]);
+        shell.handle_event(key(KeyCode::BackTab), of(&services), &[]);
         assert_eq!(shell.section, Section::Commit);
-        shell.handle_event(key(KeyCode::Tab), &services, &[]);
-        shell.handle_event(key(KeyCode::Tab), &services, &[]);
+        shell.handle_event(key(KeyCode::Tab), of(&services), &[]);
+        shell.handle_event(key(KeyCode::Tab), of(&services), &[]);
         assert_eq!(shell.section, Section::Help);
-        shell.handle_event(key(KeyCode::BackTab), &services, &[]);
+        shell.handle_event(key(KeyCode::BackTab), of(&services), &[]);
         assert_eq!(shell.section, Section::Config);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(!rendered(&terminal).contains("saves as you go"));
         assert!(rendered(&terminal).contains("config.toml"));
-        shell.handle_event(key(KeyCode::Esc), &services, &[]);
+        shell.handle_event(key(KeyCode::Esc), of(&services), &[]);
         assert_eq!(shell.section, Section::Home);
         Ok(())
     }
@@ -1466,8 +1457,8 @@ mod tests {
     fn embedded_config_places_the_library_inspector_by_terminal_shape()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
-        shell.handle_event(key(KeyCode::Char('2')), &services, &[]);
+        let mut shell = Shell::new(InitialPage::Config, of(&services), &[]);
+        shell.handle_event(key(KeyCode::Char('2')), of(&services), &[]);
         let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
         // Content starts right of the 13-column rail and its rule.
         let content = 14;
@@ -1540,12 +1531,12 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
         for (width, height) in [(87, 40), (MINIMUM_WIDTH, MINIMUM_HEIGHT)] {
-            let mut shell = Shell::new(InitialPage::Config, &services, &[]);
+            let mut shell = Shell::new(InitialPage::Config, of(&services), &[]);
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             for section in Section::ALL {
-                shell.execute(Action::Select(section), &services);
+                shell.execute(Action::Select(section), of(&services));
                 if section == Section::Config {
-                    shell.handle_event(key(KeyCode::Char('2')), &services, &[]);
+                    shell.handle_event(key(KeyCode::Char('2')), of(&services), &[]);
                 }
                 terminal.draw(|frame| shell.render(frame, &[]))?;
                 let buffer = terminal.backend().buffer();
@@ -1577,12 +1568,12 @@ mod tests {
     #[test]
     fn the_config_tab_has_no_library_change_badge() -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Config, of(&services), &[]);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(!rendered(&terminal).contains('●'));
-        shell.handle_event(key(KeyCode::Char('2')), &services, &[]);
-        shell.handle_event(key(KeyCode::Char('n')), &services, &[]);
+        shell.handle_event(key(KeyCode::Char('2')), of(&services), &[]);
+        shell.handle_event(key(KeyCode::Char('n')), of(&services), &[]);
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let header = rendered(&terminal)
             .lines()
@@ -1608,7 +1599,7 @@ mod tests {
     fn hidden_config_edit_pauses(event: Event) -> Result<(), Box<dyn std::error::Error>> {
         for (width, height) in [(MINIMUM_WIDTH - 1, 40), (87, MINIMUM_HEIGHT - 1)] {
             let services = Services;
-            let mut shell = Shell::new(InitialPage::Config, &services, &[]);
+            let mut shell = Shell::new(InitialPage::Config, of(&services), &[]);
             for event in [
                 key(KeyCode::Char('2')),
                 key(KeyCode::Char('n')),
@@ -1616,7 +1607,7 @@ mod tests {
                 key(KeyCode::Enter),
                 Event::Paste("Paused purpose".into()),
             ] {
-                assert!(shell.handle_event(event, &services, &[]).is_none());
+                assert!(shell.handle_event(event, of(&services), &[]).is_none());
             }
             let mut large = Terminal::new(TestBackend::new(87, 40))?;
             large.draw(|frame| shell.render(frame, &[]))?;
@@ -1626,7 +1617,11 @@ mod tests {
             let mut small = Terminal::new(TestBackend::new(width, height))?;
             small.draw(|frame| shell.render(frame, &[]))?;
             let warning = rendered(&small);
-            assert!(shell.handle_event(event.clone(), &services, &[]).is_none());
+            assert!(
+                shell
+                    .handle_event(event.clone(), of(&services), &[])
+                    .is_none()
+            );
             large.draw(|frame| shell.render(frame, &[]))?;
             let resumed = rendered(&large);
             assert!(
@@ -1653,7 +1648,7 @@ mod tests {
                 shell
                     .handle_event(
                         Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
-                        &services,
+                        of(&services),
                         &[]
                     )
                     .is_none()
@@ -1695,27 +1690,27 @@ mod tests {
     #[test]
     fn config_edit_locks_tabs_and_gives_esc_and_q_to_the_field() {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
-        shell.handle_event(key(KeyCode::Char('2')), &services, &[]);
-        shell.handle_event(key(KeyCode::Char('n')), &services, &[]);
+        let mut shell = Shell::new(InitialPage::Config, of(&services), &[]);
+        shell.handle_event(key(KeyCode::Char('2')), of(&services), &[]);
+        shell.handle_event(key(KeyCode::Char('n')), of(&services), &[]);
         assert_eq!(shell.config.shell_keys(), ShellKeys::None);
-        shell.handle_event(key(KeyCode::Char('q')), &services, &[]);
+        shell.handle_event(key(KeyCode::Char('q')), of(&services), &[]);
         assert_eq!(shell.section, Section::Config);
         assert!(shell.overlay.is_none());
         for code in [KeyCode::Tab, KeyCode::BackTab] {
-            shell.handle_event(key(code), &services, &[]);
+            shell.handle_event(key(code), of(&services), &[]);
             assert_eq!(shell.section, Section::Config);
             assert_eq!(shell.config.shell_keys(), ShellKeys::None);
         }
-        shell.handle_event(key(KeyCode::Esc), &services, &[]);
+        shell.handle_event(key(KeyCode::Esc), of(&services), &[]);
         assert_eq!(shell.section, Section::Config);
         assert_eq!(shell.config.shell_keys(), ShellKeys::Navigation);
-        shell.handle_event(key(KeyCode::Tab), &services, &[]);
+        shell.handle_event(key(KeyCode::Tab), of(&services), &[]);
         assert_eq!(shell.section, Section::Help);
-        shell.handle_event(key(KeyCode::BackTab), &services, &[]);
+        shell.handle_event(key(KeyCode::BackTab), of(&services), &[]);
         assert_eq!(shell.section, Section::Config);
         assert_eq!(
-            shell.handle_event(key(KeyCode::Char('q')), &services, &[]),
+            shell.handle_event(key(KeyCode::Char('q')), of(&services), &[]),
             Some(Action::Quit)
         );
     }
@@ -1723,11 +1718,11 @@ mod tests {
     #[test]
     fn question_mark_does_not_open_help_but_the_help_tab_still_works() {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
-        shell.handle_event(key(KeyCode::Char('?')), &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
+        shell.handle_event(key(KeyCode::Char('?')), of(&services), &[]);
         assert_eq!(shell.section, Section::Home);
         assert!(shell.overlay.is_none());
-        shell.handle_event(key(KeyCode::BackTab), &services, &[]);
+        shell.handle_event(key(KeyCode::BackTab), of(&services), &[]);
         assert_eq!(shell.section, Section::Help);
     }
 
@@ -1735,26 +1730,26 @@ mod tests {
     fn root_wrap_palette_is_modal_and_help_scrolls_with_resize()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
         let help = vec![
             HelpPage::new("Overview", None, |_| numbered(100)),
             HelpPage::new("Config", Some("config"), |_| numbered(1)),
         ];
-        shell.handle_event(key(KeyCode::BackTab), &services, &help);
+        shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
         assert_eq!(shell.section, Section::Help);
-        shell.handle_event(key(KeyCode::Down), &services, &help);
+        shell.handle_event(key(KeyCode::Down), of(&services), &help);
         let mut terminal = Terminal::new(TestBackend::new(66, 18))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert_eq!(top(&terminal).as_deref(), Some("gitserious help: config"));
-        shell.handle_event(key(KeyCode::Tab), &services, &help);
+        shell.handle_event(key(KeyCode::Tab), of(&services), &help);
         assert_eq!(shell.section, Section::Home, "tab wraps from Help to Home");
-        shell.handle_event(key(KeyCode::Char('/')), &services, &help);
+        shell.handle_event(key(KeyCode::Char('/')), of(&services), &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert!(rendered(&terminal).contains("┌ Search ─"));
-        shell.handle_event(Event::Paste("open commit".into()), &services, &help);
-        shell.handle_event(key(KeyCode::Tab), &services, &help);
+        shell.handle_event(Event::Paste("open commit".into()), of(&services), &help);
+        shell.handle_event(key(KeyCode::Tab), of(&services), &help);
         assert_eq!(shell.section, Section::Home);
-        shell.handle_event(key(KeyCode::Enter), &services, &help);
+        shell.handle_event(key(KeyCode::Enter), of(&services), &help);
         assert_eq!(shell.section, Section::Commit);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert!(rendered(&terminal).contains("Staged (0)"));
@@ -1770,7 +1765,7 @@ mod tests {
     fn the_overview_opens_on_its_help_and_bolds_only_headings_and_names()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
         let help = vec![HelpPage::new("Overview", None, |_| {
             vec![
                 vec![span("Create durable commit-message policy", false)],
@@ -1790,7 +1785,7 @@ mod tests {
                 ],
             ]
         })];
-        shell.handle_event(key(KeyCode::BackTab), &services, &help);
+        shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
         let mut terminal = Terminal::new(TestBackend::new(66, 18))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
 
@@ -1827,9 +1822,9 @@ mod tests {
     fn command_pages_open_with_their_help_command_and_no_prompt()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
         let help = pages(1);
-        shell.handle_event(key(KeyCode::BackTab), &services, &help);
+        shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         for (digit, command) in [
             ('1', None),
@@ -1837,7 +1832,7 @@ mod tests {
             ('3', Some("config")),
             ('4', Some("commit")),
         ] {
-            shell.handle_event(key(KeyCode::Char(digit)), &services, &help);
+            shell.handle_event(key(KeyCode::Char(digit)), of(&services), &help);
             terminal.draw(|frame| shell.render(frame, &help))?;
             let text = rendered(&terminal);
             assert!(!text.contains("$ "), "{text}");
@@ -1895,9 +1890,9 @@ mod tests {
                 .collect()
         };
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
         let help = vec![HelpPage::new("Overview", None, listing)];
-        shell.handle_event(key(KeyCode::BackTab), &services, &help);
+        shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
         let mut terminal = Terminal::new(TestBackend::new(66, 18))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
 
@@ -1930,9 +1925,9 @@ mod tests {
     fn help_lists_its_pages_beside_a_rule_and_highlights_the_chosen_one()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
         let help = pages(1);
-        shell.handle_event(key(KeyCode::BackTab), &services, &help);
+        shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
 
@@ -1984,15 +1979,15 @@ mod tests {
     fn pages_focus_arrows_digits_and_clicks_choose_the_page_without_scrolling()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
         let help = pages(100);
-        shell.handle_event(key(KeyCode::BackTab), &services, &help);
+        shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert_eq!(top(&terminal).as_deref(), Some("line 1"));
 
         for code in [KeyCode::Right, KeyCode::Down, KeyCode::Down, KeyCode::Left] {
-            shell.handle_event(key(code), &services, &help);
+            shell.handle_event(key(code), of(&services), &help);
         }
         terminal.draw(|frame| shell.render(frame, &help))?;
         let scrolled = rendered(&terminal);
@@ -2001,7 +1996,7 @@ mod tests {
             Some("line 3"),
             "reading scrolled the page"
         );
-        shell.handle_event(key(KeyCode::Up), &services, &help);
+        shell.handle_event(key(KeyCode::Up), of(&services), &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert_eq!(
             rendered(&terminal),
@@ -2009,10 +2004,10 @@ mod tests {
             "up on the first page scrolls nothing"
         );
 
-        shell.handle_event(key(KeyCode::Down), &services, &help);
+        shell.handle_event(key(KeyCode::Down), of(&services), &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert_eq!(top(&terminal).as_deref(), Some("gitserious help: init"));
-        shell.handle_event(key(KeyCode::Up), &services, &help);
+        shell.handle_event(key(KeyCode::Up), of(&services), &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert_eq!(
             top(&terminal).as_deref(),
@@ -2020,21 +2015,21 @@ mod tests {
             "a new page starts at its top"
         );
 
-        shell.handle_event(key(KeyCode::Char('3')), &services, &help);
+        shell.handle_event(key(KeyCode::Char('3')), of(&services), &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert_eq!(top(&terminal).as_deref(), Some("gitserious help: config"));
-        shell.handle_event(key(KeyCode::Char('5')), &services, &help);
+        shell.handle_event(key(KeyCode::Char('5')), of(&services), &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert_eq!(top(&terminal).as_deref(), Some("gitserious help: config"));
 
-        shell.handle_event(key(KeyCode::Right), &services, &help);
+        shell.handle_event(key(KeyCode::Right), of(&services), &help);
         let (x, y) = position(&terminal, "4  Commit").ok_or("missing Commit")?;
-        shell.handle_event(click(Rect::new(x, y, 1, 1)), &services, &help);
+        shell.handle_event(click(Rect::new(x, y, 1, 1)), of(&services), &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert_eq!(top(&terminal).as_deref(), Some("gitserious help: commit"));
         assert!(footer(&terminal).contains("→ read  ↑↓ pages  1-4 jump"));
         assert_eq!(terminal.backend().buffer()[(x, y)].bg, theme().text);
-        shell.handle_event(key(KeyCode::Down), &services, &help);
+        shell.handle_event(key(KeyCode::Down), of(&services), &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert_eq!(
             top(&terminal).as_deref(),
@@ -2047,14 +2042,14 @@ mod tests {
     #[test]
     fn reading_focus_scrolls_by_line_and_by_screen() -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
         let help = pages(100);
-        shell.handle_event(key(KeyCode::BackTab), &services, &help);
+        shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
         // The numbered line at the top of the content, if any.
         let mut press = |code| -> Result<Option<u16>, Box<dyn std::error::Error>> {
-            shell.handle_event(key(code), &services, &help);
+            shell.handle_event(key(code), of(&services), &help);
             terminal.draw(|frame| shell.render(frame, &help))?;
             Ok(top(&terminal)
                 .as_deref()
@@ -2090,10 +2085,10 @@ mod tests {
             footer(&terminal)
         );
 
-        shell.handle_event(key(KeyCode::Left), &services, &help);
+        shell.handle_event(key(KeyCode::Left), of(&services), &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert!(footer(&terminal).contains("→ read  ↑↓ pages  1-4 jump"));
-        shell.handle_event(key(KeyCode::Enter), &services, &help);
+        shell.handle_event(key(KeyCode::Enter), of(&services), &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert!(footer(&terminal).contains("↑↓ scroll"), "enter reads too");
         Ok(())
@@ -2103,18 +2098,18 @@ mod tests {
     fn help_reads_to_its_last_line_and_keeps_the_way_back_at_the_minimum_size()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
         let help = pages(40);
-        shell.handle_event(key(KeyCode::BackTab), &services, &help);
+        shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
         let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert!(!rendered(&terminal).contains("line 40"));
         let (left, _) = position(&terminal, "line 1").ok_or("missing first line")?;
         assert!(footer(&terminal).contains("→ read  ↑↓ pages  1-4 jump"));
 
-        shell.handle_event(key(KeyCode::Right), &services, &help);
+        shell.handle_event(key(KeyCode::Right), of(&services), &help);
         for _ in 0..2 {
-            shell.handle_event(key(KeyCode::PageDown), &services, &help);
+            shell.handle_event(key(KeyCode::PageDown), of(&services), &help);
             terminal.draw(|frame| shell.render(frame, &help))?;
         }
         let last = MINIMUM_HEIGHT - FOOTER_HEIGHT - 1;
@@ -2123,7 +2118,7 @@ mod tests {
         assert!(hints.contains("↑↓ scroll  ← pages"), "{hints}");
         assert!(hints.contains("tab nav bar  / commands  q quit"), "{hints}");
 
-        shell.handle_event(key(KeyCode::Up), &services, &help);
+        shell.handle_event(key(KeyCode::Up), of(&services), &help);
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert_eq!(position(&terminal, "line 39"), Some((left, last)));
         Ok(())
@@ -2143,7 +2138,7 @@ mod tests {
             let entry = InitialPage::Help {
                 command: command.map(str::to_owned),
             };
-            let mut shell = Shell::new(entry, &services, &help);
+            let mut shell = Shell::new(entry, of(&services), &help);
             terminal.draw(|frame| shell.render(frame, &help))?;
 
             assert_eq!(shell.section, Section::Help, "{command:?}");
@@ -2155,10 +2150,10 @@ mod tests {
                 "{}",
                 footer(&terminal)
             );
-            shell.handle_event(key(KeyCode::Esc), &services, &help);
+            shell.handle_event(key(KeyCode::Esc), of(&services), &help);
             assert_eq!(shell.section, Section::Home, "esc goes Home");
             assert_eq!(
-                shell.handle_event(key(KeyCode::Char('q')), &services, &help),
+                shell.handle_event(key(KeyCode::Char('q')), of(&services), &help),
                 Some(Action::Quit)
             );
         }
@@ -2169,13 +2164,13 @@ mod tests {
     fn returning_to_help_starts_in_the_sidebar_on_the_page_left_last()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
         let help = pages(1);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
-        shell.handle_event(key(KeyCode::BackTab), &services, &help);
-        shell.handle_event(key(KeyCode::Char('3')), &services, &help);
-        shell.handle_event(key(KeyCode::Right), &services, &help);
-        shell.handle_event(key(KeyCode::Esc), &services, &help);
+        shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
+        shell.handle_event(key(KeyCode::Char('3')), of(&services), &help);
+        shell.handle_event(key(KeyCode::Right), of(&services), &help);
+        shell.handle_event(key(KeyCode::Esc), of(&services), &help);
         assert_eq!(
             shell.section,
             Section::Home,
@@ -2187,7 +2182,7 @@ mod tests {
             .map(key)
             .chain([Event::Paste("open help".into()), key(KeyCode::Enter)]);
         for event in palette {
-            shell.handle_event(event, &services, &help);
+            shell.handle_event(event, of(&services), &help);
         }
         assert_eq!(shell.section, Section::Help);
         terminal.draw(|frame| shell.render(frame, &help))?;
@@ -2196,8 +2191,8 @@ mod tests {
         let (x, y) = position(&terminal, "3  Config").ok_or("missing Config")?;
         assert_eq!(terminal.backend().buffer()[(x, y)].bg, theme().text);
 
-        shell.handle_event(key(KeyCode::Right), &services, &help);
-        shell.handle_event(key(KeyCode::Tab), &services, &help);
+        shell.handle_event(key(KeyCode::Right), of(&services), &help);
+        shell.handle_event(key(KeyCode::Tab), of(&services), &help);
         assert_eq!(
             shell.section,
             Section::Home,
@@ -2205,14 +2200,14 @@ mod tests {
         );
         shell.handle_event(
             click(shell.root_areas[Section::Help.index()]),
-            &services,
+            of(&services),
             &help,
         );
         terminal.draw(|frame| shell.render(frame, &help))?;
         assert!(footer(&terminal).contains("→ read  ↑↓ pages  1-4 jump"));
-        shell.handle_event(key(KeyCode::Right), &services, &help);
+        shell.handle_event(key(KeyCode::Right), of(&services), &help);
         assert_eq!(
-            shell.handle_event(key(KeyCode::Char('q')), &services, &help),
+            shell.handle_event(key(KeyCode::Char('q')), of(&services), &help),
             Some(Action::Quit)
         );
         Ok(())
@@ -2224,19 +2219,19 @@ mod tests {
         use std::fmt::Write as _;
 
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
-        shell.execute(Action::Select(Section::Commit), &services);
+        let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
+        shell.execute(Action::Select(Section::Commit), of(&services));
         for index in 0..100 {
             writeln!(&mut shell.commit.notice, "Git diagnostic {index}")?;
         }
-        shell.handle_event(key(KeyCode::Char('o')), &services, &[]);
-        shell.handle_event(key(KeyCode::PageDown), &services, &[]);
-        shell.handle_event(key(KeyCode::Tab), &services, &[]);
+        shell.handle_event(key(KeyCode::Char('o')), of(&services), &[]);
+        shell.handle_event(key(KeyCode::PageDown), of(&services), &[]);
+        shell.handle_event(key(KeyCode::Tab), of(&services), &[]);
         assert_eq!(shell.section, Section::Commit);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert!(rendered(&terminal).contains("Git diagnostic 10"));
-        shell.handle_event(key(KeyCode::Esc), &services, &[]);
+        shell.handle_event(key(KeyCode::Esc), of(&services), &[]);
         assert!(shell.overlay.is_none());
         Ok(())
     }
@@ -2245,13 +2240,13 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
         let mut shell = rejected_review_on(Section::Config)?;
-        shell.handle_event(key(KeyCode::Char('/')), &services, &[]);
-        shell.handle_event(Event::Paste("quit".into()), &services, &[]);
-        shell.handle_event(key(KeyCode::Enter), &services, &[]);
+        shell.handle_event(key(KeyCode::Char('/')), of(&services), &[]);
+        shell.handle_event(Event::Paste("quit".into()), of(&services), &[]);
+        shell.handle_event(key(KeyCode::Enter), of(&services), &[]);
         assert!(matches!(shell.overlay, Some(Overlay::QuitConfirm)));
         assert_eq!(shell.config.shell_keys(), ShellKeys::Navigation);
         assert_eq!(
-            shell.handle_event(key(KeyCode::Char('y')), &services, &[]),
+            shell.handle_event(key(KeyCode::Char('y')), of(&services), &[]),
             Some(Action::Quit)
         );
         Ok(())
@@ -2260,11 +2255,11 @@ mod tests {
     #[test]
     fn config_palette_quit_without_a_pending_review_quits() {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Config, &services, &[]);
-        shell.handle_event(key(KeyCode::Char('/')), &services, &[]);
-        shell.handle_event(Event::Paste("quit".into()), &services, &[]);
+        let mut shell = Shell::new(InitialPage::Config, of(&services), &[]);
+        shell.handle_event(key(KeyCode::Char('/')), of(&services), &[]);
+        shell.handle_event(Event::Paste("quit".into()), of(&services), &[]);
         assert_eq!(
-            shell.handle_event(key(KeyCode::Enter), &services, &[]),
+            shell.handle_event(key(KeyCode::Enter), of(&services), &[]),
             Some(Action::Quit)
         );
     }
@@ -2272,12 +2267,12 @@ mod tests {
     /// A shell on `section` that retains a reviewed commit Git rejected.
     fn rejected_review_on(section: Section) -> Result<Shell, Box<dyn std::error::Error>> {
         let (context, _, checkpoint) = crate::author::reviewed_submission()?;
-        let mut shell = Shell::new(InitialPage::Commit, &Services, &[]);
+        let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
         shell.conclude_authoring(
             &Services,
             Some((context, checkpoint, Err("hook rejected".into()))),
         );
-        shell.execute(Action::Select(section), &Services);
+        shell.execute(Action::Select(section), of(&Services));
         assert_eq!(shell.section, section);
         Ok(shell)
     }
@@ -2287,7 +2282,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
         let mut shell = rejected_review_on(Section::Config)?;
-        shell.handle_event(key(KeyCode::Char('q')), &services, &[]);
+        shell.handle_event(key(KeyCode::Char('q')), of(&services), &[]);
         assert!(matches!(shell.overlay, Some(Overlay::QuitConfirm)));
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
@@ -2298,7 +2293,7 @@ mod tests {
             .collect::<String>();
         assert_eq!(footer.trim_end(), " y discard and quit  enter/esc/n stay");
         assert_eq!(
-            shell.handle_event(key(KeyCode::Char('n')), &services, &[]),
+            shell.handle_event(key(KeyCode::Char('n')), of(&services), &[]),
             None
         );
         assert!(shell.overlay.is_none());
@@ -2309,7 +2304,7 @@ mod tests {
     fn tab_and_shift_tab_switch_sections_in_one_press_and_arrows_never_do()
     -> Result<(), Box<dyn std::error::Error>> {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
         let header: String = (0..100)
@@ -2326,7 +2321,7 @@ mod tests {
             Section::Help,
             Section::Home,
         ] {
-            shell.handle_event(key(KeyCode::Tab), &services, &[]);
+            shell.handle_event(key(KeyCode::Tab), of(&services), &[]);
             assert_eq!(shell.section, expected, "one tab moves one section");
             terminal.draw(|frame| shell.render(frame, &[]))?;
             let active = shell.root_areas[expected.index()];
@@ -2346,14 +2341,14 @@ mod tests {
             Section::Commit,
             Section::Home,
         ] {
-            shell.handle_event(key(KeyCode::BackTab), &services, &[]);
+            shell.handle_event(key(KeyCode::BackTab), of(&services), &[]);
             assert_eq!(
                 shell.section, expected,
                 "one shift+tab moves back one section"
             );
         }
         for code in [KeyCode::Left, KeyCode::Right] {
-            shell.handle_event(key(code), &services, &[]);
+            shell.handle_event(key(code), of(&services), &[]);
             assert_eq!(shell.section, Section::Home, "arrows never switch sections");
         }
 
@@ -2362,7 +2357,7 @@ mod tests {
         terminal.draw(|frame| shell.render(frame, &[]))?;
         assert_eq!(shell.root_areas, original, "tabs stay left-aligned");
         let help = shell.root_areas[Section::Help.index()];
-        shell.handle_event(click(help), &services, &[]);
+        shell.handle_event(click(help), of(&services), &[]);
         assert_eq!(shell.section, Section::Help);
         Ok(())
     }
@@ -2374,16 +2369,16 @@ mod tests {
     #[test]
     fn opening_commit_matches_navigating_there_and_does_not_author() {
         let services = Services;
-        let mut opened = Shell::new(InitialPage::Commit, &services, &[]);
-        let mut visited = Shell::new(InitialPage::Home, &services, &[]);
-        visited.execute(Action::Select(Section::Commit), &services);
+        let mut opened = Shell::new(InitialPage::Commit, of(&services), &[]);
+        let mut visited = Shell::new(InitialPage::Home, of(&services), &[]);
+        visited.execute(Action::Select(Section::Commit), of(&services));
 
         assert_eq!(opened.section, Section::Commit);
         assert_eq!(commit_page(&opened), commit_page(&visited));
         assert!(opened.pending_author.is_none());
         assert!(opened.commit.notice.is_empty());
         assert_eq!(
-            opened.handle_event(key(KeyCode::Enter), &services, &[]),
+            opened.handle_event(key(KeyCode::Enter), of(&services), &[]),
             Some(Action::Author)
         );
         assert!(opened.pending_author.is_none());
@@ -2392,9 +2387,9 @@ mod tests {
     #[test]
     fn a_missing_repository_blocks_the_commit_page_and_leaves_the_other_pages_open() {
         let workspace = Unavailable;
-        let mut opened = Shell::new(InitialPage::Commit, &workspace, &[]);
-        let mut visited = Shell::new(InitialPage::Home, &workspace, &[]);
-        visited.execute(Action::Select(Section::Commit), &workspace);
+        let mut opened = Shell::new(InitialPage::Commit, of(&workspace), &[]);
+        let mut visited = Shell::new(InitialPage::Home, of(&workspace), &[]);
+        visited.execute(Action::Select(Section::Commit), of(&workspace));
 
         assert_eq!(
             opened.commit.blocker.as_deref(),
@@ -2403,12 +2398,12 @@ mod tests {
         assert!(opened.commit.snapshot.is_none());
         assert_eq!(commit_page(&opened), commit_page(&visited));
         assert_eq!(
-            opened.handle_event(key(KeyCode::Tab), &workspace, &[]),
+            opened.handle_event(key(KeyCode::Tab), of(&workspace), &[]),
             None
         );
         assert_eq!(opened.section, Section::Config);
         assert_eq!(
-            opened.handle_event(key(KeyCode::Char('q')), &workspace, &[]),
+            opened.handle_event(key(KeyCode::Char('q')), of(&workspace), &[]),
             Some(Action::Quit)
         );
     }
@@ -2416,7 +2411,7 @@ mod tests {
     #[test]
     fn cancelling_authoring_returns_to_commit_without_writing() {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Commit, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Commit, of(&services), &[]);
         let notice = shell.commit.notice.clone();
 
         shell.conclude_authoring(&services, None);
@@ -2431,7 +2426,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let (context, _, checkpoint) = crate::author::reviewed_submission()?;
         let created = CommitOutput::new(b"created\n".to_vec(), b"hook note\n".to_vec());
-        let mut shell = Shell::new(InitialPage::Commit, &Services, &[]);
+        let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
 
         shell.conclude_authoring(&Services, Some((context, checkpoint, Ok(created))));
 
@@ -2463,7 +2458,7 @@ mod tests {
     fn a_failed_review_survives_navigation_refresh_and_cancelling_new_authoring()
     -> Result<(), Box<dyn std::error::Error>> {
         let (context, _, checkpoint) = crate::author::reviewed_submission()?;
-        let mut shell = Shell::new(InitialPage::Commit, &Services, &[]);
+        let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
         shell.conclude_authoring(
             &Services,
             Some((context, checkpoint, Err("hook rejected".into()))),
@@ -2478,27 +2473,30 @@ mod tests {
             Section::Home,
             Section::Commit,
         ] {
-            assert_eq!(shell.handle_event(key(KeyCode::Tab), &Services, &[]), None);
+            assert_eq!(
+                shell.handle_event(key(KeyCode::Tab), of(&Services), &[]),
+                None
+            );
             assert_eq!(shell.section, expected);
             assert!(shell.pending_author.is_some());
         }
         assert_eq!(
-            shell.handle_event(key(KeyCode::Char('r')), &Services, &[]),
+            shell.handle_event(key(KeyCode::Char('r')), of(&Services), &[]),
             None
         );
         assert!(shell.pending_author.is_some());
         assert_eq!(
-            shell.handle_event(key(KeyCode::Enter), &Services, &[]),
+            shell.handle_event(key(KeyCode::Enter), of(&Services), &[]),
             Some(Action::Resume)
         );
         assert_eq!(
-            shell.handle_event(key(KeyCode::Char('c')), &Services, &[]),
+            shell.handle_event(key(KeyCode::Char('c')), of(&Services), &[]),
             Some(Action::Author)
         );
         shell.conclude_authoring(&Services, None);
         assert!(shell.pending_author.is_some());
         assert_eq!(
-            shell.handle_event(key(KeyCode::Enter), &Services, &[]),
+            shell.handle_event(key(KeyCode::Enter), of(&Services), &[]),
             Some(Action::Resume)
         );
         Ok(())
@@ -2508,28 +2506,28 @@ mod tests {
     fn a_pending_review_requires_confirmation_before_quitting()
     -> Result<(), Box<dyn std::error::Error>> {
         let (context, _, checkpoint) = crate::author::reviewed_submission()?;
-        let mut shell = Shell::new(InitialPage::Commit, &Services, &[]);
+        let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
         shell.conclude_authoring(
             &Services,
             Some((context, checkpoint, Err("hook rejected".into()))),
         );
 
         assert_eq!(
-            shell.handle_event(key(KeyCode::Char('q')), &Services, &[]),
+            shell.handle_event(key(KeyCode::Char('q')), of(&Services), &[]),
             None
         );
         assert!(matches!(shell.overlay, Some(Overlay::QuitConfirm)));
         assert_eq!(
-            shell.handle_event(key(KeyCode::Char('n')), &Services, &[]),
+            shell.handle_event(key(KeyCode::Char('n')), of(&Services), &[]),
             None
         );
         assert!(shell.overlay.is_none());
         assert!(shell.pending_author.is_some());
         assert_eq!(shell.section, Section::Commit);
 
-        shell.handle_event(key(KeyCode::Char('q')), &Services, &[]);
+        shell.handle_event(key(KeyCode::Char('q')), of(&Services), &[]);
         assert_eq!(
-            shell.handle_event(key(KeyCode::Char('y')), &Services, &[]),
+            shell.handle_event(key(KeyCode::Char('y')), of(&Services), &[]),
             Some(Action::Quit)
         );
         Ok(())
@@ -2538,7 +2536,7 @@ mod tests {
     #[test]
     fn repeated_rejections_remain_resumable_until_a_successful_retry()
     -> Result<(), Box<dyn std::error::Error>> {
-        let mut shell = Shell::new(InitialPage::Commit, &Services, &[]);
+        let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
         for rejection in ["first hook rejection", "second hook rejection"] {
             let (context, _, checkpoint) = crate::author::reviewed_submission()?;
             shell.conclude_authoring(
@@ -2549,7 +2547,7 @@ mod tests {
             assert!(shell.commit.notice.contains(rejection));
             assert!(!shell.commit.notice.contains("Commit created."));
             assert_eq!(
-                shell.handle_event(key(KeyCode::Enter), &Services, &[]),
+                shell.handle_event(key(KeyCode::Enter), of(&Services), &[]),
                 Some(Action::Resume)
             );
         }
@@ -2566,7 +2564,7 @@ mod tests {
         assert!(shell.pending_author.is_none());
         assert_eq!(shell.commit.notice, "Commit created.\nretry created");
         assert_eq!(
-            shell.handle_event(key(KeyCode::Enter), &Services, &[]),
+            shell.handle_event(key(KeyCode::Enter), of(&Services), &[]),
             Some(Action::Author)
         );
         Ok(())
@@ -2576,7 +2574,7 @@ mod tests {
     fn home_draws_a_static_wordmark_and_tagline_in_bone() -> Result<(), Box<dyn std::error::Error>>
     {
         let services = Services;
-        let mut shell = Shell::new(InitialPage::Home, &services, &[]);
+        let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
         for (width, height) in [(87, 40), (100, 30), (120, 30), (66, 18)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| shell.render(frame, &[]))?;
