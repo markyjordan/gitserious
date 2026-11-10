@@ -11,6 +11,7 @@
     clippy::unused_self
 )]
 
+mod adapter;
 mod commit;
 mod config;
 mod confirmation;
@@ -20,5 +21,6 @@ mod runtime;
 mod shell;
 mod theme;
 
+pub use adapter::RatatuiInteractiveUi;
 pub use help::HelpPage;
-pub use shell::{Capabilities, InitialPage, RatatuiInteractiveUi};
+pub use shell::{Capabilities, InitialPage};

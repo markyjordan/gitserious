@@ -1,13 +1,13 @@
-use std::io::{self, IsTerminal};
+use std::io;
 
 use gitserious_app::{CommitWorkspace, ConfigurationWorkspace, ProjectWorkspace};
-use ratatui::Frame;
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::{DefaultTerminal, Frame};
 
 use crate::commit::CommitView;
 use crate::config::{ConfigRequest, ConfigView, ShellKeys};
@@ -48,54 +48,14 @@ pub struct Capabilities<'a> {
     pub project: &'a dyn ProjectWorkspace,
 }
 
-/// Unified Home, Commit, Config, and Help terminal adapter.
-#[derive(Clone, Debug)]
-pub struct RatatuiInteractiveUi {
-    start: InitialPage,
-    help: Vec<HelpPage>,
-}
-
-impl RatatuiInteractiveUi {
-    /// Opens at `start`, with `help` as the pages of the Help section.
-    #[must_use]
-    pub const fn at(start: InitialPage, help: Vec<HelpPage>) -> Self {
-        Self { start, help }
-    }
-
-    /// Runs the session on `capabilities` until the user quits.
-    pub fn run(&self, capabilities: Capabilities<'_>) -> Result<(), String> {
-        let help = &self.help;
-        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-            return Err(match self.start {
-                InitialPage::Config => "configuration editing requires an interactive terminal",
-                InitialPage::Commit => "commit requires an interactive terminal",
-                InitialPage::Home | InitialPage::Help { .. } => {
-                    "interactive shell requires an interactive terminal"
-                }
-            }
-            .into());
-        }
-        crate::runtime::run(|terminal| {
-            let mut shell = Shell::new(self.start.clone(), capabilities, help);
-            loop {
-                terminal.draw(|frame| shell.render(frame, help))?;
-                let event = ratatui::crossterm::event::read()?;
-                if let Some(action) = shell.handle_event(event, capabilities, help) {
-                    if matches!(action, Action::Quit) {
-                        return Ok(());
-                    }
-                    if matches!(action, Action::Author | Action::Resume) {
-                        shell.commit.author(
-                            terminal,
-                            capabilities.commit,
-                            matches!(action, Action::Resume),
-                        )?;
-                    }
-                }
-            }
-        })
-        .map_err(|error| format!("interactive shell failed: {error}"))
-    }
+/// What only the session loop can do after an event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SessionRequest {
+    /// Author a commit in the terminal, or resume the failed one's review.
+    Author {
+        resume: bool,
+    },
+    Quit,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -147,7 +107,7 @@ enum Overlay {
     Palette(Palette),
     QuitConfirm,
 }
-struct Shell {
+pub(crate) struct Shell {
     section: Section,
     config: ConfigView,
     commit: CommitView,
@@ -160,7 +120,11 @@ struct Shell {
 }
 
 impl Shell {
-    fn new(entry: InitialPage, capabilities: Capabilities<'_>, help: &[HelpPage]) -> Self {
+    pub(crate) fn new(
+        entry: InitialPage,
+        capabilities: Capabilities<'_>,
+        help: &[HelpPage],
+    ) -> Self {
         let (section, help) = match entry {
             InitialPage::Home => (Section::Home, HelpView::default()),
             InitialPage::Commit => (Section::Commit, HelpView::default()),
@@ -222,6 +186,31 @@ impl Shell {
             }
         }
         None
+    }
+
+    /// Handles `event` and returns what only the session loop can do.
+    pub(crate) fn session_event(
+        &mut self,
+        event: Event,
+        capabilities: Capabilities<'_>,
+        help: &[HelpPage],
+    ) -> Option<SessionRequest> {
+        match self.handle_event(event, capabilities, help)? {
+            Action::Quit => Some(SessionRequest::Quit),
+            Action::Author => Some(SessionRequest::Author { resume: false }),
+            Action::Resume => Some(SessionRequest::Author { resume: true }),
+            Action::Select(_) | Action::Refresh | Action::Result | Action::Initialize => None,
+        }
+    }
+
+    /// Authors a commit in `terminal`, or resumes the failed one's review.
+    pub(crate) fn author(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        capabilities: Capabilities<'_>,
+        resume: bool,
+    ) -> io::Result<()> {
+        self.commit.author(terminal, capabilities.commit, resume)
     }
 
     fn handle_event(
@@ -464,7 +453,7 @@ impl Shell {
         None
     }
 
-    fn render(&mut self, frame: &mut Frame<'_>, help: &[HelpPage]) {
+    pub(crate) fn render(&mut self, frame: &mut Frame<'_>, help: &[HelpPage]) {
         let area = frame.area();
         self.too_small = area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT;
         self.root_areas = [Rect::default(); Section::ALL.len()];
