@@ -60,10 +60,10 @@ pub trait ConfigurationWorkspace {
 
 /// Configuration operations over the Library and the repository that contains `start`.
 pub struct ConfigurationServices<'a, L: ?Sized, S: ?Sized, G: ?Sized> {
-    pub(crate) locator: &'a L,
-    pub(crate) project: &'a S,
-    pub(crate) global: &'a G,
-    pub(crate) start: &'a Path,
+    locator: &'a L,
+    project: &'a S,
+    global: &'a G,
+    start: &'a Path,
 }
 
 impl<'a, L, S, G> ConfigurationServices<'a, L, S, G>

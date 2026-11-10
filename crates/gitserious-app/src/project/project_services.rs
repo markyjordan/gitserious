@@ -2,7 +2,8 @@ use std::fmt::Display;
 use std::path::Path;
 
 use crate::{
-    ProjectConfigurationStore, ProjectOverview, RepositoryLocator, RepositoryStatusReader,
+    ProjectConfiguration, ProjectConfigurationStore, ProjectOverview, RepositoryInitializer,
+    RepositoryLocator, RepositoryStatusReader,
 };
 
 /// The project file every gitserious repository commits.
@@ -13,6 +14,7 @@ pub struct ProjectServices<'a, L: ?Sized, S: ?Sized> {
     locator: &'a L,
     store: &'a S,
     status: &'a dyn RepositoryStatusReader,
+    initializer: &'a dyn RepositoryInitializer,
     start: &'a Path,
 }
 
@@ -27,12 +29,14 @@ where
         locator: &'a L,
         store: &'a S,
         status: &'a dyn RepositoryStatusReader,
+        initializer: &'a dyn RepositoryInitializer,
         start: &'a Path,
     ) -> Self {
         Self {
             locator,
             store,
             status,
+            initializer,
             start,
         }
     }
@@ -85,5 +89,26 @@ where
             version,
             policy_untracked,
         }
+    }
+
+    /// Creates the project from `configuration`, and the Git repository first when there is
+    /// none; an existing project is never rewritten.
+    pub fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
+        let locate = || self.locator.locate(self.start);
+        let root = match locate() {
+            Ok(root) => root,
+            Err(error) if L::is_not_repository(&error) => {
+                self.initializer.initialize(self.start)?;
+                locate().map_err(|error| error.to_string())?
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        self.store
+            .ensure_local_state(&root)
+            .map_err(|error| error.to_string())?;
+        self.store
+            .create(&root, configuration)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 }

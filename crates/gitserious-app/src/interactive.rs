@@ -97,8 +97,7 @@ where
 {
     let workspace = InteractiveServices {
         config: ConfigurationServices::new(locator, store, global, start),
-        project: ProjectServices::new(locator, store, status, start),
-        initializer,
+        project: ProjectServices::new(locator, store, status, initializer, start),
         commit: CommitServices::new(locator, store, status, writer, start),
     };
     ui.run(&workspace, help)
@@ -107,7 +106,6 @@ where
 struct InteractiveServices<'a, L: ?Sized, S: ?Sized, G: ?Sized, W: ?Sized> {
     config: ConfigurationServices<'a, L, S, G>,
     project: ProjectServices<'a, L, S>,
-    initializer: &'a dyn RepositoryInitializer,
     commit: CommitServices<'a, L, S, W>,
 }
 
@@ -127,24 +125,7 @@ where
     }
 
     fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
-        let locate = || self.config.locator.locate(self.config.start);
-        let root = match locate() {
-            Ok(root) => root,
-            Err(error) if L::is_not_repository(&error) => {
-                self.initializer.initialize(self.config.start)?;
-                locate().map_err(|error| error.to_string())?
-            }
-            Err(error) => return Err(error.to_string()),
-        };
-        self.config
-            .project
-            .ensure_local_state(&root)
-            .map_err(|error| error.to_string())?;
-        self.config
-            .project
-            .create(&root, configuration)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        self.project.initialize(configuration)
     }
 
     fn configuration(&self) -> &dyn ConfigurationWorkspace {
