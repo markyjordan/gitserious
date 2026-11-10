@@ -16,6 +16,9 @@ serde = { workspace = true }
 tempfile = { workspace = true }
 toml = { workspace = true }
 
+[dev-dependencies]
+gitserious-app = { workspace = true, features = ["test-support"] }
+
 [lints]
 workspace = true
 

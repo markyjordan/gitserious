@@ -1,6 +1,4 @@
-#[path = "../../../tests/support/library_lookup.rs"]
-mod library_lookup;
-use library_lookup::LibraryLookup;
+use crate::test_support::LibraryLookup;
 
 use gitserious_core::{
     CommitTypeId, ConditionId, Description, LabelError, PropertyCondition, PropertyKey,

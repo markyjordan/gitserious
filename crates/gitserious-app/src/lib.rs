@@ -2,9 +2,6 @@
 
 #![allow(clippy::missing_errors_doc)]
 
-#[cfg(test)]
-extern crate self as gitserious_app;
-
 mod commit;
 mod config;
 mod directory_creator;
@@ -15,6 +12,8 @@ mod project;
 mod repository_locator;
 mod resolve_global_paths;
 mod storage_directory;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 pub use commit::{
     AuthoredCommit, BranchState, CommitAuthoringContext, CommitOutput, CommitServices,

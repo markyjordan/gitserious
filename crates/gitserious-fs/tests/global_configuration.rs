@@ -1,6 +1,4 @@
-#[path = "../../gitserious-app/tests/support/library_lookup.rs"]
-mod library_lookup;
-use library_lookup::LibraryLookup;
+use gitserious_app::test_support::LibraryLookup;
 
 use std::error::Error;
 use std::fs;

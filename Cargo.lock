@@ -447,6 +447,7 @@ dependencies = [
 name = "gitserious-app"
 version = "0.1.0"
 dependencies = [
+ "gitserious-app",
  "gitserious-core",
  "sha2",
  "time",

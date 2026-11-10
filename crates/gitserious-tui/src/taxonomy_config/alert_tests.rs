@@ -1,4 +1,4 @@
-use crate::library_lookup::LibraryLookup;
+use gitserious_app::test_support::LibraryLookup;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
