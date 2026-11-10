@@ -18,9 +18,8 @@ mod storage_directory;
 
 pub use commit::{
     AuthoredCommit, BranchState, CommitAuthoringContext, CommitDraftAuthorOutcome, CommitOutput,
-    CommitServices, CommitTaxonomy, CommitWorkspace, CommitWriter, CreateCommitError,
-    RepositoryStatus, RepositoryStatusReader, StatusEntry, prepare_commit_with_taxonomy,
-    validate_reviewed_commit,
+    CommitServices, CommitTaxonomy, CommitWorkspace, CommitWriter, RepositoryStatus,
+    RepositoryStatusReader, StatusEntry, prepare_commit_with_taxonomy, validate_reviewed_commit,
 };
 pub use config::{
     Collision, ConfigurationDestination, ConfigurationEditor, ConfigurationError,
