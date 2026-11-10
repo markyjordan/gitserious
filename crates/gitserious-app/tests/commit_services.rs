@@ -4,15 +4,18 @@ use std::path::{Path, PathBuf};
 
 use gitserious_app::{
     AuthoredCommit, BranchState, CommitAuthoringContext, CommitOutput, CommitServices,
-    CommitWorkspace, CommitWriter, ConfigurationDestination, GlobalConfiguration,
+    CommitTaxonomy, CommitWorkspace, CommitWriter, ConfigurationDestination, GlobalConfiguration,
     GlobalConfigurationStore, HelpPage, InteractiveUi, InteractiveWorkspace, ProjectConfiguration,
     ProjectConfigurationStore, ProjectRevision, RepositoryInitializer, RepositoryLocator,
     RepositoryRoot, RepositoryStatus, RepositoryStatusReader, StatusEntry, StoredProject,
-    run_interactive,
+    initial_project_configuration, run_interactive,
 };
 use gitserious_core::{
-    CommitDraft, CommitMessage, CommitSubject, CommitTypeDefinition, CommitTypeId, Description,
-    PropertyDefinition, PropertyKey, PropertyRequirement, Taxonomy, TaxonomyId,
+    AuthoredProperty, CommitDraft, CommitMessage, CommitProvenance, CommitSubject,
+    CommitTypeDefinition, CommitTypeId, Description, Fingerprint, PropertyDefinition, PropertyKey,
+    PropertyRequirement, PropertyValue, SchemaVersion, Taxonomy, TaxonomyId, TaxonomyVersion,
+    built_in_commit_types, built_in_taxonomies, validate_commit_draft,
+    validate_commit_draft_with_provenance,
 };
 
 struct Locator {
@@ -558,4 +561,418 @@ fn a_changed_library_does_not_replace_project_owned_commit_policy() -> Result<()
         );
         Ok(())
     })
+}
+
+struct FailingWriter(Cell<usize>);
+
+impl CommitWriter for FailingWriter {
+    type Error = &'static str;
+
+    fn commit(&self, _: &RepositoryRoot, _: &CommitMessage) -> Result<CommitOutput, Self::Error> {
+        self.0.set(self.0.get() + 1);
+        Err("writer failed")
+    }
+}
+
+fn staged(project: Option<ProjectConfiguration>) -> Result<Session, Box<dyn Error>> {
+    let session = Session::new(vec![entry("file", 'M', '.')])?;
+    *session.project.0.borrow_mut() = Ok(project);
+    Ok(session)
+}
+
+fn built_in_project() -> Result<ProjectConfiguration, Box<dyn Error>> {
+    Ok(initial_project_configuration(
+        &GlobalConfiguration::default(),
+    )?)
+}
+
+fn complete_draft(
+    taxonomy: &CommitTaxonomy,
+    commit_type: &str,
+) -> Result<CommitDraft, Box<dyn Error>> {
+    let definition = taxonomy
+        .definitions()
+        .iter()
+        .find(|definition| definition.id().as_str() == commit_type)
+        .ok_or("missing commit type")?;
+    let properties = definition
+        .properties()
+        .iter()
+        .filter(|property| property.requirement() == &PropertyRequirement::Required)
+        .map(|property| {
+            Ok(AuthoredProperty::new(
+                property.key().clone(),
+                PropertyValue::new(format!("authored {}", property.key()))?,
+            ))
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    Ok(CommitDraft::new(
+        definition.id().clone(),
+        None,
+        CommitSubject::new("create durable commit")?,
+        properties,
+    )?)
+}
+
+fn reviewed(
+    taxonomy: &CommitTaxonomy,
+    commit_type: &str,
+) -> Result<AuthoredCommit, Box<dyn Error>> {
+    let draft = complete_draft(taxonomy, commit_type)?;
+    let message = taxonomy.validate(&draft).into_message()?;
+    Ok(AuthoredCommit::reviewed(
+        taxonomy.id().clone(),
+        draft,
+        message,
+    ))
+}
+
+fn written(session: &Session) -> Vec<String> {
+    session
+        .writer
+        .0
+        .borrow()
+        .iter()
+        .map(|(_, message)| message.as_str().to_owned())
+        .collect()
+}
+
+#[test]
+fn submission_writes_one_reviewed_message_under_the_default_taxonomy() -> Result<(), Box<dyn Error>>
+{
+    let session = staged(Some(built_in_project()?))?;
+    let commit = session.commit();
+    let context = commit.prepare_commit()?;
+    let authored = reviewed(context.initial_taxonomy(), "feat")?;
+
+    let output = commit.submit_commit(&authored)?;
+
+    assert_eq!(output.stdout(), b"created\n");
+    let messages = written(&session);
+    assert_eq!(
+        messages,
+        [authored
+            .reviewed_message()
+            .ok_or("no approved bytes")?
+            .as_str()]
+    );
+    assert!(messages[0].starts_with("feat: create durable commit\n"));
+    assert!(messages[0].contains("Gitserious-Taxonomy: conventional-v1\n"));
+    Ok(())
+}
+
+#[test]
+fn preparation_offers_the_default_taxonomy_types_in_policy_order() -> Result<(), Box<dyn Error>> {
+    let session = staged(Some(built_in_project()?))?;
+
+    let context = session.commit().prepare_commit()?;
+
+    assert!(context.preselected_type().is_none());
+    assert_eq!(
+        context
+            .initial_taxonomy()
+            .definitions()
+            .iter()
+            .map(|definition| definition.id().clone())
+            .collect::<Vec<_>>(),
+        built_in_commit_types()
+            .iter()
+            .map(|definition| definition.id().clone())
+            .collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn an_uninitialized_project_names_init_before_authoring() -> Result<(), Box<dyn Error>> {
+    let session = staged(None)?;
+    let commit = session.commit();
+
+    for error in [
+        commit.prepare_commit().err(),
+        commit.submit_commit(&approved_project_commit()?).err(),
+    ] {
+        let error = error.ok_or("an uninitialized project was accepted")?;
+        assert!(
+            error.contains("run `gitserious init` before committing"),
+            "{error}"
+        );
+    }
+    assert!(written(&session).is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_project_owned_built_in_replaces_the_compiled_schema() -> Result<(), Box<dyn Error>> {
+    let conventional = Taxonomy::new(
+        TaxonomyId::new("conventional")?,
+        Some(TaxonomyVersion::new(7)?),
+        Description::new("A project-owned conventional taxonomy.")?,
+        None,
+        vec![CommitTypeDefinition::new(
+            Some(SchemaVersion::V1),
+            CommitTypeId::new("ship")?,
+            "Ships a change.",
+            vec![PropertyDefinition::new(
+                PropertyKey::new("intent")?,
+                "Why the change ships.",
+                PropertyRequirement::Required,
+            )?],
+        )?],
+    )?;
+    let session = staged(Some(ProjectConfiguration::new(
+        1,
+        conventional.id().clone(),
+        vec![conventional],
+    )?))?;
+    let commit = session.commit();
+    let context = commit.prepare_commit()?;
+
+    commit.submit_commit(&reviewed(context.initial_taxonomy(), "ship")?)?;
+
+    assert!(written(&session)[0].contains("Gitserious-Taxonomy: conventional-v7\n"));
+    Ok(())
+}
+
+#[test]
+fn types_outside_the_taxonomy_never_reach_git() -> Result<(), Box<dyn Error>> {
+    let session = staged(Some(built_in_project()?))?;
+    let commit = session.commit();
+    let context = commit.prepare_commit()?;
+    let custom = AuthoredCommit::new(
+        context.initial_taxonomy().id().clone(),
+        CommitDraft::new(
+            CommitTypeId::new("custom")?,
+            None,
+            CommitSubject::new("escape policy")?,
+            Vec::new(),
+        )?,
+    );
+
+    let error = commit
+        .submit_commit(&custom)
+        .err()
+        .ok_or("an unknown type was written")?;
+
+    assert!(
+        error.starts_with("commit type \"custom\" is unavailable"),
+        "{error}"
+    );
+    assert!(written(&session).is_empty());
+    Ok(())
+}
+
+#[test]
+fn an_incomplete_draft_is_revalidated_before_writing() -> Result<(), Box<dyn Error>> {
+    let session = staged(Some(built_in_project()?))?;
+    let commit = session.commit();
+    let context = commit.prepare_commit()?;
+    let taxonomy = context.initial_taxonomy();
+    let incomplete = CommitDraft::new(
+        CommitTypeId::new("feat")?,
+        None,
+        CommitSubject::new("missing properties")?,
+        Vec::new(),
+    )?;
+    let expected = taxonomy
+        .validate(&incomplete)
+        .into_message()
+        .err()
+        .ok_or("an incomplete feat draft validated")?;
+
+    let error = commit
+        .submit_commit(&AuthoredCommit::new(taxonomy.id().clone(), incomplete))
+        .err()
+        .ok_or("an incomplete draft was written")?;
+
+    assert_eq!(error, expected.to_string());
+    assert!(written(&session).is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_writer_failure_is_reported_after_one_write_attempt() -> Result<(), Box<dyn Error>> {
+    let session = staged(Some(built_in_project()?))?;
+    let writer = FailingWriter(Cell::new(0));
+    let commit = CommitServices::new(
+        &session.locator,
+        &session.project,
+        &session.status,
+        &writer,
+        session.locator.root.as_path(),
+    );
+    let authored = reviewed(commit.prepare_commit()?.initial_taxonomy(), "feat")?;
+
+    assert_eq!(
+        commit.submit_commit(&authored).err().as_deref(),
+        Some("writer failed")
+    );
+    assert_eq!(writer.0.get(), 1);
+    Ok(())
+}
+
+#[test]
+fn a_custom_taxonomy_commits_with_its_own_schema() -> Result<(), Box<dyn Error>> {
+    let ops = Taxonomy::new(
+        TaxonomyId::new("ops")?,
+        Some(TaxonomyVersion::V1),
+        Description::new("Operations change classes.")?,
+        None,
+        vec![CommitTypeDefinition::new(
+            Some(SchemaVersion::V1),
+            CommitTypeId::new("provision")?,
+            "Infrastructure provisioning.",
+            vec![PropertyDefinition::new(
+                PropertyKey::new("intent")?,
+                "Why the infrastructure must change.",
+                PropertyRequirement::Required,
+            )?],
+        )?],
+    )?;
+    let session = staged(Some(ProjectConfiguration::new(
+        1,
+        ops.id().clone(),
+        vec![ops],
+    )?))?;
+    let commit = session.commit();
+    let context = commit.prepare_commit()?;
+    assert_eq!(
+        context
+            .initial_taxonomy()
+            .definitions()
+            .iter()
+            .map(|definition| definition.id().clone())
+            .collect::<Vec<_>>(),
+        [CommitTypeId::new("provision")?]
+    );
+
+    commit.submit_commit(&reviewed(context.initial_taxonomy(), "provision")?)?;
+
+    let message = &written(&session)[0];
+    assert!(message.starts_with("provision: create durable commit\n"));
+    assert!(message.contains("intent:\nauthored intent\n"));
+    assert!(message.contains("Gitserious-Taxonomy: ops\n"));
+    assert!(!message.contains("Gitserious-Template"));
+    Ok(())
+}
+
+#[test]
+fn missing_or_mismatched_reviewed_bytes_never_reach_git() -> Result<(), Box<dyn Error>> {
+    let session = staged(Some(built_in_project()?))?;
+    let commit = session.commit();
+    let context = commit.prepare_commit()?;
+    let taxonomy = context.initial_taxonomy();
+    let draft = complete_draft(taxonomy, "fix")?;
+    let definition = taxonomy
+        .definitions()
+        .iter()
+        .find(|definition| definition.id().as_str() == "fix")
+        .ok_or("conventional has no fix")?;
+    let built_in = built_in_taxonomies()
+        .iter()
+        .find(|built_in| built_in.id() == taxonomy.id())
+        .ok_or("conventional is not built in")?
+        .clone();
+    let plain = validate_commit_draft(definition, &draft).into_message()?;
+    let wrong_fingerprint = validate_commit_draft_with_provenance(
+        &CommitProvenance::new(built_in, Fingerprint::from_bytes([0; 32])),
+        &draft,
+    )
+    .into_message()?;
+    let cases = [
+        (
+            AuthoredCommit::new(taxonomy.id().clone(), draft.clone()),
+            "author did not return reviewed commit bytes",
+        ),
+        (
+            AuthoredCommit::reviewed(taxonomy.id().clone(), draft.clone(), plain),
+            "reviewed commit bytes do not match the selected taxonomy",
+        ),
+        (
+            AuthoredCommit::reviewed(taxonomy.id().clone(), draft, wrong_fingerprint),
+            "reviewed commit bytes do not match the selected taxonomy",
+        ),
+    ];
+
+    for (authored, expected) in cases {
+        assert_eq!(
+            commit.submit_commit(&authored).err().as_deref(),
+            Some(expected)
+        );
+    }
+    assert!(written(&session).is_empty());
+    Ok(())
+}
+
+#[test]
+fn choosing_another_project_taxonomy_uses_its_schema_without_policy_writes()
+-> Result<(), Box<dyn Error>> {
+    let project = built_in_project()?;
+    let session = staged(Some(project.clone()))?;
+    let commit = session.commit();
+    let context = commit.prepare_commit()?;
+    assert_eq!(context.initial_taxonomy().id().as_str(), "conventional");
+    assert_eq!(context.taxonomies().len(), built_in_taxonomies().len());
+    let research = context
+        .find_taxonomy(&TaxonomyId::new("research")?)
+        .ok_or("research is not in the project")?;
+
+    commit.submit_commit(&reviewed(research, "fix")?)?;
+
+    let messages = written(&session);
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].contains("symptom:\n"));
+    assert!(messages[0].contains("Gitserious-Taxonomy: research-v1\n"));
+    assert_eq!(*session.project.0.borrow(), Ok(Some(project)));
+    Ok(())
+}
+
+#[test]
+fn unknown_taxonomies_and_cross_schema_drafts_never_reach_git() -> Result<(), Box<dyn Error>> {
+    let session = staged(Some(built_in_project()?))?;
+    let commit = session.commit();
+    let context = commit.prepare_commit()?;
+    let conventional = context.initial_taxonomy();
+    let research = context
+        .find_taxonomy(&TaxonomyId::new("research")?)
+        .ok_or("research is not in the project")?;
+
+    let research_fix = reviewed(research, "fix")?;
+    let forged = AuthoredCommit::reviewed(
+        TaxonomyId::new("global-only")?,
+        research_fix.draft().clone(),
+        research_fix
+            .reviewed_message()
+            .ok_or("no approved bytes")?
+            .clone(),
+    );
+    let error = commit
+        .submit_commit(&forged)
+        .err()
+        .ok_or("an unknown taxonomy was written")?;
+    assert!(
+        error.starts_with("taxonomy \"global-only\" is unavailable"),
+        "{error}"
+    );
+
+    let conventional_fix = reviewed(conventional, "fix")?;
+    let cross_schema = AuthoredCommit::reviewed(
+        research.id().clone(),
+        conventional_fix.draft().clone(),
+        conventional_fix
+            .reviewed_message()
+            .ok_or("no approved bytes")?
+            .clone(),
+    );
+    let expected = research
+        .validate(cross_schema.draft())
+        .into_message()
+        .err()
+        .ok_or("a conventional fix validated under research")?;
+    assert_eq!(
+        commit.submit_commit(&cross_schema).err(),
+        Some(expected.to_string())
+    );
+    assert!(written(&session).is_empty());
+    Ok(())
 }
