@@ -7,8 +7,7 @@ use gitserious_app::{
     CommitTaxonomy, CommitWorkspace, CommitWriter, GlobalConfiguration, GlobalConfigurationStore,
     HelpPage, InteractiveUi, InteractiveWorkspace, ProjectConfiguration, ProjectConfigurationStore,
     ProjectRevision, RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryStatus,
-    RepositoryStatusReader, StatusEntry, StoredProject, initial_project_configuration,
-    run_interactive,
+    RepositoryStatusReader, StatusEntry, StoredProject, run_interactive,
 };
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitProvenance, CommitSubject,
@@ -544,8 +543,10 @@ fn staged(project: Option<ProjectConfiguration>) -> Result<Session, Box<dyn Erro
 }
 
 fn built_in_project() -> Result<ProjectConfiguration, Box<dyn Error>> {
-    Ok(initial_project_configuration(
-        &GlobalConfiguration::default(),
+    Ok(ProjectConfiguration::new(
+        1,
+        TaxonomyId::new("conventional")?,
+        built_in_taxonomies().to_vec(),
     )?)
 }
 

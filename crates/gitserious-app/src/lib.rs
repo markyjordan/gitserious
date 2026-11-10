@@ -33,8 +33,7 @@ pub use directory_creator::DirectoryCreator;
 pub use global_path_resolver::GlobalPathResolver;
 pub use global_paths::GlobalPaths;
 pub use initialize_taxonomy_project::{
-    InitOutcome, InitStatus, InitializeProjectError, initial_project_configuration,
-    initialize_project,
+    InitOutcome, InitStatus, InitializeProjectError, initialize_project,
 };
 pub use interactive::{
     HelpLine, HelpPage, HelpSpan, HomeState, InteractiveUi, InteractiveWorkspace, run_interactive,

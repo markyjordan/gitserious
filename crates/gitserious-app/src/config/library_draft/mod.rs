@@ -696,21 +696,11 @@ impl LibraryDraft {
         self.build().err().unwrap_or_default()
     }
 
-    /// The validated Library to persist. The error lists every problem and is never empty; a
-    /// project draft builds through [`Self::build_project`] instead.
+    /// The validated Library to persist. The error lists every problem and is never empty.
     pub fn build(&self) -> Result<GlobalConfiguration, Vec<Problem>> {
         match problems::build_owner(self)? {
             Owner::Library(configuration) => Ok(configuration),
             Owner::Project { .. } => Err(vec![problems::wrong_owner()]),
-        }
-    }
-
-    /// The validated project configuration to apply. The error lists every problem and is never
-    /// empty; a Library draft builds through [`Self::build`] instead.
-    pub fn build_project(&self) -> Result<ProjectConfiguration, Vec<Problem>> {
-        match problems::build_owner(self)? {
-            Owner::Project { configuration, .. } => Ok(configuration),
-            Owner::Library(_) => Err(vec![problems::wrong_owner()]),
         }
     }
 

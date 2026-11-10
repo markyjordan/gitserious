@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use gitserious_app::{
     GlobalConfiguration, InitOutcome, InitStatus, InitializeProjectError, ProjectConfiguration,
     ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot, StoredProject,
-    fingerprint_taxonomy, initial_project_configuration, initialize_project,
+    fingerprint_taxonomy, initialize_project,
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
@@ -145,8 +145,10 @@ impl ProjectConfigurationStore for FakeStore {
 }
 
 fn default_project() -> Result<ProjectConfiguration, Box<dyn Error>> {
-    Ok(initial_project_configuration(
-        &GlobalConfiguration::default(),
+    Ok(ProjectConfiguration::new(
+        1,
+        TaxonomyId::new("conventional")?,
+        built_in_taxonomies().to_vec(),
     )?)
 }
 
@@ -444,8 +446,13 @@ fn initial_project_copies_available_custom_taxonomies() -> Result<(), Box<dyn Er
         vec![fork.clone()].into_iter().map(Into::into).collect(),
     )?;
 
-    let project = initial_project_configuration(&global)?;
+    let store = FakeStore::new(None);
+    init(&FakeLocator::available()?, &store, &global)?;
 
+    let calls = store.calls.borrow();
+    let Some(StoreCall::Create(project)) = calls.last() else {
+        return Err(format!("no project was created: {calls:?}").into());
+    };
     assert_eq!(project.taxonomies().len(), built_in_taxonomies().len() + 1);
     assert_eq!(project.taxonomies().last(), Some(&fork));
     Ok(())
