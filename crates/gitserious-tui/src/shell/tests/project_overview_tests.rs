@@ -4,7 +4,7 @@ use super::*;
 fn an_uninitialized_project_matches_the_open_bone_overview()
 -> Result<(), Box<dyn std::error::Error>> {
     let workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
-    let mut shell = Shell::new(InitialPage::Config, &workspace, &[]);
+    let mut shell = Shell::new(InitialPage::Config, of(&workspace), &[]);
     for (width, height) in [(87, 40), (100, 30), (125, 51), (66, 18)] {
         let mut terminal = Terminal::new(TestBackend::new(width, height))?;
         terminal.draw(|frame| shell.render(frame, &[]))?;
@@ -50,32 +50,32 @@ fn project_enter_opens_the_same_editor_as_home_and_cancel_writes_nothing()
 -> Result<(), Box<dyn std::error::Error>> {
     for (width, height) in [(87, 40), (100, 30), (125, 51), (66, 18)] {
         let workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
-        let mut project = Shell::new(InitialPage::Config, &workspace, &[]);
-        let mut home = Shell::new(InitialPage::Home, &workspace, &[]);
+        let mut project = Shell::new(InitialPage::Config, of(&workspace), &[]);
+        let mut home = Shell::new(InitialPage::Home, of(&workspace), &[]);
         let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-        project.handle_event(key(KeyCode::Enter), &workspace, &[]);
-        home.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        project.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+        home.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         assert_eq!(project.section, Section::Home);
         terminal.draw(|frame| project.render(frame, &[]))?;
         let project_frame = terminal.backend().buffer().clone();
         terminal.draw(|frame| home.render(frame, &[]))?;
         assert_eq!(&project_frame, terminal.backend().buffer());
         assert!(workspace.created.borrow().is_none());
-        project.handle_event(key(KeyCode::Esc), &workspace, &[]);
+        project.handle_event(key(KeyCode::Esc), of(&workspace), &[]);
         assert!(project.init_editor.is_none());
         assert!(workspace.created.borrow().is_none());
-        project.execute(Action::Select(Section::Config), &workspace);
-        project.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        project.execute(Action::Select(Section::Config), of(&workspace));
+        project.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         // Exclude conventional and make infra-ops the default; only those choices may
         // appear in Project after the shell reloads the initialized configuration.
-        project.handle_event(key(KeyCode::Char(' ')), &workspace, &[]);
-        project.handle_event(key(KeyCode::Down), &workspace, &[]);
-        project.handle_event(key(KeyCode::Down), &workspace, &[]);
-        project.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        project.handle_event(key(KeyCode::Char(' ')), of(&workspace), &[]);
+        project.handle_event(key(KeyCode::Down), of(&workspace), &[]);
+        project.handle_event(key(KeyCode::Down), of(&workspace), &[]);
+        project.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         for _ in 0..3 {
-            project.handle_event(key(KeyCode::Down), &workspace, &[]);
+            project.handle_event(key(KeyCode::Down), of(&workspace), &[]);
         }
-        project.handle_event(key(KeyCode::Enter), &workspace, &[]);
+        project.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         assert!(project.init_editor.is_none());
         let configuration = workspace
             .created
@@ -91,7 +91,7 @@ fn project_enter_opens_the_same_editor_as_home_and_cancel_writes_nothing()
                 .collect::<Vec<_>>(),
             ["infra-ops-v1", "research-v1"]
         );
-        project.execute(Action::Select(Section::Config), &workspace);
+        project.execute(Action::Select(Section::Config), of(&workspace));
         terminal.draw(|frame| project.render(frame, &[]))?;
         let text = rendered(&terminal);
         for name in ["infra-ops", "research"] {
@@ -124,25 +124,25 @@ fn the_project_initialize_row_and_palette_share_the_editor_and_its_errors()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
     workspace.failure = Some("The project file appeared on disk.");
-    let mut shell = Shell::new(InitialPage::Config, &workspace, &[]);
+    let mut shell = Shell::new(InitialPage::Config, of(&workspace), &[]);
     let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
     terminal.draw(|frame| shell.render(frame, &[]))?;
-    shell.handle_event(click(Rect::new(14, 7, 73, 1)), &workspace, &[]);
+    shell.handle_event(click(Rect::new(14, 7, 73, 1)), of(&workspace), &[]);
     assert!(shell.init_editor.is_some());
-    shell.handle_event(key(KeyCode::Esc), &workspace, &[]);
-    shell.execute(Action::Select(Section::Config), &workspace);
-    shell.handle_event(key(KeyCode::Char('/')), &workspace, &[]);
+    shell.handle_event(key(KeyCode::Esc), of(&workspace), &[]);
+    shell.execute(Action::Select(Section::Config), of(&workspace));
+    shell.handle_event(key(KeyCode::Char('/')), of(&workspace), &[]);
     terminal.draw(|frame| shell.render(frame, &[]))?;
     let text = rendered(&terminal);
     assert!(!text.contains("Configure project"));
     assert!(!text.contains("Review changes"));
-    shell.handle_event(Event::Paste("initialize".into()), &workspace, &[]);
-    shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+    shell.handle_event(Event::Paste("initialize".into()), of(&workspace), &[]);
+    shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
     assert!(shell.init_editor.is_some());
     for _ in 0..3 {
-        shell.handle_event(key(KeyCode::Down), &workspace, &[]);
+        shell.handle_event(key(KeyCode::Down), of(&workspace), &[]);
     }
-    shell.handle_event(key(KeyCode::Enter), &workspace, &[]);
+    shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
     terminal.draw(|frame| shell.render(frame, &[]))?;
     assert!(rendered(&terminal).contains("The project file appeared on disk."));
     assert!(shell.init_editor.is_some());
