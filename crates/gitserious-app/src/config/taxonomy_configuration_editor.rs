@@ -293,30 +293,6 @@ pub trait ConfigurationWorkspace {
     fn library_path(&self) -> PathBuf;
 }
 
-/// Interaction adapter for reviewed configuration authoring.
-pub trait ConfigurationEditor {
-    fn edit(&self, workspace: &dyn ConfigurationWorkspace) -> Result<(), String>;
-}
-
-/// Runs configuration interaction through application-owned persistence rules.
-pub fn edit_configuration<L, S, G>(
-    locator: &L,
-    project: &S,
-    global: &G,
-    start: &Path,
-    editor: &dyn ConfigurationEditor,
-) -> Result<(), String>
-where
-    L: RepositoryLocator + ?Sized,
-    L::Error: Display,
-    S: ProjectConfigurationStore + ?Sized,
-    S::Error: Display,
-    G: GlobalConfigurationStore + ?Sized,
-    G::Error: Display,
-{
-    editor.edit(&ConfigurationServices::new(locator, project, global, start))
-}
-
 /// Configuration operations over the Library and the repository that contains `start`.
 pub struct ConfigurationServices<'a, L: ?Sized, S: ?Sized, G: ?Sized> {
     pub(crate) locator: &'a L,

@@ -9,9 +9,8 @@ use clap::builder::styling::{Style, Styles};
 use clap::error::ErrorKind;
 use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
 use gitserious_app::{
-    ConfigurationEditor, GlobalConfigurationStore, HelpLine, HelpPage, HelpSpan, InitOutcome,
-    InitStatus, ProjectConfigurationStore, RepositoryLocator, edit_configuration,
-    initialize_project,
+    GlobalConfigurationStore, HelpLine, HelpPage, HelpSpan, InitOutcome, InitStatus,
+    ProjectConfigurationStore, RepositoryLocator, initialize_project,
 };
 use gitserious_core::TaxonomyReference;
 
@@ -110,8 +109,6 @@ enum Launch {
     /// Bare `gitserious` with no terminal.
     ConciseHelp,
     Init,
-    /// `config` when no shell is configured.
-    EditConfiguration,
 }
 
 /// Chooses where `command` goes. `shell` says a launcher is configured.
@@ -120,10 +117,11 @@ fn launch(command: Option<&Command>, shell: bool, terminal: bool) -> Result<Laun
     match command {
         Some(Command::Help { .. }) => unreachable!("help is answered before launch"),
         None if !terminal => Ok(Launch::ConciseHelp),
-        None | Some(Command::Commit) if !shell => Err("interactive shell is not configured"),
+        None | Some(Command::Commit | Command::Config) if !shell => {
+            Err("interactive shell is not configured")
+        }
         None => Ok(Launch::Shell(ShellStart::Home)),
         Some(Command::Init) => Ok(Launch::Init),
-        Some(Command::Config) if !shell => Ok(Launch::EditConfiguration),
         Some(Command::Config) => Ok(Launch::Shell(ShellStart::Config)),
         Some(Command::Commit) => Ok(Launch::Shell(ShellStart::Commit)),
     }
@@ -132,29 +130,19 @@ fn launch(command: Option<&Command>, shell: bool, terminal: bool) -> Result<Laun
 /// Concrete interaction adapters required by the binary.
 #[derive(Clone, Copy)]
 pub struct CommitAdapters<'a> {
-    configuration_editor: Option<&'a dyn ConfigurationEditor>,
     shell: Option<&'a dyn ShellLauncher>,
 }
 
 impl<'a> CommitAdapters<'a> {
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            configuration_editor: None,
-            shell: None,
-        }
+        Self { shell: None }
     }
 
     /// Supplies the unified shell.
     #[must_use]
     pub fn with_shell(mut self, shell: &'a dyn ShellLauncher) -> Self {
         self.shell = Some(shell);
-        self
-    }
-
-    #[must_use]
-    pub fn with_configuration_editor(mut self, editor: &'a dyn ConfigurationEditor) -> Self {
-        self.configuration_editor = Some(editor);
         self
     }
 }
@@ -335,15 +323,6 @@ where
             };
             match initialize_project(locator, store, &global, start) {
                 Ok(outcome) => write_init_outcome(stdout, &outcome),
-                Err(error) => operational_error(stderr, error),
-            }
-        }
-        Ok(Launch::EditConfiguration) => {
-            let Some(editor) = adapters.configuration_editor else {
-                return operational_error(stderr, "configuration editor is not configured");
-            };
-            match edit_configuration(locator, store, global, start, editor) {
-                Ok(()) => ExitCode::SUCCESS,
                 Err(error) => operational_error(stderr, error),
             }
         }
@@ -684,7 +663,7 @@ mod tests {
         );
         assert_eq!(
             page(&["gitserious", "config"], false, true),
-            Ok(Launch::EditConfiguration)
+            Err("interactive shell is not configured")
         );
         assert_eq!(
             page(&["gitserious", "init"], false, false),

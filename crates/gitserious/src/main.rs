@@ -9,7 +9,7 @@ use gitserious_fs::{
     GitCommitWriter, GitRepositoryInitializer, GitRepositoryLocator, GitRepositoryStatusReader,
     SystemGlobalPathResolver, TomlGlobalConfigurationStore, TomlProjectStore,
 };
-use gitserious_tui::{InitialPage, RatatuiInteractiveUi, RatatuiTaxonomyConfigurationEditor};
+use gitserious_tui::{InitialPage, RatatuiInteractiveUi};
 
 fn main() -> ExitCode {
     let mut stderr = io::stderr();
@@ -21,7 +21,6 @@ fn main() -> ExitCode {
     let locator = GitRepositoryLocator;
     let store = TomlProjectStore;
     let writer = GitCommitWriter;
-    let editor = RatatuiTaxonomyConfigurationEditor;
     let status = GitRepositoryStatusReader;
     let initializer = GitRepositoryInitializer;
     let shell = Application {
@@ -32,9 +31,7 @@ fn main() -> ExitCode {
         initializer: &initializer,
         writer: &writer,
     };
-    let commit = CommitAdapters::new()
-        .with_configuration_editor(&editor)
-        .with_shell(&shell);
+    let commit = CommitAdapters::new().with_shell(&shell);
     let mut stdout = io::stdout();
 
     gitserious_cli::run_with_commit(
