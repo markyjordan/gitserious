@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use gitserious_app::{
     AuthoredCommit, BranchState, CommitAuthoringContext, CommitOutput, CommitServices,
     CommitTaxonomy, CommitWorkspace, CommitWriter, GlobalConfiguration, GlobalConfigurationStore,
-    HelpPage, InteractiveUi, InteractiveWorkspace, ProjectConfiguration, ProjectConfigurationStore,
+    InteractiveUi, InteractiveWorkspace, ProjectConfiguration, ProjectConfigurationStore,
     ProjectRevision, RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryStatus,
     RepositoryStatusReader, StatusEntry, StoredProject, run_interactive,
 };
@@ -132,7 +132,7 @@ impl<F> InteractiveUi for Script<F>
 where
     F: Fn(&dyn InteractiveWorkspace) -> Result<(), Box<dyn Error>>,
 {
-    fn run(&self, workspace: &dyn InteractiveWorkspace, _: &[HelpPage]) -> Result<(), String> {
+    fn run(&self, workspace: &dyn InteractiveWorkspace) -> Result<(), String> {
         (self.0)(workspace).map_err(|error| error.to_string())
     }
 }
@@ -177,7 +177,6 @@ impl Session {
             &self.writer,
             self.locator.root.as_path(),
             &Script(script),
-            &[],
         )?;
         Ok(())
     }

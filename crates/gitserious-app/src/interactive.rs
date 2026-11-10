@@ -66,7 +66,7 @@ pub trait InteractiveWorkspace {
 
 /// Terminal adapter for the unified application.
 pub trait InteractiveUi {
-    fn run(&self, workspace: &dyn InteractiveWorkspace, help: &[HelpPage]) -> Result<(), String>;
+    fn run(&self, workspace: &dyn InteractiveWorkspace) -> Result<(), String>;
 }
 
 /// Opens an interactive session with application-owned persistence and Git services.
@@ -80,7 +80,6 @@ pub fn run_interactive<L, S, G, W>(
     writer: &W,
     start: &Path,
     ui: &dyn InteractiveUi,
-    help: &[HelpPage],
 ) -> Result<(), String>
 where
     L: RepositoryLocator + ?Sized,
@@ -97,7 +96,7 @@ where
         project: ProjectServices::new(locator, store, status, initializer, start),
         commit: CommitServices::new(locator, store, status, writer, start),
     };
-    ui.run(&workspace, help)
+    ui.run(&workspace)
 }
 
 struct InteractiveServices<'a, L: ?Sized, S: ?Sized, G: ?Sized, W: ?Sized> {

@@ -43,8 +43,7 @@ fn main() -> ExitCode {
                 &GitRepositoryInitializer,
                 &GitCommitWriter,
                 &directory,
-                &RatatuiInteractiveUi::at(page),
-                &interactive_help(),
+                &RatatuiInteractiveUi::at(page, interactive_help()),
             )
             .map_or_else(
                 |error| write_error(&mut stderr, error),
