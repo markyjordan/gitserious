@@ -1,4 +1,3 @@
-use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 
 use crate::confirmation::{
@@ -6,9 +5,9 @@ use crate::confirmation::{
     REPLACE_OR_COPY,
 };
 use gitserious_app::{
-    ConfigurationDestination, ConfigurationEditor, ConfigurationSession, ConfigurationWorkspace,
-    CopyIn, DraftEdit, EditRefusal, LibraryDraft, NodeId, NodeRef, ProjectConfiguration,
-    RepositoryRoot, TaxonomyOrigin,
+    ConfigurationDestination, ConfigurationSession, ConfigurationWorkspace, CopyIn, DraftEdit,
+    EditRefusal, LibraryDraft, NodeId, NodeRef, ProjectConfiguration, RepositoryRoot,
+    TaxonomyOrigin,
 };
 use gitserious_core::{Taxonomy, TaxonomyId};
 use ratatui::Frame;
@@ -60,29 +59,6 @@ mod tests;
 use home_overlay::{CommandPaletteState, HomeCommand};
 use naming::sentence;
 use taxonomies::{LibraryAction, Nav, TaxonomiesView};
-
-/// Taxonomy-first terminal configuration adapter.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct RatatuiTaxonomyConfigurationEditor;
-
-impl ConfigurationEditor for RatatuiTaxonomyConfigurationEditor {
-    fn edit(&self, workspace: &dyn ConfigurationWorkspace) -> Result<(), String> {
-        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-            return Err("configuration editing requires an interactive terminal".into());
-        }
-        crate::runtime::run(|terminal| {
-            let mut state = State::new(workspace);
-            loop {
-                terminal.draw(|frame| state.render(frame))?;
-                let event = ratatui::crossterm::event::read()?;
-                if state.handle_event(event, workspace) {
-                    return Ok::<_, io::Error>(());
-                }
-            }
-        })
-        .map_err(|error| format!("configuration editing failed: {error}"))
-    }
-}
 
 /// Configuration content hosted by the unified shell's terminal runtime.
 pub(crate) struct ConfigView {
@@ -1430,6 +1406,7 @@ impl State {
         self.scope_dirty(ConfigurationDestination::Project)
     }
 
+    #[cfg(test)]
     fn render(&mut self, frame: &mut Frame<'_>) {
         self.render_at(frame, frame.area());
     }

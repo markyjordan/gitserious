@@ -117,10 +117,6 @@ Left returns to the Menu. Project is read-only: there are no add rows, edit,
 fork, delete, import, export, reorder, or save commands. Its preview does not
 read definitions from Library and works when Library is unavailable.
 
-The standalone `ConfigurationEditor` adapter retains its staged Project editing
-and review API for embedders. Its pending drafts still require Apply or Discard
-before leaving. The unified shell uses the read-only Project overview.
-
 Config uses the shared Bone palette: ground behind content, band behind
 raised rows, text for values, dim for context, pending orange for EDIT, and
 blocks coral for validation. The Library header reads "Commit message taxonomy

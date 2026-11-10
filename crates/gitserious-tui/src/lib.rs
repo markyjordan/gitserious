@@ -23,8 +23,6 @@ mod shell;
 mod taxonomy_config;
 mod theme;
 
-pub use taxonomy_config::RatatuiTaxonomyConfigurationEditor;
-
 pub use shell::{InitialPage, RatatuiInteractiveUi};
 
 #[cfg(test)]
