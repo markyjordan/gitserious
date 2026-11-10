@@ -3,15 +3,15 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::widgets::{Block, Paragraph};
 
-use super::Shell;
+use super::Root;
 use super::navigation::{Section, Tabs};
 use crate::help::HelpPage;
 use crate::theme::{
-    FOOTER_HEIGHT, MINIMUM_HEIGHT, MINIMUM_WIDTH, SHELL_HINTS, centered_rect, normalize_background,
+    FOOTER_HEIGHT, MINIMUM_HEIGHT, MINIMUM_WIDTH, ROOT_HINTS, centered_rect, normalize_background,
     render_footer, render_footer_block, theme,
 };
 
-impl Shell {
+impl Root {
     pub(crate) fn render(&mut self, frame: &mut Frame<'_>, help: &[HelpPage]) {
         let area = frame.area();
         self.too_small = area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT;
@@ -59,7 +59,7 @@ impl Shell {
                     Section::Home => &home_hints,
                     Section::Config => &[],
                 };
-                render_footer(frame, footer, hints, &SHELL_HINTS);
+                render_footer(frame, footer, hints, &ROOT_HINTS);
             }
         }
         self.render_overlay(frame, area);

@@ -133,37 +133,37 @@ fn home_names_the_directory_and_offers_only_the_step_its_state_allows()
 fn enter_opens_the_editor_whose_initialize_row_writes_the_chosen_taxonomies()
 -> Result<(), Box<dyn std::error::Error>> {
     let workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
-    let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;
-    shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
-    terminal.draw(|frame| shell.render(frame, &[]))?;
+    let (mut root, mut terminal) = home_screen(&workspace, 87, 40)?;
+    root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+    terminal.draw(|frame| root.render(frame, &[]))?;
     let text = rendered(&terminal);
     assert!(text.contains(" initialize fresh"), "{text}");
     assert!(text.contains("esc back  space include  enter default"));
-    shell.handle_event(key(KeyCode::Esc), of(&workspace), &[]);
+    root.handle_event(key(KeyCode::Esc), of(&workspace), &[]);
     assert!(workspace.created.borrow().is_none(), "esc writes nothing");
     assert_eq!(
-        shell.section,
+        root.section,
         Section::Home,
-        "esc closes the editor, not the shell"
+        "esc closes the editor, not the root"
     );
-    terminal.draw(|frame| shell.render(frame, &[]))?;
+    terminal.draw(|frame| root.render(frame, &[]))?;
     assert!(rendered(&terminal).contains(" initialize gitserious "));
 
-    shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
-    shell.handle_event(key(KeyCode::Tab), of(&workspace), &[]);
-    assert_eq!(shell.section, Section::Commit, "tab leaves the open editor");
-    shell.handle_event(key(KeyCode::BackTab), of(&workspace), &[]);
-    terminal.draw(|frame| shell.render(frame, &[]))?;
+    root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+    root.handle_event(key(KeyCode::Tab), of(&workspace), &[]);
+    assert_eq!(root.section, Section::Commit, "tab leaves the open editor");
+    root.handle_event(key(KeyCode::BackTab), of(&workspace), &[]);
+    terminal.draw(|frame| root.render(frame, &[]))?;
     assert!(
         rendered(&terminal).contains(" initialize fresh"),
         "the editor survives a visit to another section"
     );
     for _ in 0..3 {
-        shell.handle_event(key(KeyCode::Down), of(&workspace), &[]);
+        root.handle_event(key(KeyCode::Down), of(&workspace), &[]);
     }
-    terminal.draw(|frame| shell.render(frame, &[]))?;
+    terminal.draw(|frame| root.render(frame, &[]))?;
     assert!(rendered(&terminal).contains("enter initialize"));
-    shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+    root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
     let created = workspace
         .created
         .borrow()
@@ -178,10 +178,10 @@ fn enter_opens_the_editor_whose_initialize_row_writes_the_chosen_taxonomies()
             .collect::<Vec<_>>(),
         ["conventional-v1", "research-v1", "infra-ops-v1"]
     );
-    assert_eq!(shell.section, Section::Home);
-    assert_eq!(shell.home.action(), Some(HomeAction::GoToCommit));
-    shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
-    assert_eq!(shell.section, Section::Commit);
+    assert_eq!(root.section, Section::Home);
+    assert_eq!(root.home.action(), Some(HomeAction::GoToCommit));
+    root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+    assert_eq!(root.section, Section::Commit);
     Ok(())
 }
 
@@ -198,9 +198,9 @@ fn library_taxonomies_start_excluded_and_an_unreadable_library_is_named()
     )?;
     let mut workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
     workspace.library = Ok(vec![team]);
-    let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;
-    shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
-    terminal.draw(|frame| shell.render(frame, &[]))?;
+    let (mut root, mut terminal) = home_screen(&workspace, 87, 40)?;
+    root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+    terminal.draw(|frame| root.render(frame, &[]))?;
     let text = rendered(&terminal);
     let row = text
         .lines()
@@ -214,12 +214,12 @@ fn library_taxonomies_start_excluded_and_an_unreadable_library_is_named()
         KeyCode::Down,
         KeyCode::Char(' '),
     ] {
-        shell.handle_event(key(code), of(&workspace), &[]);
+        root.handle_event(key(code), of(&workspace), &[]);
     }
     for _ in 0..4 {
-        shell.handle_event(key(KeyCode::Down), of(&workspace), &[]);
+        root.handle_event(key(KeyCode::Down), of(&workspace), &[]);
     }
-    shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+    root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
     let created = workspace
         .created
         .borrow()
@@ -241,9 +241,9 @@ fn library_taxonomies_start_excluded_and_an_unreadable_library_is_named()
 
     let mut workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
     workspace.library = Err("config.toml is not valid TOML".into());
-    let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;
-    shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
-    terminal.draw(|frame| shell.render(frame, &[]))?;
+    let (mut root, mut terminal) = home_screen(&workspace, 87, 40)?;
+    root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+    terminal.draw(|frame| root.render(frame, &[]))?;
     let text = rendered(&terminal);
     assert!(
         text.contains("✗ Library taxonomies are unavailable: config.toml is not valid"),
@@ -261,23 +261,23 @@ fn a_failed_initialization_shows_why_and_keeps_the_offer() -> Result<(), Box<dyn
 {
     let mut workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
     workspace.failure = Some("gitserious.toml already exists");
-    let (mut shell, mut terminal) = home_screen(&workspace, 100, 30)?;
-    shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+    let (mut root, mut terminal) = home_screen(&workspace, 100, 30)?;
+    root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
     for _ in 0..3 {
-        shell.handle_event(key(KeyCode::Down), of(&workspace), &[]);
+        root.handle_event(key(KeyCode::Down), of(&workspace), &[]);
     }
-    shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
-    terminal.draw(|frame| shell.render(frame, &[]))?;
+    root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+    terminal.draw(|frame| root.render(frame, &[]))?;
     let text = rendered(&terminal);
     assert!(text.contains("✗ gitserious.toml already exists"), "{text}");
     assert!(text.contains(" initialize fresh"), "the editor stays open");
-    shell.handle_event(key(KeyCode::Esc), of(&workspace), &[]);
-    terminal.draw(|frame| shell.render(frame, &[]))?;
+    root.handle_event(key(KeyCode::Esc), of(&workspace), &[]);
+    terminal.draw(|frame| root.render(frame, &[]))?;
     assert!(rendered(&terminal).contains(" initialize gitserious "));
     assert!(workspace.created.borrow().is_none());
-    shell.execute(Action::Select(Section::Help), of(&workspace));
-    shell.execute(Action::Select(Section::Home), of(&workspace));
-    terminal.draw(|frame| shell.render(frame, &[]))?;
+    root.execute(Action::Select(Section::Help), of(&workspace));
+    root.execute(Action::Select(Section::Home), of(&workspace));
+    terminal.draw(|frame| root.render(frame, &[]))?;
     assert!(
         !rendered(&terminal).contains("already exists"),
         "a revisit starts clean"
@@ -287,17 +287,17 @@ fn a_failed_initialization_shows_why_and_keeps_the_offer() -> Result<(), Box<dyn
         directory: fresh_root().as_path().to_path_buf(),
         error: "git is not installed".into(),
     });
-    let (mut shell, _) = home_screen(&workspace, 87, 40)?;
-    shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
-    assert_eq!(shell.section, Section::Home);
-    assert!(!shell.home.editing(), "enter has no step to take");
+    let (mut root, _) = home_screen(&workspace, 87, 40)?;
+    root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+    assert_eq!(root.section, Section::Home);
+    assert!(!root.home.editing(), "enter has no step to take");
 
     let workspace = HomeWorkspace::new(ProjectOverview::NoRepository {
         directory: fresh_root().as_path().to_path_buf(),
     });
-    let (mut shell, mut terminal) = home_screen(&workspace, 87, 40)?;
-    shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
-    terminal.draw(|frame| shell.render(frame, &[]))?;
+    let (mut root, mut terminal) = home_screen(&workspace, 87, 40)?;
+    root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+    terminal.draw(|frame| root.render(frame, &[]))?;
     assert!(
         rendered(&terminal).contains(" initialize fresh"),
         "a plain directory opens the editor too"
@@ -308,10 +308,10 @@ fn a_failed_initialization_shows_why_and_keeps_the_offer() -> Result<(), Box<dyn
 #[test]
 fn home_draws_a_static_wordmark_and_tagline_in_bone() -> Result<(), Box<dyn std::error::Error>> {
     let services = Services;
-    let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
+    let mut root = Root::new(InitialPage::Home, of(&services), &[]);
     for (width, height) in [(87, 40), (100, 30), (120, 30), (66, 18)] {
         let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-        terminal.draw(|frame| shell.render(frame, &[]))?;
+        terminal.draw(|frame| root.render(frame, &[]))?;
         let text = rendered(&terminal);
         let rows: Vec<&str> = text.lines().collect();
         let wordmark = rows
@@ -378,33 +378,33 @@ fn home_draws_a_static_wordmark_and_tagline_in_bone() -> Result<(), Box<dyn std:
 fn the_open_home_editor_leaves_q_slash_and_ctrl_c_to_the_root()
 -> Result<(), Box<dyn std::error::Error>> {
     let workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
-    let (mut shell, _) = home_screen(&workspace, 87, 40)?;
-    shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
-    assert!(shell.home.editing());
-    shell.handle_event(key(KeyCode::Char('/')), of(&workspace), &[]);
-    assert!(matches!(shell.overlay, Some(Overlay::Palette(_))));
-    shell.handle_event(key(KeyCode::Esc), of(&workspace), &[]);
-    assert!(shell.overlay.is_none());
+    let (mut root, _) = home_screen(&workspace, 87, 40)?;
+    root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
+    assert!(root.home.editing());
+    root.handle_event(key(KeyCode::Char('/')), of(&workspace), &[]);
+    assert!(matches!(root.overlay, Some(Overlay::Palette(_))));
+    root.handle_event(key(KeyCode::Esc), of(&workspace), &[]);
+    assert!(root.overlay.is_none());
     assert!(
-        shell.home.editing(),
+        root.home.editing(),
         "esc closed the palette, not the editor"
     );
     for code in [KeyCode::Char('r'), KeyCode::Char('c'), KeyCode::Char('o')] {
         assert_eq!(
-            shell.handle_event(key(code), of(&workspace), &[]),
+            root.handle_event(key(code), of(&workspace), &[]),
             None,
             "{code:?}"
         );
-        assert_eq!(shell.section, Section::Home);
-        assert!(shell.home.editing(), "{code:?} reached the editor");
+        assert_eq!(root.section, Section::Home);
+        assert!(root.home.editing(), "{code:?} reached the editor");
     }
     let control_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
     assert_eq!(
-        shell.handle_event(control_c, of(&workspace), &[]),
+        root.handle_event(control_c, of(&workspace), &[]),
         Some(Action::Quit)
     );
     assert_eq!(
-        shell.handle_event(key(KeyCode::Char('q')), of(&workspace), &[]),
+        root.handle_event(key(KeyCode::Char('q')), of(&workspace), &[]),
         Some(Action::Quit)
     );
     assert!(workspace.created.borrow().is_none());

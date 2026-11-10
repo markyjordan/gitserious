@@ -163,8 +163,8 @@ pub(crate) fn footer_hints(hints: &[(&str, &str)]) -> Line<'static> {
 
 pub(crate) const FOOTER_HEIGHT: u16 = 1;
 
-/// The shell keys every root footer ends with.
-pub(crate) const SHELL_HINTS: [(&str, &str); 3] =
+/// The root keys every page footer ends with.
+pub(crate) const ROOT_HINTS: [(&str, &str); 3] =
     [("tab", "nav bar"), ("/", "commands"), ("q", "quit")];
 
 /// Render the footer background and return its content area.
@@ -182,7 +182,7 @@ pub(crate) fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &[
     render_footer(frame, area, hints, &[]);
 }
 
-/// Contextual hints on the left and shell hints on the right.
+/// Contextual hints on the left and root hints on the right.
 pub(crate) fn render_footer(
     frame: &mut Frame<'_>,
     area: Rect,

@@ -12,7 +12,7 @@ use gitserious_app::{
 };
 
 use crate::commit;
-use crate::config::ShellKeys;
+use crate::config::RootKeys;
 use crate::help::{HelpLine, HelpSpan};
 use crate::home::{self, HomeAction};
 use crate::theme::{FOOTER_HEIGHT, MINIMUM_HEIGHT, MINIMUM_WIDTH, theme};

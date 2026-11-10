@@ -3,19 +3,19 @@ use super::*;
 #[test]
 fn question_mark_does_not_open_help_but_the_help_tab_still_works() {
     let services = Services;
-    let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
-    shell.handle_event(key(KeyCode::Char('?')), of(&services), &[]);
-    assert_eq!(shell.section, Section::Home);
-    assert!(shell.overlay.is_none());
-    shell.handle_event(key(KeyCode::BackTab), of(&services), &[]);
-    assert_eq!(shell.section, Section::Help);
+    let mut root = Root::new(InitialPage::Home, of(&services), &[]);
+    root.handle_event(key(KeyCode::Char('?')), of(&services), &[]);
+    assert_eq!(root.section, Section::Home);
+    assert!(root.overlay.is_none());
+    root.handle_event(key(KeyCode::BackTab), of(&services), &[]);
+    assert_eq!(root.section, Section::Help);
 }
 
 #[test]
 fn the_overview_opens_on_its_help_and_bolds_only_headings_and_names()
 -> Result<(), Box<dyn std::error::Error>> {
     let services = Services;
-    let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
+    let mut root = Root::new(InitialPage::Home, of(&services), &[]);
     let help = vec![HelpPage::new("Overview", None, |_| {
         vec![
             vec![span("Create durable commit-message policy", false)],
@@ -35,9 +35,9 @@ fn the_overview_opens_on_its_help_and_bolds_only_headings_and_names()
             ],
         ]
     })];
-    shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
+    root.handle_event(key(KeyCode::BackTab), of(&services), &help);
     let mut terminal = Terminal::new(TestBackend::new(66, 18))?;
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    terminal.draw(|frame| root.render(frame, &help))?;
 
     let text = rendered(&terminal);
     assert!(!text.contains("┌ Help"), "{text}");
@@ -72,9 +72,9 @@ fn the_overview_opens_on_its_help_and_bolds_only_headings_and_names()
 fn command_pages_open_with_their_help_command_and_no_prompt()
 -> Result<(), Box<dyn std::error::Error>> {
     let services = Services;
-    let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
+    let mut root = Root::new(InitialPage::Home, of(&services), &[]);
     let help = pages(1);
-    shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
+    root.handle_event(key(KeyCode::BackTab), of(&services), &help);
     let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
     for (digit, command) in [
         ('1', None),
@@ -82,8 +82,8 @@ fn command_pages_open_with_their_help_command_and_no_prompt()
         ('3', Some("config")),
         ('4', Some("commit")),
     ] {
-        shell.handle_event(key(KeyCode::Char(digit)), of(&services), &help);
-        terminal.draw(|frame| shell.render(frame, &help))?;
+        root.handle_event(key(KeyCode::Char(digit)), of(&services), &help);
+        terminal.draw(|frame| root.render(frame, &help))?;
         let text = rendered(&terminal);
         assert!(!text.contains("$ "), "{text}");
         let Some(command) = command else {
@@ -139,11 +139,11 @@ fn help_keeps_a_wrapped_description_under_its_column() -> Result<(), Box<dyn std
             .collect()
     };
     let services = Services;
-    let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
+    let mut root = Root::new(InitialPage::Home, of(&services), &[]);
     let help = vec![HelpPage::new("Overview", None, listing)];
-    shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
+    root.handle_event(key(KeyCode::BackTab), of(&services), &help);
     let mut terminal = Terminal::new(TestBackend::new(66, 18))?;
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    terminal.draw(|frame| root.render(frame, &help))?;
 
     let text = rendered(&terminal);
     let (left, _) = position(&terminal, "  commit  Author").ok_or("missing listing")?;
@@ -174,11 +174,11 @@ fn help_keeps_a_wrapped_description_under_its_column() -> Result<(), Box<dyn std
 fn help_lists_its_pages_beside_a_rule_and_highlights_the_chosen_one()
 -> Result<(), Box<dyn std::error::Error>> {
     let services = Services;
-    let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
+    let mut root = Root::new(InitialPage::Home, of(&services), &[]);
     let help = pages(1);
-    shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
+    root.handle_event(key(KeyCode::BackTab), of(&services), &help);
     let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    terminal.draw(|frame| root.render(frame, &help))?;
 
     let text = rendered(&terminal);
     for (index, label) in ["1  Overview", "2  Init", "3  Config", "4  Commit"]
@@ -228,58 +228,58 @@ fn help_lists_its_pages_beside_a_rule_and_highlights_the_chosen_one()
 fn pages_focus_arrows_digits_and_clicks_choose_the_page_without_scrolling()
 -> Result<(), Box<dyn std::error::Error>> {
     let services = Services;
-    let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
+    let mut root = Root::new(InitialPage::Home, of(&services), &[]);
     let help = pages(100);
-    shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
+    root.handle_event(key(KeyCode::BackTab), of(&services), &help);
     let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    terminal.draw(|frame| root.render(frame, &help))?;
     assert_eq!(top(&terminal).as_deref(), Some("line 1"));
 
     for code in [KeyCode::Right, KeyCode::Down, KeyCode::Down, KeyCode::Left] {
-        shell.handle_event(key(code), of(&services), &help);
+        root.handle_event(key(code), of(&services), &help);
     }
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    terminal.draw(|frame| root.render(frame, &help))?;
     let scrolled = rendered(&terminal);
     assert_eq!(
         top(&terminal).as_deref(),
         Some("line 3"),
         "reading scrolled the page"
     );
-    shell.handle_event(key(KeyCode::Up), of(&services), &help);
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    root.handle_event(key(KeyCode::Up), of(&services), &help);
+    terminal.draw(|frame| root.render(frame, &help))?;
     assert_eq!(
         rendered(&terminal),
         scrolled,
         "up on the first page scrolls nothing"
     );
 
-    shell.handle_event(key(KeyCode::Down), of(&services), &help);
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    root.handle_event(key(KeyCode::Down), of(&services), &help);
+    terminal.draw(|frame| root.render(frame, &help))?;
     assert_eq!(top(&terminal).as_deref(), Some("gitserious help: init"));
-    shell.handle_event(key(KeyCode::Up), of(&services), &help);
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    root.handle_event(key(KeyCode::Up), of(&services), &help);
+    terminal.draw(|frame| root.render(frame, &help))?;
     assert_eq!(
         top(&terminal).as_deref(),
         Some("line 1"),
         "a new page starts at its top"
     );
 
-    shell.handle_event(key(KeyCode::Char('3')), of(&services), &help);
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    root.handle_event(key(KeyCode::Char('3')), of(&services), &help);
+    terminal.draw(|frame| root.render(frame, &help))?;
     assert_eq!(top(&terminal).as_deref(), Some("gitserious help: config"));
-    shell.handle_event(key(KeyCode::Char('5')), of(&services), &help);
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    root.handle_event(key(KeyCode::Char('5')), of(&services), &help);
+    terminal.draw(|frame| root.render(frame, &help))?;
     assert_eq!(top(&terminal).as_deref(), Some("gitserious help: config"));
 
-    shell.handle_event(key(KeyCode::Right), of(&services), &help);
+    root.handle_event(key(KeyCode::Right), of(&services), &help);
     let (x, y) = position(&terminal, "4  Commit").ok_or("missing Commit")?;
-    shell.handle_event(click(Rect::new(x, y, 1, 1)), of(&services), &help);
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    root.handle_event(click(Rect::new(x, y, 1, 1)), of(&services), &help);
+    terminal.draw(|frame| root.render(frame, &help))?;
     assert_eq!(top(&terminal).as_deref(), Some("gitserious help: commit"));
     assert!(footer(&terminal).contains("→ read  ↑↓ pages  1-4 jump"));
     assert_eq!(terminal.backend().buffer()[(x, y)].bg, theme().text);
-    shell.handle_event(key(KeyCode::Down), of(&services), &help);
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    root.handle_event(key(KeyCode::Down), of(&services), &help);
+    terminal.draw(|frame| root.render(frame, &help))?;
     assert_eq!(
         top(&terminal).as_deref(),
         Some("gitserious help: commit"),
@@ -291,15 +291,15 @@ fn pages_focus_arrows_digits_and_clicks_choose_the_page_without_scrolling()
 #[test]
 fn reading_focus_scrolls_by_line_and_by_screen() -> Result<(), Box<dyn std::error::Error>> {
     let services = Services;
-    let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
+    let mut root = Root::new(InitialPage::Home, of(&services), &[]);
     let help = pages(100);
-    shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
+    root.handle_event(key(KeyCode::BackTab), of(&services), &help);
     let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    terminal.draw(|frame| root.render(frame, &help))?;
     // The numbered line at the top of the content, if any.
     let mut press = |code| -> Result<Option<u16>, Box<dyn std::error::Error>> {
-        shell.handle_event(key(code), of(&services), &help);
-        terminal.draw(|frame| shell.render(frame, &help))?;
+        root.handle_event(key(code), of(&services), &help);
+        terminal.draw(|frame| root.render(frame, &help))?;
         Ok(top(&terminal)
             .as_deref()
             .and_then(|row| row.strip_prefix("line "))
@@ -334,11 +334,11 @@ fn reading_focus_scrolls_by_line_and_by_screen() -> Result<(), Box<dyn std::erro
         footer(&terminal)
     );
 
-    shell.handle_event(key(KeyCode::Left), of(&services), &help);
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    root.handle_event(key(KeyCode::Left), of(&services), &help);
+    terminal.draw(|frame| root.render(frame, &help))?;
     assert!(footer(&terminal).contains("→ read  ↑↓ pages  1-4 jump"));
-    shell.handle_event(key(KeyCode::Enter), of(&services), &help);
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    root.handle_event(key(KeyCode::Enter), of(&services), &help);
+    terminal.draw(|frame| root.render(frame, &help))?;
     assert!(footer(&terminal).contains("↑↓ scroll"), "enter reads too");
     Ok(())
 }
@@ -347,19 +347,19 @@ fn reading_focus_scrolls_by_line_and_by_screen() -> Result<(), Box<dyn std::erro
 fn help_reads_to_its_last_line_and_keeps_the_way_back_at_the_minimum_size()
 -> Result<(), Box<dyn std::error::Error>> {
     let services = Services;
-    let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
+    let mut root = Root::new(InitialPage::Home, of(&services), &[]);
     let help = pages(40);
-    shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
+    root.handle_event(key(KeyCode::BackTab), of(&services), &help);
     let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    terminal.draw(|frame| root.render(frame, &help))?;
     assert!(!rendered(&terminal).contains("line 40"));
     let (left, _) = position(&terminal, "line 1").ok_or("missing first line")?;
     assert!(footer(&terminal).contains("→ read  ↑↓ pages  1-4 jump"));
 
-    shell.handle_event(key(KeyCode::Right), of(&services), &help);
+    root.handle_event(key(KeyCode::Right), of(&services), &help);
     for _ in 0..2 {
-        shell.handle_event(key(KeyCode::PageDown), of(&services), &help);
-        terminal.draw(|frame| shell.render(frame, &help))?;
+        root.handle_event(key(KeyCode::PageDown), of(&services), &help);
+        terminal.draw(|frame| root.render(frame, &help))?;
     }
     let last = MINIMUM_HEIGHT - FOOTER_HEIGHT - 1;
     assert_eq!(position(&terminal, "line 40"), Some((left, last)));
@@ -367,8 +367,8 @@ fn help_reads_to_its_last_line_and_keeps_the_way_back_at_the_minimum_size()
     assert!(hints.contains("↑↓ scroll  ← pages"), "{hints}");
     assert!(hints.contains("tab nav bar  / commands  q quit"), "{hints}");
 
-    shell.handle_event(key(KeyCode::Up), of(&services), &help);
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    root.handle_event(key(KeyCode::Up), of(&services), &help);
+    terminal.draw(|frame| root.render(frame, &help))?;
     assert_eq!(position(&terminal, "line 39"), Some((left, last)));
     Ok(())
 }
@@ -387,10 +387,10 @@ fn a_help_entry_opens_help_in_the_sidebar_on_its_command_page()
         let entry = InitialPage::Help {
             command: command.map(str::to_owned),
         };
-        let mut shell = Shell::new(entry, of(&services), &help);
-        terminal.draw(|frame| shell.render(frame, &help))?;
+        let mut root = Root::new(entry, of(&services), &help);
+        terminal.draw(|frame| root.render(frame, &help))?;
 
-        assert_eq!(shell.section, Section::Help, "{command:?}");
+        assert_eq!(root.section, Section::Help, "{command:?}");
         assert_eq!(top(&terminal).as_deref(), Some(top_line), "{command:?}");
         let (x, y) = position(&terminal, label).ok_or(label)?;
         assert_eq!(terminal.backend().buffer()[(x, y)].bg, theme().text);
@@ -399,10 +399,10 @@ fn a_help_entry_opens_help_in_the_sidebar_on_its_command_page()
             "{}",
             footer(&terminal)
         );
-        shell.handle_event(key(KeyCode::Esc), of(&services), &help);
-        assert_eq!(shell.section, Section::Home, "esc goes Home");
+        root.handle_event(key(KeyCode::Esc), of(&services), &help);
+        assert_eq!(root.section, Section::Home, "esc goes Home");
         assert_eq!(
-            shell.handle_event(key(KeyCode::Char('q')), of(&services), &help),
+            root.handle_event(key(KeyCode::Char('q')), of(&services), &help),
             Some(Action::Quit)
         );
     }
@@ -413,15 +413,15 @@ fn a_help_entry_opens_help_in_the_sidebar_on_its_command_page()
 fn returning_to_help_starts_in_the_sidebar_on_the_page_left_last()
 -> Result<(), Box<dyn std::error::Error>> {
     let services = Services;
-    let mut shell = Shell::new(InitialPage::Home, of(&services), &[]);
+    let mut root = Root::new(InitialPage::Home, of(&services), &[]);
     let help = pages(1);
     let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
-    shell.handle_event(key(KeyCode::BackTab), of(&services), &help);
-    shell.handle_event(key(KeyCode::Char('3')), of(&services), &help);
-    shell.handle_event(key(KeyCode::Right), of(&services), &help);
-    shell.handle_event(key(KeyCode::Esc), of(&services), &help);
+    root.handle_event(key(KeyCode::BackTab), of(&services), &help);
+    root.handle_event(key(KeyCode::Char('3')), of(&services), &help);
+    root.handle_event(key(KeyCode::Right), of(&services), &help);
+    root.handle_event(key(KeyCode::Esc), of(&services), &help);
     assert_eq!(
-        shell.section,
+        root.section,
         Section::Home,
         "esc still goes Home while reading"
     );
@@ -431,28 +431,28 @@ fn returning_to_help_starts_in_the_sidebar_on_the_page_left_last()
         .map(key)
         .chain([Event::Paste("open help".into()), key(KeyCode::Enter)]);
     for event in palette {
-        shell.handle_event(event, of(&services), &help);
+        root.handle_event(event, of(&services), &help);
     }
-    assert_eq!(shell.section, Section::Help);
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    assert_eq!(root.section, Section::Help);
+    terminal.draw(|frame| root.render(frame, &help))?;
     assert_eq!(top(&terminal).as_deref(), Some("gitserious help: config"));
     assert!(footer(&terminal).contains("→ read  ↑↓ pages  1-4 jump"));
     let (x, y) = position(&terminal, "3  Config").ok_or("missing Config")?;
     assert_eq!(terminal.backend().buffer()[(x, y)].bg, theme().text);
 
-    shell.handle_event(key(KeyCode::Right), of(&services), &help);
-    shell.handle_event(key(KeyCode::Tab), of(&services), &help);
+    root.handle_event(key(KeyCode::Right), of(&services), &help);
+    root.handle_event(key(KeyCode::Tab), of(&services), &help);
     assert_eq!(
-        shell.section,
+        root.section,
         Section::Home,
         "tab still leaves while reading"
     );
-    shell.handle_event(click(shell.tabs.area(Section::Help)), of(&services), &help);
-    terminal.draw(|frame| shell.render(frame, &help))?;
+    root.handle_event(click(root.tabs.area(Section::Help)), of(&services), &help);
+    terminal.draw(|frame| root.render(frame, &help))?;
     assert!(footer(&terminal).contains("→ read  ↑↓ pages  1-4 jump"));
-    shell.handle_event(key(KeyCode::Right), of(&services), &help);
+    root.handle_event(key(KeyCode::Right), of(&services), &help);
     assert_eq!(
-        shell.handle_event(key(KeyCode::Char('q')), of(&services), &help),
+        root.handle_event(key(KeyCode::Char('q')), of(&services), &help),
         Some(Action::Quit)
     );
     Ok(())

@@ -21,7 +21,7 @@ use ratatui::widgets::Paragraph;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::naming::{problem_sentence, refusal_sentence, single_line};
-use super::{ShellKeys, contains};
+use super::{RootKeys, contains};
 use crate::theme::{footer_hints, footer_key_style, footer_label_style, theme};
 use outline::Row;
 pub(super) use outline::RowKey;
@@ -204,10 +204,10 @@ impl TaxonomiesView {
         matches!(self.mode, Mode::Nav)
     }
 
-    pub(super) const fn shell_keys(&self) -> ShellKeys {
+    pub(super) const fn root_keys(&self) -> RootKeys {
         match self.mode {
-            Mode::Nav => ShellKeys::Navigation,
-            Mode::Edit { .. } | Mode::CopyTo { .. } => ShellKeys::None,
+            Mode::Nav => RootKeys::Navigation,
+            Mode::Edit { .. } | Mode::CopyTo { .. } => RootKeys::None,
         }
     }
 

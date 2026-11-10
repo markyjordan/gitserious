@@ -1015,7 +1015,7 @@ fn footer_commands_start_at_the_left_and_keep_the_edit_badge()
 }
 
 #[test]
-fn embedded_footer_ends_with_the_shell_keys() -> Result<(), Box<dyn std::error::Error>> {
+fn embedded_footer_ends_with_the_root_keys() -> Result<(), Box<dyn std::error::Error>> {
     let workspace = Workspace::new();
     let mut state = State::new(&workspace);
     state.handle_event(key(KeyCode::Char('2')), &workspace);

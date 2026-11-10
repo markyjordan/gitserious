@@ -3,10 +3,10 @@ use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph};
 
-use super::{Action, Section, Shell};
+use super::{Action, Root, Section};
 use crate::theme::{block_title, command_hints, navigation_key_style};
 
-impl Shell {
+impl Root {
     /// The palette's commands on the current page, in the order it lists them.
     pub(super) fn commands(&self) -> Vec<(String, Action)> {
         let mut commands: Vec<_> = Section::ALL

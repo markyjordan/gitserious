@@ -194,11 +194,11 @@ pub(super) fn home_screen(
     workspace: &HomeWorkspace,
     width: u16,
     height: u16,
-) -> Result<(Shell, Terminal<TestBackend>), Box<dyn std::error::Error>> {
-    let mut shell = Shell::new(InitialPage::Home, of(workspace), &[]);
+) -> Result<(Root, Terminal<TestBackend>), Box<dyn std::error::Error>> {
+    let mut root = Root::new(InitialPage::Home, of(workspace), &[]);
     let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-    terminal.draw(|frame| shell.render(frame, &[]))?;
-    Ok((shell, terminal))
+    terminal.draw(|frame| root.render(frame, &[]))?;
+    Ok((root, terminal))
 }
 
 pub(super) fn row_of(text: &str, needle: &str) -> Option<usize> {
@@ -247,7 +247,7 @@ pub(super) fn rendered(terminal: &Terminal<TestBackend>) -> String {
         .join("\n")
 }
 
-/// The four shell pages, with `overview` numbered lines on the first.
+/// The four root pages, with `overview` numbered lines on the first.
 pub(super) fn pages(overview: usize) -> Vec<HelpPage> {
     vec![
         HelpPage::new("Overview", None, move |_| numbered(overview)),
@@ -330,9 +330,8 @@ impl CommitWorkspace for Ready {
 
 pub(super) const OPEN: [&str; 4] = ["Open Home", "Open Commit", "Open Config", "Open Help"];
 
-pub(super) fn palette(shell: &Shell) -> Vec<String> {
-    shell
-        .commands()
+pub(super) fn palette(root: &Root) -> Vec<String> {
+    root.commands()
         .into_iter()
         .map(|(label, _)| label)
         .collect()
@@ -348,44 +347,44 @@ pub(super) fn listing(extra: &[&str]) -> Vec<String> {
 
 /// Runs the palette command whose label contains `query`.
 pub(super) fn run(
-    shell: &mut Shell,
+    root: &mut Root,
     workspace: &(impl CommitWorkspace + ConfigurationWorkspace + ProjectWorkspace),
     query: &str,
 ) -> Option<Action> {
-    shell.handle_event(key(KeyCode::Char('/')), of(workspace), &[]);
-    shell.handle_event(Event::Paste(query.into()), of(workspace), &[]);
-    shell.handle_event(key(KeyCode::Enter), of(workspace), &[])
+    root.handle_event(key(KeyCode::Char('/')), of(workspace), &[]);
+    root.handle_event(Event::Paste(query.into()), of(workspace), &[]);
+    root.handle_event(key(KeyCode::Enter), of(workspace), &[])
 }
 
-/// A shell on Commit that retains a rejected review, with `workspace` behind it.
+/// A root on Commit that retains a rejected review, with `workspace` behind it.
 pub(super) fn rejected_review_with(
     workspace: &(impl CommitWorkspace + ConfigurationWorkspace + ProjectWorkspace),
-) -> Result<Shell, Box<dyn std::error::Error>> {
+) -> Result<Root, Box<dyn std::error::Error>> {
     let (context, _, checkpoint) = commit::reviewed_submission()?;
-    let mut shell = Shell::new(InitialPage::Commit, of(workspace), &[]);
-    shell.commit.conclude_authoring(
+    let mut root = Root::new(InitialPage::Commit, of(workspace), &[]);
+    root.commit.conclude_authoring(
         workspace,
         Some((context, checkpoint, Err("hook rejected".into()))),
     );
-    Ok(shell)
+    Ok(root)
 }
 
-/// A shell on `section` that retains a reviewed commit Git rejected.
-pub(super) fn rejected_review_on(section: Section) -> Result<Shell, Box<dyn std::error::Error>> {
+/// A root on `section` that retains a reviewed commit Git rejected.
+pub(super) fn rejected_review_on(section: Section) -> Result<Root, Box<dyn std::error::Error>> {
     let (context, _, checkpoint) = commit::reviewed_submission()?;
-    let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
-    shell.commit.conclude_authoring(
+    let mut root = Root::new(InitialPage::Commit, of(&Services), &[]);
+    root.commit.conclude_authoring(
         &Services,
         Some((context, checkpoint, Err("hook rejected".into()))),
     );
-    shell.execute(Action::Select(section), of(&Services));
-    assert_eq!(shell.section, section);
-    Ok(shell)
+    root.execute(Action::Select(section), of(&Services));
+    assert_eq!(root.section, section);
+    Ok(root)
 }
 
-pub(super) fn commit_page(shell: &Shell) -> (Option<String>, Option<RepositoryStatus>) {
+pub(super) fn commit_page(root: &Root) -> (Option<String>, Option<RepositoryStatus>) {
     (
-        shell.commit.blocker().map(str::to_owned),
-        shell.commit.snapshot().cloned(),
+        root.commit.blocker().map(str::to_owned),
+        root.commit.snapshot().cloned(),
     )
 }

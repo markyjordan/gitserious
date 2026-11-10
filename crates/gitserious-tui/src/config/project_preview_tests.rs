@@ -267,7 +267,7 @@ fn project_browsing_expands_real_nodes_and_never_offers_or_performs_mutations() 
 }
 
 #[test]
-fn an_uninitialized_project_hands_initialization_to_the_shell_and_stages_nothing() -> Result {
+fn an_uninitialized_project_hands_initialization_to_the_root_and_stages_nothing() -> Result {
     let workspace = Workspace::new();
     let mut view = ConfigView::new(&workspace);
     let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
@@ -304,7 +304,7 @@ fn an_uninitialized_project_hands_initialization_to_the_shell_and_stages_nothing
             .project
             .as_ref()
             .is_some_and(|project| project.configuration().is_none()),
-        "initialization is the shell's, not a staged Config draft"
+        "initialization is the root's, not a staged Config draft"
     );
     assert_eq!(workspace.saves(), 0);
     Ok(())

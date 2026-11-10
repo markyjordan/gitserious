@@ -19,7 +19,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::theme::{
-    FOOTER_HEIGHT, MINIMUM_HEIGHT, MINIMUM_WIDTH, SHELL_HINTS, block_title, centered_rect,
+    FOOTER_HEIGHT, MINIMUM_HEIGHT, MINIMUM_WIDTH, ROOT_HINTS, block_title, centered_rect,
     focus_frame_style, frame_style, render_footer, render_footer_block, render_navigation_row,
     section_heading_style, selected_style, theme,
 };
@@ -53,7 +53,7 @@ use home_overlay::{CommandPaletteState, HomeCommand};
 use naming::sentence;
 use taxonomies::{LibraryAction, Nav, TaxonomiesView};
 
-/// Configuration content hosted by the unified shell's terminal runtime.
+/// Configuration content hosted by the root in the unified terminal session.
 pub(crate) struct ConfigView {
     state: State,
 }
@@ -69,7 +69,7 @@ impl ConfigView {
         self.state.render_at(frame, area);
     }
 
-    /// Routes requests requiring the shell's application services.
+    /// Routes requests requiring the root's application services.
     pub(crate) fn handle_event(
         &mut self,
         event: Event,
@@ -78,18 +78,18 @@ impl ConfigView {
         if self.state.handle_event(event, workspace) {
             Some(ConfigRequest::Quit)
         } else {
-            self.state.shell_request.take()
+            self.state.root_request.take()
         }
     }
 
-    /// Which keys the shell may take before Config sees them.
-    pub(crate) fn shell_keys(&self) -> ShellKeys {
+    /// Which keys the root may take before Config sees them.
+    pub(crate) fn root_keys(&self) -> RootKeys {
         match (&self.state.screen, &self.state.home_overlay) {
             (Screen::Home, None) if self.state.editor().is_some() => {
-                self.state.editor_view().shell_keys()
+                self.state.editor_view().root_keys()
             }
-            (Screen::Home, None) => ShellKeys::Navigation,
-            _ => ShellKeys::None,
+            (Screen::Home, None) => RootKeys::Navigation,
+            _ => RootKeys::None,
         }
     }
 
@@ -98,16 +98,16 @@ impl ConfigView {
     }
 }
 
-/// Actions the unified configuration view delegates to the shell.
+/// Actions the unified configuration view delegates to the root.
 pub(crate) enum ConfigRequest {
     Initialize,
     Quit,
 }
 
-/// The keys the shell may take before Config sees them.
+/// The keys the root may take before Config sees them.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ShellKeys {
-    /// The shell switches sections on tab, goes Home on esc, and quits on q.
+pub(crate) enum RootKeys {
+    /// The root switches sections on tab, goes Home on esc, and quits on q.
     Navigation,
     None,
 }
@@ -263,7 +263,7 @@ struct State {
     status: Option<Notice>,
     dialog: ConfirmDialog,
     too_small: bool,
-    shell_request: Option<ConfigRequest>,
+    root_request: Option<ConfigRequest>,
     project_area: Rect,
     tab_areas: [Rect; 2],
     library_path: PathBuf,
@@ -291,7 +291,7 @@ impl State {
             status: None,
             dialog: ConfirmDialog::default(),
             too_small: false,
-            shell_request: None,
+            root_request: None,
             project_area: Rect::default(),
             tab_areas: [Rect::default(); 2],
             library_path: workspace.library_path(),
@@ -358,7 +358,7 @@ impl State {
         false
     }
 
-    /// The active outline: Library, or the shell's installed project preview.
+    /// The active outline: Library, or the root's installed project preview.
     fn editor(&self) -> Option<Editor> {
         match self.category {
             Category::Taxonomies => Some(Editor::Library),
@@ -520,7 +520,7 @@ impl State {
                 {
                     if self.empty_project_overview() {
                         self.home_focus = HomeFocus::Content;
-                        self.shell_request = Some(ConfigRequest::Initialize);
+                        self.root_request = Some(ConfigRequest::Initialize);
                         return false;
                     }
                     let index = usize::from(mouse.row.saturating_sub(self.project_area.y));
@@ -614,7 +614,7 @@ impl State {
         match command {
             HomeCommand::Initialize => {
                 if self.empty_project_overview() {
-                    self.shell_request = Some(ConfigRequest::Initialize);
+                    self.root_request = Some(ConfigRequest::Initialize);
                 }
             }
             HomeCommand::New => {
@@ -628,7 +628,7 @@ impl State {
             }
             HomeCommand::Delete => self.request_global_action(PendingAction::Delete),
             HomeCommand::SwitchTab => self.category = self.category.next(),
-            // The shell confirms a retained commit review before it quits.
+            // The root confirms a retained commit review before it quits.
             HomeCommand::Quit => return true,
         }
         false
@@ -639,7 +639,7 @@ impl State {
             && matches!(key.code, KeyCode::Enter | KeyCode::Char('i'))
             && key.modifiers.is_empty()
         {
-            self.shell_request = Some(ConfigRequest::Initialize);
+            self.root_request = Some(ConfigRequest::Initialize);
             return false;
         }
         if self.category == Category::Project && key.code == KeyCode::Enter {
@@ -933,7 +933,7 @@ impl State {
                     } else {
                         [("←/→", "focus"), ("↑/↓", "move")]
                     };
-                    render_footer(frame, footer, &hints, &SHELL_HINTS);
+                    render_footer(frame, footer, &hints, &ROOT_HINTS);
                     Vec::new()
                 }
                 Screen::ConfirmRemove(_) => Vec::new(),

@@ -145,7 +145,7 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
     );
 
     press(&mut state, &workspace, &[KeyCode::Char('c')]);
-    assert_eq!(state.taxonomies.shell_keys(), ShellKeys::None);
+    assert_eq!(state.taxonomies.root_keys(), RootKeys::None);
     let rows = screen(&mut state)?.join("\n");
     assert!(
         rows.contains("Copy \"constraints\" from feat to:"),
@@ -171,7 +171,7 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
     press(&mut state, &workspace, &[KeyCode::Enter]);
 
     assert_eq!(cursor(&state), ["team", "feat", "constraints"]);
-    assert_eq!(state.taxonomies.shell_keys(), ShellKeys::Navigation);
+    assert_eq!(state.taxonomies.root_keys(), RootKeys::Navigation);
     assert!(!state.library_dirty());
     let rows = screen(&mut state)?;
     let fix = rows
@@ -237,9 +237,9 @@ fn c_refuses_a_built_in_a_lone_type_and_a_target_that_has_the_key_with_a_sentenc
         Some("Type \"fix\" already has a property \"constraints\"; nothing was copied.")
     );
     assert_eq!(format!("{:?}", state.library()), before);
-    assert_eq!(state.taxonomies.shell_keys(), ShellKeys::None);
+    assert_eq!(state.taxonomies.root_keys(), RootKeys::None);
     press(&mut state, &workspace, &[KeyCode::Esc]);
-    assert_eq!(state.taxonomies.shell_keys(), ShellKeys::Navigation);
+    assert_eq!(state.taxonomies.root_keys(), RootKeys::Navigation);
     assert_eq!(format!("{:?}", state.library()), before);
 
     let conventional = state
@@ -258,7 +258,7 @@ fn c_refuses_a_built_in_a_lone_type_and_a_target_that_has_the_key_with_a_sentenc
         notice(&state),
         Some("Built-in taxonomies are read-only; fork one to customize it.")
     );
-    assert_eq!(state.taxonomies.shell_keys(), ShellKeys::Navigation);
+    assert_eq!(state.taxonomies.root_keys(), RootKeys::Navigation);
 
     let library = state.global.as_mut().ok_or("the Library loads")?;
     for path in [["team", "fix"], ["team", "docs"]] {
@@ -277,7 +277,7 @@ fn c_refuses_a_built_in_a_lone_type_and_a_target_that_has_the_key_with_a_sentenc
         notice(&state),
         Some("Taxonomy \"team\" has no other type to copy to.")
     );
-    assert_eq!(state.taxonomies.shell_keys(), ShellKeys::Navigation);
+    assert_eq!(state.taxonomies.root_keys(), RootKeys::Navigation);
     Ok(())
 }
 

@@ -7,7 +7,7 @@
 //! active edit and writes nothing. Ctrl+W finishes that edit only after storage succeeds.
 //! At most one taxonomy root is expanded, while type expansion can be remembered independently.
 //! The existing breadth-first runner deduplicates snapshots and reports shortest counterexamples.
-//! Keys the shell takes before Config still reach it here. Mouse, resize, write failures and the shell are covered by interaction
+//! Keys the root takes before Config still reach it here. Mouse, resize, write failures and the root are covered by interaction
 //! tests.
 
 use gitserious_app::test_support::LibraryLookup;
@@ -502,7 +502,7 @@ struct Snapshot {
     project: Option<ProjectSnapshot>,
     /// Whether the Library has changes apply would write.
     unapplied: bool,
-    /// The count of unapplied changes the shell's Config tab shows.
+    /// The count of unapplied changes the root's Config tab shows.
     load_errors: [String; 2],
     /// The Library the fake workspace stores. Config never writes the project.
     saved: LibraryDraft,
