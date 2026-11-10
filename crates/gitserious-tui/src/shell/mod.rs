@@ -1,5 +1,3 @@
-mod commit;
-
 use std::io::{self, IsTerminal};
 
 use gitserious_app::{CommitWorkspace, ConfigurationWorkspace, ProjectWorkspace};
@@ -11,6 +9,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
+use crate::commit::CommitView;
 use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT};
 use crate::help::{HelpPage, HelpView};
 use crate::home::{HomeAction, HomeOutcome, HomePage};
@@ -20,7 +19,6 @@ use crate::theme::{
     centered_rect, command_hints, frame_style, navigation_key_style, normalize_background,
     render_footer, render_footer_block, theme,
 };
-use commit::CommitView;
 
 fn quit_question() -> Confirmation<'static> {
     Confirmation {

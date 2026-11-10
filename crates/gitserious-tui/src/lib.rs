@@ -11,6 +11,7 @@
     clippy::unused_self
 )]
 
+mod commit;
 mod confirmation;
 mod help;
 mod home;

@@ -17,7 +17,7 @@ use ratatui::{DefaultTerminal, Frame};
 use crate::theme::{block_title, frame_style, navigation_key_style, section_heading_style};
 
 #[cfg(test)]
-pub(super) use author::reviewed_submission;
+pub(crate) use author::reviewed_submission;
 use author::{AuthoringCheckpoint, embedded_author};
 
 #[derive(Clone)]
@@ -40,10 +40,10 @@ struct PendingAuthor {
 }
 
 #[derive(Default)]
-pub(super) struct CommitView {
-    pub(super) snapshot: Option<RepositoryStatus>,
-    pub(super) blocker: Option<String>,
-    pub(super) notice: String,
+pub(crate) struct CommitView {
+    pub(crate) snapshot: Option<RepositoryStatus>,
+    pub(crate) blocker: Option<String>,
+    pub(crate) notice: String,
     pending: Option<PendingAuthor>,
     collapsed: BTreeSet<(usize, PathBuf)>,
     rows: Vec<TreeRow>,
@@ -53,7 +53,7 @@ pub(super) struct CommitView {
 }
 
 impl CommitView {
-    pub(super) fn refresh(&mut self, commit: &dyn CommitWorkspace) {
+    pub(crate) fn refresh(&mut self, commit: &dyn CommitWorkspace) {
         match commit.repository_status() {
             Ok(snapshot) => {
                 self.snapshot = Some(snapshot);
@@ -67,12 +67,12 @@ impl CommitView {
         self.rebuild();
     }
 
-    pub(super) fn has_pending_review(&self) -> bool {
+    pub(crate) fn has_pending_review(&self) -> bool {
         self.pending.is_some()
     }
 
     /// Authors a commit in `terminal`, or resumes the failed one's review, and submits it.
-    pub(super) fn author(
+    pub(crate) fn author(
         &mut self,
         terminal: &mut DefaultTerminal,
         commit: &dyn CommitWorkspace,
@@ -101,7 +101,7 @@ impl CommitView {
     }
 
     /// Applies the editor's outcome. Cancellation leaves the Commit page as it was.
-    pub(super) fn conclude_authoring(
+    pub(crate) fn conclude_authoring(
         &mut self,
         commit: &dyn CommitWorkspace,
         outcome: Option<(
@@ -179,7 +179,7 @@ impl CommitView {
             .select((!self.rows.is_empty()).then_some(self.selected));
     }
 
-    pub(super) fn move_selection(&mut self, down: bool) {
+    pub(crate) fn move_selection(&mut self, down: bool) {
         self.selected = if down {
             (self.selected + 1).min(self.rows.len().saturating_sub(1))
         } else {
@@ -189,7 +189,7 @@ impl CommitView {
             .select((!self.rows.is_empty()).then_some(self.selected));
     }
 
-    pub(super) fn directory(&mut self, expand: bool) {
+    pub(crate) fn directory(&mut self, expand: bool) {
         if let Some(key) = self
             .rows
             .get(self.selected)
@@ -204,7 +204,7 @@ impl CommitView {
         }
     }
 
-    pub(super) fn click(&mut self, x: u16, y: u16) {
+    pub(crate) fn click(&mut self, x: u16, y: u16) {
         if self.list_area.contains((x, y).into()) {
             let index = self.list.offset() + usize::from(y.saturating_sub(self.list_area.y));
             if index < self.rows.len() {
@@ -214,7 +214,7 @@ impl CommitView {
         }
     }
 
-    pub(super) fn render(&mut self, frame: &mut Frame<'_>, area: Rect) {
+    pub(crate) fn render(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let [summary, tree, status] = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(1),
