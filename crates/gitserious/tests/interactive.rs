@@ -10,7 +10,7 @@ use std::process::{Command, Output};
 use gitserious_app::{
     AuthoredCommit, CommitServices, CommitWorkspace, ConfigurationServices, ConfigurationWorkspace,
     GlobalConfiguration, GlobalConfigurationStore, LibraryTaxonomy, ProjectConfiguration,
-    ProjectOverview, ProjectServices, RepositoryInitializer, initialize_project,
+    ProjectOverview, ProjectServices, ProjectWorkspace, RepositoryInitializer, initialize_project,
 };
 use gitserious_core::{
     CommitDraft, CommitSubject, CommitTypeDefinition, CommitTypeId, Description, SchemaVersion,
