@@ -62,13 +62,14 @@ enum Command {
     Init,
     /// Interactively configure taxonomy policy.
     ///
-    /// Config opens in the terminal with two sections. Project edits the
-    /// taxonomies in this repository's `gitserious.toml`. Library edits the
-    /// taxonomies in your global configuration, which new projects copy.
+    /// Config opens in the terminal with two sections. Project shows the
+    /// taxonomies installed in this repository's `gitserious.toml` and does
+    /// not change them. In a repository without one, it offers to initialize
+    /// the project. Library edits the taxonomies in your global
+    /// configuration, which new projects copy.
     ///
-    /// Library edits save when you press Esc. Copies, reorders, and confirmed
-    /// deletions save at once. Project changes save only after you review and
-    /// apply them.
+    /// While you edit a Library item, Ctrl+W saves it and Esc discards the
+    /// edit. Copies, reorders, and confirmed deletions save at once.
     Config,
     /// Author and create a durable commit from the staged index.
     ///
