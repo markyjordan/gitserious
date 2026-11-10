@@ -9,8 +9,10 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
-use super::init_editor::{EditorOutcome, InitEditor};
+mod init_editor;
+
 use crate::theme::theme;
+use init_editor::{EditorOutcome, InitEditor};
 
 const WORDMARK: [&str; 5] = [
     "▄████ ███ █████ ▄███ ████ ███▄ ███ ▄██▄ █  █ ▄███",
@@ -22,18 +24,18 @@ const WORDMARK: [&str; 5] = [
 /// Every Home line aligns to the wordmark's edges.
 const COLUMN_WIDTH: u16 = 49;
 
-pub(super) const TAGLINE: &str = "Why did this commit message explain nothing?";
+pub(crate) const TAGLINE: &str = "Why did this commit message explain nothing?";
 
 /// The one step Home offers for its state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum HomeAction {
+pub(crate) enum HomeAction {
     InitializeGitAndGitserious,
     InitializeGitserious,
     GoToCommit,
 }
 
 impl HomeAction {
-    pub(super) fn of(state: &ProjectOverview) -> Option<Self> {
+    fn of(state: &ProjectOverview) -> Option<Self> {
         match state {
             ProjectOverview::NoRepository { .. } => Some(Self::InitializeGitAndGitserious),
             ProjectOverview::Uninitialized { .. } => Some(Self::InitializeGitserious),
@@ -43,7 +45,7 @@ impl HomeAction {
     }
 
     /// Whether the action opens the initialization editor.
-    pub(super) fn initializes(self) -> bool {
+    pub(crate) fn initializes(self) -> bool {
         self != Self::GoToCommit
     }
 
@@ -56,7 +58,7 @@ impl HomeAction {
     }
 
     /// The footer's `enter` hint.
-    pub(super) fn hint(self) -> (&'static str, &'static str) {
+    fn hint(self) -> (&'static str, &'static str) {
         match self {
             Self::InitializeGitAndGitserious | Self::InitializeGitserious => {
                 ("enter", "initialize")
@@ -67,7 +69,7 @@ impl HomeAction {
 }
 
 /// The project overview Home shows, and the editor that initializes the project.
-pub(super) struct HomePage {
+pub(crate) struct HomePage {
     overview: ProjectOverview,
     /// Open while the user chooses the new project's taxonomies.
     editor: Option<InitEditor>,
@@ -77,13 +79,13 @@ pub(super) struct HomePage {
 
 /// What a key on the initialization editor did, for the root to follow up.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum HomeOutcome {
+pub(crate) enum HomeOutcome {
     Stay,
     Initialized,
 }
 
 impl HomePage {
-    pub(super) fn new(project: &dyn ProjectWorkspace) -> Self {
+    pub(crate) fn new(project: &dyn ProjectWorkspace) -> Self {
         Self {
             overview: project.overview(),
             editor: None,
@@ -92,7 +94,7 @@ impl HomePage {
     }
 
     /// Rereads the overview, and closes the editor once there is nothing to initialize.
-    pub(super) fn enter(&mut self, project: &dyn ProjectWorkspace) {
+    pub(crate) fn enter(&mut self, project: &dyn ProjectWorkspace) {
         self.refresh(project);
         self.error = None;
         if !self.action().is_some_and(HomeAction::initializes) {
@@ -100,20 +102,20 @@ impl HomePage {
         }
     }
 
-    pub(super) fn refresh(&mut self, project: &dyn ProjectWorkspace) {
+    pub(crate) fn refresh(&mut self, project: &dyn ProjectWorkspace) {
         self.overview = project.overview();
     }
 
-    pub(super) fn action(&self) -> Option<HomeAction> {
+    pub(crate) fn action(&self) -> Option<HomeAction> {
         HomeAction::of(&self.overview)
     }
 
-    pub(super) fn editing(&self) -> bool {
+    pub(crate) fn editing(&self) -> bool {
         self.editor.is_some()
     }
 
     /// Opens the editor on the built-in taxonomies and the Library's.
-    pub(super) fn offer_initialization(&mut self, config: &dyn ConfigurationWorkspace) {
+    pub(crate) fn offer_initialization(&mut self, config: &dyn ConfigurationWorkspace) {
         let library = config.library_taxonomies().unwrap_or_else(|error| {
             self.error = Some(format!("Library taxonomies are unavailable: {error}"));
             Vec::new()
@@ -127,7 +129,7 @@ impl HomePage {
     }
 
     /// Hands `key` to the open editor.
-    pub(super) fn key(&mut self, key: KeyEvent, project: &dyn ProjectWorkspace) -> HomeOutcome {
+    pub(crate) fn key(&mut self, key: KeyEvent, project: &dyn ProjectWorkspace) -> HomeOutcome {
         let Some(editor) = &mut self.editor else {
             return HomeOutcome::Stay;
         };
@@ -156,7 +158,7 @@ impl HomePage {
         }
     }
 
-    pub(super) fn render(&self, frame: &mut Frame<'_>, area: Rect) {
+    pub(crate) fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         let error = self.error.as_deref();
         match (&self.editor, &self.overview) {
             (Some(editor), ProjectOverview::Uninitialized { root }) => {
@@ -169,7 +171,7 @@ impl HomePage {
         }
     }
 
-    pub(super) fn hints(&self) -> Vec<(&'static str, &'static str)> {
+    pub(crate) fn hints(&self) -> Vec<(&'static str, &'static str)> {
         self.editor.as_ref().map_or_else(
             || self.action().map(HomeAction::hint).into_iter().collect(),
             InitEditor::hints,

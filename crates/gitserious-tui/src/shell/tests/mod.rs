@@ -10,6 +10,7 @@ use gitserious_app::{
 };
 
 use super::help_page::{HelpLine, HelpSpan};
+use crate::home;
 use gitserious_core::TaxonomyVersion;
 use ratatui::{Terminal, backend::TestBackend};
 use support::*;
