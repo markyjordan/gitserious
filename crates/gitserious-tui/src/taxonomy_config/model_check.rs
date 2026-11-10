@@ -34,7 +34,7 @@ use super::naming::problem_sentence;
 use super::taxonomies::{Observation, ObservedMode as Mode};
 use super::tests::Workspace;
 use super::*;
-use crate::confirmation::{self, Answer, ConfirmDialog, DISCARD_AND_QUIT, REMOVE};
+use crate::confirmation::{self, Answer, ConfirmDialog, REMOVE};
 
 const fn press(code: KeyCode, modifiers: KeyModifiers) -> Event {
     Event::Key(KeyEvent::new(code, modifiers))
@@ -499,10 +499,8 @@ struct Snapshot {
     active_scope: ConfigurationDestination,
     taxonomies: Observation,
     overlay: Option<String>,
-    scroll: u16,
     project_scroll: u16,
     status: Option<String>,
-    settings: Option<SettingsDraft>,
     global: Option<ConfigurationSession>,
     project: Option<ConfigurationSession>,
     /// Whether the Library has changes apply would write.
@@ -530,13 +528,10 @@ impl Snapshot {
                 .home_overlay
                 .as_ref()
                 .map(|overlay| format!("{overlay:?}")),
-            scroll: state.scroll,
             project_scroll: state.project_scroll,
             status: state.status.as_ref().map(|notice| match notice {
                 Notice::Error(message) => format!("error: {message}"),
-                Notice::Info(message) => format!("info: {message}"),
             }),
-            settings: state.settings.clone(),
             global: state.global.clone(),
             project: state.project.clone(),
             unapplied: state.scope_dirty(ConfigurationDestination::Global),
@@ -719,14 +714,6 @@ fn no_silent_draft_loss(
         return Ok(());
     }
     let legitimate = match &before.screen {
-        Screen::Leave => answer(DISCARD_AND_QUIT, input) == Some(Answer::Confirm),
-        Screen::ScopeChange(_) => matches!(
-            answer(APPLY_OR_DISCARD, input),
-            Some(Answer::Confirm | Answer::Alternate)
-        ),
-        Screen::Review(_) => {
-            after.is_some_and(|after| format!("{:?}", after.saved) != format!("{:?}", before.saved))
-        }
         Screen::ConfirmRemove(_) => answer(REMOVE, input) == Some(Answer::Confirm),
         Screen::Home => {
             cancelled_edit(before, input, after)
@@ -740,10 +727,6 @@ fn no_silent_draft_loss(
                     })
                 ) && matches!(before.taxonomies.mode, Mode::Edit { .. })
         }
-        Screen::Settings(_)
-        | Screen::Import { .. }
-        | Screen::ImportConflict(_)
-        | Screen::ExportConflict(_) => false,
     };
     if legitimate {
         return Ok(());
@@ -981,11 +964,7 @@ fn removals_go_through_their_dialog(
     }
     let confirmed = match before.screen {
         Screen::ConfirmRemove(_) => answer(REMOVE, input) == Some(Answer::Confirm),
-        Screen::ScopeChange(_) => matches!(
-            answer(APPLY_OR_DISCARD, input),
-            Some(Answer::Confirm | Answer::Alternate)
-        ),
-        _ => false,
+        Screen::Home => false,
     };
     if confirmed {
         return Ok(());
@@ -1329,12 +1308,6 @@ fn navigation_is_persisted(
     let Some(after) = after else {
         return Ok(());
     };
-    if matches!(
-        after.screen,
-        Screen::Review(ConfigurationDestination::Global)
-    ) {
-        return Err("Library review is reachable.".into());
-    }
     if !matches!(after.taxonomies.mode, Mode::Edit { .. })
         && let Some(candidate) = after.staged_library()
         && Some(candidate) != after.stored_library()

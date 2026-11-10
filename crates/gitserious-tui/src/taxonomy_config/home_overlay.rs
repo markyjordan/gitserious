@@ -11,9 +11,7 @@ use crate::theme::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum HomeCommand {
-    Configure,
     Initialize,
-    ReviewProject,
     New,
     Edit,
     Fork,
@@ -32,13 +30,11 @@ impl HomeCommand {
                 Self::Delete => "delete taxonomy",
                 Self::SwitchTab => "switch to project",
                 Self::Quit => "quit",
-                _ => unreachable!("Project commands are not shown in Taxonomies"),
+                Self::Initialize => unreachable!("Project commands are not shown in Taxonomies"),
             };
         }
         match self {
-            Self::Configure => "Configure project",
             Self::Initialize => "Initialize project",
-            Self::ReviewProject => "Review changes",
             Self::New => "New taxonomy",
             Self::Edit => "Edit taxonomy",
             Self::Fork => "Fork taxonomy",
@@ -53,9 +49,7 @@ impl HomeCommand {
 
     fn shortcut(self) -> &'static str {
         match self {
-            Self::Configure => "enter",
             Self::Initialize => "i",
-            Self::ReviewProject => "ctrl+s",
             Self::New => "n",
             Self::Edit => "e",
             Self::Fork => "f",
@@ -67,9 +61,7 @@ impl HomeCommand {
 }
 
 const PROJECT_COMMANDS: &[HomeCommand] = &[
-    HomeCommand::Configure,
     HomeCommand::Initialize,
-    HomeCommand::ReviewProject,
     HomeCommand::SwitchTab,
     HomeCommand::Quit,
 ];

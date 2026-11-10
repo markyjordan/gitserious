@@ -51,43 +51,6 @@ const fn keep(label: &'static str) -> Choice {
 pub(crate) const DISCARD: &[Choice] = &[confirm("discard"), keep("keep editing")];
 pub(crate) const REMOVE: &[Choice] = &[confirm("remove"), keep("keep")];
 pub(crate) const DISCARD_AND_QUIT: &[Choice] = &[confirm("discard and quit"), keep("stay")];
-pub(crate) const APPLY_OR_DISCARD: &[Choice] = &[
-    Choice {
-        keys: &[KeyCode::Char('a')],
-        hint: "a",
-        label: "apply",
-        answer: Answer::Confirm,
-    },
-    Choice {
-        keys: &[KeyCode::Char('d')],
-        hint: "d",
-        label: "discard",
-        answer: Answer::Alternate,
-    },
-    Choice {
-        keys: &[KeyCode::Enter, KeyCode::Esc],
-        hint: "enter/esc",
-        label: "cancel",
-        answer: Answer::Keep,
-    },
-];
-
-pub(crate) const REPLACE_OR_COPY: &[Choice] = &[
-    Choice {
-        keys: &[KeyCode::Char('r')],
-        hint: "r",
-        label: "replace",
-        answer: Answer::Confirm,
-    },
-    Choice {
-        keys: &[KeyCode::Char('c')],
-        hint: "c",
-        label: "copy as new",
-        answer: Answer::Alternate,
-    },
-    keep("keep"),
-];
-
 /// The footer hints for `choices`: the same pairs the dialog's buttons show.
 pub(crate) fn hints(choices: &'static [Choice]) -> Vec<(&'static str, &'static str)> {
     choices
