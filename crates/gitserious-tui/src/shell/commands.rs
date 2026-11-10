@@ -4,7 +4,6 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph};
 
 use super::{Action, Section, Shell};
-use crate::home::HomeAction;
 use crate::theme::{block_title, command_hints, navigation_key_style};
 
 impl Shell {
@@ -14,9 +13,13 @@ impl Shell {
             .into_iter()
             .map(|section| (format!("Open {}", section.label()), Action::Select(section)))
             .collect();
-        if self.section == Section::Home && self.home.action().is_some_and(HomeAction::initializes)
-        {
-            commands.push(("Initialize gitserious".into(), Action::Initialize));
+        if self.section == Section::Home {
+            commands.extend(
+                self.home
+                    .commands()
+                    .into_iter()
+                    .map(|(label, request)| (label.into(), Action::Home(request))),
+            );
         }
         if self.section == Section::Commit {
             commands.push(("Refresh repository".into(), Action::Refresh));

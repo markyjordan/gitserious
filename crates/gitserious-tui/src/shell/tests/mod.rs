@@ -11,7 +11,7 @@ use gitserious_app::{
 
 use crate::commit;
 use crate::help::{HelpLine, HelpSpan};
-use crate::home;
+use crate::home::{self, HomeAction};
 use gitserious_core::TaxonomyVersion;
 use ratatui::style::Modifier;
 use ratatui::{Terminal, backend::TestBackend};
