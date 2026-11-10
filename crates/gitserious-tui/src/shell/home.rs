@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use gitserious_app::HomeState;
+use gitserious_app::ProjectOverview;
 use gitserious_core::TaxonomyReference;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
@@ -31,12 +31,12 @@ pub(super) enum HomeAction {
 }
 
 impl HomeAction {
-    pub(super) fn of(state: &HomeState) -> Option<Self> {
+    pub(super) fn of(state: &ProjectOverview) -> Option<Self> {
         match state {
-            HomeState::NoRepository { .. } => Some(Self::InitializeGitAndGitserious),
-            HomeState::Uninitialized { .. } => Some(Self::InitializeGitserious),
-            HomeState::Initialized { .. } => Some(Self::GoToCommit),
-            HomeState::Unavailable { .. } => None,
+            ProjectOverview::NoRepository { .. } => Some(Self::InitializeGitAndGitserious),
+            ProjectOverview::Uninitialized { .. } => Some(Self::InitializeGitserious),
+            ProjectOverview::Initialized { .. } => Some(Self::GoToCommit),
+            ProjectOverview::Unavailable { .. } => None,
         }
     }
 
@@ -65,7 +65,12 @@ impl HomeAction {
 }
 
 /// Draws the wordmark, the tagline, where gitserious runs, and the next step, centered in `area`.
-pub(super) fn render(frame: &mut Frame<'_>, area: Rect, state: &HomeState, error: Option<&str>) {
+pub(super) fn render(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &ProjectOverview,
+    error: Option<&str>,
+) {
     let text = Style::new().fg(theme().text);
     let dim = Style::new().fg(theme().dim);
     let bold = text.add_modifier(Modifier::BOLD);
@@ -77,13 +82,13 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, state: &HomeState, error
     lines.push(Line::styled(TAGLINE, dim).centered());
     lines.push(Line::default());
     match state {
-        HomeState::NoRepository { directory } => {
+        ProjectOverview::NoRepository { directory } => {
             lines.extend(identity(directory));
             lines.push(Line::default());
             lines.push(Line::styled("no git repository found", pending()).centered());
         }
-        HomeState::Uninitialized { root } => lines.extend(identity(root.as_path())),
-        HomeState::Initialized {
+        ProjectOverview::Uninitialized { root } => lines.extend(identity(root.as_path())),
+        ProjectOverview::Initialized {
             root,
             default,
             version,
@@ -110,7 +115,7 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, state: &HomeState, error
                 lines.push(Line::styled("  git add gitserious.toml", bold));
             }
         }
-        HomeState::Unavailable { directory, error } => {
+        ProjectOverview::Unavailable { directory, error } => {
             lines.extend(identity(directory));
             lines.push(Line::default());
             lines.push(Line::styled(format!("✗ {error}"), blocks()));

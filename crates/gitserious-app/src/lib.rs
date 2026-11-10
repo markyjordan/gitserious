@@ -10,8 +10,8 @@ mod config;
 mod directory_creator;
 mod global_path_resolver;
 mod global_paths;
-mod initialize_taxonomy_project;
 mod interactive;
+mod project;
 mod repository_locator;
 mod resolve_global_paths;
 mod storage_directory;
@@ -31,11 +31,11 @@ pub use config::{
 pub use directory_creator::DirectoryCreator;
 pub use global_path_resolver::GlobalPathResolver;
 pub use global_paths::GlobalPaths;
-pub use initialize_taxonomy_project::{
-    InitOutcome, InitStatus, InitializeProjectError, initialize_project,
-};
 pub use interactive::{
-    HelpLine, HelpPage, HelpSpan, HomeState, InteractiveUi, InteractiveWorkspace, run_interactive,
+    HelpLine, HelpPage, HelpSpan, InteractiveUi, InteractiveWorkspace, run_interactive,
+};
+pub use project::{
+    InitOutcome, InitStatus, InitializeProjectError, ProjectOverview, initialize_project,
 };
 pub use repository_locator::{
     RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryRootError,
