@@ -1,6 +1,6 @@
 use super::tests::Workspace;
 use super::*;
-use gitserious_app::{ProjectConfiguration, ProjectRevision, StoredProject};
+use gitserious_app::ProjectConfiguration;
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
     PropertyRequirement, SchemaVersion, TaxonomyVersion,
@@ -37,16 +37,13 @@ fn fixture() -> Result<(Workspace, ConfigView)> {
     )?;
     // The configured default deliberately follows another installed taxonomy.
     let research = gitserious_core::built_in_taxonomies()[1].clone();
-    *workspace.project.borrow_mut() = ConfigurationSession::open_project(
+    *workspace.project.borrow_mut() = ProjectSnapshot::new(
         RepositoryRoot::new(std::env::temp_dir())?,
-        Some(StoredProject {
-            configuration: ProjectConfiguration::new(
-                1,
-                research.id().clone(),
-                vec![taxonomy, research],
-            )?,
-            revision: ProjectRevision::of_bytes(b"opened"),
-        }),
+        Some(ProjectConfiguration::new(
+            1,
+            research.id().clone(),
+            vec![taxonomy, research],
+        )?),
     );
     let mut view = ConfigView::new(&workspace);
     view.state.global = None;
@@ -138,7 +135,6 @@ fn installed_definitions_use_the_library_layout_even_without_a_readable_library(
             assert!(observed.inspector_area.x > observed.outline_area.right());
             assert_eq!(observed.inspector_area.y, 1);
         }
-        assert!(!view.state.scope_dirty(ConfigurationDestination::Project));
     }
     // Library has a different default and keeps its built-in/custom origin labels.
     view.state.global = Some(workspace.global.borrow().clone());
@@ -207,7 +203,6 @@ fn project_browsing_expands_real_nodes_and_never_offers_or_performs_mutations() 
     ] {
         assert!(view.handle_event(event, &workspace).is_none());
     }
-    assert!(!view.state.scope_dirty(ConfigurationDestination::Project));
     assert_eq!(workspace.saves(), 0);
     assert_eq!(text, rendered(&mut view, &mut terminal)?);
     press(&mut view, &workspace, KeyCode::Enter);
@@ -268,7 +263,6 @@ fn project_browsing_expands_real_nodes_and_never_offers_or_performs_mutations() 
     assert!(!text.contains("+ add"));
     press(&mut view, &workspace, KeyCode::Enter);
     assert!(matches!(view.state.screen, Screen::Home));
-    assert!(!view.state.scope_dirty(ConfigurationDestination::Project));
     Ok(())
 }
 
@@ -309,10 +303,9 @@ fn an_uninitialized_project_hands_initialization_to_the_shell_and_stages_nothing
         view.state
             .project
             .as_ref()
-            .is_some_and(|session| session.project_draft().is_none()),
+            .is_some_and(|project| project.configuration().is_none()),
         "initialization is the shell's, not a staged Config draft"
     );
-    assert!(!view.state.scope_dirty(ConfigurationDestination::Project));
     assert_eq!(workspace.saves(), 0);
     Ok(())
 }

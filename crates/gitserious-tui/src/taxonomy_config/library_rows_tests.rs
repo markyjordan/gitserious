@@ -335,11 +335,7 @@ fn narrow_rows_drop_the_count_then_the_version_before_the_name() -> Result {
         ("an-exceptionally-long-taxonomy-names-too", "built-in"),
     ] {
         let (_, mut state) = fixture()?;
-        let library = state
-            .global
-            .as_mut()
-            .and_then(ConfigurationSession::library_mut)
-            .ok_or("Library")?;
+        let library = state.global.as_mut().ok_or("Library")?;
         let draft = library.find_path(&["draft-ideas"]).ok_or("draft-ideas")?;
         library.edit(&draft, DraftEdit::Text(DraftField::Name, name))?;
         let frame = Frame::draw(&mut state, (MINIMUM_WIDTH, 40))?;

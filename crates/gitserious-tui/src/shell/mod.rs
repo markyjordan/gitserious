@@ -802,9 +802,9 @@ mod tests {
     use std::cell::RefCell;
 
     use gitserious_app::{
-        BranchState, CommitOutput, CommitWorkspace, ConfigurationDestination, ConfigurationSession,
-        ConfigurationWorkspace, GlobalConfiguration, HelpLine, HelpSpan, ProjectConfiguration,
-        RepositoryRoot, RepositoryStatus,
+        BranchState, CommitOutput, CommitWorkspace, ConfigurationWorkspace, GlobalConfiguration,
+        HelpLine, HelpSpan, LibraryDraft, ProjectConfiguration, ProjectSnapshot, RepositoryRoot,
+        RepositoryStatus,
     };
     use gitserious_core::TaxonomyVersion;
     use ratatui::{Terminal, backend::TestBackend};
@@ -813,21 +813,19 @@ mod tests {
 
     struct Services;
     impl ConfigurationWorkspace for Services {
-        fn load(
-            &self,
-            destination: ConfigurationDestination,
-        ) -> Result<ConfigurationSession, String> {
-            let global = GlobalConfiguration::default();
-            match destination {
-                ConfigurationDestination::Global => Ok(ConfigurationSession::open_global(global)),
-                ConfigurationDestination::Project => Ok(ConfigurationSession::open_project(
-                    RepositoryRoot::new(std::env::temp_dir()).map_err(|error| error.to_string())?,
-                    None,
-                )),
-            }
+        fn load_library(&self) -> Result<LibraryDraft, String> {
+            Ok(LibraryDraft::from_configuration(
+                GlobalConfiguration::default(),
+            ))
         }
-        fn save(&self, _: &ConfigurationSession) -> Result<ConfigurationSession, String> {
+        fn save_library(&self, _: &LibraryDraft) -> Result<LibraryDraft, String> {
             Err("test save unavailable".into())
+        }
+        fn load_project(&self) -> Result<ProjectSnapshot, String> {
+            Ok(ProjectSnapshot::new(
+                RepositoryRoot::new(std::env::temp_dir()).map_err(|error| error.to_string())?,
+                None,
+            ))
         }
         fn library_path(&self) -> std::path::PathBuf {
             "/home/tester/.config/gitserious/config.toml".into()
@@ -873,14 +871,14 @@ mod tests {
     struct Unavailable;
 
     impl ConfigurationWorkspace for Unavailable {
-        fn load(
-            &self,
-            destination: ConfigurationDestination,
-        ) -> Result<ConfigurationSession, String> {
-            Services.load(destination)
+        fn load_library(&self) -> Result<LibraryDraft, String> {
+            Services.load_library()
         }
-        fn save(&self, session: &ConfigurationSession) -> Result<ConfigurationSession, String> {
-            Services.save(session)
+        fn save_library(&self, library: &LibraryDraft) -> Result<LibraryDraft, String> {
+            Services.save_library(library)
+        }
+        fn load_project(&self) -> Result<ProjectSnapshot, String> {
+            Services.load_project()
         }
         fn library_path(&self) -> std::path::PathBuf {
             Services.library_path()
@@ -950,13 +948,13 @@ mod tests {
     }
 
     impl ConfigurationWorkspace for HomeWorkspace {
-        fn load(
-            &self,
-            destination: ConfigurationDestination,
-        ) -> Result<ConfigurationSession, String> {
-            if destination == ConfigurationDestination::Global {
-                return Services.load(destination);
-            }
+        fn load_library(&self) -> Result<LibraryDraft, String> {
+            Services.load_library()
+        }
+        fn save_library(&self, _: &LibraryDraft) -> Result<LibraryDraft, String> {
+            Err("Project preview must never save.".into())
+        }
+        fn load_project(&self) -> Result<ProjectSnapshot, String> {
             let state = self.state.borrow();
             let root = match &*state {
                 HomeState::Uninitialized { root } | HomeState::Initialized { root, .. } => {
@@ -964,18 +962,7 @@ mod tests {
                 }
                 _ => return Err("No Git repository.".into()),
             };
-            let stored =
-                self.created
-                    .borrow()
-                    .as_ref()
-                    .map(|configuration| gitserious_app::StoredProject {
-                        configuration: configuration.clone(),
-                        revision: gitserious_app::ProjectRevision::of_bytes(b"initialized"),
-                    });
-            Ok(ConfigurationSession::open_project(root, stored))
-        }
-        fn save(&self, _: &ConfigurationSession) -> Result<ConfigurationSession, String> {
-            Err("Project preview must never save.".into())
+            Ok(ProjectSnapshot::new(root, self.created.borrow().clone()))
         }
         fn library_path(&self) -> std::path::PathBuf {
             Services.library_path()

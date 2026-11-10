@@ -22,12 +22,11 @@ pub use commit::{
     StatusEntry, prepare_commit_with_taxonomy, validate_reviewed_commit,
 };
 pub use config::{
-    ConfigurationDestination, ConfigurationError, ConfigurationServices, ConfigurationSession,
-    ConfigurationWorkspace, DraftEdit, DraftField, EditRefusal, GlobalConfiguration,
-    GlobalConfigurationStore, LibraryDraft, LibraryTaxonomy, NodeId, NodeRef, Policy, Problem,
-    ProblemKind, ProblemSite, ProjectConfiguration, ProjectConfigurationStore, ProjectRevision,
-    PropertyNode, StoredProject, TaxonomyDate, TaxonomyNode, TaxonomyOrigin, TypeNode,
-    fingerprint_taxonomy,
+    ConfigurationError, ConfigurationServices, ConfigurationWorkspace, DraftEdit, DraftField,
+    EditRefusal, GlobalConfiguration, GlobalConfigurationStore, LibraryDraft, LibraryTaxonomy,
+    NodeId, NodeRef, Policy, Problem, ProblemKind, ProblemSite, ProjectConfiguration,
+    ProjectConfigurationStore, ProjectRevision, ProjectSnapshot, PropertyNode, StoredProject,
+    TaxonomyDate, TaxonomyNode, TaxonomyOrigin, TypeNode, fingerprint_taxonomy,
 };
 pub use directory_creator::DirectoryCreator;
 pub use global_path_resolver::GlobalPathResolver;

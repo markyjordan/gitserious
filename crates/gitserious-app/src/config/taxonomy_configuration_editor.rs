@@ -2,114 +2,35 @@ use std::fmt::Display;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    GlobalConfiguration, GlobalConfigurationStore, LibraryDraft, Problem, ProjectConfiguration,
-    ProjectConfigurationStore, RepositoryLocator, RepositoryRoot, StoredProject,
+    GlobalConfigurationStore, LibraryDraft, Problem, ProjectConfiguration,
+    ProjectConfigurationStore, RepositoryLocator, RepositoryRoot,
 };
 
-/// Persistence destination edited by one reviewed session.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ConfigurationDestination {
-    Global,
-    Project,
-}
-
-#[derive(Clone, Debug)]
-enum Scope {
-    /// The working Library; it holds the configuration it was loaded from.
-    Global(LibraryDraft),
-    Project(Box<ProjectScope>),
-}
-
-#[derive(Clone, Debug)]
-struct ProjectScope {
+/// The project that contains the start directory, as stored.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectSnapshot {
     root: RepositoryRoot,
-    /// The project's own taxonomies; none before initialization.
-    draft: Option<LibraryDraft>,
+    configuration: Option<ProjectConfiguration>,
 }
 
-/// The working Library, or the project's configuration as loaded.
-#[derive(Clone, Debug)]
-pub struct ConfigurationSession {
-    scope: Scope,
-}
-
-impl ConfigurationSession {
-    /// Opens a global snapshot without performing I/O.
+impl ProjectSnapshot {
     #[must_use]
-    pub fn open_global(global: GlobalConfiguration) -> Self {
+    pub const fn new(root: RepositoryRoot, configuration: Option<ProjectConfiguration>) -> Self {
         Self {
-            scope: Scope::Global(LibraryDraft::from_configuration(global)),
+            root,
+            configuration,
         }
     }
 
-    /// Opens a project snapshot without performing I/O or reading the Library.
     #[must_use]
-    pub fn open_project(root: RepositoryRoot, stored: Option<StoredProject>) -> Self {
-        Self {
-            scope: Scope::Project(Box::new(ProjectScope {
-                root,
-                draft: stored.map(|stored| LibraryDraft::from_project(stored.configuration)),
-            })),
-        }
+    pub const fn root(&self) -> &RepositoryRoot {
+        &self.root
     }
 
-    /// Returns the project root when present.
+    /// The project's configuration, or none before initialization.
     #[must_use]
-    pub const fn root(&self) -> Option<&RepositoryRoot> {
-        match &self.scope {
-            Scope::Global(_) => None,
-            Scope::Project(project) => Some(&project.root),
-        }
-    }
-
-    /// Returns the working Library of a Global session.
-    #[must_use]
-    pub const fn library(&self) -> Option<&LibraryDraft> {
-        match &self.scope {
-            Scope::Global(library) => Some(library),
-            Scope::Project(_) => None,
-        }
-    }
-
-    /// Returns the working Library of a Global session for editing.
-    pub const fn library_mut(&mut self) -> Option<&mut LibraryDraft> {
-        match &mut self.scope {
-            Scope::Global(library) => Some(library),
-            Scope::Project(_) => None,
-        }
-    }
-
-    /// Returns the working draft of the project's own taxonomies, or none before initialization.
-    #[must_use]
-    pub fn project_draft(&self) -> Option<&LibraryDraft> {
-        match &self.scope {
-            Scope::Global(_) => None,
-            Scope::Project(project) => project.draft.as_ref(),
-        }
-    }
-
-    /// Returns the project draft for editing.
-    pub fn project_draft_mut(&mut self) -> Option<&mut LibraryDraft> {
-        match &mut self.scope {
-            Scope::Global(_) => None,
-            Scope::Project(project) => project.draft.as_mut(),
-        }
-    }
-
-    /// Returns the project's configuration as loaded, or none before initialization.
-    #[must_use]
-    pub fn persisted_project_config(&self) -> Option<&ProjectConfiguration> {
-        self.project_draft()?.persisted_project()
-    }
-
-    /// Returns whether the Library differs from what was last loaded or saved. A Project
-    /// session is never dirty.
-    #[must_use]
-    pub fn is_dirty(&self) -> bool {
-        match &self.scope {
-            Scope::Global(library) => library.is_changed(),
-            Scope::Project(_) => false,
-        }
+    pub const fn configuration(&self) -> Option<&ProjectConfiguration> {
+        self.configuration.as_ref()
     }
 }
 
@@ -120,11 +41,16 @@ fn first_problem(problems: &[Problem]) -> String {
         .map_or_else(|| "the draft does not build".into(), ToString::to_string)
 }
 
-/// Application operations exposed to the configuration TUI.
+/// Application operations exposed to the Config page. The Library is read and written; the
+/// project is only read.
 pub trait ConfigurationWorkspace {
-    fn load(&self, destination: ConfigurationDestination) -> Result<ConfigurationSession, String>;
-    fn save(&self, session: &ConfigurationSession) -> Result<ConfigurationSession, String>;
-    /// The file a Global session loads from and saves to.
+    /// The Library as last saved.
+    fn load_library(&self) -> Result<LibraryDraft, String>;
+    /// Writes `library`'s changes unless the stored Library changed since it was loaded, and
+    /// returns the Library as saved.
+    fn save_library(&self, library: &LibraryDraft) -> Result<LibraryDraft, String>;
+    fn load_project(&self) -> Result<ProjectSnapshot, String>;
+    /// The file the Library loads from and saves to.
     fn library_path(&self) -> PathBuf;
 }
 
@@ -164,46 +90,40 @@ where
     G: GlobalConfigurationStore + ?Sized,
     G::Error: Display,
 {
-    fn load(&self, destination: ConfigurationDestination) -> Result<ConfigurationSession, String> {
-        match destination {
-            ConfigurationDestination::Global => Ok(ConfigurationSession::open_global(
-                self.global.load().map_err(|error| error.to_string())?,
-            )),
-            ConfigurationDestination::Project => {
-                let root = self
-                    .locator
-                    .locate(self.start)
-                    .map_err(|error| error.to_string())?;
-                let stored = self
-                    .project
-                    .load(&root)
-                    .map_err(|error| error.to_string())?;
-                Ok(ConfigurationSession::open_project(root, stored))
-            }
-        }
+    fn load_library(&self) -> Result<LibraryDraft, String> {
+        Ok(LibraryDraft::from_configuration(
+            self.global.load().map_err(|error| error.to_string())?,
+        ))
     }
 
-    fn save(&self, session: &ConfigurationSession) -> Result<ConfigurationSession, String> {
-        match &session.scope {
-            Scope::Global(library) => {
-                let saved = library
-                    .saved_on(crate::TaxonomyDate::now_utc())
-                    .map_err(|problems| first_problem(&problems))?;
-                let (Some(before), Some(working)) = (library.persisted(), saved.persisted()) else {
-                    return Err("a Library session holds the Library".into());
-                };
-                if working != before {
-                    self.global
-                        .compare_and_swap(before, working)
-                        .map_err(|error| error.to_string())?;
-                }
-                Ok(ConfigurationSession {
-                    scope: Scope::Global(saved),
-                })
-            }
-            // Removed by type when Library and Project get separate session types.
-            Scope::Project(_) => Err("Config does not change a Project".into()),
+    fn save_library(&self, library: &LibraryDraft) -> Result<LibraryDraft, String> {
+        let saved = library
+            .saved_on(crate::TaxonomyDate::now_utc())
+            .map_err(|problems| first_problem(&problems))?;
+        let (Some(before), Some(working)) = (library.persisted(), saved.persisted()) else {
+            return Err("only the Library saves".into());
+        };
+        if working != before {
+            self.global
+                .compare_and_swap(before, working)
+                .map_err(|error| error.to_string())?;
         }
+        Ok(saved)
+    }
+
+    fn load_project(&self) -> Result<ProjectSnapshot, String> {
+        let root = self
+            .locator
+            .locate(self.start)
+            .map_err(|error| error.to_string())?;
+        let stored = self
+            .project
+            .load(&root)
+            .map_err(|error| error.to_string())?;
+        Ok(ProjectSnapshot::new(
+            root,
+            stored.map(|stored| stored.configuration),
+        ))
     }
 
     fn library_path(&self) -> PathBuf {

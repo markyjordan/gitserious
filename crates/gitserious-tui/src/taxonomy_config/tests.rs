@@ -38,8 +38,8 @@ fn rule_row(terminal: &Terminal<TestBackend>) -> Option<u16> {
 }
 
 pub(super) struct Workspace {
-    pub(super) global: RefCell<ConfigurationSession>,
-    pub(super) project: RefCell<ConfigurationSession>,
+    pub(super) global: RefCell<LibraryDraft>,
+    pub(super) project: RefCell<ProjectSnapshot>,
     saves: Cell<usize>,
     library_path: PathBuf,
 }
@@ -49,8 +49,8 @@ impl Workspace {
         let global = GlobalConfiguration::default();
         let root = RepositoryRoot::new(std::env::temp_dir()).unwrap_or_else(|_| unreachable!());
         Self {
-            global: RefCell::new(ConfigurationSession::open_global(global.clone())),
-            project: RefCell::new(ConfigurationSession::open_project(root, None)),
+            global: RefCell::new(LibraryDraft::from_configuration(global)),
+            project: RefCell::new(ProjectSnapshot::new(root, None)),
             saves: Cell::new(0),
             library_path: PathBuf::from(LIBRARY_PATH),
         }
@@ -63,11 +63,10 @@ impl Workspace {
 
 /// Forks `source` under the name `target`, as `f` and typing a name do.
 fn fork_as(
-    session: &mut ConfigurationSession,
+    library: &mut LibraryDraft,
     source: &str,
     target: &str,
 ) -> Result<NodeId, Box<dyn std::error::Error>> {
-    let library = session.library_mut().ok_or("a Global session")?;
     let source = library.find_path(&[source]).ok_or("missing source")?;
     let fork = library.fork(&source)?;
     library.edit(&fork, DraftEdit::Text(DraftField::Name, target))?;
@@ -94,7 +93,7 @@ fn custom_workspace() -> Result<(Workspace, Taxonomy), Box<dyn std::error::Error
         )?],
     )?;
     let workspace = Workspace::new();
-    *workspace.global.borrow_mut() = ConfigurationSession::open_global(GlobalConfiguration::new(
+    *workspace.global.borrow_mut() = LibraryDraft::from_configuration(GlobalConfiguration::new(
         1,
         TaxonomyId::new("conventional")?,
         vec![TaxonomyId::new("conventional")?],
@@ -112,36 +111,28 @@ fn cursor(state: &State) -> Vec<String> {
 }
 
 impl ConfigurationWorkspace for Workspace {
-    fn load(&self, destination: ConfigurationDestination) -> Result<ConfigurationSession, String> {
-        Ok(match destination {
-            ConfigurationDestination::Global => self.global.borrow().clone(),
-            ConfigurationDestination::Project => self.project.borrow().clone(),
-        })
+    fn load_library(&self) -> Result<LibraryDraft, String> {
+        Ok(self.global.borrow().clone())
     }
 
-    fn save(&self, session: &ConfigurationSession) -> Result<ConfigurationSession, String> {
+    fn save_library(&self, library: &LibraryDraft) -> Result<LibraryDraft, String> {
         self.saves.set(self.saves.get() + 1);
-        match session.root() {
-            None => {
-                let library = session.library().ok_or("missing Library")?;
-                if self.global.borrow().library().map(LibraryDraft::persisted)
-                    != Some(library.persisted())
-                {
-                    return Err("global configuration changed while editing".into());
-                }
-                let mut saved = session.clone();
-                *saved.library_mut().ok_or("missing Library")? = library
-                    .saved_on(
-                        "2026-11-08"
-                            .parse::<gitserious_app::TaxonomyDate>()
-                            .map_err(|error| error.to_string())?,
-                    )
-                    .map_err(|problems| format!("{problems:?}"))?;
-                *self.global.borrow_mut() = saved.clone();
-                Ok(saved)
-            }
-            Some(_) => Err("the Config page never saves a Project".into()),
+        if self.global.borrow().persisted() != library.persisted() {
+            return Err("global configuration changed while editing".into());
         }
+        let saved = library
+            .saved_on(
+                "2026-11-08"
+                    .parse::<gitserious_app::TaxonomyDate>()
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|problems| format!("{problems:?}"))?;
+        *self.global.borrow_mut() = saved.clone();
+        Ok(saved)
+    }
+
+    fn load_project(&self) -> Result<ProjectSnapshot, String> {
+        Ok(self.project.borrow().clone())
     }
 
     fn library_path(&self) -> PathBuf {
@@ -702,16 +693,13 @@ fn the_library_opens_under_a_header_naming_its_file_from_home()
 /// The built-ins and three custom taxonomies, so conventional with fix open overflows the
 /// outline at 87x40.
 fn crowded_workspace() -> Result<Workspace, Box<dyn std::error::Error>> {
-    let mut session = ConfigurationSession::open_global(GlobalConfiguration::default());
+    let mut session = LibraryDraft::from_configuration(GlobalConfiguration::default());
     for name in ["team-changes", "draft-ideas", "release-notes"] {
         fork_as(&mut session, "research", name)?;
     }
-    let global = session
-        .library()
-        .and_then(|library| library.build().ok())
-        .ok_or("the forks build")?;
+    let global = session.build().ok().ok_or("the forks build")?;
     let workspace = Workspace::new();
-    *workspace.global.borrow_mut() = ConfigurationSession::open_global(global);
+    *workspace.global.borrow_mut() = LibraryDraft::from_configuration(global);
     Ok(workspace)
 }
 
@@ -1196,14 +1184,13 @@ fn taxonomy_footer_pills_keep_their_padding_inside_the_viewport()
             let (workspace, _) = custom_workspace()?;
             let mut state = State::new(&workspace);
             state.handle_event(key(KeyCode::Char('2')), &workspace);
-            let session = state.global.as_mut().ok_or("missing Global session")?;
+            let draft = state.global.as_mut().ok_or("missing Library")?;
             let node = if let Some(description) = description {
-                let draft = session.library_mut().ok_or("missing Library")?;
                 let node = draft.find_path(&["original"]).ok_or("missing original")?;
                 draft.edit(&node, DraftEdit::Text(DraftField::Description, description))?;
                 node
             } else {
-                fork_as(session, "conventional", "team")?
+                fork_as(draft, "conventional", "team")?
             };
             state.taxonomies.select(node);
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
@@ -1651,7 +1638,6 @@ fn taxonomy_commands_target_selected_global_definition() -> Result<(), Box<dyn s
     state
         .global
         .as_mut()
-        .and_then(ConfigurationSession::library_mut)
         .ok_or("missing global")?
         .edit(&fork, DraftEdit::Text(DraftField::Name, "team"))?;
     state.handle_event(ctrl(KeyCode::Char('w')), &workspace);
@@ -1756,7 +1742,7 @@ fn remove_dialog_invalidates_mouse_targets_after_resize() -> Result<(), Box<dyn 
     assert!(matches!(state.screen, Screen::ConfirmRemove(_)));
     state.handle_event(key(KeyCode::Esc), &workspace);
     assert!(matches!(state.screen, Screen::Home));
-    assert!(!state.scope_dirty(ConfigurationDestination::Global));
+    assert!(!state.library_dirty());
     assert_eq!(workspace.saves.get(), 0);
     Ok(())
 }
@@ -2128,7 +2114,7 @@ fn a_custom_property_edits_in_place_and_each_field_holds_at_most_its_limit()
         state.handle_event(ctrl(KeyCode::Char('w')), &workspace);
         assert_eq!(field(&state), Some(DraftField::Rationale));
         assert!(matches!(state.screen, Screen::Home));
-        assert!(state.scope_dirty(ConfigurationDestination::Global));
+        assert!(state.library_dirty());
         press(&mut state, &workspace, &[KeyCode::Right, KeyCode::Left]);
         assert_eq!(text_of(&state, &path, DraftField::Condition)?, "risky");
         assert_eq!(workspace.saves.get(), 0);
@@ -2245,11 +2231,7 @@ fn alt_arrows_reorder_a_custom_type_and_the_cursor_follows()
 -> Result<(), Box<dyn std::error::Error>> {
     let (workspace, _) = custom_workspace()?;
     let mut state = State::new(&workspace);
-    let draft = state
-        .global
-        .as_mut()
-        .and_then(ConfigurationSession::library_mut)
-        .ok_or("missing global")?;
+    let draft = state.global.as_mut().ok_or("missing global")?;
     let original = draft.find_path(&["original"]).ok_or("missing original")?;
     let added = draft.edit(&original, DraftEdit::AddType)?;
     draft.edit(&added, DraftEdit::Text(DraftField::Name, "added"))?;
@@ -2257,7 +2239,7 @@ fn alt_arrows_reorder_a_custom_type_and_the_cursor_follows()
         &added,
         DraftEdit::Text(DraftField::Description, "Added type"),
     )?;
-    let saved = workspace.save(state.global.as_ref().ok_or("Global")?)?;
+    let saved = workspace.save_library(state.global.as_ref().ok_or("Library")?)?;
     state.global = Some(saved);
     open_notes(&mut state, &workspace);
     press(&mut state, &workspace, &[KeyCode::Up]);
@@ -2299,7 +2281,7 @@ fn alt_arrows_reorder_a_custom_type_and_the_cursor_follows()
 fn deleting_a_selected_taxonomy_is_refused_before_its_dialog()
 -> Result<(), Box<dyn std::error::Error>> {
     let (workspace, source) = custom_workspace()?;
-    *workspace.global.borrow_mut() = ConfigurationSession::open_global(GlobalConfiguration::new(
+    *workspace.global.borrow_mut() = LibraryDraft::from_configuration(GlobalConfiguration::new(
         1,
         TaxonomyId::new("conventional")?,
         vec![
@@ -2332,7 +2314,7 @@ fn quitting_after_a_library_save_has_no_discard_prompt() -> Result<(), Box<dyn s
         &[KeyCode::Char('e'), KeyCode::Char('q')],
     );
     state.handle_event(ctrl(KeyCode::Char('w')), &workspace);
-    assert!(!state.scope_dirty(ConfigurationDestination::Global));
+    assert!(!state.library_dirty());
     assert_eq!(workspace.saves(), 1);
     assert!(state.handle_event(key(KeyCode::Char('q')), &workspace));
     assert!(matches!(state.screen, Screen::Home));

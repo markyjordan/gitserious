@@ -4,18 +4,19 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::{ConfigurationSession, content_padding, library_header};
+use super::{content_padding, library_header};
 use crate::theme::{popup_selected_style, theme};
+use gitserious_app::ProjectSnapshot;
 
 /// The project identity and its missing configuration, without framed settings panels.
 pub(super) fn render_empty(
     frame: &mut Frame<'_>,
     area: Rect,
-    session: &ConfigurationSession,
+    project: &ProjectSnapshot,
     home: Option<&std::path::Path>,
 ) -> Rect {
     let content = area.inner(Margin::new(0, content_padding(frame.area())));
-    render_header(frame, content, session, home);
+    render_header(frame, content, project, home);
     frame.render_widget(
         Paragraph::new("No gitserious configuration found in this project."),
         Rect::new(
@@ -39,14 +40,12 @@ pub(super) fn render_empty(
 pub(super) fn render_header(
     frame: &mut Frame<'_>,
     area: Rect,
-    session: &ConfigurationSession,
+    project: &ProjectSnapshot,
     home: Option<&std::path::Path>,
 ) {
-    let Some(root) = session.root().map(gitserious_app::RepositoryRoot::as_path) else {
-        return;
-    };
+    let root = project.root().as_path();
     let width = usize::from(area.width.saturating_sub(2));
-    let (badge, color) = if session.persisted_project_config().is_some() {
+    let (badge, color) = if project.configuration().is_some() {
         ("✓ gitserious.toml", theme().done)
     } else {
         ("✗ gitserious.toml", theme().blocks)
