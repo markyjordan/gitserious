@@ -3,9 +3,9 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 
 use gitserious_app::{
-    AuthoredCommit, BranchState, CommitAuthoringContext, CommitOutput, CommitWriter,
-    ConfigurationDestination, GlobalConfiguration, GlobalConfigurationStore, HelpPage,
-    InteractiveUi, InteractiveWorkspace, ProjectConfiguration, ProjectConfigurationStore,
+    AuthoredCommit, BranchState, CommitAuthoringContext, CommitOutput, CommitServices,
+    CommitWriter, ConfigurationDestination, GlobalConfiguration, GlobalConfigurationStore,
+    HelpPage, InteractiveUi, InteractiveWorkspace, ProjectConfiguration, ProjectConfigurationStore,
     ProjectRevision, RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryStatus,
     RepositoryStatusReader, StatusEntry, StoredProject, run_interactive,
 };
@@ -179,6 +179,16 @@ impl Session {
         Ok(())
     }
 
+    fn commit(&self) -> CommitServices<'_, Locator, Project, Writer> {
+        CommitServices::new(
+            &self.locator,
+            &self.project,
+            &self.status,
+            &self.writer,
+            self.locator.root.as_path(),
+        )
+    }
+
     fn set_entries(&self, entries: Vec<StatusEntry>) {
         *self.status.0.borrow_mut() = Ok(RepositoryStatus {
             root: self.locator.root.clone(),
@@ -277,37 +287,35 @@ fn preparation_and_submission_require_a_staged_conflict_free_index() -> Result<(
     ];
     for (name, entries, blocker) in cases {
         let session = Session::new(entries)?;
-        session.run(|workspace| {
-            let preparation = workspace.prepare_commit();
-            if let Some(blocker) = blocker {
-                let error = preparation
-                    .err()
-                    .ok_or("ineligible preparation succeeded")?;
-                assert!(error.contains(blocker), "{name}: {error}");
-                let error = workspace
-                    .submit_commit(&approved_project_commit()?)
-                    .err()
-                    .ok_or("ineligible submission succeeded")?;
-                assert!(error.contains(blocker), "{name}: {error}");
-                assert!(session.writer.0.borrow().is_empty(), "{name}");
-            } else {
-                let authored = approved(&preparation?)?;
-                let output = workspace.submit_commit(&authored)?;
-                assert_eq!(output.stdout(), b"created\n", "{name}");
-                assert_eq!(
-                    session.writer.0.borrow().as_slice(),
-                    &[(
-                        session.locator.root.clone(),
-                        authored
-                            .reviewed_message()
-                            .ok_or("no approved bytes")?
-                            .clone()
-                    )],
-                    "{name}"
-                );
-            }
-            Ok(())
-        })?;
+        let commit = session.commit();
+        let preparation = commit.prepare_commit();
+        if let Some(blocker) = blocker {
+            let error = preparation
+                .err()
+                .ok_or("ineligible preparation succeeded")?;
+            assert!(error.contains(blocker), "{name}: {error}");
+            let error = commit
+                .submit_commit(&approved_project_commit()?)
+                .err()
+                .ok_or("ineligible submission succeeded")?;
+            assert!(error.contains(blocker), "{name}: {error}");
+            assert!(session.writer.0.borrow().is_empty(), "{name}");
+        } else {
+            let authored = approved(&preparation?)?;
+            let output = commit.submit_commit(&authored)?;
+            assert_eq!(output.stdout(), b"created\n", "{name}");
+            assert_eq!(
+                session.writer.0.borrow().as_slice(),
+                &[(
+                    session.locator.root.clone(),
+                    authored
+                        .reviewed_message()
+                        .ok_or("no approved bytes")?
+                        .clone()
+                )],
+                "{name}"
+            );
+        }
     }
     Ok(())
 }
@@ -321,17 +329,15 @@ fn locator_and_status_failures_stop_preparation_and_submission() -> Result<(), B
         } else {
             *session.status.0.borrow_mut() = Err(failure.into());
         }
-        session.run(|workspace| {
-            assert_eq!(workspace.prepare_commit().err().as_deref(), Some(failure));
-            assert_eq!(
-                workspace
-                    .submit_commit(&approved_project_commit()?)
-                    .err()
-                    .as_deref(),
-                Some(failure)
-            );
-            Ok(())
-        })?;
+        let commit = session.commit();
+        assert_eq!(commit.prepare_commit().err().as_deref(), Some(failure));
+        assert_eq!(
+            commit
+                .submit_commit(&approved_project_commit()?)
+                .err()
+                .as_deref(),
+            Some(failure)
+        );
         assert!(session.writer.0.borrow().is_empty());
     }
     Ok(())
@@ -342,15 +348,9 @@ fn missing_or_unreadable_project_policy_never_reaches_the_writer() -> Result<(),
     for policy in [Ok(None), Err("invalid persisted project policy")] {
         let session = Session::new(vec![entry("file", 'M', '.')])?;
         *session.project.0.borrow_mut() = policy;
-        session.run(|workspace| {
-            assert!(workspace.prepare_commit().is_err());
-            assert!(
-                workspace
-                    .submit_commit(&approved_project_commit()?)
-                    .is_err()
-            );
-            Ok(())
-        })?;
+        let commit = session.commit();
+        assert!(commit.prepare_commit().is_err());
+        assert!(commit.submit_commit(&approved_project_commit()?).is_err());
         assert!(session.writer.0.borrow().is_empty());
     }
     Ok(())
@@ -363,12 +363,10 @@ fn submission_rechecks_index_and_conflicts_after_approval() -> Result<(), Box<dy
         vec![entry("conflict", 'U', 'U'), entry("staged", 'M', '.')],
     ] {
         let session = Session::new(vec![entry("file", 'M', '.')])?;
-        session.run(|workspace| {
-            let authored = approved(&workspace.prepare_commit()?)?;
-            session.set_entries(entries.clone());
-            assert!(workspace.submit_commit(&authored).is_err());
-            Ok(())
-        })?;
+        let commit = session.commit();
+        let authored = approved(&commit.prepare_commit()?)?;
+        session.set_entries(entries.clone());
+        assert!(commit.submit_commit(&authored).is_err());
         assert!(session.writer.0.borrow().is_empty());
     }
     Ok(())
@@ -402,12 +400,10 @@ fn submission_rejects_a_removed_or_incompatible_authored_taxonomy() -> Result<()
     ];
     for replacement in replacements {
         let session = Session::new(vec![entry("file", 'M', '.')])?;
-        session.run(|workspace| {
-            let authored = approved(&workspace.prepare_commit()?)?;
-            *session.project.0.borrow_mut() = Ok(Some(replacement.clone()));
-            assert!(workspace.submit_commit(&authored).is_err());
-            Ok(())
-        })?;
+        let commit = session.commit();
+        let authored = approved(&commit.prepare_commit()?)?;
+        *session.project.0.borrow_mut() = Ok(Some(replacement.clone()));
+        assert!(commit.submit_commit(&authored).is_err());
         assert!(session.writer.0.borrow().is_empty());
     }
     Ok(())
@@ -417,31 +413,29 @@ fn submission_rejects_a_removed_or_incompatible_authored_taxonomy() -> Result<()
 fn submission_rejects_changed_provenance_even_when_the_draft_remains_valid()
 -> Result<(), Box<dyn Error>> {
     let session = Session::new(vec![entry("file", 'M', '.')])?;
-    session.run(|workspace| {
-        let authored = approved(&workspace.prepare_commit()?)?;
-        let original = taxonomy("team")?;
-        let changed = Taxonomy::new(
-            original.id().clone(),
-            original.version(),
-            Description::new("A changed project description.")?,
-            original.derived_from().cloned(),
-            original.commit_types().to_vec(),
-        )?;
-        *session.project.0.borrow_mut() = Ok(Some(ProjectConfiguration::new(
-            1,
-            changed.id().clone(),
-            vec![changed, taxonomy("other")?],
-        )?));
-        let current = workspace.prepare_commit()?;
-        let new_message = current
-            .find_taxonomy(authored.taxonomy())
-            .ok_or("selected taxonomy disappeared")?
-            .validate(authored.draft())
-            .into_message()?;
-        assert_ne!(Some(&new_message), authored.reviewed_message());
-        assert!(workspace.submit_commit(&authored).is_err());
-        Ok(())
-    })?;
+    let commit = session.commit();
+    let authored = approved(&commit.prepare_commit()?)?;
+    let original = taxonomy("team")?;
+    let changed = Taxonomy::new(
+        original.id().clone(),
+        original.version(),
+        Description::new("A changed project description.")?,
+        original.derived_from().cloned(),
+        original.commit_types().to_vec(),
+    )?;
+    *session.project.0.borrow_mut() = Ok(Some(ProjectConfiguration::new(
+        1,
+        changed.id().clone(),
+        vec![changed, taxonomy("other")?],
+    )?));
+    let current = commit.prepare_commit()?;
+    let new_message = current
+        .find_taxonomy(authored.taxonomy())
+        .ok_or("selected taxonomy disappeared")?
+        .validate(authored.draft())
+        .into_message()?;
+    assert_ne!(Some(&new_message), authored.reviewed_message());
+    assert!(commit.submit_commit(&authored).is_err());
     assert!(session.writer.0.borrow().is_empty());
     Ok(())
 }
@@ -449,42 +443,39 @@ fn submission_rejects_changed_provenance_even_when_the_draft_remains_valid()
 #[test]
 fn a_default_only_change_keeps_the_authored_taxonomy_usable() -> Result<(), Box<dyn Error>> {
     let session = Session::new(vec![entry("file", 'M', '.')])?;
-    session.run(|workspace| {
-        let authored = approved(&workspace.prepare_commit()?)?;
-        *session.project.0.borrow_mut() = Ok(Some(ProjectConfiguration::new(
-            1,
-            TaxonomyId::new("other")?,
-            vec![taxonomy("team")?, taxonomy("other")?],
-        )?));
-        assert_eq!(
-            workspace.prepare_commit()?.initial_taxonomy().id().as_str(),
-            "other"
-        );
-        workspace.submit_commit(&authored)?;
-        assert_eq!(
-            session.writer.0.borrow().as_slice(),
-            &[(
-                session.locator.root.clone(),
-                authored
-                    .reviewed_message()
-                    .ok_or("no approved bytes")?
-                    .clone()
-            )]
-        );
-        Ok(())
-    })
+    let commit = session.commit();
+    let authored = approved(&commit.prepare_commit()?)?;
+    *session.project.0.borrow_mut() = Ok(Some(ProjectConfiguration::new(
+        1,
+        TaxonomyId::new("other")?,
+        vec![taxonomy("team")?, taxonomy("other")?],
+    )?));
+    assert_eq!(
+        commit.prepare_commit()?.initial_taxonomy().id().as_str(),
+        "other"
+    );
+    commit.submit_commit(&authored)?;
+    assert_eq!(
+        session.writer.0.borrow().as_slice(),
+        &[(
+            session.locator.root.clone(),
+            authored
+                .reviewed_message()
+                .ok_or("no approved bytes")?
+                .clone()
+        )]
+    );
+    Ok(())
 }
 
 #[test]
 fn persisted_policy_loss_after_approval_prevents_writing() -> Result<(), Box<dyn Error>> {
     for replacement in [Ok(None), Err("invalid persisted project policy")] {
         let session = Session::new(vec![entry("file", 'M', '.')])?;
-        session.run(|workspace| {
-            let authored = approved(&workspace.prepare_commit()?)?;
-            *session.project.0.borrow_mut() = replacement.clone();
-            assert!(workspace.submit_commit(&authored).is_err());
-            Ok(())
-        })?;
+        let commit = session.commit();
+        let authored = approved(&commit.prepare_commit()?)?;
+        *session.project.0.borrow_mut() = replacement.clone();
+        assert!(commit.submit_commit(&authored).is_err());
         assert!(session.writer.0.borrow().is_empty());
     }
     Ok(())
