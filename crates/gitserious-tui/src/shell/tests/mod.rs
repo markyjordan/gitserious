@@ -1,4 +1,6 @@
-use ratatui::crossterm::event::{self, KeyEvent};
+use ratatui::crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 
 use super::*;
 use std::cell::RefCell;
@@ -10,6 +12,7 @@ use gitserious_app::{
 };
 
 use crate::commit;
+use crate::config::ShellKeys;
 use crate::help::{HelpLine, HelpSpan};
 use crate::home::{self, HomeAction};
 use gitserious_core::TaxonomyVersion;
