@@ -2,7 +2,8 @@ use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
 use gitserious_app::{
-    GlobalConfigurationStore, initialize_project, resolve_global_paths, run_interactive,
+    CommitServices, ConfigurationServices, GlobalConfigurationStore, ProjectServices,
+    initialize_project, resolve_global_paths,
 };
 use gitserious_cli::{
     Invocation, ShellStart, help_topics, parse, styled_help, write_answer, write_error,
@@ -12,7 +13,7 @@ use gitserious_fs::{
     GitCommitWriter, GitRepositoryInitializer, GitRepositoryLocator, GitRepositoryStatusReader,
     SystemGlobalPathResolver, TomlGlobalConfigurationStore, TomlProjectStore,
 };
-use gitserious_tui::{HelpPage, InitialPage, RatatuiInteractiveUi};
+use gitserious_tui::{Capabilities, HelpPage, InitialPage, RatatuiInteractiveUi};
 
 fn main() -> ExitCode {
     let mut stdout = io::stdout();
@@ -36,20 +37,36 @@ fn main() -> ExitCode {
                 ShellStart::Config => InitialPage::Config,
                 ShellStart::Help { command } => InitialPage::Help { command },
             };
-            run_interactive(
+            let commit = CommitServices::new(
+                &GitRepositoryLocator,
+                &TomlProjectStore,
+                &GitRepositoryStatusReader,
+                &GitCommitWriter,
+                &directory,
+            );
+            let config = ConfigurationServices::new(
                 &GitRepositoryLocator,
                 &TomlProjectStore,
                 &configuration,
+                &directory,
+            );
+            let project = ProjectServices::new(
+                &GitRepositoryLocator,
+                &TomlProjectStore,
                 &GitRepositoryStatusReader,
                 &GitRepositoryInitializer,
-                &GitCommitWriter,
                 &directory,
-                &RatatuiInteractiveUi::at(page, help_pages()),
-            )
-            .map_or_else(
-                |error| write_error(&mut stderr, error),
-                |()| ExitCode::SUCCESS,
-            )
+            );
+            RatatuiInteractiveUi::at(page, help_pages())
+                .run(Capabilities {
+                    commit: &commit,
+                    config: &config,
+                    project: &project,
+                })
+                .map_or_else(
+                    |error| write_error(&mut stderr, error),
+                    |()| ExitCode::SUCCESS,
+                )
         }
         Invocation::Init => {
             let global = match configuration.load() {
