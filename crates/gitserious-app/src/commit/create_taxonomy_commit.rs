@@ -28,7 +28,6 @@ impl Error for CommitPolicyError {}
 /// Failure to prepare a commit or to accept its reviewed message.
 #[derive(Debug)]
 pub enum CreateCommitError<LocatorError, StoreError> {
-    MissingReviewedMessage,
     ReviewedMessageMismatch,
     UnknownTaxonomy {
         requested: TaxonomyId,
@@ -60,9 +59,6 @@ pub type CommitPreparationResult<L, S> =
 impl<L: Display, S: Display> Display for CreateCommitError<L, S> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingReviewedMessage => {
-                formatter.write_str("author did not return reviewed commit bytes")
-            }
             Self::ReviewedMessageMismatch => {
                 formatter.write_str("reviewed commit bytes do not match the selected taxonomy")
             }
@@ -169,9 +165,7 @@ pub fn validate_reviewed_commit<L, S>(
         .validate(authored.draft())
         .into_message()
         .map_err(CreateCommitError::InvalidDraft)?;
-    let reviewed = authored
-        .reviewed_message()
-        .ok_or(CreateCommitError::MissingReviewedMessage)?;
+    let reviewed = authored.reviewed_message();
     if reviewed != &message {
         return Err(CreateCommitError::ReviewedMessageMismatch);
     }

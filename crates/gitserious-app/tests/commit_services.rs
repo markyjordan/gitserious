@@ -310,10 +310,7 @@ fn preparation_and_submission_require_a_staged_conflict_free_index() -> Result<(
                 session.writer.0.borrow().as_slice(),
                 &[(
                     session.locator.root.clone(),
-                    authored
-                        .reviewed_message()
-                        .ok_or("no approved bytes")?
-                        .clone()
+                    authored.reviewed_message().clone()
                 )],
                 "{name}"
             );
@@ -436,7 +433,7 @@ fn submission_rejects_changed_provenance_even_when_the_draft_remains_valid()
         .ok_or("selected taxonomy disappeared")?
         .validate(authored.draft())
         .into_message()?;
-    assert_ne!(Some(&new_message), authored.reviewed_message());
+    assert_ne!(&new_message, authored.reviewed_message());
     assert!(commit.submit_commit(&authored).is_err());
     assert!(session.writer.0.borrow().is_empty());
     Ok(())
@@ -461,10 +458,7 @@ fn a_default_only_change_keeps_the_authored_taxonomy_usable() -> Result<(), Box<
         session.writer.0.borrow().as_slice(),
         &[(
             session.locator.root.clone(),
-            authored
-                .reviewed_message()
-                .ok_or("no approved bytes")?
-                .clone()
+            authored.reviewed_message().clone()
         )]
     );
     Ok(())
@@ -517,10 +511,7 @@ fn a_changed_library_does_not_replace_project_owned_commit_policy() -> Result<()
             session.writer.0.borrow().as_slice(),
             &[(
                 session.locator.root.clone(),
-                authored
-                    .reviewed_message()
-                    .ok_or("no approved bytes")?
-                    .clone()
+                authored.reviewed_message().clone()
             )]
         );
         Ok(())
@@ -615,13 +606,7 @@ fn submission_writes_one_reviewed_message_under_the_default_taxonomy() -> Result
 
     assert_eq!(output.stdout(), b"created\n");
     let messages = written(&session);
-    assert_eq!(
-        messages,
-        [authored
-            .reviewed_message()
-            .ok_or("no approved bytes")?
-            .as_str()]
-    );
+    assert_eq!(messages, [authored.reviewed_message().as_str()]);
     assert!(messages[0].starts_with("feat: create durable commit\n"));
     assert!(messages[0].contains("Gitserious-Taxonomy: conventional-v1\n"));
     Ok(())
@@ -705,7 +690,7 @@ fn types_outside_the_taxonomy_never_reach_git() -> Result<(), Box<dyn Error>> {
     let session = staged(Some(built_in_project()?))?;
     let commit = session.commit();
     let context = commit.prepare_commit()?;
-    let custom = AuthoredCommit::new(
+    let custom = AuthoredCommit::reviewed(
         context.initial_taxonomy().id().clone(),
         CommitDraft::new(
             CommitTypeId::new("custom")?,
@@ -713,6 +698,9 @@ fn types_outside_the_taxonomy_never_reach_git() -> Result<(), Box<dyn Error>> {
             CommitSubject::new("escape policy")?,
             Vec::new(),
         )?,
+        reviewed(context.initial_taxonomy(), "fix")?
+            .reviewed_message()
+            .clone(),
     );
 
     let error = commit
@@ -747,7 +735,11 @@ fn an_incomplete_draft_is_revalidated_before_writing() -> Result<(), Box<dyn Err
         .ok_or("an incomplete feat draft validated")?;
 
     let error = commit
-        .submit_commit(&AuthoredCommit::new(taxonomy.id().clone(), incomplete))
+        .submit_commit(&AuthoredCommit::reviewed(
+            taxonomy.id().clone(),
+            incomplete,
+            reviewed(taxonomy, "fix")?.reviewed_message().clone(),
+        ))
         .err()
         .ok_or("an incomplete draft was written")?;
 
@@ -823,7 +815,7 @@ fn a_custom_taxonomy_commits_with_its_own_schema() -> Result<(), Box<dyn Error>>
 }
 
 #[test]
-fn missing_or_mismatched_reviewed_bytes_never_reach_git() -> Result<(), Box<dyn Error>> {
+fn mismatched_reviewed_bytes_never_reach_git() -> Result<(), Box<dyn Error>> {
     let session = staged(Some(built_in_project()?))?;
     let commit = session.commit();
     let context = commit.prepare_commit()?;
@@ -846,10 +838,6 @@ fn missing_or_mismatched_reviewed_bytes_never_reach_git() -> Result<(), Box<dyn 
     )
     .into_message()?;
     let cases = [
-        (
-            AuthoredCommit::new(taxonomy.id().clone(), draft.clone()),
-            "author did not return reviewed commit bytes",
-        ),
         (
             AuthoredCommit::reviewed(taxonomy.id().clone(), draft.clone(), plain),
             "reviewed commit bytes do not match the selected taxonomy",
@@ -907,10 +895,7 @@ fn unknown_taxonomies_and_cross_schema_drafts_never_reach_git() -> Result<(), Bo
     let forged = AuthoredCommit::reviewed(
         TaxonomyId::new("global-only")?,
         research_fix.draft().clone(),
-        research_fix
-            .reviewed_message()
-            .ok_or("no approved bytes")?
-            .clone(),
+        research_fix.reviewed_message().clone(),
     );
     let error = commit
         .submit_commit(&forged)
@@ -925,10 +910,7 @@ fn unknown_taxonomies_and_cross_schema_drafts_never_reach_git() -> Result<(), Bo
     let cross_schema = AuthoredCommit::reviewed(
         research.id().clone(),
         conventional_fix.draft().clone(),
-        conventional_fix
-            .reviewed_message()
-            .ok_or("no approved bytes")?
-            .clone(),
+        conventional_fix.reviewed_message().clone(),
     );
     let expected = research
         .validate(cross_schema.draft())

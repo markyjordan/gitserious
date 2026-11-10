@@ -70,8 +70,6 @@ fn exercise(commit: &GitCommitServices<'_>, directory: &Path) -> Result<(), Stri
         .validate(&draft)
         .into_message()
         .map_err(|error| error.to_string())?;
-    let unreviewed = AuthoredCommit::new(taxonomy.id().clone(), draft.clone());
-    assert!(commit.submit_commit(&unreviewed).is_err());
     let other_draft = CommitDraft::new(
         draft.commit_type().clone(),
         None,

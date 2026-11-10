@@ -163,13 +163,7 @@ fn git_stores_the_exact_reviewed_taxonomy_message() -> Result<(), Box<dyn Error>
 
     let object = stdout(&git(repository.path(), &["cat-file", "commit", "HEAD"])?);
     let (_, message) = object.split_once("\n\n").ok_or("missing commit body")?;
-    assert_eq!(
-        message,
-        authored
-            .reviewed_message()
-            .ok_or("no approved bytes")?
-            .as_str()
-    );
+    assert_eq!(message, authored.reviewed_message().as_str());
     assert!(message.contains("\nsymptom:\nreviewed symptom\n"));
     assert!(message.contains("Gitserious-Taxonomy: research-v1\n"));
     assert_eq!(fs::read(repository.path().join("gitserious.toml"))?, config);
