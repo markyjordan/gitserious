@@ -7,8 +7,8 @@ mod init_editor;
 use std::io::{self, IsTerminal};
 
 use gitserious_app::{
-    CommitAuthoringContext, CommitOutput, CommitWorkspace, ConfigurationWorkspace, InteractiveUi,
-    InteractiveWorkspace, ProjectConfiguration, ProjectOverview, ProjectWorkspace,
+    CommitAuthoringContext, CommitOutput, CommitWorkspace, ConfigurationWorkspace,
+    ProjectConfiguration, ProjectOverview, ProjectWorkspace,
 };
 use gitserious_core::built_in_taxonomies;
 use ratatui::crossterm::event::{
@@ -74,10 +74,9 @@ impl RatatuiInteractiveUi {
     pub const fn at(start: InitialPage, help: Vec<HelpPage>) -> Self {
         Self { start, help }
     }
-}
 
-impl InteractiveUi for RatatuiInteractiveUi {
-    fn run(&self, workspace: &dyn InteractiveWorkspace) -> Result<(), String> {
+    /// Runs the session on `capabilities` until the user quits.
+    pub fn run(&self, capabilities: Capabilities<'_>) -> Result<(), String> {
         let help = &self.help;
         if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
             return Err(match self.start {
@@ -89,11 +88,6 @@ impl InteractiveUi for RatatuiInteractiveUi {
             }
             .into());
         }
-        let capabilities = Capabilities {
-            commit: workspace.commit(),
-            config: workspace.configuration(),
-            project: workspace.project(),
-        };
         crate::runtime::run(|terminal| {
             let mut shell = Shell::new(self.start.clone(), capabilities, help);
             loop {

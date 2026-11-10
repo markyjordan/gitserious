@@ -19,4 +19,4 @@ mod shell;
 mod taxonomy_config;
 mod theme;
 
-pub use shell::{HelpPage, InitialPage, RatatuiInteractiveUi};
+pub use shell::{Capabilities, HelpPage, InitialPage, RatatuiInteractiveUi};
