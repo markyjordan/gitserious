@@ -9,6 +9,7 @@ use gitserious_app::{
     ProjectWorkspace, RepositoryRoot, RepositoryStatus,
 };
 
+use crate::commit;
 use crate::help::{HelpLine, HelpSpan};
 use crate::home;
 use gitserious_core::TaxonomyVersion;
