@@ -6,18 +6,15 @@ mod init_editor;
 
 use std::io::{self, IsTerminal};
 
-use gitserious_app::{
-    CommitAuthoringContext, CommitOutput, CommitWorkspace, ConfigurationWorkspace, ProjectWorkspace,
-};
+use gitserious_app::{CommitWorkspace, ConfigurationWorkspace, ProjectWorkspace};
+use ratatui::Frame;
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
-use ratatui::{DefaultTerminal, Frame};
 
-use crate::author::{AuthoringCheckpoint, embedded_author};
 use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, DISCARD_AND_QUIT};
 use crate::taxonomy_config::{ConfigRequest, ConfigView, ShellKeys};
 use crate::theme::{
@@ -95,7 +92,7 @@ impl RatatuiInteractiveUi {
                         return Ok(());
                     }
                     if matches!(action, Action::Author | Action::Resume) {
-                        shell.author(
+                        shell.commit.author(
                             terminal,
                             capabilities.commit,
                             matches!(action, Action::Resume),
@@ -158,17 +155,11 @@ enum Overlay {
     QuitConfirm,
     Result(u16),
 }
-struct PendingAuthor {
-    context: CommitAuthoringContext,
-    checkpoint: AuthoringCheckpoint,
-}
-
 struct Shell {
     section: Section,
     config: ConfigView,
     commit: CommitView,
     home: HomePage,
-    pending_author: Option<PendingAuthor>,
     overlay: Option<Overlay>,
     quit_dialog: ConfirmDialog,
     help: HelpView,
@@ -196,7 +187,6 @@ impl Shell {
             config: ConfigView::new(capabilities.config),
             commit: CommitView::default(),
             home: HomePage::new(capabilities.project),
-            pending_author: None,
             overlay: None,
             quit_dialog: ConfirmDialog::default(),
             help,
@@ -232,7 +222,7 @@ impl Shell {
             Action::Result => self.overlay = Some(Overlay::Result(0)),
             Action::Author | Action::Resume => return Some(action),
             Action::Quit => {
-                if self.pending_author.is_some() {
+                if self.commit.has_pending_review() {
                     self.overlay = Some(Overlay::QuitConfirm);
                 } else {
                     return Some(Action::Quit);
@@ -351,7 +341,7 @@ impl Shell {
                         }
                         KeyCode::Enter => {
                             return self.execute(
-                                if self.pending_author.is_some() {
+                                if self.commit.has_pending_review() {
                                     Action::Resume
                                 } else {
                                     Action::Author
@@ -419,7 +409,7 @@ impl Shell {
             if self.commit.blocker.is_none() {
                 commands.push(("Start commit".into(), Action::Author));
             }
-            if self.pending_author.is_some() {
+            if self.commit.has_pending_review() {
                 commands.push(("Resume review".into(), Action::Resume));
             }
         }
@@ -491,74 +481,6 @@ impl Shell {
         None
     }
 
-    fn author(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        commit: &dyn CommitWorkspace,
-        resume: bool,
-    ) -> io::Result<()> {
-        self.commit.refresh(commit);
-        let pending = if resume {
-            self.pending_author.take()
-        } else {
-            None
-        };
-        let (context, checkpoint) = if let Some(pending) = pending {
-            (pending.context, Some(pending.checkpoint))
-        } else {
-            match commit.prepare_commit() {
-                Ok(context) => (context, None),
-                Err(error) => {
-                    self.commit.notice = error;
-                    return Ok(());
-                }
-            }
-        };
-        let Some((authored, checkpoint)) = embedded_author(terminal, &context, checkpoint)? else {
-            self.conclude_authoring(commit, None);
-            return Ok(());
-        };
-        let result = crate::runtime::suspended(terminal, || commit.submit_commit(&authored))?;
-        self.conclude_authoring(commit, Some((context, checkpoint, result)));
-        Ok(())
-    }
-
-    /// Applies the editor's outcome. Cancellation leaves the Commit page as it was.
-    fn conclude_authoring(
-        &mut self,
-        commit: &dyn CommitWorkspace,
-        outcome: Option<(
-            CommitAuthoringContext,
-            crate::author::AuthoringCheckpoint,
-            Result<CommitOutput, String>,
-        )>,
-    ) {
-        let Some((context, checkpoint, result)) = outcome else {
-            return;
-        };
-        match result {
-            Ok(output) => {
-                self.pending_author = None;
-                format!(
-                    "Commit created.\n{}{}",
-                    String::from_utf8_lossy(output.stdout()),
-                    String::from_utf8_lossy(output.stderr())
-                )
-                .trim()
-                .clone_into(&mut self.commit.notice);
-            }
-            Err(error) => {
-                self.commit.notice =
-                    format!("Commit failed: {error}\nThe reviewed message is retained.");
-                self.pending_author = Some(PendingAuthor {
-                    context,
-                    checkpoint,
-                });
-            }
-        }
-        self.commit.refresh(commit);
-    }
-
     fn render(&mut self, frame: &mut Frame<'_>, help: &[HelpPage]) {
         let area = frame.area();
         self.too_small = area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT;
@@ -593,10 +515,7 @@ impl Shell {
                 let footer = render_footer_block(frame, footer);
                 match self.section {
                     Section::Home => self.home.render(frame, content),
-                    Section::Commit => {
-                        self.commit
-                            .render(frame, content, self.pending_author.is_some())
-                    }
+                    Section::Commit => self.commit.render(frame, content),
                     Section::Help => self.help.render(frame, content, help),
                     Section::Config => {}
                 }
@@ -737,9 +656,9 @@ mod tests {
     use std::cell::RefCell;
 
     use gitserious_app::{
-        BranchState, CommitOutput, CommitWorkspace, ConfigurationWorkspace, GlobalConfiguration,
-        LibraryDraft, ProjectConfiguration, ProjectOverview, ProjectSnapshot, ProjectWorkspace,
-        RepositoryRoot, RepositoryStatus,
+        BranchState, CommitAuthoringContext, CommitOutput, CommitWorkspace, ConfigurationWorkspace,
+        GlobalConfiguration, LibraryDraft, ProjectConfiguration, ProjectOverview, ProjectSnapshot,
+        ProjectWorkspace, RepositoryRoot, RepositoryStatus,
     };
 
     use super::help_page::{HelpLine, HelpSpan};
@@ -2193,7 +2112,7 @@ mod tests {
     fn rejected_review_on(section: Section) -> Result<Shell, Box<dyn std::error::Error>> {
         let (context, _, checkpoint) = crate::author::reviewed_submission()?;
         let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
-        shell.conclude_authoring(
+        shell.commit.conclude_authoring(
             &Services,
             Some((context, checkpoint, Err("hook rejected".into()))),
         );
@@ -2300,13 +2219,13 @@ mod tests {
 
         assert_eq!(opened.section, Section::Commit);
         assert_eq!(commit_page(&opened), commit_page(&visited));
-        assert!(opened.pending_author.is_none());
+        assert!(!opened.commit.has_pending_review());
         assert!(opened.commit.notice.is_empty());
         assert_eq!(
             opened.handle_event(key(KeyCode::Enter), of(&services), &[]),
             Some(Action::Author)
         );
-        assert!(opened.pending_author.is_none());
+        assert!(!opened.commit.has_pending_review());
     }
 
     #[test]
@@ -2339,10 +2258,10 @@ mod tests {
         let mut shell = Shell::new(InitialPage::Commit, of(&services), &[]);
         let notice = shell.commit.notice.clone();
 
-        shell.conclude_authoring(&services, None);
+        shell.commit.conclude_authoring(&services, None);
 
         assert_eq!(shell.section, Section::Commit);
-        assert!(shell.pending_author.is_none());
+        assert!(!shell.commit.has_pending_review());
         assert_eq!(shell.commit.notice, notice);
     }
 
@@ -2353,22 +2272,24 @@ mod tests {
         let created = CommitOutput::new(b"created\n".to_vec(), b"hook note\n".to_vec());
         let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
 
-        shell.conclude_authoring(&Services, Some((context, checkpoint, Ok(created))));
+        shell
+            .commit
+            .conclude_authoring(&Services, Some((context, checkpoint, Ok(created))));
 
         assert_eq!(shell.section, Section::Commit);
-        assert!(shell.pending_author.is_none());
+        assert!(!shell.commit.has_pending_review());
         assert!(shell.commit.notice.contains("Commit created."));
         assert!(shell.commit.notice.contains("created"));
         assert!(shell.commit.notice.contains("hook note"));
 
         let (context, _, checkpoint) = crate::author::reviewed_submission()?;
-        shell.conclude_authoring(
+        shell.commit.conclude_authoring(
             &Services,
             Some((context, checkpoint, Err("hook rejected".into()))),
         );
 
         assert_eq!(shell.section, Section::Commit);
-        assert!(shell.pending_author.is_some());
+        assert!(shell.commit.has_pending_review());
         assert!(
             shell
                 .commit
@@ -2384,7 +2305,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let (context, _, checkpoint) = crate::author::reviewed_submission()?;
         let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
-        shell.conclude_authoring(
+        shell.commit.conclude_authoring(
             &Services,
             Some((context, checkpoint, Err("hook rejected".into()))),
         );
@@ -2403,13 +2324,13 @@ mod tests {
                 None
             );
             assert_eq!(shell.section, expected);
-            assert!(shell.pending_author.is_some());
+            assert!(shell.commit.has_pending_review());
         }
         assert_eq!(
             shell.handle_event(key(KeyCode::Char('r')), of(&Services), &[]),
             None
         );
-        assert!(shell.pending_author.is_some());
+        assert!(shell.commit.has_pending_review());
         assert_eq!(
             shell.handle_event(key(KeyCode::Enter), of(&Services), &[]),
             Some(Action::Resume)
@@ -2418,8 +2339,8 @@ mod tests {
             shell.handle_event(key(KeyCode::Char('c')), of(&Services), &[]),
             Some(Action::Author)
         );
-        shell.conclude_authoring(&Services, None);
-        assert!(shell.pending_author.is_some());
+        shell.commit.conclude_authoring(&Services, None);
+        assert!(shell.commit.has_pending_review());
         assert_eq!(
             shell.handle_event(key(KeyCode::Enter), of(&Services), &[]),
             Some(Action::Resume)
@@ -2432,7 +2353,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let (context, _, checkpoint) = crate::author::reviewed_submission()?;
         let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
-        shell.conclude_authoring(
+        shell.commit.conclude_authoring(
             &Services,
             Some((context, checkpoint, Err("hook rejected".into()))),
         );
@@ -2447,7 +2368,7 @@ mod tests {
             None
         );
         assert!(shell.overlay.is_none());
-        assert!(shell.pending_author.is_some());
+        assert!(shell.commit.has_pending_review());
         assert_eq!(shell.section, Section::Commit);
 
         shell.handle_event(key(KeyCode::Char('q')), of(&Services), &[]);
@@ -2464,11 +2385,11 @@ mod tests {
         let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
         for rejection in ["first hook rejection", "second hook rejection"] {
             let (context, _, checkpoint) = crate::author::reviewed_submission()?;
-            shell.conclude_authoring(
+            shell.commit.conclude_authoring(
                 &Services,
                 Some((context, checkpoint, Err(rejection.into()))),
             );
-            assert!(shell.pending_author.is_some());
+            assert!(shell.commit.has_pending_review());
             assert!(shell.commit.notice.contains(rejection));
             assert!(!shell.commit.notice.contains("Commit created."));
             assert_eq!(
@@ -2478,7 +2399,7 @@ mod tests {
         }
 
         let (context, _, checkpoint) = crate::author::reviewed_submission()?;
-        shell.conclude_authoring(
+        shell.commit.conclude_authoring(
             &Services,
             Some((
                 context,
@@ -2486,7 +2407,7 @@ mod tests {
                 Ok(CommitOutput::new(b"retry created\n".to_vec(), Vec::new())),
             )),
         );
-        assert!(shell.pending_author.is_none());
+        assert!(!shell.commit.has_pending_review());
         assert_eq!(shell.commit.notice, "Commit created.\nretry created");
         assert_eq!(
             shell.handle_event(key(KeyCode::Enter), of(&Services), &[]),

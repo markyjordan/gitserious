@@ -1,13 +1,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
+use std::io;
 use std::path::{Path, PathBuf};
 
-use gitserious_app::{BranchState, CommitWorkspace, RepositoryStatus, StatusEntry};
-use ratatui::Frame;
+use gitserious_app::{
+    BranchState, CommitAuthoringContext, CommitOutput, CommitWorkspace, RepositoryStatus,
+    StatusEntry,
+};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::{DefaultTerminal, Frame};
 
+use crate::author::{AuthoringCheckpoint, embedded_author};
 use crate::theme::{block_title, frame_style, navigation_key_style, section_heading_style};
 
 #[derive(Clone)]
@@ -23,11 +28,18 @@ struct Node<'a> {
     entry: Option<&'a StatusEntry>,
 }
 
+/// A reviewed commit whose submission failed, kept so review can resume.
+struct PendingAuthor {
+    context: CommitAuthoringContext,
+    checkpoint: AuthoringCheckpoint,
+}
+
 #[derive(Default)]
 pub(super) struct CommitView {
     pub(super) snapshot: Option<RepositoryStatus>,
     pub(super) blocker: Option<String>,
     pub(super) notice: String,
+    pending: Option<PendingAuthor>,
     collapsed: BTreeSet<(usize, PathBuf)>,
     rows: Vec<TreeRow>,
     selected: usize,
@@ -48,6 +60,74 @@ impl CommitView {
             }
         }
         self.rebuild();
+    }
+
+    pub(super) fn has_pending_review(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// Authors a commit in `terminal`, or resumes the failed one's review, and submits it.
+    pub(super) fn author(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        commit: &dyn CommitWorkspace,
+        resume: bool,
+    ) -> io::Result<()> {
+        self.refresh(commit);
+        let pending = if resume { self.pending.take() } else { None };
+        let (context, checkpoint) = if let Some(pending) = pending {
+            (pending.context, Some(pending.checkpoint))
+        } else {
+            match commit.prepare_commit() {
+                Ok(context) => (context, None),
+                Err(error) => {
+                    self.notice = error;
+                    return Ok(());
+                }
+            }
+        };
+        let Some((authored, checkpoint)) = embedded_author(terminal, &context, checkpoint)? else {
+            self.conclude_authoring(commit, None);
+            return Ok(());
+        };
+        let result = crate::runtime::suspended(terminal, || commit.submit_commit(&authored))?;
+        self.conclude_authoring(commit, Some((context, checkpoint, result)));
+        Ok(())
+    }
+
+    /// Applies the editor's outcome. Cancellation leaves the Commit page as it was.
+    pub(super) fn conclude_authoring(
+        &mut self,
+        commit: &dyn CommitWorkspace,
+        outcome: Option<(
+            CommitAuthoringContext,
+            AuthoringCheckpoint,
+            Result<CommitOutput, String>,
+        )>,
+    ) {
+        let Some((context, checkpoint, result)) = outcome else {
+            return;
+        };
+        match result {
+            Ok(output) => {
+                self.pending = None;
+                format!(
+                    "Commit created.\n{}{}",
+                    String::from_utf8_lossy(output.stdout()),
+                    String::from_utf8_lossy(output.stderr())
+                )
+                .trim()
+                .clone_into(&mut self.notice);
+            }
+            Err(error) => {
+                self.notice = format!("Commit failed: {error}\nThe reviewed message is retained.");
+                self.pending = Some(PendingAuthor {
+                    context,
+                    checkpoint,
+                });
+            }
+        }
+        self.refresh(commit);
     }
 
     fn rebuild(&mut self) {
@@ -129,7 +209,7 @@ impl CommitView {
         }
     }
 
-    pub(super) fn render(&mut self, frame: &mut Frame<'_>, area: Rect, pending: bool) {
+    pub(super) fn render(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let [summary, tree, status] = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(1),
@@ -167,7 +247,7 @@ impl CommitView {
             tree,
             &mut self.list,
         );
-        let action = if pending {
+        let action = if self.has_pending_review() {
             "[c] start new commit  [enter] resume review"
         } else if self.blocker.is_some() {
             "Start commit unavailable"
