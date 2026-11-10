@@ -7,10 +7,8 @@ mod init_editor;
 use std::io::{self, IsTerminal};
 
 use gitserious_app::{
-    CommitAuthoringContext, CommitOutput, CommitWorkspace, ConfigurationWorkspace,
-    ProjectConfiguration, ProjectOverview, ProjectWorkspace,
+    CommitAuthoringContext, CommitOutput, CommitWorkspace, ConfigurationWorkspace, ProjectWorkspace,
 };
-use gitserious_core::built_in_taxonomies;
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
@@ -30,8 +28,7 @@ use crate::theme::{
 use commit_view::CommitView;
 pub use help_page::HelpPage;
 use help_view::HelpView;
-use home::HomeAction;
-use init_editor::{EditorOutcome, InitEditor};
+use home::{HomeAction, HomeOutcome, HomePage};
 
 fn quit_question() -> Confirmation<'static> {
     Confirmation {
@@ -170,11 +167,7 @@ struct Shell {
     section: Section,
     config: ConfigView,
     commit: CommitView,
-    home: ProjectOverview,
-    /// Open while the user chooses the new project's taxonomies.
-    init_editor: Option<InitEditor>,
-    /// Why the last initialization from Home failed.
-    home_error: Option<String>,
+    home: HomePage,
     pending_author: Option<PendingAuthor>,
     overlay: Option<Overlay>,
     quit_dialog: ConfirmDialog,
@@ -202,9 +195,7 @@ impl Shell {
             section,
             config: ConfigView::new(capabilities.config),
             commit: CommitView::default(),
-            home: capabilities.project.overview(),
-            init_editor: None,
-            home_error: None,
+            home: HomePage::new(capabilities.project),
             pending_author: None,
             overlay: None,
             quit_dialog: ConfirmDialog::default(),
@@ -221,13 +212,7 @@ impl Shell {
         self.section = section;
         match section {
             Section::Commit => self.commit.refresh(capabilities.commit),
-            Section::Home => {
-                self.home = capabilities.project.overview();
-                self.home_error = None;
-                if !HomeAction::of(&self.home).is_some_and(HomeAction::initializes) {
-                    self.init_editor = None;
-                }
-            }
+            Section::Home => self.home.enter(capabilities.project),
             Section::Help => self.help.enter(),
             Section::Config => {}
         }
@@ -238,20 +223,7 @@ impl Shell {
             Action::Select(section) => self.enter(section, capabilities),
             Action::Initialize => {
                 self.section = Section::Home;
-                let library = capabilities
-                    .config
-                    .library_taxonomies()
-                    .unwrap_or_else(|error| {
-                        self.home_error =
-                            Some(format!("Library taxonomies are unavailable: {error}"));
-                        Vec::new()
-                    });
-                let creates_repository = matches!(self.home, ProjectOverview::NoRepository { .. });
-                self.init_editor = Some(InitEditor::new(
-                    built_in_taxonomies(),
-                    &library,
-                    creates_repository,
-                ));
+                self.home.offer_initialization(capabilities.config);
             }
             Action::Refresh => {
                 self.commit.notice.clear();
@@ -333,21 +305,15 @@ impl Shell {
                 }
             } else {
                 if self.section == Section::Home
-                    && let Some(editor) = &mut self.init_editor
+                    && self.home.editing()
                     && !matches!(
                         key.code,
                         KeyCode::Tab | KeyCode::BackTab | KeyCode::Char('q' | '/')
                     )
                 {
-                    match editor.key(*key) {
-                        EditorOutcome::Stay => {}
-                        EditorOutcome::Back => {
-                            self.init_editor = None;
-                            self.home_error = None;
-                        }
-                        EditorOutcome::Initialize(configuration) => {
-                            self.initialize(capabilities, &configuration);
-                        }
+                    if self.home.key(*key, capabilities.project) == HomeOutcome::Initialized {
+                        // Config loaded the project before it existed.
+                        self.config = ConfigView::new(capabilities.config);
                     }
                     return None;
                 }
@@ -371,15 +337,13 @@ impl Shell {
                     _ => {}
                 }
                 match self.section {
-                    Section::Home if key.code == KeyCode::Enter => {
-                        match HomeAction::of(&self.home) {
-                            Some(HomeAction::GoToCommit) => {
-                                return self.execute(Action::Select(Section::Commit), capabilities);
-                            }
-                            Some(_) => return self.execute(Action::Initialize, capabilities),
-                            None => {}
+                    Section::Home if key.code == KeyCode::Enter => match self.home.action() {
+                        Some(HomeAction::GoToCommit) => {
+                            return self.execute(Action::Select(Section::Commit), capabilities);
                         }
-                    }
+                        Some(_) => return self.execute(Action::Initialize, capabilities),
+                        None => {}
+                    },
                     Section::Commit => match key.code {
                         KeyCode::Char('r') => return self.execute(Action::Refresh, capabilities),
                         KeyCode::Char('o') if !self.commit.notice.is_empty() => {
@@ -419,8 +383,8 @@ impl Shell {
         match self.config.handle_event(event, capabilities.config) {
             Some(ConfigRequest::Quit) => return self.execute(Action::Quit, capabilities),
             Some(ConfigRequest::Initialize) => {
-                self.home = capabilities.project.overview();
-                if HomeAction::of(&self.home).is_some_and(HomeAction::initializes) {
+                self.home.refresh(capabilities.project);
+                if self.home.action().is_some_and(HomeAction::initializes) {
                     return self.execute(Action::Initialize, capabilities);
                 }
                 self.config = ConfigView::new(capabilities.config);
@@ -428,19 +392,6 @@ impl Shell {
             None => {}
         }
         None
-    }
-
-    fn initialize(&mut self, capabilities: Capabilities<'_>, configuration: &ProjectConfiguration) {
-        match capabilities.project.initialize(configuration) {
-            Ok(()) => {
-                self.init_editor = None;
-                self.home_error = None;
-                // Config loaded the project before it existed.
-                self.config = ConfigView::new(capabilities.config);
-            }
-            Err(error) => self.home_error = Some(error),
-        }
-        self.home = capabilities.project.overview();
     }
 
     fn open_palette(&mut self) {
@@ -456,8 +407,7 @@ impl Shell {
             .into_iter()
             .map(|section| (format!("Open {}", section.label()), Action::Select(section)))
             .collect();
-        if self.section == Section::Home
-            && HomeAction::of(&self.home).is_some_and(HomeAction::initializes)
+        if self.section == Section::Home && self.home.action().is_some_and(HomeAction::initializes)
         {
             commands.push(("Initialize gitserious".into(), Action::Initialize));
         }
@@ -642,18 +592,7 @@ impl Shell {
                         .areas(body);
                 let footer = render_footer_block(frame, footer);
                 match self.section {
-                    Section::Home => {
-                        match (&self.init_editor, &self.home) {
-                            (Some(editor), ProjectOverview::Uninitialized { root }) => editor
-                                .render(frame, content, root.as_path(), self.home_error.as_deref()),
-                            (Some(editor), ProjectOverview::NoRepository { directory }) => {
-                                editor.render(frame, content, directory, self.home_error.as_deref())
-                            }
-                            _ => {
-                                home::render(frame, content, &self.home, self.home_error.as_deref())
-                            }
-                        }
-                    }
+                    Section::Home => self.home.render(frame, content),
                     Section::Commit => {
                         self.commit
                             .render(frame, content, self.pending_author.is_some())
@@ -661,15 +600,7 @@ impl Shell {
                     Section::Help => self.help.render(frame, content, help),
                     Section::Config => {}
                 }
-                let home_hints = self.init_editor.as_ref().map_or_else(
-                    || {
-                        HomeAction::of(&self.home)
-                            .map(HomeAction::hint)
-                            .into_iter()
-                            .collect()
-                    },
-                    InitEditor::hints,
-                );
+                let home_hints = self.home.hints();
                 let help_hints = self.help.hints(help.len());
                 let hints: &[(&str, &str)] = match self.section {
                     Section::Commit => &[("↑/↓", "move"), ("←/→", "tree"), ("r", "refresh")],
@@ -807,8 +738,8 @@ mod tests {
 
     use gitserious_app::{
         BranchState, CommitOutput, CommitWorkspace, ConfigurationWorkspace, GlobalConfiguration,
-        LibraryDraft, ProjectConfiguration, ProjectSnapshot, ProjectWorkspace, RepositoryRoot,
-        RepositoryStatus,
+        LibraryDraft, ProjectConfiguration, ProjectOverview, ProjectSnapshot, ProjectWorkspace,
+        RepositoryRoot, RepositoryStatus,
     };
 
     use super::help_page::{HelpLine, HelpSpan};
@@ -1206,7 +1137,7 @@ mod tests {
             ["conventional-v1", "research-v1", "infra-ops-v1"]
         );
         assert_eq!(shell.section, Section::Home);
-        assert!(matches!(shell.home, ProjectOverview::Initialized { .. }));
+        assert_eq!(shell.home.action(), Some(HomeAction::GoToCommit));
         shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         assert_eq!(shell.section, Section::Commit);
         Ok(())
@@ -1320,7 +1251,7 @@ mod tests {
         let (mut shell, _) = home_screen(&workspace, 87, 40)?;
         shell.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         assert_eq!(shell.section, Section::Home);
-        assert!(shell.init_editor.is_none(), "enter has no step to take");
+        assert!(!shell.home.editing(), "enter has no step to take");
 
         let workspace = HomeWorkspace::new(ProjectOverview::NoRepository {
             directory: fresh_root().as_path().to_path_buf(),
