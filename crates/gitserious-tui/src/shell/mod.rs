@@ -204,7 +204,7 @@ impl Shell {
     fn enter(&mut self, section: Section, workspace: &dyn InteractiveWorkspace) {
         self.section = section;
         match section {
-            Section::Commit => self.commit.refresh(workspace),
+            Section::Commit => self.commit.refresh(workspace.commit()),
             Section::Home => {
                 self.home = workspace.home();
                 self.home_error = None;
@@ -235,7 +235,7 @@ impl Shell {
             }
             Action::Refresh => {
                 self.commit.notice.clear();
-                self.commit.refresh(workspace);
+                self.commit.refresh(workspace.commit());
             }
             Action::Result => self.overlay = Some(Overlay::Result(0)),
             Action::Author | Action::Resume => return Some(action),
@@ -541,7 +541,7 @@ impl Shell {
         workspace: &dyn InteractiveWorkspace,
         resume: bool,
     ) -> io::Result<()> {
-        self.commit.refresh(workspace);
+        self.commit.refresh(workspace.commit());
         let pending = if resume {
             self.pending_author.take()
         } else {
@@ -600,7 +600,7 @@ impl Shell {
                 });
             }
         }
-        self.commit.refresh(workspace);
+        self.commit.refresh(workspace.commit());
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, help: &[HelpPage]) {
@@ -800,7 +800,7 @@ mod tests {
     use std::cell::RefCell;
 
     use gitserious_app::{
-        BranchState, CommitOutput, ConfigurationDestination, ConfigurationSession,
+        BranchState, CommitOutput, CommitWorkspace, ConfigurationDestination, ConfigurationSession,
         ConfigurationWorkspace, GlobalConfiguration, HelpLine, HelpSpan, ProjectConfiguration,
         RepositoryRoot, RepositoryStatus,
     };
@@ -844,6 +844,23 @@ mod tests {
         fn configuration(&self) -> &dyn ConfigurationWorkspace {
             self
         }
+        fn commit(&self) -> &dyn CommitWorkspace {
+            self
+        }
+        fn repository_status(&self) -> Result<RepositoryStatus, String> {
+            CommitWorkspace::repository_status(self)
+        }
+        fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
+            CommitWorkspace::prepare_commit(self)
+        }
+        fn submit_commit(
+            &self,
+            authored: &gitserious_app::AuthoredCommit,
+        ) -> Result<CommitOutput, String> {
+            CommitWorkspace::submit_commit(self, authored)
+        }
+    }
+    impl CommitWorkspace for Services {
         fn repository_status(&self) -> Result<RepositoryStatus, String> {
             Ok(RepositoryStatus {
                 root: RepositoryRoot::new(std::env::temp_dir())
@@ -893,6 +910,24 @@ mod tests {
         fn configuration(&self) -> &dyn ConfigurationWorkspace {
             self
         }
+        fn commit(&self) -> &dyn CommitWorkspace {
+            self
+        }
+        fn repository_status(&self) -> Result<RepositoryStatus, String> {
+            CommitWorkspace::repository_status(self)
+        }
+        fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
+            CommitWorkspace::prepare_commit(self)
+        }
+        fn submit_commit(
+            &self,
+            authored: &gitserious_app::AuthoredCommit,
+        ) -> Result<CommitOutput, String> {
+            CommitWorkspace::submit_commit(self, authored)
+        }
+    }
+
+    impl CommitWorkspace for Unavailable {
         fn repository_status(&self) -> Result<RepositoryStatus, String> {
             Err("repository unavailable".into())
         }
@@ -903,7 +938,7 @@ mod tests {
             &self,
             authored: &gitserious_app::AuthoredCommit,
         ) -> Result<CommitOutput, String> {
-            Services.submit_commit(authored)
+            CommitWorkspace::submit_commit(&Services, authored)
         }
     }
 
@@ -992,17 +1027,20 @@ mod tests {
         fn configuration(&self) -> &dyn ConfigurationWorkspace {
             self
         }
+        fn commit(&self) -> &dyn CommitWorkspace {
+            &Services
+        }
         fn repository_status(&self) -> Result<RepositoryStatus, String> {
-            Services.repository_status()
+            CommitWorkspace::repository_status(&Services)
         }
         fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
-            Services.prepare_commit()
+            CommitWorkspace::prepare_commit(&Services)
         }
         fn submit_commit(
             &self,
             authored: &gitserious_app::AuthoredCommit,
         ) -> Result<CommitOutput, String> {
-            Services.submit_commit(authored)
+            CommitWorkspace::submit_commit(&Services, authored)
         }
     }
 

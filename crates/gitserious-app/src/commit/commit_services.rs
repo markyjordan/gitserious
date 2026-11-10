@@ -8,6 +8,15 @@ use crate::{
     validate_reviewed_commit,
 };
 
+/// Application operations exposed to the Commit page.
+pub trait CommitWorkspace {
+    fn repository_status(&self) -> Result<RepositoryStatus, String>;
+    /// The authoring context for a staged, conflict-free index under persisted project policy.
+    fn prepare_commit(&self) -> Result<CommitAuthoringContext, String>;
+    /// Writes the reviewed bytes once the index and persisted policy still accept them.
+    fn submit_commit(&self, authored: &AuthoredCommit) -> Result<CommitOutput, String>;
+}
+
 /// Commit operations over the repository that contains `start`.
 pub struct CommitServices<'a, L: ?Sized, S: ?Sized, W: ?Sized> {
     locator: &'a L,
@@ -41,8 +50,18 @@ where
             start,
         }
     }
+}
 
-    pub fn repository_status(&self) -> Result<RepositoryStatus, String> {
+impl<L, S, W> CommitWorkspace for CommitServices<'_, L, S, W>
+where
+    L: RepositoryLocator + ?Sized,
+    L::Error: Display,
+    S: ProjectConfigurationStore + ?Sized,
+    S::Error: Display,
+    W: CommitWriter + ?Sized,
+    W::Error: Display,
+{
+    fn repository_status(&self) -> Result<RepositoryStatus, String> {
         let root = self
             .locator
             .locate(self.start)
@@ -50,7 +69,7 @@ where
         self.status.read(&root)
     }
 
-    pub fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
+    fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
         let snapshot = self.repository_status()?;
         if snapshot.has_conflicts() {
             return Err("Resolve Git conflicts before starting a commit.".into());
@@ -67,7 +86,7 @@ where
         .map_err(|error| error.to_string())
     }
 
-    pub fn submit_commit(&self, authored: &AuthoredCommit) -> Result<CommitOutput, String> {
+    fn submit_commit(&self, authored: &AuthoredCommit) -> Result<CommitOutput, String> {
         // Reload persisted policy on submission; unapplied Config drafts never influence authoring.
         let context = self.prepare_commit()?;
         let message = validate_reviewed_commit::<Infallible, Infallible, Infallible, Infallible>(
