@@ -344,3 +344,185 @@ fn a_pending_review_requires_confirmation_before_quitting() -> Result<(), Box<dy
     );
     Ok(())
 }
+
+#[test]
+fn key_releases_change_nothing_on_any_page_or_overlay() -> Result<(), Box<dyn std::error::Error>> {
+    let release = |code| {
+        Event::Key(KeyEvent::new_with_kind(
+            code,
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ))
+    };
+    let codes = [
+        KeyCode::Tab,
+        KeyCode::BackTab,
+        KeyCode::Esc,
+        KeyCode::Enter,
+        KeyCode::Char('q'),
+        KeyCode::Char('/'),
+        KeyCode::Char('c'),
+    ];
+    let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+    for section in Section::ALL {
+        let mut shell = Shell::new(InitialPage::Home, of(&Services), &[]);
+        shell.execute(Action::Select(section), of(&Services));
+        for open in [false, true] {
+            if open {
+                shell.handle_event(key(KeyCode::Char('/')), of(&Services), &[]);
+            }
+            terminal.draw(|frame| shell.render(frame, &[]))?;
+            let before = rendered(&terminal);
+            for code in codes {
+                assert_eq!(
+                    shell.handle_event(release(code), of(&Services), &[]),
+                    None,
+                    "{section:?} {code:?}"
+                );
+            }
+            assert_eq!(shell.section, section);
+            terminal.draw(|frame| shell.render(frame, &[]))?;
+            assert_eq!(rendered(&terminal), before, "{section:?} palette {open}");
+        }
+    }
+
+    let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
+    shell.commit.notice.push_str("hook rejected");
+    shell.handle_event(key(KeyCode::Char('o')), of(&Services), &[]);
+    for code in codes {
+        assert_eq!(shell.handle_event(release(code), of(&Services), &[]), None);
+        assert!(shell.commit.modal(), "{code:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_too_small_terminal_quits_on_q_esc_and_ctrl_c_and_ignores_other_input()
+-> Result<(), Box<dyn std::error::Error>> {
+    let control_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    for section in Section::ALL {
+        for (width, height) in [(MINIMUM_WIDTH - 1, 40), (87, MINIMUM_HEIGHT - 1)] {
+            let fresh = || {
+                let mut shell = Shell::new(InitialPage::Home, of(&Services), &[]);
+                shell.execute(Action::Select(section), of(&Services));
+                shell
+            };
+            let mut shell = fresh();
+            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+            terminal.draw(|frame| shell.render(frame, &[]))?;
+            assert!(
+                rendered(&terminal).contains("Resize or press esc/q to quit"),
+                "{section:?} {width}x{height}"
+            );
+            for event in [
+                key(KeyCode::Tab),
+                key(KeyCode::BackTab),
+                key(KeyCode::Enter),
+                key(KeyCode::Char('/')),
+                key(KeyCode::Char('r')),
+                key(KeyCode::Char('c')),
+                click(Rect::new(1, 0, 1, 1)),
+                click(Rect::new(8, 0, 1, 1)),
+                click(Rect::new(15, 0, 1, 1)),
+            ] {
+                let shown = format!("{event:?}");
+                assert_eq!(
+                    shell.handle_event(event, of(&Services), &[]),
+                    None,
+                    "{section:?} {shown}"
+                );
+                assert_eq!(shell.section, section, "{shown}");
+                assert!(shell.overlay.is_none(), "{shown}");
+                assert!(!shell.home.editing(), "{shown}");
+            }
+            for event in [
+                key(KeyCode::Char('q')),
+                key(KeyCode::Esc),
+                control_c.clone(),
+            ] {
+                let mut shell = fresh();
+                terminal.draw(|frame| shell.render(frame, &[]))?;
+                assert_eq!(
+                    shell.handle_event(event.clone(), of(&Services), &[]),
+                    Some(Action::Quit),
+                    "{section:?} {event:?}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ctrl_c_waits_while_the_git_result_or_a_hidden_config_edit_is_open()
+-> Result<(), Box<dyn std::error::Error>> {
+    let control_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    let mut shell = Shell::new(InitialPage::Commit, of(&Services), &[]);
+    shell.commit.notice.push_str("hook rejected");
+    shell.handle_event(key(KeyCode::Char('o')), of(&Services), &[]);
+    assert!(shell.commit.modal());
+    assert_eq!(
+        shell.handle_event(control_c.clone(), of(&Services), &[]),
+        None
+    );
+    assert!(shell.commit.modal());
+    shell.handle_event(key(KeyCode::Esc), of(&Services), &[]);
+    assert!(!shell.commit.modal());
+    assert_eq!(
+        shell.handle_event(control_c.clone(), of(&Services), &[]),
+        Some(Action::Quit)
+    );
+
+    let mut config = Shell::new(InitialPage::Config, of(&Services), &[]);
+    config.handle_event(key(KeyCode::Char('2')), of(&Services), &[]);
+    config.handle_event(key(KeyCode::Char('n')), of(&Services), &[]);
+    let mut small = Terminal::new(TestBackend::new(MINIMUM_WIDTH - 1, 40))?;
+    small.draw(|frame| config.render(frame, &[]))?;
+    assert_eq!(config.handle_event(control_c, of(&Services), &[]), None);
+    assert!(config.config.modal());
+    assert_eq!(config.section, Section::Config);
+    Ok(())
+}
+
+#[test]
+fn an_open_palette_takes_every_key_and_ignores_clicks() -> Result<(), Box<dyn std::error::Error>> {
+    let control_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    for section in [Section::Home, Section::Commit, Section::Help] {
+        let mut shell = Shell::new(InitialPage::Home, of(&Services), &[]);
+        shell.execute(Action::Select(section), of(&Services));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        let (x, y) = position(&terminal, "Config").ok_or("no Config tab")?;
+        shell.handle_event(key(KeyCode::Char('/')), of(&Services), &[]);
+        for event in [
+            key(KeyCode::Char('q')),
+            key(KeyCode::Tab),
+            key(KeyCode::BackTab),
+            click(Rect::new(x, y, 1, 1)),
+            control_c.clone(),
+        ] {
+            let shown = format!("{event:?}");
+            assert_eq!(
+                shell.handle_event(event, of(&Services), &[]),
+                None,
+                "{section:?} {shown}"
+            );
+            assert_eq!(shell.section, section, "{shown}");
+            assert!(
+                matches!(shell.overlay, Some(Overlay::Palette(_))),
+                "{shown}"
+            );
+        }
+        terminal.draw(|frame| shell.render(frame, &[]))?;
+        let search = rendered(&terminal);
+        assert!(search.contains("/ q "), "{section:?}: q joins the query");
+        assert!(!search.contains("/ qc"), "{section:?}: ctrl+c does not");
+        assert_eq!(
+            shell.handle_event(key(KeyCode::Esc), of(&Services), &[]),
+            None
+        );
+        assert!(shell.overlay.is_none());
+        assert_eq!(shell.section, section);
+    }
+    Ok(())
+}
