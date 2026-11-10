@@ -17,7 +17,7 @@ use crate::commit::CommitView;
 use crate::config::{ConfigRequest, ConfigView, ShellKeys};
 use crate::confirmation::ConfirmDialog;
 use crate::help::{HelpPage, HelpView};
-use crate::home::{HomeAction, HomeOutcome, HomePage};
+use crate::home::{HomePage, HomeRequest};
 use crate::theme::{
     FOOTER_HEIGHT, MINIMUM_HEIGHT, MINIMUM_WIDTH, SHELL_HINTS, centered_rect, normalize_background,
     render_footer, render_footer_block, theme,
@@ -58,6 +58,7 @@ pub(crate) enum SessionRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Action {
     Select(Section),
+    Home(HomeRequest),
     Refresh,
     Result,
     Author,
@@ -126,7 +127,12 @@ impl Shell {
     fn execute(&mut self, action: Action, capabilities: Capabilities<'_>) -> Option<Action> {
         match action {
             Action::Select(section) => self.enter(section, capabilities),
-            Action::Initialize => {
+            Action::Home(HomeRequest::GoToCommit) => self.enter(Section::Commit, capabilities),
+            Action::Home(HomeRequest::Initialized) => {
+                // Config loaded the project before it existed.
+                self.config = ConfigView::new(capabilities.config);
+            }
+            Action::Home(HomeRequest::Initialize) | Action::Initialize => {
                 self.section = Section::Home;
                 self.home.offer_initialization(capabilities.config);
             }
@@ -158,7 +164,11 @@ impl Shell {
             Action::Quit => Some(SessionRequest::Quit),
             Action::Author => Some(SessionRequest::Author { resume: false }),
             Action::Resume => Some(SessionRequest::Author { resume: true }),
-            Action::Select(_) | Action::Refresh | Action::Result | Action::Initialize => None,
+            Action::Select(_)
+            | Action::Home(_)
+            | Action::Refresh
+            | Action::Result
+            | Action::Initialize => None,
         }
     }
 
@@ -236,18 +246,9 @@ impl Shell {
                     _ => {}
                 }
             } else {
-                if self.section == Section::Home
-                    && self.home.editing()
-                    && !matches!(
-                        key.code,
-                        KeyCode::Tab | KeyCode::BackTab | KeyCode::Char('q' | '/')
-                    )
-                {
-                    if self.home.key(*key, capabilities.project) == HomeOutcome::Initialized {
-                        // Config loaded the project before it existed.
-                        self.config = ConfigView::new(capabilities.config);
-                    }
-                    return None;
+                if self.section == Section::Home && self.home.captures(key) {
+                    let request = self.home.key(*key, capabilities.project)?;
+                    return self.execute(Action::Home(request), capabilities);
                 }
                 match key.code {
                     KeyCode::Tab | KeyCode::BackTab => {
@@ -269,13 +270,10 @@ impl Shell {
                     _ => {}
                 }
                 match self.section {
-                    Section::Home if key.code == KeyCode::Enter => match self.home.action() {
-                        Some(HomeAction::GoToCommit) => {
-                            return self.execute(Action::Select(Section::Commit), capabilities);
-                        }
-                        Some(_) => return self.execute(Action::Initialize, capabilities),
-                        None => {}
-                    },
+                    Section::Home => {
+                        let request = self.home.key(*key, capabilities.project)?;
+                        return self.execute(Action::Home(request), capabilities);
+                    }
                     Section::Commit => match key.code {
                         KeyCode::Char('r') => return self.execute(Action::Refresh, capabilities),
                         KeyCode::Char('o') if !self.commit.notice.is_empty() => {
@@ -301,7 +299,7 @@ impl Shell {
                         _ => {}
                     },
                     Section::Help => self.help.key(key.code, help.len()),
-                    _ => {}
+                    Section::Config => {}
                 }
             }
         }
@@ -316,7 +314,7 @@ impl Shell {
             Some(ConfigRequest::Quit) => return self.execute(Action::Quit, capabilities),
             Some(ConfigRequest::Initialize) => {
                 self.home.refresh(capabilities.project);
-                if self.home.action().is_some_and(HomeAction::initializes) {
+                if self.home.can_initialize() {
                     return self.execute(Action::Initialize, capabilities);
                 }
                 self.config = ConfigView::new(capabilities.config);

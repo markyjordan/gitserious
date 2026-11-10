@@ -3,7 +3,7 @@ use std::path::Path;
 use gitserious_app::{ConfigurationWorkspace, ProjectOverview, ProjectWorkspace};
 use gitserious_core::{TaxonomyReference, built_in_taxonomies};
 use ratatui::Frame;
-use ratatui::crossterm::event::KeyEvent;
+use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -77,10 +77,13 @@ pub(crate) struct HomePage {
     error: Option<String>,
 }
 
-/// What a key on the initialization editor did, for the root to follow up.
+/// What Home asks the root to do.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum HomeOutcome {
-    Stay,
+pub(crate) enum HomeRequest {
+    GoToCommit,
+    /// Open the initialization editor.
+    Initialize,
+    /// The project now exists, so any page that loaded it before is stale.
     Initialized,
 }
 
@@ -114,6 +117,29 @@ impl HomePage {
         self.editor.is_some()
     }
 
+    /// Whether Home's step opens the initialization editor.
+    pub(crate) fn can_initialize(&self) -> bool {
+        self.action().is_some_and(HomeAction::initializes)
+    }
+
+    /// Whether the open editor takes `key` before the root's keys. It leaves tab, q, and slash to the root.
+    pub(crate) fn captures(&self, key: &KeyEvent) -> bool {
+        self.editing()
+            && !matches!(
+                key.code,
+                KeyCode::Tab | KeyCode::BackTab | KeyCode::Char('q' | '/')
+            )
+    }
+
+    /// Home's palette commands.
+    pub(crate) fn commands(&self) -> Vec<(&'static str, HomeRequest)> {
+        if self.can_initialize() {
+            vec![("Initialize gitserious", HomeRequest::Initialize)]
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Opens the editor on the built-in taxonomies and the Library's.
     pub(crate) fn offer_initialization(&mut self, config: &dyn ConfigurationWorkspace) {
         let library = config.library_taxonomies().unwrap_or_else(|error| {
@@ -128,28 +154,37 @@ impl HomePage {
         ));
     }
 
-    /// Hands `key` to the open editor.
-    pub(crate) fn key(&mut self, key: KeyEvent, project: &dyn ProjectWorkspace) -> HomeOutcome {
+    /// Hands `key` to the open editor, or takes Home's step on enter.
+    pub(crate) fn key(
+        &mut self,
+        key: KeyEvent,
+        project: &dyn ProjectWorkspace,
+    ) -> Option<HomeRequest> {
         let Some(editor) = &mut self.editor else {
-            return HomeOutcome::Stay;
+            return match self.action() {
+                _ if key.code != KeyCode::Enter => None,
+                Some(HomeAction::GoToCommit) => Some(HomeRequest::GoToCommit),
+                Some(_) => Some(HomeRequest::Initialize),
+                None => None,
+            };
         };
         match editor.key(key) {
-            EditorOutcome::Stay => HomeOutcome::Stay,
+            EditorOutcome::Stay => None,
             EditorOutcome::Back => {
                 self.editor = None;
                 self.error = None;
-                HomeOutcome::Stay
+                None
             }
             EditorOutcome::Initialize(configuration) => {
                 let outcome = match project.initialize(&configuration) {
                     Ok(()) => {
                         self.editor = None;
                         self.error = None;
-                        HomeOutcome::Initialized
+                        Some(HomeRequest::Initialized)
                     }
                     Err(error) => {
                         self.error = Some(error);
-                        HomeOutcome::Stay
+                        None
                     }
                 };
                 self.refresh(project);
