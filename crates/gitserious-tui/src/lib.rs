@@ -23,7 +23,7 @@ mod shell;
 mod taxonomy_config;
 mod theme;
 
-pub use shell::{InitialPage, RatatuiInteractiveUi};
+pub use shell::{HelpPage, InitialPage, RatatuiInteractiveUi};
 
 #[cfg(test)]
 #[path = "../tests/unit/mod.rs"]

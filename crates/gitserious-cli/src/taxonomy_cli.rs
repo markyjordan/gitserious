@@ -7,7 +7,7 @@ use clap::builder::StyledStr;
 use clap::builder::styling::{Style, Styles};
 use clap::error::ErrorKind;
 use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
-use gitserious_app::{HelpLine, HelpPage, HelpSpan, InitOutcome, InitStatus};
+use gitserious_app::{InitOutcome, InitStatus};
 use gitserious_core::TaxonomyReference;
 
 const HELP_WIDTH: usize = 100;
@@ -327,19 +327,46 @@ fn exit_code(code: i32) -> ExitCode {
     u8::try_from(code).map_or(ExitCode::FAILURE, ExitCode::from)
 }
 
-/// Help pages for the unified Help surface: what `-h` prints, then what
-/// `help <command>` prints for each command.
+/// One page of the interactive Help: the overview, or a command's documentation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HelpTopic {
+    pub title: &'static str,
+    /// The command the topic documents; the overview documents none.
+    pub command: Option<&'static str>,
+}
+
+/// The overview, then each command, in the order Help lists them.
 #[must_use]
-pub fn interactive_help() -> Vec<HelpPage> {
-    let mut pages = vec![HelpPage::new("Overview", None, |width| {
-        help_lines(&concise_help(styled_root(width)))
-    })];
-    for (title, command) in [("Init", "init"), ("Config", "config"), ("Commit", "commit")] {
-        pages.push(HelpPage::new(title, Some(command), move |width| {
-            help_lines(&detailed_help(styled_root(width), Some(command)))
-        }));
-    }
-    pages
+pub const fn help_topics() -> [HelpTopic; 4] {
+    [
+        HelpTopic {
+            title: "Overview",
+            command: None,
+        },
+        HelpTopic {
+            title: "Init",
+            command: Some("init"),
+        },
+        HelpTopic {
+            title: "Config",
+            command: Some("config"),
+        },
+        HelpTopic {
+            title: "Commit",
+            command: Some("commit"),
+        },
+    ]
+}
+
+/// What `-h` prints for no `command`, or what `help <command>` prints, wrapped to `width`
+/// columns with headings and names in SGR bold.
+#[must_use]
+pub fn styled_help(command: Option<&str>, width: u16) -> String {
+    let help = match command {
+        None => concise_help(styled_root(width)),
+        Some(command) => detailed_help(styled_root(width), Some(command)),
+    };
+    help.ansi().to_string()
 }
 
 /// The root command as a terminal `width` columns wide renders it, names in bold.
@@ -353,86 +380,9 @@ fn styled_root(width: u16) -> clap::Command {
     )
 }
 
-/// Splits rendered help into lines of spans that are strong while SGR bold is on.
-fn help_lines(help: &StyledStr) -> Vec<HelpLine> {
-    let ansi = help.ansi().to_string();
-    let mut pieces = ansi.split('\x1b');
-    let mut lines = Lines::default();
-    lines.push(pieces.next().unwrap_or_default());
-    for piece in pieces {
-        let Some(sequence) = piece.strip_prefix('[') else {
-            lines.push(piece);
-            continue;
-        };
-        let end = sequence
-            .find(|character| ('@'..='~').contains(&character))
-            .unwrap_or(sequence.len());
-        let (parameters, rest) = sequence.split_at(end);
-        let mut text = rest.chars();
-        if text.next() == Some('m') {
-            for parameter in parameters.split(';') {
-                match parameter {
-                    "1" => lines.strong = true,
-                    "" | "0" | "22" => lines.strong = false,
-                    _ => {}
-                }
-            }
-        }
-        lines.push(text.as_str());
-    }
-    lines.finish()
-}
-
-#[derive(Default)]
-struct Lines {
-    done: Vec<HelpLine>,
-    current: HelpLine,
-    strong: bool,
-}
-
-impl Lines {
-    fn push(&mut self, text: &str) {
-        for (index, part) in text.split('\n').enumerate() {
-            if index > 0 {
-                self.done.push(std::mem::take(&mut self.current));
-            }
-            if part.is_empty() {
-                continue;
-            }
-            match self.current.last_mut() {
-                Some(span) if span.strong == self.strong => span.text.push_str(part),
-                _ => self.current.push(HelpSpan {
-                    text: part.into(),
-                    strong: self.strong,
-                }),
-            }
-        }
-    }
-
-    /// The lines without trailing blank ones, as `printed` trims them.
-    fn finish(mut self) -> Vec<HelpLine> {
-        self.done.push(self.current);
-        while self
-            .done
-            .last()
-            .is_some_and(|line| line.iter().all(|span| span.text.trim().is_empty()))
-        {
-            self.done.pop();
-        }
-        self.done
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn span(text: &str, strong: bool) -> HelpSpan {
-        HelpSpan {
-            text: text.into(),
-            strong,
-        }
-    }
 
     fn invocations(arguments: &[&str]) -> [Invocation; 2] {
         let arguments = || std::iter::once("gitserious").chain(arguments.iter().copied());
@@ -626,26 +576,6 @@ mod tests {
         assert_eq!(
             sub.map(|usage| usage.to_string()).as_deref(),
             Some("Usage: tool sub [OPTIONS] [path]")
-        );
-    }
-
-    #[test]
-    fn help_spans_are_strong_only_while_sgr_bold_is_on() {
-        let help = StyledStr::from(
-            "\x1b[1mUsage:\x1b[m a\x1b[1;4mb\x1b[22mc\x1b[1m\nd\x1b[0me\x1b[32mf\x1b[1m\n\n",
-        );
-
-        assert_eq!(
-            help_lines(&help),
-            [
-                vec![
-                    span("Usage:", true),
-                    span(" a", false),
-                    span("b", true),
-                    span("c", false),
-                ],
-                vec![span("d", true), span("ef", false)],
-            ]
         );
     }
 }

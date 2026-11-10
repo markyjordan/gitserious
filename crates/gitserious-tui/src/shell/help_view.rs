@@ -1,4 +1,3 @@
-use gitserious_app::HelpPage;
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -6,6 +5,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Padding, Paragraph};
 
+use super::HelpPage;
 use crate::theme::theme;
 
 /// The labels of the digit keys that jump to a page, by page count.

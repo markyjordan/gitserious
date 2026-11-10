@@ -1,4 +1,5 @@
 mod commit_view;
+mod help_page;
 mod help_view;
 mod home;
 mod init_editor;
@@ -6,8 +7,8 @@ mod init_editor;
 use std::io::{self, IsTerminal};
 
 use gitserious_app::{
-    CommitAuthoringContext, CommitOutput, CommitWorkspace, HelpPage, InteractiveUi,
-    InteractiveWorkspace, ProjectConfiguration, ProjectOverview,
+    CommitAuthoringContext, CommitOutput, CommitWorkspace, InteractiveUi, InteractiveWorkspace,
+    ProjectConfiguration, ProjectOverview,
 };
 use gitserious_core::built_in_taxonomies;
 use ratatui::crossterm::event::{
@@ -27,6 +28,7 @@ use crate::theme::{
     render_footer, render_footer_block, theme,
 };
 use commit_view::CommitView;
+pub use help_page::HelpPage;
 use help_view::HelpView;
 use home::HomeAction;
 use init_editor::{EditorOutcome, InitEditor};
@@ -810,9 +812,11 @@ mod tests {
 
     use gitserious_app::{
         BranchState, CommitOutput, CommitWorkspace, ConfigurationWorkspace, GlobalConfiguration,
-        HelpLine, HelpSpan, LibraryDraft, ProjectConfiguration, ProjectSnapshot, ProjectWorkspace,
-        RepositoryRoot, RepositoryStatus,
+        LibraryDraft, ProjectConfiguration, ProjectSnapshot, ProjectWorkspace, RepositoryRoot,
+        RepositoryStatus,
     };
+
+    use super::help_page::{HelpLine, HelpSpan};
     use gitserious_core::TaxonomyVersion;
     use ratatui::{Terminal, backend::TestBackend};
 
