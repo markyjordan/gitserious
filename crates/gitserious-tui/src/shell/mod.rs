@@ -1,3 +1,5 @@
+mod navigation;
+
 use std::io;
 
 use gitserious_app::{CommitWorkspace, ConfigurationWorkspace, ProjectWorkspace};
@@ -5,7 +7,7 @@ use ratatui::crossterm::event::{
     Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 
@@ -19,6 +21,7 @@ use crate::theme::{
     centered_rect, command_hints, frame_style, navigation_key_style, normalize_background,
     render_footer, render_footer_block, theme,
 };
+use navigation::{Section, Tabs};
 
 fn quit_question() -> Confirmation<'static> {
     Confirmation {
@@ -59,35 +62,6 @@ pub(crate) enum SessionRequest {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Section {
-    Home,
-    Commit,
-    Config,
-    Help,
-}
-impl Section {
-    const ALL: [Self; 4] = [Self::Home, Self::Commit, Self::Config, Self::Help];
-    fn label(self) -> &'static str {
-        match self {
-            Self::Home => "Home",
-            Self::Config => "Config",
-            Self::Commit => "Commit",
-            Self::Help => "Help",
-        }
-    }
-    fn index(self) -> usize {
-        Self::ALL
-            .iter()
-            .position(|section| *section == self)
-            .unwrap_or(0)
-    }
-    fn next(self, reverse: bool) -> Self {
-        let count = Self::ALL.len();
-        Self::ALL[(self.index() + if reverse { count - 1 } else { 1 }) % count]
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Action {
     Select(Section),
     Refresh,
@@ -115,7 +89,7 @@ pub(crate) struct Shell {
     overlay: Option<Overlay>,
     quit_dialog: ConfirmDialog,
     help: HelpView,
-    root_areas: [Rect; Section::ALL.len()],
+    tabs: Tabs,
     too_small: bool,
 }
 
@@ -146,7 +120,7 @@ impl Shell {
             overlay: None,
             quit_dialog: ConfirmDialog::default(),
             help,
-            root_areas: [Rect::default(); Section::ALL.len()],
+            tabs: Tabs::default(),
             too_small: false,
         };
         shell.enter(section, capabilities);
@@ -239,9 +213,7 @@ impl Shell {
             && mouse.kind == MouseEventKind::Down(MouseButton::Left)
             && !self.too_small
         {
-            if let Some(section) = Section::ALL.into_iter().find(|section| {
-                self.root_areas[section.index()].contains((mouse.column, mouse.row).into())
-            }) {
+            if let Some(section) = self.tabs.at(mouse.column, mouse.row) {
                 return self.execute(Action::Select(section), capabilities);
             }
             match self.section {
@@ -456,7 +428,7 @@ impl Shell {
     pub(crate) fn render(&mut self, frame: &mut Frame<'_>, help: &[HelpPage]) {
         let area = frame.area();
         self.too_small = area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT;
-        self.root_areas = [Rect::default(); Section::ALL.len()];
+        self.tabs = Tabs::default();
         frame.render_widget(
             Block::default().style(Style::default().fg(theme().text).bg(theme().ground)),
             area,
@@ -521,22 +493,7 @@ impl Shell {
         frame.render_widget(Block::new().style(band), area);
         let version = format!("gitserious v{} ", env!("CARGO_PKG_VERSION"));
         frame.render_widget(Paragraph::new(version).style(band).right_aligned(), area);
-        let mut x = area.x.saturating_add(1);
-        for section in Section::ALL {
-            let label = section.label();
-            let width = u16::try_from(label.len()).unwrap_or(0);
-            let rect = Rect::new(x, area.y, width.min(area.right().saturating_sub(x)), 1);
-            let style = if section == self.section {
-                Style::new()
-                    .fg(theme().text)
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-            } else {
-                Style::new().fg(theme().dim)
-            };
-            frame.render_widget(Paragraph::new(label).style(style), rect);
-            self.root_areas[section.index()] = rect;
-            x = x.saturating_add(width + 2);
-        }
+        self.tabs.render(frame, area, self.section);
     }
 
     fn render_overlay(&mut self, frame: &mut Frame<'_>, area: Rect) {

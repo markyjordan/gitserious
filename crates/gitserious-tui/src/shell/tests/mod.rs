@@ -13,6 +13,7 @@ use crate::commit;
 use crate::help::{HelpLine, HelpSpan};
 use crate::home;
 use gitserious_core::TaxonomyVersion;
+use ratatui::style::Modifier;
 use ratatui::{Terminal, backend::TestBackend};
 use support::*;
 
