@@ -110,6 +110,13 @@ pub enum Invocation {
     Open(ShellStart),
     /// Initialize the project that contains the start directory.
     Init,
+    /// Text the CLI writes without running anything.
+    Answer(Answer),
+}
+
+/// A response the CLI writes in full, with `write_answer`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Answer {
     /// Help for a terminal, shown through the pager.
     Page(String),
     /// Help or the version, written to stdout.
@@ -141,7 +148,7 @@ where
     }
     match cli.command {
         Some(Command::Help { command }) => help(HelpRequest::Topic(command), terminal),
-        None if !terminal => Invocation::Print(printed(&concise_help(root()))),
+        None if !terminal => Invocation::Answer(Answer::Print(printed(&concise_help(root())))),
         None => Invocation::Open(ShellStart::Home),
         Some(Command::Init) => Invocation::Init,
         Some(Command::Config) => Invocation::Open(ShellStart::Config),
@@ -151,14 +158,14 @@ where
 
 /// Clap reports the version as an error that belongs on stdout.
 fn rejected(error: &clap::Error) -> Invocation {
-    if error.use_stderr() {
-        Invocation::Reject {
+    Invocation::Answer(if error.use_stderr() {
+        Answer::Reject {
             message: error.to_string(),
             code: exit_code(error.exit_code()),
         }
     } else {
-        Invocation::Print(error.to_string())
-    }
+        Answer::Print(error.to_string())
+    })
 }
 
 /// Concrete interaction adapters required by the binary.
@@ -246,7 +253,7 @@ where
 {
     let start = match std::env::current_dir() {
         Ok(path) => path,
-        Err(error) => return operational_error(stderr, error),
+        Err(error) => return write_error(stderr, error),
     };
     run_from_with_commit(
         arguments, &start, locator, store, global, adapters, stdout, stderr,
@@ -316,31 +323,22 @@ where
     let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     match parse(arguments, terminal) {
         Invocation::Open(page) => match adapters.shell {
-            Some(shell) => shell.open(page, start, &interactive_help()).map_or_else(
-                |error| operational_error(stderr, error),
-                |()| ExitCode::SUCCESS,
-            ),
-            None => operational_error(stderr, "interactive shell is not configured"),
+            Some(shell) => shell
+                .open(page, start, &interactive_help())
+                .map_or_else(|error| write_error(stderr, error), |()| ExitCode::SUCCESS),
+            None => write_error(stderr, "interactive shell is not configured"),
         },
         Invocation::Init => {
             let global = match global.load() {
                 Ok(value) => value,
-                Err(error) => return operational_error(stderr, error),
+                Err(error) => return write_error(stderr, error),
             };
             match initialize_project(locator, store, &global, start) {
                 Ok(outcome) => write_init_outcome(stdout, &outcome),
-                Err(error) => operational_error(stderr, error),
+                Err(error) => write_error(stderr, error),
             }
         }
-        Invocation::Page(text) if page(&text).is_ok() => ExitCode::SUCCESS,
-        Invocation::Page(text) | Invocation::Print(text) => write_all(stdout, &text),
-        Invocation::Reject { message, code } => {
-            if stderr.write_all(message.as_bytes()).is_ok() {
-                code
-            } else {
-                ExitCode::FAILURE
-            }
-        }
+        Invocation::Answer(answer) => write_answer(answer, stdout, stderr),
     }
 }
 
@@ -417,21 +415,43 @@ enum HelpRequest {
 /// Answers `request` for a session whose stdin and stdout are both `terminal`s or not.
 fn help(request: HelpRequest, terminal: bool) -> Invocation {
     match (request, terminal) {
-        (HelpRequest::Concise(text), true) => Invocation::Page(text),
-        (HelpRequest::Concise(text), false) => Invocation::Print(text),
+        (HelpRequest::Concise(text), true) => Invocation::Answer(Answer::Page(text)),
+        (HelpRequest::Concise(text), false) => Invocation::Answer(Answer::Print(text)),
         (HelpRequest::Full(command) | HelpRequest::Topic(command), true) => {
             Invocation::Open(ShellStart::Help { command })
         }
-        (HelpRequest::Full(None), false) => Invocation::Print(printed(&concise_help(root()))),
-        (HelpRequest::Full(command) | HelpRequest::Topic(command), false) => {
-            Invocation::Print(printed(&detailed_help(root(), command.as_deref())))
+        (HelpRequest::Full(None), false) => {
+            Invocation::Answer(Answer::Print(printed(&concise_help(root()))))
         }
+        (HelpRequest::Full(command) | HelpRequest::Topic(command), false) => Invocation::Answer(
+            Answer::Print(printed(&detailed_help(root(), command.as_deref()))),
+        ),
     }
 }
 
 /// Help as the CLI prints it: plain text ending in one newline.
 fn printed(help: &StyledStr) -> String {
     format!("{}\n", help.to_string().trim_end())
+}
+
+/// Writes `answer` and returns the exit code it carries. Paged help falls back to stdout
+/// when the pager cannot start.
+pub fn write_answer(
+    answer: Answer,
+    stdout: &mut (impl Write + ?Sized),
+    stderr: &mut (impl Write + ?Sized),
+) -> ExitCode {
+    match answer {
+        Answer::Page(text) if page(&text).is_ok() => ExitCode::SUCCESS,
+        Answer::Page(text) | Answer::Print(text) => write_all(stdout, &text),
+        Answer::Reject { message, code } => {
+            if stderr.write_all(message.as_bytes()).is_ok() {
+                code
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+    }
 }
 
 fn page(text: &str) -> std::io::Result<()> {
@@ -460,7 +480,8 @@ fn write_all(stdout: &mut (impl Write + ?Sized), text: &str) -> ExitCode {
     }
 }
 
-fn write_init_outcome(output: &mut (impl Write + ?Sized), outcome: &InitOutcome) -> ExitCode {
+/// Writes the line that reports `outcome`.
+pub fn write_init_outcome(output: &mut (impl Write + ?Sized), outcome: &InitOutcome) -> ExitCode {
     let action = match outcome.status() {
         InitStatus::Initialized => "Initialized gitserious in",
         InitStatus::AlreadyInitialized => "gitserious is already initialized in",
@@ -479,7 +500,8 @@ fn write_init_outcome(output: &mut (impl Write + ?Sized), outcome: &InitOutcome)
     }
 }
 
-fn operational_error(output: &mut (impl Write + ?Sized), error: impl Display) -> ExitCode {
+/// Writes `error` as an `error: ` line and returns failure.
+pub fn write_error(output: &mut (impl Write + ?Sized), error: impl Display) -> ExitCode {
     let _ = writeln!(output, "error: {error}");
     ExitCode::FAILURE
 }
@@ -610,13 +632,17 @@ mod tests {
         })
     }
 
+    fn print(text: String) -> Invocation {
+        Invocation::Answer(Answer::Print(text))
+    }
+
     fn printed_long(command: Option<&str>) -> Invocation {
-        Invocation::Print(printed(&detailed_help(root(), command)))
+        print(printed(&detailed_help(root(), command)))
     }
 
     #[test]
     fn commands_select_a_shell_page_and_commit_does_not_author() {
-        let concise = Invocation::Print(printed(&concise_help(root())));
+        let concise = print(printed(&concise_help(root())));
         let table = [
             (&[][..], [shell(ShellStart::Home), concise]),
             (&["init"], [Invocation::Init, Invocation::Init]),
@@ -637,7 +663,7 @@ mod tests {
 
     #[test]
     fn help_opens_the_shell_on_a_terminal_and_prints_when_redirected() {
-        let concise = Invocation::Print(printed(&concise_help(root())));
+        let concise = print(printed(&concise_help(root())));
         let table = [
             (&["--help"][..], [help_on(None), concise]),
             (
@@ -668,7 +694,10 @@ mod tests {
     #[test]
     fn concise_help_pages_on_a_terminal_and_prints_when_redirected() {
         for arguments in [&["-h"][..], &["config", "-h"], &["commit", "-h"]] {
-            let [Invocation::Page(paged), Invocation::Print(printed)] = invocations(arguments)
+            let [
+                Invocation::Answer(Answer::Page(paged)),
+                Invocation::Answer(Answer::Print(printed)),
+            ] = invocations(arguments)
             else {
                 unreachable!("{arguments:?} is concise help");
             };
@@ -677,13 +706,13 @@ mod tests {
         }
         assert_eq!(
             invocations(&["-h"])[1],
-            Invocation::Print(printed(&concise_help(root())))
+            print(printed(&concise_help(root())))
         );
     }
 
     #[test]
     fn the_version_prints_on_stdout_whatever_the_terminal() {
-        let version = Invocation::Print(format!("gitserious {}\n", env!("CARGO_PKG_VERSION")));
+        let version = print(format!("gitserious {}\n", env!("CARGO_PKG_VERSION")));
 
         assert_eq!(invocations(&["--version"]), [version.clone(), version]);
     }
@@ -700,13 +729,62 @@ mod tests {
             &["help", "unknown"],
         ] {
             for invocation in invocations(arguments) {
-                let Invocation::Reject { message, code } = invocation else {
+                let Invocation::Answer(Answer::Reject { message, code }) = invocation else {
                     unreachable!("{arguments:?} is a usage error");
                 };
                 assert_eq!(code, ExitCode::from(2), "{arguments:?}");
                 assert!(message.starts_with("error: "), "{message}");
             }
         }
+    }
+
+    struct Closed;
+
+    impl Write for Closed {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn answers_write_their_text_to_one_stream_with_their_exit_code() {
+        let rejected = || Answer::Reject {
+            message: "error: unexpected argument\n".into(),
+            code: ExitCode::from(2),
+        };
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let printed = write_answer(Answer::Print("help\n".into()), &mut stdout, &mut stderr);
+        let rejection = write_answer(rejected(), &mut stdout, &mut stderr);
+
+        assert_eq!((printed, rejection), (ExitCode::SUCCESS, ExitCode::from(2)));
+        assert_eq!(stdout, b"help\n");
+        assert_eq!(stderr, b"error: unexpected argument\n");
+        assert_eq!(
+            write_answer(Answer::Print("help\n".into()), &mut Closed, &mut Vec::new()),
+            ExitCode::FAILURE
+        );
+        assert_eq!(
+            write_answer(rejected(), &mut Vec::new(), &mut Closed),
+            ExitCode::FAILURE
+        );
+    }
+
+    #[test]
+    fn errors_are_one_prefixed_line_and_fail_even_when_unwritable() {
+        let mut stderr = Vec::new();
+
+        assert_eq!(
+            write_error(&mut stderr, "help shell rejected"),
+            ExitCode::FAILURE
+        );
+        assert_eq!(stderr, b"error: help shell rejected\n");
+        assert_eq!(write_error(&mut Closed, "lost"), ExitCode::FAILURE);
     }
 
     #[test]
