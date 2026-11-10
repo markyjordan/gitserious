@@ -42,11 +42,22 @@ struct PendingAuthor {
     checkpoint: AuthoringCheckpoint,
 }
 
+/// What Commit asks the root to do.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CommitRequest {
+    Refresh,
+    ShowResult,
+    /// Author a new commit, which needs the terminal.
+    Author,
+    /// Resume the failed commit's review, which needs the terminal.
+    Resume,
+}
+
 #[derive(Default)]
 pub(crate) struct CommitView {
-    pub(crate) snapshot: Option<RepositoryStatus>,
-    pub(crate) blocker: Option<String>,
-    pub(crate) notice: String,
+    snapshot: Option<RepositoryStatus>,
+    blocker: Option<String>,
+    notice: String,
     pending: Option<PendingAuthor>,
     collapsed: BTreeSet<(usize, PathBuf)>,
     rows: Vec<TreeRow>,
@@ -58,8 +69,82 @@ pub(crate) struct CommitView {
 }
 
 impl CommitView {
-    pub(crate) fn show_result(&mut self) {
-        self.result = Some(0);
+    /// Turns `code` into a request, after moving through the tree itself.
+    pub(crate) fn key(&mut self, code: KeyCode) -> Option<CommitRequest> {
+        match code {
+            KeyCode::Char('r') => return Some(CommitRequest::Refresh),
+            KeyCode::Char('o') if !self.notice.is_empty() => {
+                return Some(CommitRequest::ShowResult);
+            }
+            KeyCode::Enter => {
+                return Some(if self.has_pending_review() {
+                    CommitRequest::Resume
+                } else {
+                    CommitRequest::Author
+                });
+            }
+            KeyCode::Char('c') => return Some(CommitRequest::Author),
+            KeyCode::Up | KeyCode::Down => self.move_selection(code == KeyCode::Down),
+            KeyCode::Left | KeyCode::Right => self.directory(code == KeyCode::Right),
+            _ => {}
+        }
+        None
+    }
+
+    /// Runs `request`, and returns it when only the terminal session can.
+    pub(crate) fn run(
+        &mut self,
+        request: CommitRequest,
+        commit: &dyn CommitWorkspace,
+    ) -> Option<CommitRequest> {
+        match request {
+            CommitRequest::Refresh => {
+                self.notice.clear();
+                self.refresh(commit);
+            }
+            CommitRequest::ShowResult => self.result = Some(0),
+            CommitRequest::Author | CommitRequest::Resume => return Some(request),
+        }
+        None
+    }
+
+    /// Commit's palette commands.
+    pub(crate) fn commands(&self) -> Vec<(&'static str, CommitRequest)> {
+        let mut commands = vec![("Refresh repository", CommitRequest::Refresh)];
+        if !self.notice.is_empty() {
+            commands.push(("View last Git result", CommitRequest::ShowResult));
+        }
+        if self.blocker.is_none() {
+            commands.push(("Start commit", CommitRequest::Author));
+        }
+        if self.has_pending_review() {
+            commands.push(("Resume review", CommitRequest::Resume));
+        }
+        commands
+    }
+
+    pub(crate) fn hints(&self) -> Vec<(&'static str, &'static str)> {
+        vec![("↑/↓", "move"), ("←/→", "tree"), ("r", "refresh")]
+    }
+
+    #[cfg(test)]
+    pub(crate) fn notice(&self) -> &str {
+        &self.notice
+    }
+
+    #[cfg(test)]
+    pub(crate) fn notice_mut(&mut self) -> &mut String {
+        &mut self.notice
+    }
+
+    #[cfg(test)]
+    pub(crate) fn blocker(&self) -> Option<&str> {
+        self.blocker.as_deref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn snapshot(&self) -> Option<&RepositoryStatus> {
+        self.snapshot.as_ref()
     }
 
     /// Whether the Git result view is open and takes every event.
@@ -232,7 +317,7 @@ impl CommitView {
             .select((!self.rows.is_empty()).then_some(self.selected));
     }
 
-    pub(crate) fn move_selection(&mut self, down: bool) {
+    fn move_selection(&mut self, down: bool) {
         self.selected = if down {
             (self.selected + 1).min(self.rows.len().saturating_sub(1))
         } else {
@@ -242,7 +327,7 @@ impl CommitView {
             .select((!self.rows.is_empty()).then_some(self.selected));
     }
 
-    pub(crate) fn directory(&mut self, expand: bool) {
+    fn directory(&mut self, expand: bool) {
         if let Some(key) = self
             .rows
             .get(self.selected)

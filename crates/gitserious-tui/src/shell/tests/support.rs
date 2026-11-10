@@ -384,5 +384,8 @@ pub(super) fn rejected_review_on(section: Section) -> Result<Shell, Box<dyn std:
 }
 
 pub(super) fn commit_page(shell: &Shell) -> (Option<String>, Option<RepositoryStatus>) {
-    (shell.commit.blocker.clone(), shell.commit.snapshot.clone())
+    (
+        shell.commit.blocker().map(str::to_owned),
+        shell.commit.snapshot().cloned(),
+    )
 }

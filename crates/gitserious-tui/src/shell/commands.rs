@@ -22,16 +22,12 @@ impl Shell {
             );
         }
         if self.section == Section::Commit {
-            commands.push(("Refresh repository".into(), Action::Refresh));
-            if !self.commit.notice.is_empty() {
-                commands.push(("View last Git result".into(), Action::Result));
-            }
-            if self.commit.blocker.is_none() {
-                commands.push(("Start commit".into(), Action::Author));
-            }
-            if self.commit.has_pending_review() {
-                commands.push(("Resume review".into(), Action::Resume));
-            }
+            commands.extend(
+                self.commit
+                    .commands()
+                    .into_iter()
+                    .map(|(label, request)| (label.into(), Action::Commit(request))),
+            );
         }
         commands.push(("Quit".into(), Action::Quit));
         commands
