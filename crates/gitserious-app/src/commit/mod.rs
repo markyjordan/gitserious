@@ -1,10 +1,12 @@
 mod commit_draft_author;
+mod commit_services;
 mod commit_writer;
 mod create_taxonomy_commit;
 mod repository_status;
 mod taxonomy_authoring_context;
 
 pub use commit_draft_author::{CommitDraftAuthor, CommitDraftAuthorOutcome};
+pub use commit_services::CommitServices;
 pub use commit_writer::{CommitOutput, CommitWriter};
 pub use create_taxonomy_commit::{
     CommitOutcome, CreateCommitError, create_commit_with_taxonomy, prepare_commit_with_taxonomy,

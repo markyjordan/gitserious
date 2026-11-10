@@ -1,4 +1,3 @@
-use std::convert::Infallible;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -7,10 +6,10 @@ use gitserious_core::{Taxonomy, TaxonomyId, TaxonomyVersion};
 
 use crate::config::Workspace;
 use crate::{
-    AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitWriter, ConfigurationWorkspace,
-    GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore,
-    RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryStatus,
-    RepositoryStatusReader, prepare_commit_with_taxonomy, validate_reviewed_commit,
+    AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitServices, CommitWriter,
+    ConfigurationWorkspace, GlobalConfigurationStore, ProjectConfiguration,
+    ProjectConfigurationStore, RepositoryInitializer, RepositoryLocator, RepositoryRoot,
+    RepositoryStatus, RepositoryStatusReader,
 };
 
 /// The project file every gitserious repository commits.
@@ -135,7 +134,7 @@ where
         },
         status,
         initializer,
-        writer,
+        commit: CommitServices::new(locator, store, status, writer, start),
     };
     ui.run(&workspace, help)
 }
@@ -144,7 +143,7 @@ struct InteractiveServices<'a, L: ?Sized, S: ?Sized, G: ?Sized, W: ?Sized> {
     config: Workspace<'a, L, S, G>,
     status: &'a dyn RepositoryStatusReader,
     initializer: &'a dyn RepositoryInitializer,
-    writer: &'a W,
+    commit: CommitServices<'a, L, S, W>,
 }
 
 impl<L, S, G, W> InteractiveWorkspace for InteractiveServices<'_, L, S, G, W>
@@ -246,45 +245,14 @@ where
     }
 
     fn repository_status(&self) -> Result<RepositoryStatus, String> {
-        let root = self
-            .config
-            .locator
-            .locate(self.config.start)
-            .map_err(|error| error.to_string())?;
-        self.status.read(&root)
+        self.commit.repository_status()
     }
 
     fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
-        let snapshot = self.repository_status()?;
-        if snapshot.has_conflicts() {
-            return Err("Resolve Git conflicts before starting a commit.".into());
-        }
-        if !snapshot.has_staged_changes() {
-            return Err("Stage changes with Git, then refresh to start a commit.".into());
-        }
-        prepare_commit_with_taxonomy::<L, S, Infallible, Infallible>(
-            self.config.locator,
-            self.config.project,
-            self.config.start,
-        )
-        .map(|(_, context)| context)
-        .map_err(|error| error.to_string())
+        self.commit.prepare_commit()
     }
 
     fn submit_commit(&self, authored: &AuthoredCommit) -> Result<CommitOutput, String> {
-        // Reload persisted policy on submission; unapplied Config drafts never influence authoring.
-        let context = self.prepare_commit()?;
-        let message = validate_reviewed_commit::<Infallible, Infallible, Infallible, Infallible>(
-            &context, authored,
-        )
-        .map_err(|error| error.to_string())?;
-        let root = self
-            .config
-            .locator
-            .locate(self.config.start)
-            .map_err(|error| error.to_string())?;
-        self.writer
-            .commit(&root, &message)
-            .map_err(|error| error.to_string())
+        self.commit.submit_commit(authored)
     }
 }
