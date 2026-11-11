@@ -81,9 +81,9 @@ Commit page and waits. Authoring starts from the page, and cancelling it
 returns here.
 
 Help lists its Overview, Init, Config, and Commit pages in a numbered sidebar
-beside the chosen page. `gitserious --help` opens the shell at Help on the
-Overview, and `gitserious <command> --help` or `gitserious help <command>` on
-that command's page, or on the Overview when the command has none. The
+beside the chosen page. `gitserious help` opens the shell at Help on the
+Overview, and `gitserious help <command>` on that command's page, or on the
+Overview when the command has none. The
 Overview shows what `gitserious -h` prints. Each command page opens with `gitserious help: <command>` and shows what
 `gitserious help <command>` prints. Pages wrap to the pane. Headings and command and flag names are bold;
 descriptions are dim. Help opens in the sidebar on the page chosen last. There,

@@ -25,12 +25,12 @@ concise help when redirected. Bare `config` enters the shell at Config, and
 
 Help has two tiers. `-h` prints the concise help, through `$PAGER` or `less`
 when stdin and stdout are terminals; `less` prints help that fits one screen
-and exits. In a terminal, `--help` and `gitserious help [<command>]` open the
-shell at Help, on the command's page or the Overview. Redirected,
-`gitserious <command> --help` and `gitserious help [<command>]` print the
-detailed help, and `gitserious --help` prints the concise help. Printed help
-wraps to the terminal width, up to 100 columns. Every usage line shows
-`[OPTIONS]`, and `-h` and `--help` are listed under `Global options:` because
-every command takes them. The shell Help pages show what `gitserious -h` and
+and exits. `gitserious <command> --help` prints the command's detailed help,
+and `gitserious --help` prints the concise help. In a terminal,
+`gitserious help [<command>]` opens the shell at Help, on the command's page or
+the Overview. Redirected, it prints the detailed help. Printed help wraps to
+the terminal width, up to 100 columns. Every usage line shows `[OPTIONS]`, and
+`-h` and `--help` are listed under `Global options:` because every command
+takes them. The shell Help pages show what `gitserious -h` and
 `gitserious help <command>` print at the pane's width, with headings and names
 in bold.
