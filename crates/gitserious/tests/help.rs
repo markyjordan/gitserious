@@ -113,7 +113,7 @@ fn short_help_flag_prints_the_concise_help_and_names_both_help_flags() -> Result
 }
 
 #[test]
-fn redirected_long_help_flag_prints_the_root_concise_help_and_each_command_long_help()
+fn the_long_help_flag_prints_the_root_concise_help_and_each_command_long_help()
 -> Result<(), Box<dyn Error>> {
     assert_eq!(full(None)?, concise(None)?);
     assert_ne!(full(None)?, detailed(None)?);
