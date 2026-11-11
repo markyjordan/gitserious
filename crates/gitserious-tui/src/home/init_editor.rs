@@ -24,7 +24,7 @@ struct Candidate {
     included: bool,
 }
 
-/// What a key asks of the shell.
+/// What a key asks of the root.
 pub(super) enum EditorOutcome {
     Stay,
     Back,

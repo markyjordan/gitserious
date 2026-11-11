@@ -3,12 +3,12 @@ use ratatui::crossterm::event::{
 };
 
 use super::navigation::Section;
-use super::{Action, Capabilities, SessionRequest, Shell};
+use super::{Action, Capabilities, Root, SessionRequest};
 use crate::commit::CommitRequest;
-use crate::config::{ConfigRequest, ConfigView, ShellKeys};
+use crate::config::{ConfigRequest, ConfigView, RootKeys};
 use crate::help::HelpPage;
 
-impl Shell {
+impl Root {
     /// Handles `event` and returns what only the session loop can do.
     pub(crate) fn session_event(
         &mut self,
@@ -75,17 +75,17 @@ impl Shell {
                 };
             }
             if self.section == Section::Config {
-                match (self.config.shell_keys(), key.code) {
-                    (ShellKeys::Navigation, KeyCode::Tab | KeyCode::BackTab) => {
+                match (self.config.root_keys(), key.code) {
+                    (RootKeys::Navigation, KeyCode::Tab | KeyCode::BackTab) => {
                         return self.execute(
                             Action::Select(self.section.next(key.code == KeyCode::BackTab)),
                             capabilities,
                         );
                     }
-                    (ShellKeys::Navigation, KeyCode::Esc) => {
+                    (RootKeys::Navigation, KeyCode::Esc) => {
                         return self.execute(Action::Select(Section::Home), capabilities);
                     }
-                    (ShellKeys::Navigation, KeyCode::Char('q')) => {
+                    (RootKeys::Navigation, KeyCode::Char('q')) => {
                         return self.execute(Action::Quit, capabilities);
                     }
                     _ => {}

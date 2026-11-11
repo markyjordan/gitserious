@@ -5,7 +5,7 @@ use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Clear};
 
 use super::commands::{Palette, Step};
-use super::{Action, Capabilities, Shell};
+use super::{Action, Capabilities, Root};
 use crate::confirmation::{self, Answer, Confirmation, DISCARD_AND_QUIT};
 use crate::theme::{
     FOOTER_HEIGHT, JET_BLACK, centered_rect, frame_style, render_footer, render_footer_block,
@@ -25,7 +25,7 @@ pub(super) enum Overlay {
     QuitConfirm,
 }
 
-impl Shell {
+impl Root {
     pub(super) fn open_palette(&mut self) {
         self.overlay = Some(Overlay::Palette(Palette::default()));
     }

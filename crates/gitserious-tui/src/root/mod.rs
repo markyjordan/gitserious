@@ -56,7 +56,7 @@ enum Action {
     Quit,
 }
 
-pub(crate) struct Shell {
+pub(crate) struct Root {
     section: Section,
     config: ConfigView,
     commit: CommitView,
@@ -68,7 +68,7 @@ pub(crate) struct Shell {
     too_small: bool,
 }
 
-impl Shell {
+impl Root {
     pub(crate) fn new(
         entry: InitialPage,
         capabilities: Capabilities<'_>,
@@ -87,7 +87,7 @@ impl Shell {
                 ),
             ),
         };
-        let mut shell = Self {
+        let mut root = Self {
             section,
             config: ConfigView::new(capabilities.config),
             commit: CommitView::default(),
@@ -98,8 +98,8 @@ impl Shell {
             tabs: Tabs::default(),
             too_small: false,
         };
-        shell.enter(section, capabilities);
-        shell
+        root.enter(section, capabilities);
+        root
     }
 
     /// Arrives at `section` the same way a tab, a click, or the launch does.

@@ -1,7 +1,7 @@
 use std::io::{self, IsTerminal};
 
 use crate::help::HelpPage;
-use crate::root::{Capabilities, InitialPage, SessionRequest, Shell};
+use crate::root::{Capabilities, InitialPage, Root, SessionRequest};
 
 /// Unified Home, Commit, Config, and Help terminal adapter.
 #[derive(Clone, Debug)]
@@ -31,14 +31,14 @@ impl RatatuiInteractiveUi {
             .into());
         }
         crate::runtime::run(|terminal| {
-            let mut shell = Shell::new(self.start.clone(), capabilities, help);
+            let mut root = Root::new(self.start.clone(), capabilities, help);
             loop {
-                terminal.draw(|frame| shell.render(frame, help))?;
+                terminal.draw(|frame| root.render(frame, help))?;
                 let event = ratatui::crossterm::event::read()?;
-                match shell.session_event(event, capabilities, help) {
+                match root.session_event(event, capabilities, help) {
                     Some(SessionRequest::Quit) => return Ok(()),
                     Some(SessionRequest::Author { resume }) => {
-                        shell.author(terminal, capabilities, resume)?;
+                        root.author(terminal, capabilities, resume)?;
                     }
                     None => {}
                 }
