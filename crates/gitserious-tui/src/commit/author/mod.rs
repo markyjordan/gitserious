@@ -12,7 +12,7 @@ use ratatui::crossterm::event;
 
 use self::state::{AuthoringOutcome, AuthoringSession};
 
-/// Author within the already initialized shell terminal and retain an owned review checkpoint.
+/// Author within the unified session's already initialized terminal and retain an owned review checkpoint.
 pub(crate) fn embedded_author(
     terminal: &mut DefaultTerminal,
     context: &CommitAuthoringContext,
