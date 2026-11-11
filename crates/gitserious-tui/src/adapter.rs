@@ -1,7 +1,7 @@
 use std::io::{self, IsTerminal};
 
 use crate::help::HelpPage;
-use crate::shell::{Capabilities, InitialPage, SessionRequest, Shell};
+use crate::root::{Capabilities, InitialPage, SessionRequest, Shell};
 
 /// Unified Home, Commit, Config, and Help terminal adapter.
 #[derive(Clone, Debug)]
