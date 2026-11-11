@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::fmt::Display;
 use std::io::Write;
-use std::process::{self, ExitCode, Stdio};
+use std::process::ExitCode;
 
 use clap::builder::StyledStr;
 use clap::builder::styling::{Style, Styles};
@@ -108,8 +108,6 @@ pub enum Invocation {
 /// A response the CLI writes in full, with `write_answer`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Answer {
-    /// Help for a terminal, shown through the pager.
-    Page(String),
     /// Help or the version, written to stdout.
     Print(String),
     /// A usage error: clap's message for stderr and the exit code it chose.
@@ -232,7 +230,6 @@ enum HelpRequest {
 /// Answers `request` for a session whose stdin and stdout are both `terminal`s or not.
 fn help(request: HelpRequest, terminal: bool) -> Invocation {
     match request {
-        HelpRequest::Concise(text) if terminal => Invocation::Answer(Answer::Page(text)),
         HelpRequest::Concise(text) => Invocation::Answer(Answer::Print(text)),
         HelpRequest::Topic(command) if terminal => Invocation::Open(ShellStart::Help { command }),
         HelpRequest::Full(None) => {
@@ -249,16 +246,14 @@ fn printed(help: &StyledStr) -> String {
     format!("{}\n", help.to_string().trim_end())
 }
 
-/// Writes `answer` and returns the exit code it carries. Paged help falls back to stdout
-/// when the pager cannot start.
+/// Writes `answer` and returns the exit code it carries.
 pub fn write_answer(
     answer: Answer,
     stdout: &mut (impl Write + ?Sized),
     stderr: &mut (impl Write + ?Sized),
 ) -> ExitCode {
     match answer {
-        Answer::Page(text) if page(&text).is_ok() => ExitCode::SUCCESS,
-        Answer::Page(text) | Answer::Print(text) => write_all(stdout, &text),
+        Answer::Print(text) => write_all(stdout, &text),
         Answer::Reject { message, code } => {
             if stderr.write_all(message.as_bytes()).is_ok() {
                 code
@@ -267,24 +262,6 @@ pub fn write_answer(
             }
         }
     }
-}
-
-fn page(text: &str) -> std::io::Result<()> {
-    let pager = std::env::var("PAGER").unwrap_or_default();
-    let mut words = pager.split_whitespace();
-    let mut command = process::Command::new(words.next().unwrap_or("less"));
-    command.args(words).stdin(Stdio::piped());
-    // Git's default: exit on one screen of text and leave it in scrollback.
-    if std::env::var_os("LESS").is_none() {
-        command.env("LESS", "FRX");
-    }
-    let mut child = command.spawn()?;
-    if let Some(mut input) = child.stdin.take() {
-        // Quitting the pager early closes the pipe, which is not an error.
-        let _ = input.write_all(text.as_bytes());
-    }
-    child.wait()?;
-    Ok(())
 }
 
 fn write_all(stdout: &mut (impl Write + ?Sized), text: &str) -> ExitCode {
@@ -466,16 +443,13 @@ mod tests {
     }
 
     #[test]
-    fn concise_help_pages_on_a_terminal_and_prints_when_redirected() {
+    fn the_short_help_flag_prints_whatever_the_terminal() {
         for arguments in [&["-h"][..], &["config", "-h"], &["commit", "-h"]] {
-            let [
-                Invocation::Answer(Answer::Page(paged)),
-                Invocation::Answer(Answer::Print(printed)),
-            ] = invocations(arguments)
-            else {
+            let [terminal, redirected] = invocations(arguments);
+            assert_eq!(terminal, redirected, "{arguments:?}");
+            let Invocation::Answer(Answer::Print(printed)) = redirected else {
                 unreachable!("{arguments:?} is concise help");
             };
-            assert_eq!(paged, printed, "{arguments:?}");
             assert!(printed.contains("Usage: gitserious"), "{printed}");
         }
         assert_eq!(

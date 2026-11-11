@@ -88,45 +88,6 @@ fn terminal_deadline_applies_even_when_output_is_already_queued() -> Result<(), 
 }
 
 #[test]
-fn terminal_short_help_uses_the_pager_and_preserves_its_exit_contract() -> Result<(), Box<dyn Error>>
-{
-    for pager_exit in [0, 17] {
-        let temp = tempfile::tempdir()?;
-        let home = Home::new()?;
-        let capture = temp.path().join("captured-help");
-        let mut command = home.command(temp.path());
-        command
-            .arg("-h")
-            .env("PAGER", pager(temp.path(), pager_exit)?)
-            .env("PAGER_CAPTURE", &capture);
-        let mut session = Session::spawn(&command, Streams::Terminal)?;
-        assert!(session.finish()?.success());
-        assert!(session.contents().contains("pager-was-run"));
-        let expected = home.run(temp.path(), &["-h"])?;
-        assert_eq!(fs::read_to_string(capture)?, stdout(&expected));
-    }
-    Ok(())
-}
-
-#[test]
-fn missing_pager_prints_short_help_and_succeeds() -> Result<(), Box<dyn Error>> {
-    let temp = tempfile::tempdir()?;
-    let home = Home::new()?;
-    let mut command = home.command(temp.path());
-    command
-        .arg("-h")
-        .env("PAGER", temp.path().join("nonexistent-pager"));
-    let mut session = Session::spawn(&command, Streams::Terminal)?;
-    assert!(session.finish()?.success());
-    let expected = home.run(temp.path(), &["-h"])?;
-    assert_eq!(
-        String::from_utf8(session.transcript().to_vec())?.replace("\r\n", "\n"),
-        stdout(&expected)
-    );
-    Ok(())
-}
-
-#[test]
 fn either_redirected_stream_prints_help_without_paging_or_starting_the_tui()
 -> Result<(), Box<dyn Error>> {
     let temp = tempfile::tempdir()?;
@@ -167,11 +128,16 @@ fn either_redirected_stream_prints_help_without_paging_or_starting_the_tui()
 }
 
 #[test]
-fn terminal_long_help_prints_without_paging_or_starting_the_tui() -> Result<(), Box<dyn Error>> {
+fn terminal_help_flags_print_without_paging_or_starting_the_tui() -> Result<(), Box<dyn Error>> {
     let temp = tempfile::tempdir()?;
     let home = Home::new()?;
     let capture = temp.path().join("pager-output");
-    for arguments in [["--help"].as_slice(), ["commit", "--help"].as_slice()] {
+    for arguments in [
+        ["-h"].as_slice(),
+        ["commit", "-h"].as_slice(),
+        ["--help"].as_slice(),
+        ["commit", "--help"].as_slice(),
+    ] {
         let mut command = home.command(temp.path());
         command
             .args(arguments)
