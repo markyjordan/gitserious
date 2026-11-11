@@ -234,6 +234,11 @@ fn executable_commands_select_the_initial_page_without_authoring_or_git_writes()
         (Vec::<&str>::new(), "Home", "Go to Commit"),
         (vec!["commit"], "Commit", "[enter] start commit"),
         (vec!["config"], "Config", "1  Project"),
+        (
+            vec!["help"],
+            "Help",
+            "Usage: gitserious [OPTIONS] [COMMAND]",
+        ),
         (vec!["help", "commit"], "Help", "gitserious help: commit"),
     ] {
         let mut command = home.command(repository.path());
@@ -247,7 +252,7 @@ fn executable_commands_select_the_initial_page_without_authoring_or_git_writes()
         for other in ["Home", "Commit", "Config", "Help"] {
             assert_eq!(active_page(session.screen(), other), other == page);
         }
-        record(&session, &format!("initial-{page}"))?;
+        record(&session, &[&["initial"][..], &arguments].concat().join("-"))?;
         quit(&mut session)?;
         assert_eq!(
             support::git(repository.path(), &["status", "--porcelain=v1"])?.stdout,
