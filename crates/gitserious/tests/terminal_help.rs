@@ -167,11 +167,35 @@ fn either_redirected_stream_prints_help_without_paging_or_starting_the_tui()
 }
 
 #[test]
-fn terminal_long_and_topic_help_open_the_tui_without_paging() -> Result<(), Box<dyn Error>> {
+fn terminal_long_help_prints_without_paging_or_starting_the_tui() -> Result<(), Box<dyn Error>> {
     let temp = tempfile::tempdir()?;
     let home = Home::new()?;
     let capture = temp.path().join("pager-output");
-    for arguments in [["--help"].as_slice(), ["help", "commit"].as_slice()] {
+    for arguments in [["--help"].as_slice(), ["commit", "--help"].as_slice()] {
+        let mut command = home.command(temp.path());
+        command
+            .args(arguments)
+            .env("PAGER", pager(temp.path(), 0)?)
+            .env("PAGER_CAPTURE", &capture);
+        let mut session = Session::spawn(&command, Streams::Terminal)?;
+        assert!(session.finish()?.success());
+        assert!(!capture.exists(), "{arguments:?} started the pager");
+        let transcript = String::from_utf8(session.transcript().to_vec())?.replace("\r\n", "\n");
+        assert_eq!(transcript, stdout(&home.run(temp.path(), arguments)?));
+        assert!(
+            !transcript.contains("\x1b[?1049h"),
+            "{arguments:?} entered the TUI"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn terminal_help_command_opens_the_tui_without_paging() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let home = Home::new()?;
+    let capture = temp.path().join("pager-output");
+    for arguments in [["help"].as_slice(), ["help", "commit"].as_slice()] {
         let mut command = home.command(temp.path());
         command
             .args(arguments)

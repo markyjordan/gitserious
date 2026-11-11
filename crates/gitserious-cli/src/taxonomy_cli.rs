@@ -231,16 +231,14 @@ enum HelpRequest {
 
 /// Answers `request` for a session whose stdin and stdout are both `terminal`s or not.
 fn help(request: HelpRequest, terminal: bool) -> Invocation {
-    match (request, terminal) {
-        (HelpRequest::Concise(text), true) => Invocation::Answer(Answer::Page(text)),
-        (HelpRequest::Concise(text), false) => Invocation::Answer(Answer::Print(text)),
-        (HelpRequest::Full(command) | HelpRequest::Topic(command), true) => {
-            Invocation::Open(ShellStart::Help { command })
-        }
-        (HelpRequest::Full(None), false) => {
+    match request {
+        HelpRequest::Concise(text) if terminal => Invocation::Answer(Answer::Page(text)),
+        HelpRequest::Concise(text) => Invocation::Answer(Answer::Print(text)),
+        HelpRequest::Topic(command) if terminal => Invocation::Open(ShellStart::Help { command }),
+        HelpRequest::Full(None) => {
             Invocation::Answer(Answer::Print(printed(&concise_help(root()))))
         }
-        (HelpRequest::Full(command) | HelpRequest::Topic(command), false) => Invocation::Answer(
+        HelpRequest::Full(command) | HelpRequest::Topic(command) => Invocation::Answer(
             Answer::Print(printed(&detailed_help(root(), command.as_deref()))),
         ),
     }
@@ -429,15 +427,24 @@ mod tests {
     }
 
     #[test]
-    fn help_opens_the_shell_on_a_terminal_and_prints_when_redirected() {
+    fn the_long_help_flag_prints_whatever_the_terminal() {
         let concise = print(printed(&concise_help(root())));
+
+        assert_eq!(invocations(&["--help"]), [concise.clone(), concise]);
+        for command in ["init", "config", "commit", "help"] {
+            let long = printed_long(Some(command));
+            assert_eq!(
+                invocations(&[command, "--help"]),
+                [long.clone(), long],
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_help_command_opens_the_shell_on_a_terminal_and_prints_when_redirected() {
         let table = [
-            (&["--help"][..], [help_on(None), concise]),
-            (
-                &["config", "--help"],
-                [help_on(Some("config")), printed_long(Some("config"))],
-            ),
-            (&["help"], [help_on(None), printed_long(None)]),
+            (&["help"][..], [help_on(None), printed_long(None)]),
             (
                 &["help", "config"],
                 [help_on(Some("config")), printed_long(Some("config"))],
@@ -454,7 +461,7 @@ mod tests {
         assert_ne!(
             invocations(&["--help"])[1],
             invocations(&["help"])[1],
-            "redirected `--help` is concise and `help` is long"
+            "`--help` is concise and redirected `help` is long"
         );
     }
 
