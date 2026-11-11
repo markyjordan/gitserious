@@ -23,10 +23,9 @@ Bare `gitserious` opens the unified Home TUI in a terminal and prints the
 concise help when redirected. Bare `config` enters the shell at Config, and
 `commit` enters the shell at Commit.
 
-Help has two tiers. `-h` prints the concise help, through `$PAGER` or `less`
-when stdin and stdout are terminals; `less` prints help that fits one screen
-and exits. `gitserious <command> --help` prints the command's detailed help,
-and `gitserious --help` prints the concise help. In a terminal,
+Help has two tiers. `-h` prints the concise help to stdout.
+`gitserious <command> --help` prints the command's detailed help, and
+`gitserious --help` prints the concise help. In a terminal,
 `gitserious help [<command>]` opens the shell at Help, on the command's page or
 the Overview. Redirected, it prints the detailed help. Printed help wraps to
 the terminal width, up to 100 columns. Every usage line shows `[OPTIONS]`, and
