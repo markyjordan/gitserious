@@ -102,7 +102,7 @@ Consumer columns are a source-token index by crate, reviewed against the use-cas
 
 ## Use-case flow and removal constraints
 
-The executable assembles FS adapters, a standalone configuration editor, and a CLI `ShellLauncher`. CLI currently parses and dispatches. Its shell request reaches binary `Application::open`, which maps `ShellStart` into TUI `InitialPage` and calls App `run_interactive`. App constructs interactive services and launches the supplied UI. Moving either dispatch or launch must preserve these current callback consumers until they migrate.
+The executable assembles FS adapters, a standalone configuration editor, and a CLI `ShellLauncher`. CLI currently parses and dispatches. Its shell request reaches binary `Application::open`, which maps `Destination` into TUI `InitialPage` and calls App `run_interactive`. App constructs interactive services and launches the supplied UI. Moving either dispatch or launch must preserve these current callback consumers until they migrate.
 
 `prepare_commit_with_taxonomy` loads project-owned policy. `validate_reviewed_commit` checks the chosen taxonomy, draft rules, and exact reviewed bytes. The active facade's `submit_commit` prepares again and therefore reloads persisted policy and eligibility. `create_commit_with_taxonomy` prepares once and validates against its captured policy after its author returns. The existing captured-policy test is not evidence of freshness in the active path.
 

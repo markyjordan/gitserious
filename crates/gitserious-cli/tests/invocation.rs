@@ -1,6 +1,6 @@
 use std::process::ExitCode;
 
-use gitserious_cli::{Invocation, ShellStart, parse, write_answer};
+use gitserious_cli::{Destination, Invocation, parse, write_answer};
 
 fn invocations(arguments: &[&str]) -> [Invocation; 2] {
     let arguments = || std::iter::once("gitserious").chain(arguments.iter().copied());
@@ -30,8 +30,8 @@ fn init_initializes_whatever_the_terminal() {
 #[test]
 fn commit_and_config_open_the_shell_whatever_the_terminal() {
     for (command, page) in [
-        ("commit", ShellStart::Commit),
-        ("config", ShellStart::Config),
+        ("commit", Destination::Commit),
+        ("config", Destination::Config),
     ] {
         assert_eq!(
             invocations(&[command]),
