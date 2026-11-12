@@ -6,7 +6,7 @@ use gitserious_app::{
     initialize_project, resolve_global_paths,
 };
 use gitserious_cli::{
-    Invocation, ShellStart, help_topics, parse, styled_help, write_answer, write_error,
+    Destination, Invocation, help_topics, parse, styled_help, write_answer, write_error,
     write_init_outcome,
 };
 use gitserious_fs::{
@@ -32,10 +32,10 @@ fn main() -> ExitCode {
     match parse(std::env::args_os(), terminal) {
         Invocation::Open(start) => {
             let page = match start {
-                ShellStart::Home => InitialPage::Home,
-                ShellStart::Commit => InitialPage::Commit,
-                ShellStart::Config => InitialPage::Config,
-                ShellStart::Help { command } => InitialPage::Help { command },
+                Destination::Home => InitialPage::Home,
+                Destination::Commit => InitialPage::Commit,
+                Destination::Config => InitialPage::Config,
+                Destination::Help { command } => InitialPage::Help { command },
             };
             let commit = CommitServices::new(
                 &GitRepositoryLocator,

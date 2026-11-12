@@ -1,14 +1,13 @@
 use std::ffi::OsString;
-use std::fmt::Display;
-use std::io::Write;
 use std::process::ExitCode;
 
 use clap::builder::StyledStr;
 use clap::builder::styling::{Style, Styles};
 use clap::error::ErrorKind;
-use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
-use gitserious_app::{InitOutcome, InitStatus};
-use gitserious_core::TaxonomyReference;
+use clap::{ArgAction, CommandFactory, FromArgMatches, Parser};
+
+use crate::commands::Command;
+use crate::invocation::{Answer, Destination, Invocation};
 
 const HELP_WIDTH: usize = 100;
 
@@ -46,74 +45,6 @@ struct Cli {
     command: Option<Command>,
 }
 
-#[derive(Debug, Subcommand)]
-enum Command {
-    /// Initialize repository-local gitserious policy.
-    ///
-    /// Init writes `gitserious.toml` at the root of the current Git repository.
-    /// It holds complete copies of the taxonomies your Library gives new
-    /// projects. The Library's default taxonomy becomes the project default.
-    ///
-    /// An existing `gitserious.toml` is never rewritten.
-    Init,
-    /// Interactively configure taxonomy policy.
-    ///
-    /// Config opens in the terminal with two sections. Project shows the
-    /// taxonomies installed in this repository's `gitserious.toml` and does
-    /// not change them. In a repository without one, it offers to initialize
-    /// the project. Library edits the taxonomies in your global
-    /// configuration, which new projects copy.
-    ///
-    /// While you edit a Library item, Ctrl+W saves it and Esc discards the
-    /// edit. Copies, reorders, and confirmed deletions save at once.
-    Config,
-    /// Author and create a durable commit from the staged index.
-    ///
-    /// Commit opens the Commit page. From that page you start authoring,
-    /// choose a type, write its properties, and review the exact message
-    /// before gitserious passes it to `git commit`.
-    ///
-    /// Only staged changes are committed. Stage them with `git add` first.
-    Commit,
-    /// Display documentation for a command
-    Help {
-        /// The command to document
-        command: Option<String>,
-    },
-}
-
-/// The page an interactive command asks the shell to show first.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ShellStart {
-    Home,
-    Commit,
-    Config,
-    /// Help, on the page of the named command, or the overview for none.
-    Help {
-        command: Option<String>,
-    },
-}
-
-/// What an argument list asks gitserious to do.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Invocation {
-    /// Open the unified shell on this page.
-    Open(ShellStart),
-    /// Initialize the project that contains the start directory.
-    Init,
-    /// Text the CLI writes without running anything.
-    Answer(Answer),
-}
-
-/// A response the CLI writes in full, with `write_answer`.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Answer {
-    /// Help or the version, written to stdout.
-    Print(String),
-    /// A usage error: clap's message for stderr and the exit code it chose.
-    Reject { message: String, code: ExitCode },
-}
-
 /// Parses `arguments` for a session whose stdin and stdout are both `terminal`s or not.
 pub fn parse<I, T>(arguments: I, terminal: bool) -> Invocation
 where
@@ -138,10 +69,10 @@ where
     match cli.command {
         Some(Command::Help { command }) => help(HelpRequest::Topic(command), terminal),
         None if !terminal => Invocation::Answer(Answer::Print(printed(&concise_help(root())))),
-        None => Invocation::Open(ShellStart::Home),
+        None => Invocation::Open(Destination::Home),
         Some(Command::Init) => Invocation::Init,
-        Some(Command::Config) => Invocation::Open(ShellStart::Config),
-        Some(Command::Commit) => Invocation::Open(ShellStart::Commit),
+        Some(Command::Config) => Invocation::Open(Destination::Config),
+        Some(Command::Commit) => Invocation::Open(Destination::Commit),
     }
 }
 
@@ -231,7 +162,7 @@ enum HelpRequest {
 fn help(request: HelpRequest, terminal: bool) -> Invocation {
     match request {
         HelpRequest::Concise(text) => Invocation::Answer(Answer::Print(text)),
-        HelpRequest::Topic(command) if terminal => Invocation::Open(ShellStart::Help { command }),
+        HelpRequest::Topic(command) if terminal => Invocation::Open(Destination::Help { command }),
         HelpRequest::Full(None) => {
             Invocation::Answer(Answer::Print(printed(&concise_help(root()))))
         }
@@ -244,58 +175,6 @@ fn help(request: HelpRequest, terminal: bool) -> Invocation {
 /// Help as the CLI prints it: plain text ending in one newline.
 fn printed(help: &StyledStr) -> String {
     format!("{}\n", help.to_string().trim_end())
-}
-
-/// Writes `answer` and returns the exit code it carries.
-pub fn write_answer(
-    answer: Answer,
-    stdout: &mut (impl Write + ?Sized),
-    stderr: &mut (impl Write + ?Sized),
-) -> ExitCode {
-    match answer {
-        Answer::Print(text) => write_all(stdout, &text),
-        Answer::Reject { message, code } => {
-            if stderr.write_all(message.as_bytes()).is_ok() {
-                code
-            } else {
-                ExitCode::FAILURE
-            }
-        }
-    }
-}
-
-fn write_all(stdout: &mut (impl Write + ?Sized), text: &str) -> ExitCode {
-    if stdout.write_all(text.as_bytes()).is_ok() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    }
-}
-
-/// Writes the line that reports `outcome`.
-pub fn write_init_outcome(output: &mut (impl Write + ?Sized), outcome: &InitOutcome) -> ExitCode {
-    let action = match outcome.status() {
-        InitStatus::Initialized => "Initialized gitserious in",
-        InitStatus::AlreadyInitialized => "gitserious is already initialized in",
-    };
-    if writeln!(
-        output,
-        "{action} {} ({}).",
-        outcome.root().as_path().display(),
-        TaxonomyReference::new(outcome.taxonomy(), outcome.version())
-    )
-    .is_ok()
-    {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    }
-}
-
-/// Writes `error` as an `error: ` line and returns failure.
-pub fn write_error(output: &mut (impl Write + ?Sized), error: impl Display) -> ExitCode {
-    let _ = writeln!(output, "error: {error}");
-    ExitCode::FAILURE
 }
 
 fn exit_code(code: i32) -> ExitCode {
@@ -354,7 +233,6 @@ fn styled_root(width: u16) -> clap::Command {
             .styles(Styles::plain().header(BOLD).usage(BOLD).literal(BOLD)),
     )
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,12 +242,12 @@ mod tests {
         [parse(arguments(), true), parse(arguments(), false)]
     }
 
-    fn shell(page: ShellStart) -> Invocation {
-        Invocation::Open(page)
+    fn open(destination: Destination) -> Invocation {
+        Invocation::Open(destination)
     }
 
     fn help_on(command: Option<&str>) -> Invocation {
-        shell(ShellStart::Help {
+        open(Destination::Help {
             command: command.map(str::to_owned),
         })
     }
@@ -383,18 +261,18 @@ mod tests {
     }
 
     #[test]
-    fn commands_select_a_shell_page_and_commit_does_not_author() {
+    fn commands_select_a_destination_and_commit_does_not_author() {
         let concise = print(printed(&concise_help(root())));
         let table = [
-            (&[][..], [shell(ShellStart::Home), concise]),
+            (&[][..], [open(Destination::Home), concise]),
             (&["init"], [Invocation::Init, Invocation::Init]),
             (
                 &["config"],
-                [shell(ShellStart::Config), shell(ShellStart::Config)],
+                [open(Destination::Config), open(Destination::Config)],
             ),
             (
                 &["commit"],
-                [shell(ShellStart::Commit), shell(ShellStart::Commit)],
+                [open(Destination::Commit), open(Destination::Commit)],
             ),
         ];
 
@@ -419,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn the_help_command_opens_the_shell_on_a_terminal_and_prints_when_redirected() {
+    fn the_help_command_opens_help_on_a_terminal_and_prints_when_redirected() {
         let table = [
             (&["help"][..], [help_on(None), printed_long(None)]),
             (
@@ -484,55 +362,6 @@ mod tests {
                 assert!(message.starts_with("error: "), "{message}");
             }
         }
-    }
-
-    struct Closed;
-
-    impl Write for Closed {
-        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-            Err(std::io::ErrorKind::BrokenPipe.into())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn answers_write_their_text_to_one_stream_with_their_exit_code() {
-        let rejected = || Answer::Reject {
-            message: "error: unexpected argument\n".into(),
-            code: ExitCode::from(2),
-        };
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-
-        let printed = write_answer(Answer::Print("help\n".into()), &mut stdout, &mut stderr);
-        let rejection = write_answer(rejected(), &mut stdout, &mut stderr);
-
-        assert_eq!((printed, rejection), (ExitCode::SUCCESS, ExitCode::from(2)));
-        assert_eq!(stdout, b"help\n");
-        assert_eq!(stderr, b"error: unexpected argument\n");
-        assert_eq!(
-            write_answer(Answer::Print("help\n".into()), &mut Closed, &mut Vec::new()),
-            ExitCode::FAILURE
-        );
-        assert_eq!(
-            write_answer(rejected(), &mut Vec::new(), &mut Closed),
-            ExitCode::FAILURE
-        );
-    }
-
-    #[test]
-    fn errors_are_one_prefixed_line_and_fail_even_when_unwritable() {
-        let mut stderr = Vec::new();
-
-        assert_eq!(
-            write_error(&mut stderr, "help shell rejected"),
-            ExitCode::FAILURE
-        );
-        assert_eq!(stderr, b"error: help shell rejected\n");
-        assert_eq!(write_error(&mut Closed, "lost"), ExitCode::FAILURE);
     }
 
     #[test]
