@@ -340,7 +340,13 @@ mod tests {
     fn the_version_prints_on_stdout_whatever_the_terminal() {
         let version = print(format!("gitserious {}\n", env!("CARGO_PKG_VERSION")));
 
-        assert_eq!(invocations(&["--version"]), [version.clone(), version]);
+        for flag in ["-V", "--version"] {
+            assert_eq!(
+                invocations(&[flag]),
+                [version.clone(), version.clone()],
+                "{flag}"
+            );
+        }
     }
 
     #[test]
