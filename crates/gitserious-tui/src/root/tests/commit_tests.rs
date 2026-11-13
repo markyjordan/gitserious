@@ -248,7 +248,7 @@ fn enter_opens_the_editor_under_the_nav_bar_with_the_staged_header_and_edit_badg
 
     let footer = footer(&terminal);
     assert!(
-        footer.starts_with("  EDIT  ←/→ taxonomy  ↑/↓ move  enter select  esc/q cancel"),
+        footer.starts_with("  EDIT  enter choose  ↑/↓ move  ←/→ taxonomy  esc back  "),
         "{footer}"
     );
     assert!(footer.trim_end().ends_with("tab nav bar"), "{footer}");
@@ -261,11 +261,50 @@ fn enter_opens_the_editor_under_the_nav_bar_with_the_staged_header_and_edit_badg
         assert_eq!(cell.bg, theme().pending);
         assert!(cell.modifier.contains(Modifier::BOLD));
     }
-    let (x, y) = position(&terminal, "enter select").ok_or("missing hint")?;
+    let (x, y) = position(&terminal, "enter choose").ok_or("missing hint")?;
     assert!(buffer[(x, y)].modifier.contains(Modifier::BOLD));
     assert_eq!(buffer[(x, y)].fg, theme().text);
     assert_eq!(buffer[(x + 6, y)].fg, theme().dim);
     assert_eq!(buffer[(x + 6, y)].bg, theme().band);
+    Ok(())
+}
+
+#[test]
+fn the_type_picker_fits_the_page_at_80x24_and_100x30() -> Result<(), Box<dyn std::error::Error>> {
+    for (width, height) in [(80, 24), (100, 30)] {
+        let mut root = Root::new(InitialPage::Commit, of(&Ready), &[]);
+        assert_eq!(
+            root.handle_event(key(KeyCode::Enter), of(&Ready), &[]),
+            None
+        );
+        let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+        terminal.draw(|frame| root.render(frame, &[]))?;
+        let text = rendered(&terminal);
+        let rows: Vec<_> = text.lines().collect();
+        assert!(
+            rows[3].starts_with("▎   type(scope): description"),
+            "{text}"
+        );
+        for (offset, kind) in [
+            "feat", "fix", "refactor", "perf", "test", "docs", "chore", "build", "ci", "style",
+            "revert",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert!(
+                rows[8 + offset].trim_start().starts_with(kind),
+                "{kind} at {width}x{height}\n{text}"
+            );
+        }
+        let detail = rows
+            .iter()
+            .position(|row| row.contains("An addition or expansion of capability."))
+            .ok_or("missing description")?;
+        assert!(detail < usize::from(height) - 1, "{text}");
+        assert!(!text.contains("Typing filters"), "{text}");
+        assert!(!text.contains("tab taxonomy"), "{text}");
+    }
     Ok(())
 }
 

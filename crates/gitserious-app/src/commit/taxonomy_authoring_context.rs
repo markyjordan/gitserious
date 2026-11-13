@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 
 use gitserious_core::{
     CommitDraft, CommitMessage, CommitProvenance, CommitTypeDefinition, CommitTypeId,
-    CommitValidationReport, Taxonomy, TaxonomyId, validate_commit_draft_with_provenance,
+    CommitValidationReport, Taxonomy, TaxonomyId, TaxonomyReference,
+    validate_commit_draft_with_provenance,
 };
 
 use crate::fingerprint_taxonomy;
@@ -33,6 +34,12 @@ impl CommitTaxonomy {
     #[must_use]
     pub const fn id(&self) -> &TaxonomyId {
         self.taxonomy.id()
+    }
+
+    /// Returns the taxonomy identity with its built-in release, such as `conventional-v1`.
+    #[must_use]
+    pub const fn reference(&self) -> TaxonomyReference<'_> {
+        self.taxonomy.reference()
     }
 
     /// Returns commit types in taxonomy order.
