@@ -7,13 +7,13 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Cell, Clear, Paragraph, Row, Table, TableState, Widget, Wrap};
-use tui_textarea::{CursorMove, TextArea, WrapMode};
+use tui_textarea::{CursorMove, TextArea};
 
 use super::state::{
     AuthoringSession, CatalogTab, ConfirmationAction, FieldId, FieldStatus, SCOPE_VALUE_LINE, Stage,
 };
 use crate::confirmation::{Confirmation, DISCARD};
-use crate::theme::{ACCENT, JET_BLACK, ZEBRA_BACKGROUND};
+use crate::theme::{ACCENT, JET_BLACK, ZEBRA_BACKGROUND, popup_selected_style, theme};
 
 const MINIMUM_WIDTH: u16 = 60;
 const MINIMUM_HEIGHT: u16 = 16;
@@ -88,7 +88,13 @@ struct CursorStatus {
 }
 
 /// Draws the editor in `area`, which the Commit page leaves it under the staged header.
-pub(crate) fn render(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession) {
+/// `target` names where Git puts the commit, as the review's commit row reads.
+pub(crate) fn render(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    session: &mut AuthoringSession,
+    target: &str,
+) {
     session.discard_dialog.invalidate();
     session.catalog_tabs.clear();
     let minimum_height = if session.visible_stage() == Stage::Compose {
@@ -127,7 +133,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringS
     match session.visible_stage() {
         Stage::SelectType => render_picker(frame, area, session),
         Stage::Compose => render_composer(frame, area, session),
-        Stage::Review => render_review(frame, area, session),
+        Stage::Review => render_review(frame, area, session, target),
         Stage::Confirm => unreachable!("confirmation resolves to its underlying stage"),
     }
     if session.stage == Stage::Confirm {
@@ -145,12 +151,12 @@ pub(crate) fn hints(session: &AuthoringSession) -> &'static [(&'static str, &'st
             ("esc/q", "cancel"),
         ],
         Stage::Compose => &[("↑/↓", "move"), ("esc", "back"), ("ctrl+s", "review")],
-        Stage::Review | Stage::Confirm => &[
+        Stage::Review => &[
             ("enter", "commit"),
-            ("esc", "edit"),
+            ("esc", "keep editing"),
             ("↑/↓", "scroll"),
-            ("q", "cancel"),
         ],
+        Stage::Confirm => unreachable!("confirmation shows over the composer"),
     }
 }
 
@@ -909,53 +915,49 @@ fn subject_context_fits(editor: &TextArea<'_>, viewport_height: u16) -> bool {
     subject.measure(MAX_EDITOR_INNER_WIDTH).content_rows <= viewport_height
 }
 
-fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession) {
-    let shell = stage_shell(area, 0);
-    frame.render_widget(Block::bordered().border_style(frame_style()), shell.frame);
-    let inner = Rect::new(
-        shell.frame.x.saturating_add(1),
-        shell.frame.y.saturating_add(1),
-        shell.frame.width.saturating_sub(2),
-        shell.frame.height.saturating_sub(2),
-    );
-    let review_sections = Layout::vertical([
+/// The message without its provenance trailers, then the highlighted `target` row
+/// that enter commits, then any recommendations the message leaves out, dimmed.
+fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession, target: &str) {
+    let Some(review) = &mut session.review else {
+        return;
+    };
+    let area = inset_horizontally(area, 1);
+    let recommendations: Vec<_> = session
+        .composer
+        .warnings
+        .iter()
+        .map(|warning| Line::styled(warning.message.clone(), Style::new().fg(theme().dim)))
+        .collect();
+    let recommendation_rows = u16::try_from(recommendations.len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(u16::from(!recommendations.is_empty()));
+    let message =
+        Paragraph::new(review.message.content().trim_end().to_owned()).wrap(Wrap { trim: false });
+    let rows = u16::try_from(message.line_count(area.width)).unwrap_or(u16::MAX);
+    let room = area.height.saturating_sub(2 + recommendation_rows);
+    review.scrollable = rows > room;
+    review.scroll = review.scroll.min(rows.saturating_sub(room));
+    let [text, _, commit, _, notes] = Layout::vertical([
+        Constraint::Length(rows.min(room)),
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Min(1),
+        Constraint::Length(u16::from(!recommendations.is_empty())),
+        Constraint::Min(0),
     ])
-    .split(inner);
-    render_section_heading(
-        frame,
-        Pane::new(review_sections[0]).content,
-        "Final Git Commit Message",
+    .areas(area);
+    frame.render_widget(message.scroll((review.scroll, 0)), text);
+    let key = "enter ";
+    let label = crate::commit::truncate(
+        &format!(" {target}"),
+        usize::from(commit.width).saturating_sub(key.len() + 1),
     );
-    render_frame_rule(frame, shell.frame, review_sections[1].y, None);
-    let message = Pane::new(review_sections[2]).content;
-    if let Some(review) = &mut session.review {
-        let mut preview = review.message.as_str().to_owned();
-        if !session.composer.warnings.is_empty() {
-            preview.push_str("\nRecommendations (nonblocking; not included in commit):\n");
-            let warnings = session.composer.warnings.iter();
-            preview.push_str(
-                &warnings
-                    .map(|warning| warning.message.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            );
-        }
-        let mut measured_message = TextArea::new(preview.lines().map(str::to_owned).collect());
-        measured_message.set_wrap_mode(WrapMode::WordOrGlyph);
-        review.scrollable = measured_message.measure(message.width).content_rows > message.height;
-        if !review.scrollable {
-            review.scroll = 0;
-        }
-        frame.render_widget(
-            Paragraph::new(preview)
-                .wrap(Wrap { trim: false })
-                .scroll((review.scroll, 0)),
-            message,
-        );
-    }
+    let gap =
+        usize::from(commit.width).saturating_sub(Line::from(label.as_str()).width() + key.len());
+    frame.render_widget(
+        Paragraph::new(format!("{label}{}{key}", " ".repeat(gap))).style(popup_selected_style()),
+        commit,
+    );
+    frame.render_widget(Paragraph::new(recommendations), notes);
 }
 
 fn render_confirmation(frame: &mut Frame<'_>, session: &mut AuthoringSession) {

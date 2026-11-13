@@ -73,5 +73,6 @@ mod tests {
         assert!(message.as_str().contains("Gitserious-Schema: sha256:"));
         assert!(!message.as_str().contains("Gitserious-Template"));
         assert!(!message.as_str().contains("Gitserious-Typeset"));
+        assert_eq!(message.content(), "note: record context\n");
     }
 }

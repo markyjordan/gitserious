@@ -16,13 +16,30 @@ pub const COMMIT_MESSAGE_WIDTH: u16 = 80;
 
 /// A canonical, schema-validated commit message.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct CommitMessage(Box<str>);
+pub struct CommitMessage {
+    text: Box<str>,
+    /// Byte length of the text before any provenance trailers.
+    content: usize,
+}
 
 impl CommitMessage {
+    fn new(text: String, content: usize) -> Self {
+        Self {
+            text: text.into_boxed_str(),
+            content,
+        }
+    }
+
     /// Returns the canonical message text.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.text
+    }
+
+    /// Returns the message without its provenance trailers, as a reviewer reads it.
+    #[must_use]
+    pub fn content(&self) -> &str {
+        &self.text[..self.content]
     }
 }
 
@@ -73,7 +90,8 @@ fn render_valid_draft(definition: &CommitTypeDefinition, draft: &CommitDraft) ->
         }
     }
 
-    CommitMessage(message.into_boxed_str())
+    let content = message.len();
+    CommitMessage::new(message, content)
 }
 
 /// Validates against the provenance schema and, when nothing blocks the
@@ -110,7 +128,7 @@ pub fn validate_commit_draft_with_provenance(
         message.push('\n');
         let _ = writeln!(message, "Gitserious-Taxonomy: {}", taxonomy.reference());
         let _ = writeln!(message, "Gitserious-Schema: {}", provenance.fingerprint());
-        *rendered = CommitMessage(message.into_boxed_str());
+        *rendered = CommitMessage::new(message, rendered.content);
     }
     report
 }

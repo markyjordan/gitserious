@@ -270,6 +270,53 @@ fn enter_opens_the_editor_under_the_nav_bar_with_the_staged_header_and_edit_badg
 }
 
 #[test]
+fn review_draws_the_message_without_provenance_and_approves_it_with_provenance()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut root = Root::new(InitialPage::Commit, of(&Ready), &[]);
+    review_a_commit(&mut root);
+    let terminal = draw(&mut root)?;
+    let text = rendered(&terminal);
+    let rows: Vec<_> = text.lines().collect();
+    assert!(rows[1].starts_with(" 2 staged"), "{text}");
+    assert!(rows[1].trim_end().ends_with("ctrl+g change"), "{text}");
+    assert!(rows[3].starts_with(" feat: open the commit page"), "{text}");
+    assert!(!text.contains("Gitserious-"), "{text}");
+    let commit = rows
+        .iter()
+        .position(|row| row.starts_with("  commit to main (first commit) "))
+        .ok_or("missing commit row")?;
+    assert!(rows[commit].ends_with(" enter  "), "{text}");
+    assert!(rows[commit - 1].trim().is_empty(), "{text}");
+    assert!(rows[commit - 2].contains("reviewed decision"), "{text}");
+    let footer = footer(&terminal);
+    assert!(
+        footer.starts_with("  EDIT  enter commit  esc keep editing  ↑/↓ scroll  "),
+        "{footer}"
+    );
+    assert!(!footer.contains("cancel"), "{footer}");
+
+    assert_eq!(
+        root.handle_event(key(KeyCode::Enter), of(&Ready), &[]),
+        Some(Action::Commit(CommitRequest::Submit))
+    );
+    let message = root
+        .commit
+        .approved()
+        .ok_or("missing approved commit")?
+        .reviewed_message()
+        .as_str();
+    assert!(
+        message.contains("\nGitserious-Taxonomy: conventional-v1\n"),
+        "{message}"
+    );
+    assert!(
+        message.contains("\nGitserious-Schema: sha256:"),
+        "{message}"
+    );
+    Ok(())
+}
+
+#[test]
 fn tab_reaches_the_nav_bar_and_returning_to_commit_keeps_the_draft()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut root = editing("keep this subject");

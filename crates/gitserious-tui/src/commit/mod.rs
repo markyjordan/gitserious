@@ -189,6 +189,11 @@ impl CommitView {
     }
 
     #[cfg(test)]
+    pub(crate) const fn approved(&self) -> Option<&AuthoredCommit> {
+        self.approved.as_ref()
+    }
+
+    #[cfg(test)]
     pub(crate) fn notice(&self) -> &str {
         &self.notice
     }
@@ -407,7 +412,12 @@ impl CommitView {
                 Paragraph::new("─".repeat(usize::from(rule.width))).style(frame_style()),
                 rule,
             );
-            author::render(frame, editor, session);
+            author::render(
+                frame,
+                editor,
+                session,
+                &commit_target(self.snapshot.as_ref()),
+            );
             return;
         }
         let [summary, tree, status] = Layout::vertical([
@@ -528,6 +538,16 @@ fn in_group(entry: &StatusEntry, group: usize) -> bool {
         0 => !entry.untracked && entry.index != '.',
         1 => !entry.untracked && entry.worktree != '.',
         _ => entry.untracked,
+    }
+}
+
+/// Where Git puts the commit, as the review's commit row reads.
+fn commit_target(snapshot: Option<&RepositoryStatus>) -> String {
+    match snapshot.map(|snapshot| &snapshot.branch) {
+        Some(BranchState::Named(name)) => format!("commit to {}", visible(name)),
+        Some(BranchState::Unborn(name)) => format!("commit to {} (first commit)", visible(name)),
+        Some(BranchState::Detached(_)) => "commit on detached HEAD".to_owned(),
+        None => "commit".to_owned(),
     }
 }
 
