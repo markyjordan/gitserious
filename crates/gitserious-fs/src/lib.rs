@@ -7,6 +7,7 @@ mod directory;
 mod git;
 mod git_commit;
 mod git_status;
+mod git_worktree;
 mod global;
 mod platform;
 mod taxonomy_global;
@@ -25,3 +26,4 @@ pub use taxonomy_project::{ProjectStateError, TomlProjectStore};
 mod tests;
 
 pub use git_status::GitRepositoryStatusReader;
+pub use git_worktree::GitWorktreePaths;

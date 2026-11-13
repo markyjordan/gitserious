@@ -17,7 +17,7 @@ pub mod test_support;
 pub use commit::{
     AuthoredCommit, BranchState, CommitAuthoringContext, CommitOutput, CommitServices,
     CommitTaxonomy, CommitWorkspace, CommitWriter, RepositoryStatus, RepositoryStatusReader,
-    StatusEntry, prepare_commit_with_taxonomy, validate_reviewed_commit,
+    StatusEntry, WorktreePaths, prepare_commit_with_taxonomy, validate_reviewed_commit,
 };
 pub use config::{
     ConfigurationError, ConfigurationServices, ConfigurationWorkspace, DraftEdit, DraftField,
