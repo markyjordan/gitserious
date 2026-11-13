@@ -5,19 +5,20 @@ use gitserious_core::{
     PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion, built_in_commit_types,
     built_in_taxonomies, validate_commit_draft,
 };
-use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
+use ratatui::{Frame, Terminal};
 use tui_textarea::{CursorMove, CursorRenderMode, TextArea, WrapMode};
 
 use crate::theme::{ACCENT, theme};
 
-use super::render::render;
+use super::render::{hints, render};
 use super::state::{
     AuthoringOutcome, AuthoringSession, ConfirmationAction, FieldId, FieldStatus, Stage,
     TypeCatalogKind, ValidationIssue,
@@ -84,10 +85,10 @@ fn taxonomy_picker_switches_schema_and_confirms_discard() -> Result<(), Box<dyn 
         .map(|taxonomy| taxonomy.id().clone())
         .collect::<Vec<_>>();
     let context = gitserious_app::CommitAuthoringContext::new(taxonomies.to_vec(), &ids[0], None)?;
-    let mut session = AuthoringSession::with_context(&context);
+    let mut session = AuthoringSession::with_context(context.clone());
     assert!(rendered(&mut session, 100, 32)?.contains("research"));
-    press(&mut session, KeyCode::Tab);
-    assert_eq!(session.taxonomy.ok_or("missing taxonomy")?.id(), &ids[1]);
+    press(&mut session, KeyCode::Right);
+    assert_eq!(session.taxonomy().ok_or("missing taxonomy")?.id(), &ids[1]);
     assert_eq!(session.definitions, context.taxonomies()[1].definitions());
     press(&mut session, KeyCode::Enter);
     press(&mut session, KeyCode::Char('x'));
@@ -99,11 +100,11 @@ fn taxonomy_picker_switches_schema_and_confirms_discard() -> Result<(), Box<dyn 
     press(&mut session, KeyCode::Esc);
     press(&mut session, KeyCode::Char('y'));
     assert_eq!(session.stage, Stage::SelectType);
-    press(&mut session, KeyCode::Tab);
-    assert_eq!(session.taxonomy.ok_or("missing taxonomy")?.id(), &ids[2]);
+    press(&mut session, KeyCode::Right);
+    assert_eq!(session.taxonomy().ok_or("missing taxonomy")?.id(), &ids[2]);
     assert!(!session.composer.dirty());
-    press(&mut session, KeyCode::Tab);
-    assert_eq!(session.taxonomy.ok_or("missing taxonomy")?.id(), &ids[0]);
+    press(&mut session, KeyCode::Right);
+    assert_eq!(session.taxonomy().ok_or("missing taxonomy")?.id(), &ids[0]);
     Ok(())
 }
 
@@ -117,7 +118,7 @@ fn context_review_includes_provenance_and_returns_the_latest_approved_bytes()
         &id,
         Some(&CommitTypeId::new("feat")?),
     )?;
-    let mut session = AuthoringSession::with_context(&context);
+    let mut session = AuthoringSession::with_context(context.clone());
     set_document(&mut session, valid_feat_document(), 10);
     modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
     let review = session.review.as_ref().ok_or("review missing")?;
@@ -176,11 +177,11 @@ fn left_click(column: u16, row: u16) -> Event {
     })
 }
 
-fn press(session: &mut AuthoringSession<'_>, code: KeyCode) {
+fn press(session: &mut AuthoringSession, code: KeyCode) {
     assert!(session.handle_event(key(code)).is_none());
 }
 
-fn modified_press(session: &mut AuthoringSession<'_>, code: KeyCode, modifiers: KeyModifiers) {
+fn modified_press(session: &mut AuthoringSession, code: KeyCode, modifiers: KeyModifiers) {
     assert!(
         session
             .handle_event(modified_key(code, modifiers))
@@ -188,7 +189,7 @@ fn modified_press(session: &mut AuthoringSession<'_>, code: KeyCode, modifiers: 
     );
 }
 
-fn paste(session: &mut AuthoringSession<'_>, text: &str) {
+fn paste(session: &mut AuthoringSession, text: &str) {
     assert!(
         session
             .handle_event(Event::Paste(text.to_owned()))
@@ -196,7 +197,7 @@ fn paste(session: &mut AuthoringSession<'_>, text: &str) {
     );
 }
 
-fn set_document(session: &mut AuthoringSession<'_>, document: &str, cursor_line: u16) {
+fn set_document(session: &mut AuthoringSession, document: &str, cursor_line: u16) {
     session.composer.editor = TextArea::new(document.lines().map(str::to_owned).collect());
     session
         .composer
@@ -217,6 +218,18 @@ fn set_document(session: &mut AuthoringSession<'_>, document: &str, cursor_line:
     }
 }
 
+/// Draws `session` where the Commit page puts it: below the page's header and above
+/// the footer, which these tests leave as the first and last rows.
+fn draw(frame: &mut Frame<'_>, session: &mut AuthoringSession) {
+    let area = frame.area();
+    render(
+        frame,
+        Rect::new(0, 1, area.width, area.height.saturating_sub(2)),
+        session,
+    );
+    crate::theme::normalize_background(frame, area);
+}
+
 fn buffer_text(backend: &TestBackend) -> String {
     backend
         .buffer()
@@ -227,24 +240,24 @@ fn buffer_text(backend: &TestBackend) -> String {
 }
 
 fn rendered(
-    session: &mut AuthoringSession<'_>,
+    session: &mut AuthoringSession,
     width: u16,
     height: u16,
 ) -> Result<String, Box<dyn Error>> {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend)?;
-    terminal.draw(|frame| render(frame, session))?;
+    terminal.draw(|frame| draw(frame, session))?;
     Ok(buffer_text(terminal.backend()))
 }
 
 fn rendered_buffer(
-    session: &mut AuthoringSession<'_>,
+    session: &mut AuthoringSession,
     width: u16,
     height: u16,
 ) -> Result<Buffer, Box<dyn Error>> {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend)?;
-    terminal.draw(|frame| render(frame, session))?;
+    terminal.draw(|frame| draw(frame, session))?;
     Ok(terminal.backend().buffer().clone())
 }
 
@@ -335,7 +348,7 @@ fn compact_region_text(
 }
 
 fn rendered_property_guidance(
-    session: &mut AuthoringSession<'_>,
+    session: &mut AuthoringSession,
     width: u16,
     height: u16,
 ) -> Result<String, Box<dyn Error>> {
@@ -433,47 +446,15 @@ fn assert_bold_blue_heading(
     Ok(position)
 }
 
-fn assert_stage_header(
-    session: &mut AuthoringSession<'_>,
-    width: u16,
-    height: u16,
-    step: &str,
-) -> Result<(), Box<dyn Error>> {
-    let buffer = rendered_buffer(session, width, height)?;
-    assert_eq!(
-        find_ascii(&buffer, width, height, "Commit / "),
-        Some((0, 0))
-    );
-    let position = find_ascii(&buffer, width, height, step).ok_or("missing active step")?;
-    assert_eq!(position.1, 0);
-    assert_eq!(buffer[position].bg, ACCENT);
-    assert!((0..width).all(|column| !matches!(buffer[(column, 0)].symbol(), "─" | "┌" | "┐")));
-    Ok(())
-}
-
-fn assert_highlighted_footer(
-    session: &mut AuthoringSession<'_>,
-    width: u16,
-    height: u16,
-) -> Result<(), Box<dyn Error>> {
-    let backend = TestBackend::new(width, height);
-    let mut terminal = Terminal::new(backend)?;
-    terminal.draw(|frame| render(frame, session))?;
-    let buffer = terminal.backend().buffer();
-    let row = (0..width)
-        .map(|column| &buffer[(column, height - 1)])
-        .collect::<Vec<_>>();
-    assert!(row.iter().all(|cell| cell.bg == theme().band));
-    assert!(
-        row.iter()
-            .any(|cell| cell.fg == theme().text && cell.modifier.contains(Modifier::BOLD))
-    );
-    assert!(row.iter().any(|cell| cell.fg == theme().dim));
-    Ok(())
+/// The editor leaves the page's header row and the footer row to the Commit page.
+fn assert_rows_untouched(buffer: &Buffer, width: u16, height: u16) {
+    for row in [0, height - 1] {
+        assert!(row_text(buffer, width, row).trim().is_empty(), "row {row}");
+    }
 }
 
 fn assert_validation_and_column_status(
-    composer: &mut AuthoringSession<'_>,
+    composer: &mut AuthoringSession,
 ) -> Result<(), Box<dyn Error>> {
     modified_press(composer, KeyCode::Char('s'), KeyModifiers::CONTROL);
     let invalid_buffer = rendered_buffer(composer, 120, 32)?;
@@ -524,7 +505,7 @@ fn valid_feat_document() -> &'static str {
     "scope:\n\n\ndescription:\ncompose durable message\n\nintent:\nexplain intent 🦀\n\ndecision:\nfirst line\nsecond line\n\nconstraints:"
 }
 
-fn valid_feat_session() -> AuthoringSession<'static> {
+fn valid_feat_session() -> AuthoringSession {
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
     set_document(&mut session, valid_feat_document(), 10);
     modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
@@ -615,11 +596,6 @@ fn picker_navigation_wraps_selects_and_cancels() {
     let mut cancelled = AuthoringSession::new(definitions, None);
     assert_eq!(
         cancelled.handle_event(key(KeyCode::Char('q'))),
-        Some(AuthoringOutcome::Cancelled)
-    );
-    let mut cancelled = AuthoringSession::new(definitions, None);
-    assert_eq!(
-        cancelled.handle_event(modified_key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
         Some(AuthoringOutcome::Cancelled)
     );
 }
@@ -1465,7 +1441,6 @@ fn review_cancellation_confirmation_can_resume_without_losing_the_preview()
 fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn Error>> {
     let mut picker = AuthoringSession::new(built_in_commit_types(), None);
     let text = rendered(&mut picker, 100, 24)?;
-    assert!(text.contains("select taxonomy and type"));
     assert!(!text.contains("gitserious commit"));
     assert!(!text.contains("Choose the semantic contract for this commit."));
     assert!(!text.contains("Commit types"));
@@ -1474,10 +1449,8 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
             .count(),
         1
     );
-    assert!(text.contains("enter select"));
-    assert!(text.contains("tab switch"));
-    assert_stage_header(&mut picker, 100, 24, "select taxonomy and type")?;
     let picker_buffer = rendered_buffer(&mut picker, 100, 24)?;
+    assert_rows_untouched(&picker_buffer, 100, 24);
     assert_eq!(picker_buffer[(0, 1)].symbol(), "┌");
     assert_eq!(picker_buffer[(99, 1)].symbol(), "┐");
     assert_eq!(picker_buffer[(0, 22)].symbol(), "└");
@@ -1491,7 +1464,6 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert_black_canvas(&picker_buffer);
     let selected = find_ascii(&picker_buffer, 100, 24, "feat").ok_or("missing selection")?;
     assert_eq!(selected, (5, 4));
-    assert_highlighted_footer(&mut picker, 100, 24)?;
 
     let definitions = vec![presentation_definition()?];
     let mut composer = AuthoringSession::new(&definitions, Some(0));
@@ -1500,7 +1472,6 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
         .editor
         .move_cursor(CursorMove::Jump(19, 0));
     let text = rendered(&mut composer, 120, 32)?;
-    assert!(text.contains("compose message"));
     assert!(text.contains("Type: custom"));
     assert!(!text.contains("Keymap:"));
     assert!(text.contains("○  description"));
@@ -1510,8 +1481,8 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert!(text.contains("applies"));
     assert!(!text.contains("ctrl+t"));
     assert!(!text.contains("Complete every required field before review."));
-    assert_stage_header(&mut composer, 120, 32, "compose message")?;
     let composer_buffer = rendered_buffer(&mut composer, 120, 32)?;
+    assert_rows_untouched(&composer_buffer, 120, 32);
     assert_eq!(composer_buffer[(0, 2)].symbol(), "┌");
     assert_eq!(composer_buffer[(119, 2)].symbol(), "┐");
     for heading in ["Message Properties", "Property Description"] {
@@ -1519,18 +1490,15 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     }
     assert!(find_ascii(&composer_buffer, 120, 32, "Message form").is_none());
     assert_black_canvas(&composer_buffer);
-    assert_highlighted_footer(&mut composer, 120, 32)?;
 
     assert_validation_and_column_status(&mut composer)?;
 
     let mut review = valid_feat_session();
     let text = rendered(&mut review, 100, 24)?;
-    assert!(text.contains("review and submit"));
     assert!(!text.contains("Review the exact canonical message before Git creates the commit."));
     assert!(text.contains("feat: compose durable message"));
-    assert!(text.contains("enter commit"));
-    assert_stage_header(&mut review, 100, 24, "review and submit")?;
     let review_buffer = rendered_buffer(&mut review, 100, 24)?;
+    assert_rows_untouched(&review_buffer, 100, 24);
     assert_eq!(
         find_ascii(&review_buffer, 100, 24, "feat: compose durable message"),
         Some((2, 4)),
@@ -1546,7 +1514,6 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert_eq!(review_buffer[(0, 1)].symbol(), "┌");
     assert_eq!(review_buffer[(99, 22)].symbol(), "┘");
     assert_black_canvas(&review_buffer);
-    assert_highlighted_footer(&mut review, 100, 24)?;
     Ok(())
 }
 
@@ -1592,7 +1559,7 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
     assert!(text.contains("Discard this draft and cancel"));
     assert!(text.contains("y discard"));
     assert!(text.contains("enter/esc/n keep editing"));
-    assert!(text.contains("review and submit"));
+    assert!(text.contains("Final Git Commit Message"));
     let buffer = rendered_buffer(&mut review, 100, 24)?;
     let buttons = review
         .discard_dialog
@@ -1710,43 +1677,36 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
     let authored = find_ascii(&buffer, 100, 32, "hello").ok_or("missing authored value")?;
     assert!(!buffer[authored].modifier.contains(Modifier::UNDERLINED));
 
-    let footer = row_text(&buffer, 100, 31);
-    assert!(footer.contains("↑/↓ move  esc back  ctrl+s review"));
-    assert!(!footer.contains('|'));
-    assert!(!footer.contains("col 6/80"));
-    assert!(!footer.contains('▌'));
-    assert!(!footer.contains("Ctrl"));
-    assert!(!footer.contains("ctrl+n"));
-    assert!(!footer.contains("ctrl+d"));
+    assert_eq!(
+        hints(&composer),
+        [("↑/↓", "move"), ("esc", "back"), ("ctrl+s", "review")]
+    );
     let status = find_ascii(&buffer, 100, 32, "col 6/80").ok_or("missing column status")?;
     assert_eq!(status, (90, 29));
     assert_eq!(status.0 + u16::try_from("col 6/80".len())?, 98);
     assert_eq!(buffer[status].bg, JET_BLACK);
-    let key = find_ascii(&buffer, 100, 32, "ctrl+s review").ok_or("missing key hint")?;
-    let action = (key.0 + 7, key.1);
-    assert!(buffer[key].modifier.contains(Modifier::BOLD));
-    assert!(!buffer[action].modifier.contains(Modifier::BOLD));
-    assert_eq!(buffer[key].fg, theme().text);
-    assert_eq!(buffer[action].fg, theme().dim);
-    assert_eq!(buffer[key].bg, theme().band);
-    assert_eq!(buffer[action].bg, theme().band);
 
-    let mut picker = AuthoringSession::new(built_in_commit_types(), None);
-    let buffer = rendered_buffer(&mut picker, 100, 24)?;
-    let footer = row_text(&buffer, 100, 23);
-    assert!(footer.contains("tab switch  ↑/↓ move  enter select  esc/q cancel"));
-    assert!(!footer.contains('|'));
-    assert!(!footer.contains("/j"));
-    assert!(!footer.contains("/k"));
-    assert!(!footer.contains("Home/End"));
+    let picker = AuthoringSession::new(built_in_commit_types(), None);
+    assert_eq!(
+        hints(&picker),
+        [
+            ("←/→", "taxonomy"),
+            ("↑/↓", "move"),
+            ("enter", "select"),
+            ("esc/q", "cancel")
+        ]
+    );
 
-    let mut review = valid_feat_session();
-    let buffer = rendered_buffer(&mut review, 100, 24)?;
-    let footer = row_text(&buffer, 100, 23);
-    assert!(footer.contains("enter commit  esc edit  ↑/↓ scroll  q/ctrl+c cancel"));
-    assert!(!footer.contains('|'));
-    assert!(!footer.contains("Ctrl"));
-    assert!(!footer.contains('·'));
+    let review = valid_feat_session();
+    assert_eq!(
+        hints(&review),
+        [
+            ("enter", "commit"),
+            ("esc", "edit"),
+            ("↑/↓", "scroll"),
+            ("q", "cancel")
+        ]
+    );
     Ok(())
 }
 
@@ -2722,7 +2682,7 @@ fn non_press_resize_and_paste_events_obey_stage_boundaries() {
 }
 
 /// Moves the cursor to the value line under the first `heading` in the composer.
-fn focus_heading(session: &mut AuthoringSession<'_>, heading: &str) -> Result<(), Box<dyn Error>> {
+fn focus_heading(session: &mut AuthoringSession, heading: &str) -> Result<(), Box<dyn Error>> {
     let row = session
         .composer
         .editor

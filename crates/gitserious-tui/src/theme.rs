@@ -167,6 +167,31 @@ pub(crate) const FOOTER_HEIGHT: u16 = 1;
 pub(crate) const ROOT_HINTS: [(&str, &str); 3] =
     [("tab", "nav bar"), ("/", "commands"), ("q", "quit")];
 
+/// The EDIT badge: dark bold text on the pending accent.
+pub(crate) const EDIT_BADGE: Style = Style::new()
+    .fg(theme().ground)
+    .bg(theme().pending)
+    .add_modifier(Modifier::BOLD);
+
+/// An EDIT badge, then `hints`, for an editor that leaves the root only tab.
+pub(crate) fn render_edit_footer(frame: &mut Frame<'_>, area: Rect, hints: &[(&str, &str)]) {
+    let badge = Span::styled(" EDIT ", EDIT_BADGE);
+    let width = u16::try_from(badge.width() + 1)
+        .unwrap_or(u16::MAX)
+        .min(area.width);
+    frame.render_widget(Paragraph::new(badge), Rect { width, ..area });
+    render_footer(
+        frame,
+        Rect {
+            x: area.x + width,
+            width: area.width - width,
+            ..area
+        },
+        hints,
+        &ROOT_HINTS[..1],
+    );
+}
+
 /// Render the footer background and return its content area.
 pub(crate) fn render_footer_block(frame: &mut Frame<'_>, area: Rect) -> Rect {
     let block = Block::default()

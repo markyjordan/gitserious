@@ -70,11 +70,16 @@ applicable groups. Up/Down selects rows; Left/Right collapses or expands folders
 project policy exist. Conflicts block authoring. These actions are also available
 through `/`. Stage changes using Git; the overview never modifies the index.
 
-Shell authoring reuses the existing picker, composer, and review. Its header is
-`Commit / select taxonomy and type / compose message / review and submit`,
-with the active step highlighted. The parent is clickable and protects dirty
-drafts. Submission restores the terminal while Git runs, then returns to a
-refreshed overview with the result; `o` opens a scrollable full result. A
+Authoring happens inside the Commit page, under the nav bar, and reuses the
+existing picker, composer, and review. Its first row reads `N staged` and the
+staged paths, cut to fit, with `ctrl+g change` on the right, above a rule.
+Ctrl+G opens a read-only view of the staged changes; Esc returns to the draft.
+The footer leads with an orange EDIT badge and the step's keys, and ends with
+`tab nav bar`. The editor takes every key except Tab and Shift+Tab, so `q`,
+`/`, and Esc reach it. Tab and nav bar clicks still switch sections, and the
+draft is still there on return. Quit and Ctrl+C ask before discarding an
+unsaved draft. Submission restores the terminal while Git runs, then returns
+to a refreshed overview with the result; `o` opens a scrollable full result. A
 rejected commit retains its reviewed message and composer; Enter resumes review. `c` starts a new commit. Quit asks
 before discarding a retained review. Direct `gitserious commit` opens this
 Commit page and waits. Authoring starts from the page, and cancelling it
@@ -205,7 +210,7 @@ compact and wide terminals.
 ## Commit authoring
 
 Authoring, once started from the Commit page, begins at the default taxonomy
-in `gitserious.toml`. Picker tabs support Tab/Shift+Tab to switch forward/backward and
+in `gitserious.toml`. Left and Right switch the picker's taxonomy tabs, which
 show taxonomy identities and never mutate project policy.
 
 The composer retains the established schema-document interaction: immutable

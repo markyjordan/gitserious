@@ -40,10 +40,8 @@ pub struct Capabilities<'a> {
 /// What only the session loop can do after an event.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SessionRequest {
-    /// Author a commit in the terminal, or resume the failed one's review.
-    Author {
-        resume: bool,
-    },
+    /// Hand the approved commit to Git, which may need the terminal.
+    Submit,
     Quit,
 }
 
@@ -132,7 +130,7 @@ impl Root {
                     .map(Action::Commit);
             }
             Action::Quit => {
-                if self.commit.has_pending_review() {
+                if self.commit.has_unsaved_work() {
                     self.overlay = Some(Overlay::QuitConfirm);
                 } else {
                     return Some(Action::Quit);
@@ -142,14 +140,13 @@ impl Root {
         None
     }
 
-    /// Authors a commit in `terminal`, or resumes the failed one's review.
-    pub(crate) fn author(
+    /// Submits the approved commit with `terminal` restored for Git.
+    pub(crate) fn submit(
         &mut self,
         terminal: &mut DefaultTerminal,
         capabilities: Capabilities<'_>,
-        resume: bool,
     ) -> io::Result<()> {
-        self.commit.author(terminal, capabilities.commit, resume)
+        self.commit.submit(terminal, capabilities.commit)
     }
 }
 

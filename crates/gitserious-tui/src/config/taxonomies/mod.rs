@@ -22,7 +22,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::naming::{problem_sentence, refusal_sentence, single_line};
 use super::{RootKeys, contains};
-use crate::theme::{footer_hints, footer_key_style, footer_label_style, theme};
+use crate::theme::{EDIT_BADGE, footer_hints, footer_key_style, footer_label_style, theme};
 use outline::Row;
 pub(super) use outline::RowKey;
 
@@ -37,11 +37,6 @@ mod text_layout;
 const DIM: Style = Style::new().fg(theme().dim);
 const KEY_STYLE: Style = Style::new().fg(theme().text).add_modifier(Modifier::BOLD);
 pub(super) const BAND: Style = Style::new().bg(theme().band);
-const EDIT_CHIP: Style = Style::new()
-    .fg(theme().ground)
-    .bg(theme().pending)
-    .add_modifier(Modifier::BOLD);
-
 /// A node's change or problem status in the outline and Inspector.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Chip {
@@ -758,7 +753,7 @@ impl TaxonomiesView {
                     && node.taxonomy().origin() == TaxonomyOrigin::Custom
             });
         let chip = vec![if editing {
-            Span::styled(" EDIT ", EDIT_CHIP)
+            Span::styled(" EDIT ", EDIT_BADGE)
         } else {
             Span::raw("")
         }];

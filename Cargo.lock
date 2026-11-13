@@ -492,6 +492,7 @@ dependencies = [
  "ratatui",
  "tui-textarea-2",
  "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]
