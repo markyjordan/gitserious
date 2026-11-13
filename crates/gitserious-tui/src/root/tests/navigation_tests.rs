@@ -99,8 +99,7 @@ fn the_palette_lists_open_commands_then_the_pages_own_then_quit() {
 }
 
 #[test]
-fn the_commit_palette_follows_the_blocker_the_last_result_and_the_pending_review()
--> Result<(), Box<dyn std::error::Error>> {
+fn the_commit_palette_follows_the_blocker_the_last_result_and_the_pending_review() {
     let missing = Root::new(InitialPage::Commit, of(&Unavailable), &[]);
     assert_eq!(palette(&missing), listing(&["Refresh repository"]));
     let unstaged = Root::new(InitialPage::Commit, of(&Services), &[]);
@@ -111,18 +110,16 @@ fn the_commit_palette_follows_the_blocker_the_last_result_and_the_pending_review
         palette(&ready),
         listing(&["Refresh repository", "Start commit"])
     );
-    let (context, _, checkpoint) = commit::reviewed_submission()?;
+    approve_a_commit(&mut ready);
     let created = CommitOutput::new(b"created\n".to_vec(), Vec::new());
-    ready
-        .commit
-        .conclude_authoring(&Ready, Some((context, checkpoint, Ok(created))));
+    ready.commit.conclude_submission(&Ready, Ok(created));
     assert_eq!(
         palette(&ready),
         listing(&["Refresh repository", "View last Git result", "Start commit"])
     );
 
     assert_eq!(
-        palette(&rejected_review_with(&Ready)?),
+        palette(&rejected_review_with(&Ready)),
         listing(&[
             "Refresh repository",
             "View last Git result",
@@ -131,27 +128,27 @@ fn the_commit_palette_follows_the_blocker_the_last_result_and_the_pending_review
         ])
     );
     assert_eq!(
-        palette(&rejected_review_with(&Services)?),
+        palette(&rejected_review_with(&Services)),
         listing(&[
             "Refresh repository",
             "View last Git result",
             "Resume review"
         ])
     );
-    Ok(())
 }
 
 #[test]
 fn each_palette_command_does_what_its_label_says() -> Result<(), Box<dyn std::error::Error>> {
-    let mut root = rejected_review_with(&Ready)?;
-    assert_eq!(
-        run(&mut root, &Ready, "Start commit"),
-        Some(Action::Commit(CommitRequest::Author))
-    );
-    assert_eq!(
-        run(&mut root, &Ready, "Resume review"),
-        Some(Action::Commit(CommitRequest::Resume))
-    );
+    let mut root = rejected_review_with(&Ready);
+    assert_eq!(run(&mut root, &Ready, "Start commit"), None);
+    assert!(root.commit.editing());
+    assert!(root.commit.has_pending_review());
+    root.handle_event(key(KeyCode::Esc), of(&Ready), &[]);
+    assert_eq!(run(&mut root, &Ready, "Resume review"), None);
+    assert!(root.commit.editing());
+    assert!(!root.commit.has_pending_review());
+
+    let mut root = rejected_review_with(&Ready);
 
     assert_eq!(run(&mut root, &Ready, "View last Git result"), None);
     let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
@@ -194,7 +191,7 @@ fn each_palette_command_does_what_its_label_says() -> Result<(), Box<dyn std::er
 }
 
 #[test]
-fn ctrl_c_and_esc_reach_quit_from_every_page() -> Result<(), Box<dyn std::error::Error>> {
+fn ctrl_c_and_esc_reach_quit_from_every_page() {
     let control_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
     for section in Section::ALL {
         let mut root = Root::new(InitialPage::Home, of(&Services), &[]);
@@ -214,7 +211,7 @@ fn ctrl_c_and_esc_reach_quit_from_every_page() -> Result<(), Box<dyn std::error:
             assert_eq!(root.section, Section::Home, "{section:?}");
         }
 
-        let mut pending = rejected_review_on(section)?;
+        let mut pending = rejected_review_on(section);
         assert_eq!(
             pending.handle_event(control_c.clone(), of(&Services), &[]),
             None,
@@ -226,14 +223,13 @@ fn ctrl_c_and_esc_reach_quit_from_every_page() -> Result<(), Box<dyn std::error:
             "{section:?}"
         );
     }
-    Ok(())
 }
 
 #[test]
 fn quit_confirmation_footer_shows_only_the_dialogs_choices()
 -> Result<(), Box<dyn std::error::Error>> {
     let services = Services;
-    let mut root = rejected_review_on(Section::Config)?;
+    let mut root = rejected_review_on(Section::Config);
     root.handle_event(key(KeyCode::Char('q')), of(&services), &[]);
     assert!(matches!(root.overlay, Some(Overlay::QuitConfirm)));
     let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
@@ -315,14 +311,8 @@ fn tab_and_shift_tab_switch_sections_in_one_press_and_arrows_never_do()
 }
 
 #[test]
-fn a_pending_review_requires_confirmation_before_quitting() -> Result<(), Box<dyn std::error::Error>>
-{
-    let (context, _, checkpoint) = commit::reviewed_submission()?;
-    let mut root = Root::new(InitialPage::Commit, of(&Services), &[]);
-    root.commit.conclude_authoring(
-        &Services,
-        Some((context, checkpoint, Err("hook rejected".into()))),
-    );
+fn a_pending_review_requires_confirmation_before_quitting() {
+    let mut root = rejected_review_with(&Services);
 
     assert_eq!(
         root.handle_event(key(KeyCode::Char('q')), of(&Services), &[]),
@@ -342,7 +332,6 @@ fn a_pending_review_requires_confirmation_before_quitting() -> Result<(), Box<dy
         root.handle_event(key(KeyCode::Char('y')), of(&Services), &[]),
         Some(Action::Quit)
     );
-    Ok(())
 }
 
 #[test]

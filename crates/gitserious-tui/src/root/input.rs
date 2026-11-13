@@ -18,15 +18,15 @@ impl Root {
     ) -> Option<SessionRequest> {
         match self.handle_event(event, capabilities, help)? {
             Action::Quit => Some(SessionRequest::Quit),
-            Action::Commit(CommitRequest::Author) => Some(SessionRequest::Author { resume: false }),
-            Action::Commit(CommitRequest::Resume) => Some(SessionRequest::Author { resume: true }),
+            Action::Commit(CommitRequest::Submit) => Some(SessionRequest::Submit),
             Action::Select(_) | Action::Home(_) | Action::Commit(_) | Action::Initialize => None,
         }
     }
 
     /// Routes `event` in order: key releases are dropped, then an open root overlay,
     /// an open page modal, a too-small terminal, tab clicks, the root's keys, and
-    /// finally the page take it.
+    /// finally the page take it. Commit's open editor takes every key but tab and
+    /// shift+tab before the root's keys, so `q`, `/`, and esc reach it.
     pub(super) fn handle_event(
         &mut self,
         event: Event,
@@ -56,10 +56,8 @@ impl Root {
             if let Some(section) = self.tabs.at(mouse.column, mouse.row) {
                 return self.execute(Action::Select(section), capabilities);
             }
-            match self.section {
-                Section::Commit => self.commit.click(mouse.column, mouse.row),
-                Section::Help => self.help.click(mouse.column, mouse.row),
-                Section::Home | Section::Config => {}
+            if self.section == Section::Help {
+                self.help.click(mouse.column, mouse.row);
             }
         }
         if let Event::Key(key) = &event {
@@ -95,6 +93,12 @@ impl Root {
                     let request = self.home.key(*key, capabilities.project)?;
                     return self.execute(Action::Home(request), capabilities);
                 }
+                if self.section == Section::Commit
+                    && self.commit.editing()
+                    && !matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
+                {
+                    return self.commit_event(event, capabilities);
+                }
                 match key.code {
                     KeyCode::Tab | KeyCode::BackTab => {
                         return self.execute(
@@ -128,10 +132,16 @@ impl Root {
                 }
             }
         }
-        if self.section == Section::Config {
-            return self.config_event(event, capabilities);
+        match self.section {
+            Section::Config => self.config_event(event, capabilities),
+            Section::Commit if !self.too_small => self.commit_event(event, capabilities),
+            Section::Home | Section::Commit | Section::Help => None,
         }
-        None
+    }
+
+    fn commit_event(&mut self, event: Event, capabilities: Capabilities<'_>) -> Option<Action> {
+        let request = self.commit.event(event)?;
+        self.execute(Action::Commit(request), capabilities)
     }
 
     fn config_event(&mut self, event: Event, capabilities: Capabilities<'_>) -> Option<Action> {

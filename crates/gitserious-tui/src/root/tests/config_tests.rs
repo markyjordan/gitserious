@@ -256,10 +256,9 @@ fn config_edit_locks_tabs_and_gives_esc_and_q_to_the_field() {
 }
 
 #[test]
-fn config_palette_quit_uses_one_root_discard_confirmation() -> Result<(), Box<dyn std::error::Error>>
-{
+fn config_palette_quit_uses_one_root_discard_confirmation() {
     let services = Services;
-    let mut root = rejected_review_on(Section::Config)?;
+    let mut root = rejected_review_on(Section::Config);
     root.handle_event(key(KeyCode::Char('/')), of(&services), &[]);
     root.handle_event(Event::Paste("quit".into()), of(&services), &[]);
     root.handle_event(key(KeyCode::Enter), of(&services), &[]);
@@ -269,7 +268,6 @@ fn config_palette_quit_uses_one_root_discard_confirmation() -> Result<(), Box<dy
         root.handle_event(key(KeyCode::Char('y')), of(&services), &[]),
         Some(Action::Quit)
     );
-    Ok(())
 }
 
 #[test]

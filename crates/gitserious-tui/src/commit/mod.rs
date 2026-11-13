@@ -6,22 +6,23 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use gitserious_app::{
-    BranchState, CommitAuthoringContext, CommitOutput, CommitWorkspace, RepositoryStatus,
-    StatusEntry,
+    AuthoredCommit, BranchState, CommitOutput, CommitWorkspace, RepositoryStatus, StatusEntry,
 };
-use ratatui::crossterm::event::{Event, KeyCode};
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
+use ratatui::layout::{Constraint, Layout, Margin, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::theme::{
-    block_title, command_hints, frame_style, navigation_key_style, section_heading_style,
+    block_title, command_hints, frame_style, navigation_key_style, section_heading_style, theme,
 };
 
 #[cfg(test)]
-pub(crate) use author::reviewed_submission;
-use author::{AuthoringCheckpoint, embedded_author};
+pub(crate) use author::built_in_context;
+use author::{AuthoringOutcome, AuthoringSession};
 
 #[derive(Clone)]
 struct TreeRow {
@@ -36,21 +37,26 @@ struct Node<'a> {
     entry: Option<&'a StatusEntry>,
 }
 
-/// A reviewed commit whose submission failed, kept so review can resume.
-struct PendingAuthor {
-    context: CommitAuthoringContext,
-    checkpoint: AuthoringCheckpoint,
-}
-
 /// What Commit asks the root to do.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CommitRequest {
     Refresh,
     ShowResult,
-    /// Author a new commit, which needs the terminal.
+    /// Open the editor on a new commit.
     Author,
-    /// Resume the failed commit's review, which needs the terminal.
+    /// Reopen the failed commit's review.
     Resume,
+    /// Hand the approved commit to Git, which needs the terminal.
+    Submit,
+}
+
+/// A read-only popup over the page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Popup {
+    /// The last Git result.
+    Result,
+    /// What the commit being written will contain.
+    Staged,
 }
 
 #[derive(Default)]
@@ -58,14 +64,19 @@ pub(crate) struct CommitView {
     snapshot: Option<RepositoryStatus>,
     blocker: Option<String>,
     notice: String,
-    pending: Option<PendingAuthor>,
+    /// The commit being written, kept while other pages are open.
+    authoring: Option<AuthoringSession>,
+    /// The approved commit, from review until Git answers.
+    approved: Option<AuthoredCommit>,
+    /// The session of a reviewed commit Git rejected, kept so its review can resume.
+    pending: Option<AuthoringSession>,
     collapsed: BTreeSet<(usize, PathBuf)>,
     rows: Vec<TreeRow>,
     selected: usize,
     list: ListState,
     list_area: Rect,
-    /// The open Git result view's scroll offset.
-    result: Option<u16>,
+    /// The open popup and its scroll offset.
+    popup: Option<(Popup, u16)>,
 }
 
 impl CommitView {
@@ -91,6 +102,42 @@ impl CommitView {
         None
     }
 
+    /// Whether the editor is open, taking every key but tab and shift+tab.
+    pub(crate) fn editing(&self) -> bool {
+        self.authoring.is_some()
+    }
+
+    /// Hands `event` to the open editor, or a click to the tree.
+    pub(crate) fn event(&mut self, event: Event) -> Option<CommitRequest> {
+        let Some(session) = &mut self.authoring else {
+            if let Event::Mouse(mouse) = event
+                && mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            {
+                self.click(mouse.column, mouse.row);
+            }
+            return None;
+        };
+        if let Event::Key(key) = event
+            && key.code == KeyCode::Char('g')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            self.popup = Some((Popup::Staged, 0));
+            return None;
+        }
+        match session.handle_event(event)? {
+            AuthoringOutcome::Cancelled => {
+                self.authoring = None;
+                None
+            }
+            AuthoringOutcome::Authored(draft) => {
+                let message = session.approved_message.clone()?;
+                let taxonomy = session.taxonomy()?.id().clone();
+                self.approved = Some(AuthoredCommit::reviewed(taxonomy, draft, message));
+                Some(CommitRequest::Submit)
+            }
+        }
+    }
+
     /// Runs `request`, and returns it when only the terminal session can.
     pub(crate) fn run(
         &mut self,
@@ -102,8 +149,19 @@ impl CommitView {
                 self.notice.clear();
                 self.refresh(commit);
             }
-            CommitRequest::ShowResult => self.result = Some(0),
-            CommitRequest::Author | CommitRequest::Resume => return Some(request),
+            CommitRequest::ShowResult => self.popup = Some((Popup::Result, 0)),
+            CommitRequest::Author => {
+                self.refresh(commit);
+                match commit.prepare_commit() {
+                    Ok(context) => self.authoring = Some(AuthoringSession::with_context(context)),
+                    Err(error) => self.notice = error,
+                }
+            }
+            CommitRequest::Resume => {
+                self.refresh(commit);
+                self.authoring = self.pending.take();
+            }
+            CommitRequest::Submit => return Some(request),
         }
         None
     }
@@ -124,7 +182,10 @@ impl CommitView {
     }
 
     pub(crate) fn hints(&self) -> Vec<(&'static str, &'static str)> {
-        vec![("↑/↓", "move"), ("←/→", "tree"), ("r", "refresh")]
+        self.authoring.as_ref().map_or_else(
+            || vec![("↑/↓", "move"), ("←/→", "tree"), ("r", "refresh")],
+            |session| author::hints(session).to_vec(),
+        )
     }
 
     #[cfg(test)]
@@ -147,18 +208,18 @@ impl CommitView {
         self.snapshot.as_ref()
     }
 
-    /// Whether the Git result view is open and takes every event.
+    /// Whether a popup is open and takes every event.
     pub(crate) fn modal(&self) -> bool {
-        self.result.is_some()
+        self.popup.is_some()
     }
 
     pub(crate) fn modal_event(&mut self, event: &Event) {
-        let Some(scroll) = &mut self.result else {
+        let Some((_, scroll)) = &mut self.popup else {
             return;
         };
         if let Event::Key(key) = event {
             match key.code {
-                KeyCode::Esc | KeyCode::Enter => self.result = None,
+                KeyCode::Esc | KeyCode::Enter => self.popup = None,
                 KeyCode::Up => *scroll = scroll.saturating_sub(1),
                 KeyCode::Down => *scroll = scroll.saturating_add(1),
                 KeyCode::PageUp => *scroll = scroll.saturating_sub(10),
@@ -168,14 +229,32 @@ impl CommitView {
         }
     }
 
-    /// Draws the Git result view inside the popup the root frames.
+    /// Draws the open popup inside the frame the root draws.
     pub(crate) fn render_modal(&mut self, frame: &mut Frame<'_>, inner: Rect) {
-        let Some(scroll) = &mut self.result else {
+        let Some((popup, scroll)) = &mut self.popup else {
             return;
         };
         let [text, footer] =
             Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
-        let paragraph = Paragraph::new(self.notice.as_str()).wrap(Wrap { trim: false });
+        let paragraph = match popup {
+            Popup::Result => Paragraph::new(self.notice.as_str()),
+            Popup::Staged => Paragraph::new(
+                self.snapshot
+                    .as_ref()
+                    .map(|snapshot| group_rows(snapshot, 0, &BTreeSet::new()))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|row| {
+                        if row.directory.is_none() && row.detail.is_empty() {
+                            Line::styled(row.label, section_heading_style())
+                        } else {
+                            Line::from(row.label)
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        }
+        .wrap(Wrap { trim: false });
         let maximum = paragraph
             .line_count(text.width)
             .saturating_sub(usize::from(text.height));
@@ -209,48 +288,38 @@ impl CommitView {
         self.pending.is_some()
     }
 
-    /// Authors a commit in `terminal`, or resumes the failed one's review, and submits it.
-    pub(crate) fn author(
+    /// Whether quitting now would drop a draft or a rejected review.
+    pub(crate) fn has_unsaved_work(&self) -> bool {
+        self.pending.is_some()
+            || self
+                .authoring
+                .as_ref()
+                .is_some_and(|session| session.composer.dirty())
+    }
+
+    /// Hands the approved commit to Git with the terminal restored, since hooks and
+    /// signing may prompt in it.
+    pub(crate) fn submit(
         &mut self,
         terminal: &mut DefaultTerminal,
         commit: &dyn CommitWorkspace,
-        resume: bool,
     ) -> io::Result<()> {
-        self.refresh(commit);
-        let pending = if resume { self.pending.take() } else { None };
-        let (context, checkpoint) = if let Some(pending) = pending {
-            (pending.context, Some(pending.checkpoint))
-        } else {
-            match commit.prepare_commit() {
-                Ok(context) => (context, None),
-                Err(error) => {
-                    self.notice = error;
-                    return Ok(());
-                }
-            }
-        };
-        let Some((authored, checkpoint)) = embedded_author(terminal, &context, checkpoint)? else {
-            self.conclude_authoring(commit, None);
+        let Some(authored) = &self.approved else {
             return Ok(());
         };
-        let result = crate::runtime::suspended(terminal, || commit.submit_commit(&authored))?;
-        self.conclude_authoring(commit, Some((context, checkpoint, result)));
+        let result = crate::runtime::suspended(terminal, || commit.submit_commit(authored))?;
+        self.conclude_submission(commit, result);
         Ok(())
     }
 
-    /// Applies the editor's outcome. Cancellation leaves the Commit page as it was.
-    pub(crate) fn conclude_authoring(
+    /// Closes the editor on Git's answer, keeping a rejected review to resume.
+    pub(crate) fn conclude_submission(
         &mut self,
         commit: &dyn CommitWorkspace,
-        outcome: Option<(
-            CommitAuthoringContext,
-            AuthoringCheckpoint,
-            Result<CommitOutput, String>,
-        )>,
+        result: Result<CommitOutput, String>,
     ) {
-        let Some((context, checkpoint, result)) = outcome else {
-            return;
-        };
+        let session = self.authoring.take();
+        let authored = self.approved.take();
         match result {
             Ok(output) => {
                 self.pending = None;
@@ -264,10 +333,10 @@ impl CommitView {
             }
             Err(error) => {
                 self.notice = format!("Commit failed: {error}\nThe reviewed message is retained.");
-                self.pending = Some(PendingAuthor {
-                    context,
-                    checkpoint,
-                });
+                if let (Some(mut session), Some(authored)) = (session, authored) {
+                    session.reopen_review(&authored);
+                    self.pending = Some(session);
+                }
             }
         }
         self.refresh(commit);
@@ -276,40 +345,9 @@ impl CommitView {
     fn rebuild(&mut self) {
         self.rows.clear();
         if let Some(snapshot) = &self.snapshot {
-            for (group, name) in ["Staged", "Unstaged", "Untracked"].into_iter().enumerate() {
-                let entries: Vec<_> = snapshot
-                    .entries
-                    .iter()
-                    .filter(|entry| match group {
-                        0 => !entry.untracked && entry.index != '.',
-                        1 => !entry.untracked && entry.worktree != '.',
-                        _ => entry.untracked,
-                    })
-                    .collect();
-                self.rows.push(TreeRow {
-                    label: format!("{name} ({})", entries.len()),
-                    directory: None,
-                    detail: String::new(),
-                });
-                let mut root = Node::default();
-                for entry in entries {
-                    let mut node = &mut root;
-                    for component in entry.path.components() {
-                        node = node
-                            .children
-                            .entry(component.as_os_str().to_os_string())
-                            .or_default();
-                    }
-                    node.entry = Some(entry);
-                }
-                append_rows(
-                    &root,
-                    Path::new(""),
-                    group,
-                    1,
-                    &self.collapsed,
-                    &mut self.rows,
-                );
+            for group in 0..3 {
+                self.rows
+                    .extend(group_rows(snapshot, group, &self.collapsed));
             }
         }
         self.selected = self.selected.min(self.rows.len().saturating_sub(1));
@@ -342,7 +380,7 @@ impl CommitView {
         }
     }
 
-    pub(crate) fn click(&mut self, x: u16, y: u16) {
+    fn click(&mut self, x: u16, y: u16) {
         if self.list_area.contains((x, y).into()) {
             let index = self.list.offset() + usize::from(y.saturating_sub(self.list_area.y));
             if index < self.rows.len() {
@@ -353,6 +391,25 @@ impl CommitView {
     }
 
     pub(crate) fn render(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        if let Some(session) = &mut self.authoring {
+            let [header, rule, editor] = Layout::vertical([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(1),
+            ])
+            .areas(area);
+            render_staged_header(
+                frame,
+                header.inner(Margin::new(1, 0)),
+                self.snapshot.as_ref(),
+            );
+            frame.render_widget(
+                Paragraph::new("─".repeat(usize::from(rule.width))).style(frame_style()),
+                rule,
+            );
+            author::render(frame, editor, session);
+            return;
+        }
         let [summary, tree, status] = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(1),
@@ -434,6 +491,106 @@ fn visible(text: &str) -> String {
         .collect()
 }
 
+/// One group of the tree: 0 staged, 1 unstaged, 2 untracked, under its heading.
+fn group_rows(
+    snapshot: &RepositoryStatus,
+    group: usize,
+    collapsed: &BTreeSet<(usize, PathBuf)>,
+) -> Vec<TreeRow> {
+    let entries: Vec<_> = snapshot
+        .entries
+        .iter()
+        .filter(|entry| in_group(entry, group))
+        .collect();
+    let name = ["Staged", "Unstaged", "Untracked"][group];
+    let mut rows = vec![TreeRow {
+        label: format!("{name} ({})", entries.len()),
+        directory: None,
+        detail: String::new(),
+    }];
+    let mut root = Node::default();
+    for entry in entries {
+        let mut node = &mut root;
+        for component in entry.path.components() {
+            node = node
+                .children
+                .entry(component.as_os_str().to_os_string())
+                .or_default();
+        }
+        node.entry = Some(entry);
+    }
+    append_rows(&root, Path::new(""), group, 1, collapsed, &mut rows);
+    rows
+}
+
+fn in_group(entry: &StatusEntry, group: usize) -> bool {
+    match group {
+        0 => !entry.untracked && entry.index != '.',
+        1 => !entry.untracked && entry.worktree != '.',
+        _ => entry.untracked,
+    }
+}
+
+/// `N staged  path · path` on the left, cut to fit, and the staged view's key on the right.
+fn render_staged_header(frame: &mut Frame<'_>, area: Rect, snapshot: Option<&RepositoryStatus>) {
+    let key = Line::from(vec![
+        Span::styled(
+            "ctrl+g",
+            Style::new().fg(theme().text).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" change", Style::new().fg(theme().dim)),
+    ]);
+    let key_width = u16::try_from(key.width()).unwrap_or(u16::MAX);
+    let staged: Vec<_> = snapshot
+        .map(|snapshot| {
+            snapshot
+                .entries
+                .iter()
+                .filter(|entry| in_group(entry, 0))
+                .map(|entry| visible(&entry.path.to_string_lossy()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let count = format!("{} staged", staged.len());
+    let room = usize::from(area.width.saturating_sub(key_width.saturating_add(2)))
+        .saturating_sub(count.width() + 2);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                count,
+                Style::new().fg(theme().text).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                truncate(&staged.join(" · "), room),
+                Style::new().fg(theme().dim),
+            ),
+        ])),
+        area,
+    );
+    frame.render_widget(Paragraph::new(key).right_aligned(), area);
+}
+
+/// `text` cut to `width` columns, ending in an ellipsis when cut.
+fn truncate(text: &str, width: usize) -> String {
+    if text.width() <= width {
+        return text.to_owned();
+    }
+    let mut kept = String::new();
+    let mut used = '…'.width().unwrap_or(1);
+    for character in text.chars() {
+        used += character.width().unwrap_or(0);
+        if used > width {
+            break;
+        }
+        kept.push(character);
+    }
+    if width > 0 {
+        kept.push('…');
+    }
+    kept
+}
+
 fn append_rows(
     node: &Node<'_>,
     parent: &Path,
@@ -492,6 +649,37 @@ fn append_rows(
 mod tests {
     use super::*;
     use gitserious_app::RepositoryRoot;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn a_long_staged_list_is_cut_to_keep_the_staged_view_key_visible()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let entry = |path: &str| StatusEntry {
+            path: path.into(),
+            original_path: None,
+            index: 'M',
+            worktree: '.',
+            untracked: false,
+            conflicted: false,
+            submodule: "N...".into(),
+        };
+        let snapshot = RepositoryStatus {
+            root: RepositoryRoot::new(std::env::temp_dir())?,
+            branch: BranchState::Named("main".into()),
+            entries: vec![entry("src/net/retry.rs"), entry("tests/retry.rs")],
+        };
+        let mut terminal = Terminal::new(TestBackend::new(40, 1))?;
+        terminal.draw(|frame| render_staged_header(frame, frame.area(), Some(&snapshot)))?;
+        let row: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+        assert_eq!(row, "2 staged  src/net/retry.…  ctrl+g change");
+        Ok(())
+    }
 
     #[test]
     fn partial_staging_appears_in_both_groups_and_directories_collapse()

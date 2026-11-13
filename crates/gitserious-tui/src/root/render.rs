@@ -8,7 +8,7 @@ use super::navigation::{Section, Tabs};
 use crate::help::HelpPage;
 use crate::theme::{
     FOOTER_HEIGHT, MINIMUM_HEIGHT, MINIMUM_WIDTH, ROOT_HINTS, centered_rect, normalize_background,
-    render_footer, render_footer_block, theme,
+    render_edit_footer, render_footer, render_footer_block, theme,
 };
 
 impl Root {
@@ -59,7 +59,11 @@ impl Root {
                     Section::Home => &home_hints,
                     Section::Config => &[],
                 };
-                render_footer(frame, footer, hints, &ROOT_HINTS);
+                if self.section == Section::Commit && self.commit.editing() {
+                    render_edit_footer(frame, footer, hints);
+                } else {
+                    render_footer(frame, footer, hints, &ROOT_HINTS);
+                }
             }
         }
         self.render_overlay(frame, area);

@@ -15,6 +15,7 @@ gitserious-core = { workspace = true }
 ratatui = { workspace = true, features = ["unstable-rendered-line-info"] }
 tui-textarea = { workspace = true }
 unicode-segmentation = { workspace = true }
+unicode-width = { workspace = true }
 
 [dev-dependencies]
 gitserious-app = { workspace = true, features = ["test-support"] }

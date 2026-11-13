@@ -16,8 +16,8 @@ use crate::confirmation::{Confirmation, DISCARD};
 use crate::theme::{ACCENT, JET_BLACK, ZEBRA_BACKGROUND};
 
 const MINIMUM_WIDTH: u16 = 60;
-const MINIMUM_HEIGHT: u16 = 18;
-const COMPOSER_MINIMUM_HEIGHT: u16 = 22;
+const MINIMUM_HEIGHT: u16 = 16;
+const COMPOSER_MINIMUM_HEIGHT: u16 = 20;
 const MAX_EDITOR_INNER_WIDTH: u16 = COMMIT_MESSAGE_WIDTH;
 const FIELD_COLUMN_SPACING: u16 = 2;
 const FIELD_MARKER_WIDTH: u16 = 1;
@@ -32,7 +32,6 @@ const SCROLLBAR_WIDTH: u16 = 1;
 struct StageShell {
     header: Rect,
     frame: Rect,
-    navigation: Rect,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -88,12 +87,10 @@ struct CursorStatus {
     viewport_height: u16,
 }
 
-pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) {
-    let area = frame.area();
+/// Draws the editor in `area`, which the Commit page leaves it under the staged header.
+pub(crate) fn render(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession) {
     session.discard_dialog.invalidate();
-    session.commit_breadcrumb = Rect::default();
     session.catalog_tabs.clear();
-    frame.render_widget(Block::default().style(Style::default().bg(JET_BLACK)), area);
     let minimum_height = if session.visible_stage() == Stage::Compose {
         COMPOSER_MINIMUM_HEIGHT
     } else {
@@ -124,7 +121,6 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
                 None,
             );
         }
-        normalize_background(frame, area);
         return;
     }
 
@@ -137,16 +133,29 @@ pub(crate) fn render(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) 
     if session.stage == Stage::Confirm {
         render_confirmation(frame, session);
     }
-    normalize_background(frame, area);
 }
 
-fn normalize_background(frame: &mut Frame<'_>, area: Rect) {
-    crate::theme::normalize_background(frame, area);
+/// The footer keys of the stage on screen.
+pub(crate) fn hints(session: &AuthoringSession) -> &'static [(&'static str, &'static str)] {
+    match session.visible_stage() {
+        Stage::SelectType => &[
+            ("←/→", "taxonomy"),
+            ("↑/↓", "move"),
+            ("enter", "select"),
+            ("esc/q", "cancel"),
+        ],
+        Stage::Compose => &[("↑/↓", "move"), ("esc", "back"), ("ctrl+s", "review")],
+        Stage::Review | Stage::Confirm => &[
+            ("enter", "commit"),
+            ("esc", "edit"),
+            ("↑/↓", "scroll"),
+            ("q", "cancel"),
+        ],
+    }
 }
 
-fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
-    let shell = stage_shell(area, 1);
-    session.commit_breadcrumb = render_stage_header(frame, shell.header, 1);
+fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession) {
+    let shell = stage_shell(area, 0);
     frame.render_widget(Block::bordered().border_style(frame_style()), shell.frame);
     let inner = Rect::new(
         shell.frame.x.saturating_add(1),
@@ -163,7 +172,7 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
     render_catalog_tabs(frame, Pane::new(picker_sections[0]).content, session);
     render_frame_rule(frame, shell.frame, picker_sections[1].y, None);
     let content = Pane::new(picker_sections[2]).content;
-    let type_width = picker_type_width(session.definitions, content.width);
+    let type_width = picker_type_width(&session.definitions, content.width);
     let rows = session
         .definitions
         .iter()
@@ -206,19 +215,9 @@ fn render_picker(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
         content,
         &mut state,
     );
-    render_navigation_row(
-        frame,
-        shell.navigation,
-        &[
-            ("tab/shift+tab", "switch"),
-            ("↑/↓", "move"),
-            ("enter", "select"),
-            ("esc/q", "cancel"),
-        ],
-    );
 }
 
-fn render_catalog_tabs(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
+fn render_catalog_tabs(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession) {
     let mut x = area.x;
     let mut catalogs = session.available_type_catalogs();
     let total_width: u16 = catalogs
@@ -250,11 +249,8 @@ fn render_catalog_tabs(frame: &mut Frame<'_>, area: Rect, session: &mut Authorin
     }
 }
 
-fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
-    let shell = stage_shell(area, 2);
-    let header =
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(shell.header);
-    session.commit_breadcrumb = render_stage_header(frame, header[0], 2);
+fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession) {
+    let shell = stage_shell(area, 1);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::raw("Type: "),
@@ -262,11 +258,11 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
                 session.definition().id().as_str(),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(session.taxonomy.map_or_else(String::new, |taxonomy| {
+            Span::raw(session.taxonomy().map_or_else(String::new, |taxonomy| {
                 format!("  Taxonomy: {}", taxonomy.id())
             })),
         ])),
-        header[1],
+        shell.header,
     );
 
     let composer_frame =
@@ -312,17 +308,15 @@ fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSes
     );
     render_editor_scrollbar(frame, scrollbar_area, cursor_status);
 
-    let help: &[_] = &[("↑/↓", "move"), ("esc", "back"), ("ctrl+s", "review")];
     render_validation_row(
         frame,
         composer_frame.validation.content,
         session.composer.notice(session.definition()),
         cursor_status,
     );
-    render_navigation_row(frame, shell.navigation, help);
 }
 
-fn composer_frame(area: Rect, session: &AuthoringSession<'_>, wide: bool) -> ComposerFrame {
+fn composer_frame(area: Rect, session: &AuthoringSession, wide: bool) -> ComposerFrame {
     if wide {
         wide_composer_frame(area, session)
     } else {
@@ -330,7 +324,7 @@ fn composer_frame(area: Rect, session: &AuthoringSession<'_>, wide: bool) -> Com
     }
 }
 
-fn compact_composer_frame(area: Rect, session: &AuthoringSession<'_>) -> ComposerFrame {
+fn compact_composer_frame(area: Rect, session: &AuthoringSession) -> ComposerFrame {
     let inner = Rect::new(
         area.x.saturating_add(1),
         area.y.saturating_add(1),
@@ -375,7 +369,7 @@ fn compact_composer_frame(area: Rect, session: &AuthoringSession<'_>) -> Compose
     }
 }
 
-fn wide_composer_frame(area: Rect, session: &AuthoringSession<'_>) -> ComposerFrame {
+fn wide_composer_frame(area: Rect, session: &AuthoringSession) -> ComposerFrame {
     let inner = Rect::new(
         area.x.saturating_add(1),
         area.y.saturating_add(1),
@@ -518,7 +512,7 @@ fn render_partial_frame_rule(frame: &mut Frame<'_>, start: u16, end: u16, y: u16
     merge_rule_cell(frame, end, y, "┤", style);
 }
 
-fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
+fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession) {
     let definition = session.definition();
     let current = session.composer.current_field(definition);
     let fields = session.composer.hud_fields(definition);
@@ -565,7 +559,7 @@ fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSessio
     );
 }
 
-fn render_field_description(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession<'_>) {
+fn render_field_description(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession) {
     let definition = session.definition().clone();
     let current = session.composer.current_field(&definition);
     let guidance = current.map_or_else(
@@ -584,7 +578,7 @@ fn render_document_editor(
     frame: &mut Frame<'_>,
     area: Rect,
     outer: Rect,
-    session: &mut AuthoringSession<'_>,
+    session: &mut AuthoringSession,
 ) -> CursorStatus {
     session.composer.editor.remove_block();
 
@@ -915,9 +909,8 @@ fn subject_context_fits(editor: &TextArea<'_>, viewport_height: u16) -> bool {
     subject.measure(MAX_EDITOR_INNER_WIDTH).content_rows <= viewport_height
 }
 
-fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession<'_>) {
-    let shell = stage_shell(area, 1);
-    session.commit_breadcrumb = render_stage_header(frame, shell.header, 3);
+fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession) {
+    let shell = stage_shell(area, 0);
     frame.render_widget(Block::bordered().border_style(frame_style()), shell.frame);
     let inner = Rect::new(
         shell.frame.x.saturating_add(1),
@@ -963,19 +956,9 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
             message,
         );
     }
-    render_navigation_row(
-        frame,
-        shell.navigation,
-        &[
-            ("enter", "commit"),
-            ("esc", "edit"),
-            ("↑/↓", "scroll"),
-            ("q/ctrl+c", "cancel"),
-        ],
-    );
 }
 
-fn render_confirmation(frame: &mut Frame<'_>, session: &mut AuthoringSession<'_>) {
+fn render_confirmation(frame: &mut Frame<'_>, session: &mut AuthoringSession) {
     let message = match session.confirmation {
         ConfirmationAction::Cancel => "Discard this draft and cancel the commit?",
         ConfirmationAction::ChangeType => "Discard this draft and choose another type?",
@@ -1097,7 +1080,7 @@ fn field_guidance(kind: FieldId, definition: &CommitTypeDefinition) -> FieldGuid
     }
 }
 
-fn session_field_guidance(kind: FieldId, session: &AuthoringSession<'_>) -> FieldGuidance {
+fn session_field_guidance(kind: FieldId, session: &AuthoringSession) -> FieldGuidance {
     let mut guidance = field_guidance(kind, session.definition());
     if let FieldId::Property(definition_index) = kind {
         let property = &session.definition().properties()[definition_index];
@@ -1119,7 +1102,7 @@ fn session_field_guidance(kind: FieldId, session: &AuthoringSession<'_>) -> Fiel
     guidance
 }
 
-fn context_content_height(description_width: u16, session: &AuthoringSession<'_>) -> u16 {
+fn context_content_height(description_width: u16, session: &AuthoringSession) -> u16 {
     let hud_height =
         u16::try_from(session.composer.hud_fields(session.definition()).len()).unwrap_or(u16::MAX);
     let definition = session.definition().clone();
@@ -1206,16 +1189,8 @@ fn text_button_width(label: &str) -> u16 {
         .saturating_add(2)
 }
 
-fn render_stage_header(frame: &mut Frame<'_>, area: Rect, step: usize) -> Rect {
-    super::navigation::commit_breadcrumb(frame, area, step - 1)
-}
-
 fn navigation_key_style() -> Style {
     crate::theme::navigation_key_style()
-}
-
-fn render_navigation_row(frame: &mut Frame<'_>, area: Rect, hints: &[(&str, &str)]) {
-    crate::theme::render_navigation_row(frame, area, hints);
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
@@ -1223,17 +1198,9 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 }
 
 fn stage_shell(area: Rect, header_rows: u16) -> StageShell {
-    let sections = Layout::vertical([
-        Constraint::Length(header_rows),
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .split(area);
-    StageShell {
-        header: sections[0],
-        frame: sections[1],
-        navigation: sections[2],
-    }
+    let [header, frame] =
+        Layout::vertical([Constraint::Length(header_rows), Constraint::Min(1)]).areas(area);
+    StageShell { header, frame }
 }
 
 const fn inset_horizontally(area: Rect, amount: u16) -> Rect {

@@ -37,9 +37,7 @@ impl RatatuiInteractiveUi {
                 let event = ratatui::crossterm::event::read()?;
                 match root.session_event(event, capabilities, help) {
                     Some(SessionRequest::Quit) => return Ok(()),
-                    Some(SessionRequest::Author { resume }) => {
-                        root.author(terminal, capabilities, resume)?;
-                    }
+                    Some(SessionRequest::Submit) => root.submit(terminal, capabilities)?,
                     None => {}
                 }
             }

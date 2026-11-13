@@ -315,10 +315,26 @@ impl ProjectWorkspace for Ready {
 
 impl CommitWorkspace for Ready {
     fn repository_status(&self) -> Result<RepositoryStatus, String> {
-        Services.repository_status()
+        let change = |path: &str, index, worktree| gitserious_app::StatusEntry {
+            path: path.into(),
+            original_path: None,
+            index,
+            worktree,
+            untracked: false,
+            conflicted: false,
+            submodule: "N...".into(),
+        };
+        Ok(RepositoryStatus {
+            entries: vec![
+                change("src/net/retry.rs", 'M', '.'),
+                change("tests/retry.rs", 'A', '.'),
+                change("README.md", '.', 'M'),
+            ],
+            ..Services.repository_status()?
+        })
     }
     fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
-        commit::reviewed_submission().map(|(context, _, _)| context)
+        commit::built_in_context()
     }
     fn submit_commit(
         &self,
@@ -356,30 +372,52 @@ pub(super) fn run(
     root.handle_event(key(KeyCode::Enter), of(workspace), &[])
 }
 
+pub(super) fn modified(code: KeyCode, modifiers: KeyModifiers) -> Event {
+    Event::Key(KeyEvent::new(code, modifiers))
+}
+
+/// Writes and approves a feat commit on the Commit page the way a user does, from the
+/// overview to the review's enter, and returns what that enter asks of the root.
+pub(super) fn approve_a_commit(root: &mut Root) -> Option<Action> {
+    let events = [
+        key(KeyCode::Enter),
+        key(KeyCode::Enter),
+        key(KeyCode::Down),
+        Event::Paste("open the commit page".into()),
+        key(KeyCode::Down),
+        Event::Paste("reviewed intent".into()),
+        key(KeyCode::Down),
+        Event::Paste("reviewed decision".into()),
+        key(KeyCode::Down),
+        modified(KeyCode::Char('n'), KeyModifiers::ALT),
+        modified(KeyCode::Char('s'), KeyModifiers::CONTROL),
+    ];
+    for event in events {
+        assert_eq!(root.handle_event(event, of(&Ready), &[]), None);
+    }
+    root.handle_event(key(KeyCode::Enter), of(&Ready), &[])
+}
+
 /// A root on Commit that retains a rejected review, with `workspace` behind it.
 pub(super) fn rejected_review_with(
     workspace: &(impl CommitWorkspace + ConfigurationWorkspace + ProjectWorkspace),
-) -> Result<Root, Box<dyn std::error::Error>> {
-    let (context, _, checkpoint) = commit::reviewed_submission()?;
+) -> Root {
     let mut root = Root::new(InitialPage::Commit, of(workspace), &[]);
-    root.commit.conclude_authoring(
-        workspace,
-        Some((context, checkpoint, Err("hook rejected".into()))),
+    assert_eq!(
+        approve_a_commit(&mut root),
+        Some(Action::Commit(CommitRequest::Submit))
     );
-    Ok(root)
+    root.commit
+        .conclude_submission(workspace, Err("hook rejected".into()));
+    root
 }
 
 /// A root on `section` that retains a reviewed commit Git rejected.
-pub(super) fn rejected_review_on(section: Section) -> Result<Root, Box<dyn std::error::Error>> {
-    let (context, _, checkpoint) = commit::reviewed_submission()?;
-    let mut root = Root::new(InitialPage::Commit, of(&Services), &[]);
-    root.commit.conclude_authoring(
-        &Services,
-        Some((context, checkpoint, Err("hook rejected".into()))),
-    );
+pub(super) fn rejected_review_on(section: Section) -> Root {
+    let mut root = rejected_review_with(&Services);
     root.execute(Action::Select(section), of(&Services));
     assert_eq!(root.section, section);
-    Ok(root)
+    root
 }
 
 pub(super) fn commit_page(root: &Root) -> (Option<String>, Option<RepositoryStatus>) {
