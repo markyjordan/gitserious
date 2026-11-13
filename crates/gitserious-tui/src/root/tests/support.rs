@@ -382,8 +382,7 @@ pub(super) fn review_a_commit(root: &mut Root) {
     let events = [
         key(KeyCode::Enter),
         key(KeyCode::Enter),
-        key(KeyCode::Down),
-        Event::Paste("open the commit page".into()),
+        Event::Paste(": open the commit page".into()),
         key(KeyCode::Down),
         Event::Paste("reviewed intent".into()),
         key(KeyCode::Down),

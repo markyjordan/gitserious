@@ -199,14 +199,13 @@ fn repeated_rejections_remain_resumable_until_a_successful_retry() {
     assert!(root.commit.editing());
 }
 
-/// A root on Commit with the editor open on a feat draft whose subject is `subject`.
+/// A root on Commit with the editor open on a feat draft whose description is `subject`.
 fn editing(subject: &str) -> Root {
     let mut root = Root::new(InitialPage::Commit, of(&Ready), &[]);
     for event in [
         key(KeyCode::Enter),
         key(KeyCode::Enter),
-        key(KeyCode::Down),
-        Event::Paste(subject.into()),
+        Event::Paste(format!(": {subject}")),
     ] {
         assert_eq!(root.handle_event(event, of(&Ready), &[]), None);
     }
@@ -305,6 +304,36 @@ fn the_type_picker_fits_the_page_at_80x24_and_100x30() -> Result<(), Box<dyn std
         assert!(!text.contains("Typing filters"), "{text}");
         assert!(!text.contains("tab taxonomy"), "{text}");
     }
+    Ok(())
+}
+
+#[test]
+fn a_conditional_card_keeps_every_footer_key_at_80_columns()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut root = editing("retry sooner");
+    for _ in 0..3 {
+        assert_eq!(root.handle_event(key(KeyCode::Down), of(&Ready), &[]), None);
+    }
+    let mut terminal = Terminal::new(TestBackend::new(80, 24))?;
+    terminal.draw(|frame| root.render(frame, &[]))?;
+    let text = rendered(&terminal);
+    let rows: Vec<_> = text.lines().collect();
+    let footer = rows[rows.len() - 2..].join("\n");
+    for key in [
+        "ctrl+s review",
+        "↑/↓ move",
+        "alt+a applies",
+        "alt+n doesn't apply",
+        "esc back",
+        "tab nav bar",
+        " EDIT ",
+    ] {
+        assert!(
+            footer.contains(key),
+            "missing {key:?} in the footer\n{footer}\n{text}"
+        );
+    }
+    assert!(rows.iter().any(|row| row.contains("constraints")), "{text}");
     Ok(())
 }
 

@@ -1,32 +1,17 @@
-use gitserious_core::{
-    COMMIT_MESSAGE_WIDTH, CommitTypeDefinition, PropertyRequirement, ValidationSeverity,
-};
+use gitserious_core::CommitTypeDefinition;
 use ratatui::Frame;
-use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Cell, Clear, Paragraph, Row, Table, Widget, Wrap};
-use tui_textarea::{CursorMove, TextArea};
+use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
-use super::state::{
-    AuthoringSession, CatalogTab, ConfirmationAction, FieldId, FieldStatus, SCOPE_VALUE_LINE, Stage,
-};
+use super::cards;
+use super::state::{AuthoringSession, CatalogTab, ConfirmationAction, Stage};
 use crate::confirmation::{Confirmation, DISCARD};
-use crate::theme::{ACCENT, JET_BLACK, ZEBRA_BACKGROUND, popup_selected_style, theme};
+use crate::theme::{JET_BLACK, centered_rect, popup_selected_style, section_heading_style, theme};
 
 const MINIMUM_WIDTH: u16 = 60;
 const MINIMUM_HEIGHT: u16 = 16;
-const COMPOSER_MINIMUM_HEIGHT: u16 = 20;
-const MAX_EDITOR_INNER_WIDTH: u16 = COMMIT_MESSAGE_WIDTH;
-const FIELD_COLUMN_SPACING: u16 = 2;
-const FIELD_MARKER_WIDTH: u16 = 1;
-const MINIMUM_EDITOR_HEIGHT: u16 = 3;
-const TERMINAL_EDGE_CURSOR: &str = "█";
-const COMPOSER_NON_CONTEXT_ROWS: u16 = 8;
-const COMPOSER_FRAME_WIDTH_OVERHEAD: u16 = 10;
-const WIDE_COMPOSER_BREAKPOINT: u16 = 101;
-const SCROLLBAR_WIDTH: u16 = 1;
 /// Columns between the picker panel's edge and its text.
 const PICKER_PADDING: u16 = 2;
 /// The picker panel's rows besides the type list and the description: padding
@@ -34,65 +19,6 @@ const PICKER_PADDING: u16 = 2;
 const PICKER_FIXED_ROWS: u16 = 5;
 const PICKER_KEY_GAP: u16 = 4;
 const TAB_GAP: u16 = 2;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct StageShell {
-    header: Rect,
-    frame: Rect,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Pane {
-    region: Rect,
-    content: Rect,
-}
-
-impl Pane {
-    const fn new(region: Rect) -> Self {
-        Self {
-            region,
-            content: inset_horizontally(region, 1),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ComposerFrame {
-    outer: Rect,
-    properties_heading: Pane,
-    description_heading: Pane,
-    properties: Pane,
-    description: Pane,
-    editor: Pane,
-    validation: Pane,
-    chrome: ComposerChrome,
-    editor_rule_outer: Rect,
-    validation_separator_y: u16,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ComposerChrome {
-    Compact {
-        split_x: u16,
-        heading_separator_y: u16,
-        context_separator_y: u16,
-    },
-    Wide {
-        split_x: u16,
-        properties_heading_separator_y: u16,
-        properties_separator_y: u16,
-        description_heading_separator_y: u16,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct CursorStatus {
-    column: u16,
-    wrap_width: u16,
-    content_rows: u16,
-    viewport_top: u16,
-    viewport_height: u16,
-}
 
 /// Draws the editor in `area`, which the Commit page leaves it under the staged header.
 /// `target` names where Git puts the commit, as the review's commit row reads.
@@ -105,17 +31,7 @@ pub(crate) fn render(
     session.discard_dialog.invalidate();
     session.catalog_tabs.clear();
     session.type_rows.clear();
-    let minimum_height = if session.visible_stage() == Stage::Compose {
-        COMPOSER_MINIMUM_HEIGHT
-    } else {
-        MINIMUM_HEIGHT
-    };
-    let minimum_width = if session.visible_stage() == Stage::Compose {
-        composer_minimum_width(session.definition())
-    } else {
-        MINIMUM_WIDTH
-    };
-    session.too_small = area.width < minimum_width || area.height < minimum_height;
+    session.too_small = area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT;
     if session.too_small {
         if session.stage == Stage::Confirm {
             session.discard_dialog.render(
@@ -140,7 +56,7 @@ pub(crate) fn render(
 
     match session.visible_stage() {
         Stage::SelectType => render_picker(frame, area, session),
-        Stage::Compose => render_composer(frame, area, session),
+        Stage::Compose => cards::render(frame, area, &mut session.cards),
         Stage::Review => render_review(frame, area, session, target),
         Stage::Confirm => unreachable!("confirmation resolves to its underlying stage"),
     }
@@ -149,22 +65,30 @@ pub(crate) fn render(
     }
 }
 
-/// The footer keys of the stage on screen.
-pub(crate) fn hints(session: &AuthoringSession) -> &'static [(&'static str, &'static str)] {
+/// The footer keys of the stage on screen. A conditional card adds the keys
+/// that answer whether it applies.
+pub(crate) fn hints(session: &AuthoringSession) -> Vec<(&'static str, &'static str)> {
     match session.visible_stage() {
-        Stage::SelectType => &[
+        Stage::SelectType => vec![
             ("enter", "choose"),
             ("↑/↓", "move"),
             ("←/→", "taxonomy"),
             ("esc", "back"),
         ],
-        Stage::Compose => &[("↑/↓", "move"), ("esc", "back"), ("ctrl+s", "review")],
-        Stage::Review => &[
+        Stage::Compose => {
+            let mut hints = vec![("ctrl+s", "review"), ("↑/↓", "move")];
+            if session.cards.focused_conditional() {
+                hints.extend([("alt+a", "applies"), ("alt+n", "doesn't apply")]);
+            }
+            hints.push(("esc", "back"));
+            hints
+        }
+        Stage::Review => vec![
             ("enter", "commit"),
             ("esc", "keep editing"),
             ("↑/↓", "scroll"),
         ],
-        Stage::Confirm => unreachable!("confirmation shows over the composer"),
+        Stage::Confirm => unreachable!("confirmation shows over the cards"),
     }
 }
 
@@ -359,666 +283,6 @@ fn render_catalog_tabs(frame: &mut Frame<'_>, area: Rect, session: &mut Authorin
     }
 }
 
-fn render_composer(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession) {
-    let shell = stage_shell(area, 1);
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::raw("Type: "),
-            Span::styled(
-                session.definition().id().as_str(),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(session.taxonomy().map_or_else(String::new, |taxonomy| {
-                format!("  Taxonomy: {}", taxonomy.id())
-            })),
-        ])),
-        shell.header,
-    );
-
-    let composer_frame =
-        composer_frame(shell.frame, session, area.width >= WIDE_COMPOSER_BREAKPOINT);
-    render_composer_frame(frame, composer_frame);
-    render_section_heading(
-        frame,
-        composer_frame.properties_heading.content,
-        "Message Properties",
-    );
-    render_section_heading(
-        frame,
-        composer_frame.description_heading.content,
-        "Property Description",
-    );
-    render_field_hud(frame, composer_frame.properties.content, session);
-    render_field_description(frame, composer_frame.description.content, session);
-    let editor_content = Rect::new(
-        composer_frame.editor.content.x,
-        composer_frame.editor.content.y,
-        composer_frame
-            .editor
-            .content
-            .width
-            .saturating_sub(SCROLLBAR_WIDTH),
-        composer_frame.editor.content.height,
-    );
-    let scrollbar_area = Rect::new(
-        composer_frame
-            .editor
-            .region
-            .right()
-            .saturating_sub(SCROLLBAR_WIDTH),
-        composer_frame.editor.content.y,
-        SCROLLBAR_WIDTH.min(composer_frame.editor.region.width),
-        composer_frame.editor.content.height,
-    );
-    let cursor_status = render_document_editor(
-        frame,
-        editor_content,
-        composer_frame.editor_rule_outer,
-        session,
-    );
-    render_editor_scrollbar(frame, scrollbar_area, cursor_status);
-
-    render_validation_row(
-        frame,
-        composer_frame.validation.content,
-        session.composer.notice(session.definition()),
-        cursor_status,
-    );
-}
-
-fn composer_frame(area: Rect, session: &AuthoringSession, wide: bool) -> ComposerFrame {
-    if wide {
-        wide_composer_frame(area, session)
-    } else {
-        compact_composer_frame(area, session)
-    }
-}
-
-fn compact_composer_frame(area: Rect, session: &AuthoringSession) -> ComposerFrame {
-    let inner = Rect::new(
-        area.x.saturating_add(1),
-        area.y.saturating_add(1),
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(2),
-    );
-    let context_width = inner.width.saturating_sub(1);
-    let properties_pane_width = field_hud_content_width(session.definition()).saturating_add(2);
-    let description_pane_width = context_width.saturating_sub(properties_pane_width);
-    let description_width = description_pane_width.saturating_sub(2);
-    let desired_context_height = context_content_height(description_width, session);
-    let maximum_context_height = inner.height.saturating_sub(COMPOSER_NON_CONTEXT_ROWS);
-    let context_height = desired_context_height.min(maximum_context_height).max(1);
-    let rows = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(context_height),
-        Constraint::Length(1),
-        Constraint::Min(MINIMUM_EDITOR_HEIGHT),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
-    let headings = split_context_row(rows[0], properties_pane_width);
-    let context = split_context_row(rows[2], properties_pane_width);
-    let split_x = headings[1].x;
-    ComposerFrame {
-        outer: area,
-        properties_heading: Pane::new(headings[0]),
-        description_heading: Pane::new(headings[2]),
-        properties: Pane::new(context[0]),
-        description: Pane::new(context[2]),
-        editor: Pane::new(rows[4]),
-        validation: Pane::new(rows[6]),
-        chrome: ComposerChrome::Compact {
-            split_x,
-            heading_separator_y: rows[1].y,
-            context_separator_y: rows[3].y,
-        },
-        editor_rule_outer: area,
-        validation_separator_y: rows[5].y,
-    }
-}
-
-fn wide_composer_frame(area: Rect, session: &AuthoringSession) -> ComposerFrame {
-    let inner = Rect::new(
-        area.x.saturating_add(1),
-        area.y.saturating_add(1),
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(2),
-    );
-    let vertical = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
-    let main = vertical[0];
-    let properties_pane_width = field_hud_content_width(session.definition()).saturating_add(2);
-    let columns = split_context_row(main, properties_pane_width);
-    let split_x = columns[1].x;
-    let properties_height = u16::try_from(session.composer.hud_fields(session.definition()).len())
-        .unwrap_or(u16::MAX)
-        .saturating_add(2)
-        .min(main.height.saturating_sub(4))
-        .max(1);
-    let left_rows = Layout::vertical([
-        Constraint::Length(properties_height),
-        Constraint::Length(1),
-        Constraint::Min(3),
-    ])
-    .split(columns[0]);
-    let properties_rows = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(0),
-    ])
-    .split(left_rows[0]);
-    let description_rows = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(0),
-    ])
-    .split(left_rows[2]);
-    let editor_rule_outer = Rect::new(
-        split_x,
-        area.y,
-        area.right().saturating_sub(split_x),
-        vertical[1].y.saturating_sub(area.y).saturating_add(1),
-    );
-    ComposerFrame {
-        outer: area,
-        properties_heading: Pane::new(properties_rows[0]),
-        description_heading: Pane::new(description_rows[0]),
-        properties: Pane::new(properties_rows[2]),
-        description: Pane::new(description_rows[2]),
-        editor: Pane::new(columns[2]),
-        validation: Pane::new(vertical[2]),
-        chrome: ComposerChrome::Wide {
-            split_x,
-            properties_heading_separator_y: properties_rows[1].y,
-            properties_separator_y: left_rows[1].y,
-            description_heading_separator_y: description_rows[1].y,
-        },
-        editor_rule_outer,
-        validation_separator_y: vertical[1].y,
-    }
-}
-
-fn split_context_row(area: Rect, properties_width: u16) -> std::rc::Rc<[Rect]> {
-    Layout::horizontal([
-        Constraint::Length(properties_width),
-        Constraint::Length(1),
-        Constraint::Min(1),
-    ])
-    .split(area)
-}
-
-fn render_composer_frame(frame: &mut Frame<'_>, composer: ComposerFrame) {
-    let style = frame_style();
-    frame.render_widget(Block::bordered().border_style(style), composer.outer);
-    match composer.chrome {
-        ComposerChrome::Compact {
-            split_x,
-            heading_separator_y,
-            context_separator_y,
-        } => {
-            set_rule_cell(frame, split_x, composer.outer.y, "┬", style);
-            for y in composer.outer.y.saturating_add(1)..context_separator_y {
-                set_rule_cell(frame, split_x, y, "│", style);
-            }
-            render_frame_rule(
-                frame,
-                composer.outer,
-                heading_separator_y,
-                Some((split_x, "┼")),
-            );
-            render_frame_rule(
-                frame,
-                composer.outer,
-                context_separator_y,
-                Some((split_x, "┴")),
-            );
-            render_frame_rule(frame, composer.outer, composer.validation_separator_y, None);
-        }
-        ComposerChrome::Wide {
-            split_x,
-            properties_heading_separator_y,
-            properties_separator_y,
-            description_heading_separator_y,
-        } => {
-            set_rule_cell(frame, split_x, composer.outer.y, "┬", style);
-            for y in composer.outer.y.saturating_add(1)..composer.validation_separator_y {
-                set_rule_cell(frame, split_x, y, "│", style);
-            }
-            render_partial_frame_rule(
-                frame,
-                composer.outer.x,
-                split_x,
-                properties_heading_separator_y,
-            );
-            render_partial_frame_rule(frame, composer.outer.x, split_x, properties_separator_y);
-            render_partial_frame_rule(
-                frame,
-                composer.outer.x,
-                split_x,
-                description_heading_separator_y,
-            );
-            render_frame_rule(
-                frame,
-                composer.outer,
-                composer.validation_separator_y,
-                Some((split_x, "┴")),
-            );
-        }
-    }
-}
-
-fn render_partial_frame_rule(frame: &mut Frame<'_>, start: u16, end: u16, y: u16) {
-    let style = frame_style();
-    merge_rule_cell(frame, start, y, "├", style);
-    for x in start.saturating_add(1)..end {
-        merge_rule_cell(frame, x, y, "─", style);
-    }
-    merge_rule_cell(frame, end, y, "┤", style);
-}
-
-fn render_field_hud(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession) {
-    let definition = session.definition();
-    let current = session.composer.current_field(definition);
-    let fields = session.composer.hud_fields(definition);
-    let name_width = field_hud_name_width(definition);
-    let requirement_width = field_hud_requirement_width(definition);
-    let rows = fields
-        .into_iter()
-        .enumerate()
-        .map(|(index, field)| {
-            let marker = match field.status {
-                FieldStatus::Invalid => Cell::from("!").style(Style::default().fg(Color::Red)),
-                FieldStatus::Recommended => {
-                    Cell::from("?").style(Style::default().fg(Color::Yellow))
-                }
-                FieldStatus::Complete => Cell::from("✓").style(Style::default().fg(Color::Green)),
-                FieldStatus::Incomplete => {
-                    Cell::from("○").style(Style::default().fg(Color::DarkGray))
-                }
-            };
-            let row_style = if current == Some(field.id) {
-                navigation_key_style()
-            } else {
-                Style::default().bg(if index % 2 == 0 {
-                    JET_BLACK
-                } else {
-                    ZEBRA_BACKGROUND
-                })
-            };
-            let (name, requirement) = field_columns(field.id, definition);
-            Row::new(vec![marker, Cell::from(name), Cell::from(requirement)]).style(row_style)
-        })
-        .collect::<Vec<_>>();
-    frame.render_widget(
-        Table::new(
-            rows,
-            [
-                Constraint::Length(FIELD_MARKER_WIDTH),
-                Constraint::Length(name_width),
-                Constraint::Length(requirement_width),
-            ],
-        )
-        .column_spacing(FIELD_COLUMN_SPACING),
-        area,
-    );
-}
-
-fn render_field_description(frame: &mut Frame<'_>, area: Rect, session: &AuthoringSession) {
-    let definition = session.definition().clone();
-    let current = session.composer.current_field(&definition);
-    let guidance = current.map_or_else(
-        || FieldGuidance::new("Edit values beneath the schema-generated field headers."),
-        |kind| session_field_guidance(kind, session),
-    );
-    let lines = guidance
-        .paragraphs
-        .into_iter()
-        .map(Line::from)
-        .collect::<Vec<_>>();
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
-}
-
-fn render_document_editor(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    outer: Rect,
-    session: &mut AuthoringSession,
-) -> CursorStatus {
-    session.composer.editor.remove_block();
-
-    // Render against a stable 80-column editing surface, then copy its
-    // cursor-following portion directly into the unpadded visible area.
-    let virtual_area = Rect::new(0, 0, MAX_EDITOR_INNER_WIDTH, area.height);
-    let mut virtual_buffer = Buffer::empty(virtual_area);
-    Widget::render(&session.composer.editor, virtual_area, &mut virtual_buffer);
-    if subject_context_fits(&session.composer.editor, area.height) {
-        // The first render updates tui-textarea's private viewport dimensions.
-        // Resetting after that render cannot move the cursor because the complete
-        // subject prefix is known to fit in the current viewport.
-        session.composer.editor.scroll((-i16::MAX, 0));
-        virtual_buffer = Buffer::empty(virtual_area);
-        Widget::render(&session.composer.editor, virtual_area, &mut virtual_buffer);
-    }
-
-    let cursor_position = session.composer.editor.rendered_cursor_position();
-    let column = cursor_position
-        .map_or(1, |position| position.x + 1)
-        .clamp(1, MAX_EDITOR_INNER_WIDTH);
-    let viewport_width = area.width.clamp(1, MAX_EDITOR_INNER_WIDTH);
-    let horizontal_offset = column.saturating_sub(viewport_width);
-    for row in 0..area.height.min(virtual_area.height) {
-        for viewport_column in 0..viewport_width {
-            let source = (horizontal_offset + viewport_column, row);
-            let destination = (area.x + viewport_column, area.y + row);
-            let mut cell = virtual_buffer[source].clone();
-            let remaining_width = viewport_width.saturating_sub(viewport_column);
-            if u16::try_from(Line::from(cell.symbol()).width()).unwrap_or(u16::MAX)
-                > remaining_width
-            {
-                cell.set_symbol(" ");
-            }
-            frame.buffer_mut()[destination] = cell;
-        }
-    }
-    render_document_rules(
-        frame,
-        area,
-        outer,
-        &virtual_buffer,
-        horizontal_offset,
-        session.definition(),
-    );
-    if let Some(position) = cursor_position
-        && let Some(viewport_column) = position.x.checked_sub(horizontal_offset)
-        && viewport_column < viewport_width
-        && position.y < area.height
-    {
-        let destination = (area.x + viewport_column, area.y + position.y);
-        let cursor_cell = &mut frame.buffer_mut()[destination];
-        if destination.0 == 0 && cursor_cell.symbol().trim().is_empty() {
-            let style = cursor_cell.style().remove_modifier(Modifier::REVERSED);
-            cursor_cell
-                .set_symbol(TERMINAL_EDGE_CURSOR)
-                .set_style(style);
-        } else {
-            let cursor_style = cursor_cell
-                .style()
-                .patch(session.composer.editor.cursor_style());
-            cursor_cell.set_style(cursor_style);
-        }
-    }
-
-    CursorStatus {
-        column,
-        wrap_width: MAX_EDITOR_INNER_WIDTH,
-        content_rows: meaningful_editor_rows(&session.composer.editor),
-        viewport_top: absolute_viewport_top(
-            &session.composer.editor,
-            cursor_position.map_or(0, |position| position.y),
-        ),
-        viewport_height: area.height,
-    }
-}
-
-fn absolute_viewport_top(editor: &TextArea<'_>, visible_cursor_row: u16) -> u16 {
-    let mut top_reset = editor.clone();
-    let content_rows = top_reset
-        .measure(MAX_EDITOR_INNER_WIDTH)
-        .content_rows
-        .max(1);
-    let cursor = top_reset.cursor();
-    top_reset.scroll((-i16::MAX, 0));
-    top_reset.move_cursor(CursorMove::Jump(
-        u16::try_from(cursor.0).unwrap_or(u16::MAX),
-        u16::try_from(cursor.1).unwrap_or(u16::MAX),
-    ));
-    let area = Rect::new(0, 0, MAX_EDITOR_INNER_WIDTH, content_rows);
-    let mut buffer = Buffer::empty(area);
-    Widget::render(&top_reset, area, &mut buffer);
-    top_reset
-        .rendered_cursor_position()
-        .map_or(0, |position| position.y.saturating_sub(visible_cursor_row))
-}
-
-fn render_editor_scrollbar(frame: &mut Frame<'_>, area: Rect, status: CursorStatus) {
-    if area.is_empty() {
-        return;
-    }
-    let track_style = Style::default().fg(Color::DarkGray);
-    for y in area.y..area.bottom() {
-        set_rule_cell(frame, area.x, y, "│", track_style);
-    }
-    if status.content_rows <= status.viewport_height {
-        for y in area.y..area.bottom() {
-            render_scrollbar_thumb_row(frame, area, y);
-        }
-        return;
-    }
-    let track_length = area.height;
-    let thumb_length = u16::try_from(
-        u32::from(status.viewport_height)
-            .saturating_mul(u32::from(track_length))
-            .div_ceil(u32::from(status.content_rows)),
-    )
-    .unwrap_or(track_length)
-    .clamp(1, track_length);
-    let maximum_position = status.content_rows.saturating_sub(status.viewport_height);
-    let position = status.viewport_top.min(maximum_position);
-    let maximum_thumb_offset = track_length.saturating_sub(thumb_length);
-    let thumb_offset = if maximum_position == 0 {
-        0
-    } else {
-        u16::try_from(
-            (u32::from(position)
-                .saturating_mul(u32::from(maximum_thumb_offset))
-                .saturating_add(u32::from(maximum_position) / 2))
-                / u32::from(maximum_position),
-        )
-        .unwrap_or(maximum_thumb_offset)
-        .min(maximum_thumb_offset)
-    };
-    for row in thumb_offset..thumb_offset.saturating_add(thumb_length) {
-        render_scrollbar_thumb_row(frame, area, area.y.saturating_add(row));
-    }
-}
-
-fn render_scrollbar_thumb_row(frame: &mut Frame<'_>, area: Rect, y: u16) {
-    set_rule_cell(frame, area.x, y, "█", Style::default().fg(ACCENT));
-}
-
-fn meaningful_editor_rows(editor: &TextArea<'_>) -> u16 {
-    let mut lines = editor.lines().to_vec();
-    if lines.len() > 1 {
-        lines.pop();
-    }
-    let mut meaningful = TextArea::new(lines);
-    meaningful.set_wrap_mode(editor.wrap_mode());
-    meaningful
-        .measure(MAX_EDITOR_INNER_WIDTH)
-        .content_rows
-        .max(1)
-}
-
-fn render_validation_row(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    notice: Option<(&super::state::ValidationIssue, ValidationSeverity)>,
-    cursor: CursorStatus,
-) {
-    let status = format!("col {}/{}", cursor.column, cursor.wrap_width);
-    let status_width = u16::try_from(Line::from(status.as_str()).width()).unwrap_or(u16::MAX);
-    let columns =
-        Layout::horizontal([Constraint::Min(0), Constraint::Length(status_width)]).split(area);
-    if let Some((issue, severity)) = notice {
-        let color = match severity {
-            ValidationSeverity::Error => Color::Red,
-            ValidationSeverity::Warning => Color::Yellow,
-        };
-        frame.render_widget(
-            Paragraph::new(issue.message.as_str()).style(Style::default().fg(color)),
-            columns[0],
-        );
-    }
-    frame.render_widget(Paragraph::new(status).right_aligned(), columns[1]);
-}
-
-fn render_document_rules(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    outer: Rect,
-    virtual_buffer: &Buffer,
-    horizontal_offset: u16,
-    definition: &CommitTypeDefinition,
-) {
-    let field_headings = ["scope:".to_owned(), "description:".to_owned()]
-        .into_iter()
-        .chain(
-            definition
-                .properties()
-                .iter()
-                .map(|property| super::state::property_heading(property.key().as_str())),
-        )
-        .chain(std::iter::once("breaking-change:".to_owned()))
-        .collect::<Vec<_>>();
-    for row in 0..area.height {
-        if horizontal_offset == 0
-            && let Some(heading) = field_headings
-                .iter()
-                .find(|heading| bold_heading_at(virtual_buffer, row, heading))
-        {
-            let visible_heading = heading.trim_end_matches(':');
-            let heading_width =
-                u16::try_from(Line::from(visible_heading).width()).unwrap_or(u16::MAX);
-            let colon = area.x.saturating_add(heading_width);
-            let colon_style = frame.buffer_mut()[(colon, area.y + row)].style();
-            frame.buffer_mut()[(colon, area.y + row)]
-                .set_symbol(" ")
-                .set_style(colon_style);
-            let start = colon.saturating_add(1);
-            render_inner_rule(frame, start, area.right(), area.y + row);
-        }
-        if row > 0
-            && ["Message Body", "Message Footer"]
-                .iter()
-                .any(|heading| bold_heading_at(virtual_buffer, row, heading))
-        {
-            render_editor_section_rule(frame, outer.x, area.right(), area.y + row - 1);
-        }
-    }
-}
-
-fn render_editor_section_rule(frame: &mut Frame<'_>, start: u16, end: u16, y: u16) {
-    let style = frame_style();
-    merge_rule_cell(frame, start, y, "├", style);
-    for x in start.saturating_add(1)..end {
-        merge_rule_cell(frame, x, y, "─", style);
-    }
-}
-
-fn bold_heading_at(buffer: &Buffer, row: u16, heading: &str) -> bool {
-    heading.chars().enumerate().all(|(column, character)| {
-        u16::try_from(column).ok().is_some_and(|column| {
-            let cell = &buffer[(column, row)];
-            cell.symbol() == character.to_string() && cell.modifier.contains(Modifier::BOLD)
-        })
-    })
-}
-
-fn render_inner_rule(frame: &mut Frame<'_>, start: u16, end: u16, y: u16) {
-    let style = frame_style();
-    for x in start..end {
-        set_rule_cell(frame, x, y, "⠒", style);
-    }
-}
-
-fn render_frame_rule(
-    frame: &mut Frame<'_>,
-    outer: Rect,
-    y: u16,
-    intersection: Option<(u16, &'static str)>,
-) {
-    let style = frame_style();
-    merge_rule_cell(frame, outer.x, y, "├", style);
-    for x in outer.x.saturating_add(1)..outer.right().saturating_sub(1) {
-        merge_rule_cell(frame, x, y, "─", style);
-    }
-    if let Some((x, symbol)) = intersection {
-        merge_rule_cell(frame, x, y, symbol, style);
-    }
-    merge_rule_cell(frame, outer.right().saturating_sub(1), y, "┤", style);
-}
-
-fn merge_rule_cell(frame: &mut Frame<'_>, x: u16, y: u16, incoming: &'static str, style: Style) {
-    const LEFT: u8 = 1;
-    const RIGHT: u8 = 2;
-    const UP: u8 = 4;
-    const DOWN: u8 = 8;
-
-    fn connections(symbol: &str) -> u8 {
-        match symbol {
-            "─" => LEFT | RIGHT,
-            "│" => UP | DOWN,
-            "┌" => RIGHT | DOWN,
-            "┐" => LEFT | DOWN,
-            "└" => RIGHT | UP,
-            "┘" => LEFT | UP,
-            "├" => RIGHT | UP | DOWN,
-            "┤" => LEFT | UP | DOWN,
-            "┬" => LEFT | RIGHT | DOWN,
-            "┴" => LEFT | RIGHT | UP,
-            "┼" => LEFT | RIGHT | UP | DOWN,
-            _ => 0,
-        }
-    }
-
-    fn rule_symbol(connections: u8, fallback: &'static str) -> &'static str {
-        match connections {
-            value if value == LEFT | RIGHT => "─",
-            value if value == UP | DOWN => "│",
-            value if value == RIGHT | DOWN => "┌",
-            value if value == LEFT | DOWN => "┐",
-            value if value == RIGHT | UP => "└",
-            value if value == LEFT | UP => "┘",
-            value if value == RIGHT | UP | DOWN => "├",
-            value if value == LEFT | UP | DOWN => "┤",
-            value if value == LEFT | RIGHT | DOWN => "┬",
-            value if value == LEFT | RIGHT | UP => "┴",
-            value if value == LEFT | RIGHT | UP | DOWN => "┼",
-            _ => fallback,
-        }
-    }
-
-    let existing = frame.buffer_mut()[(x, y)].symbol().to_owned();
-    let merged = connections(&existing) | connections(incoming);
-    frame.buffer_mut()[(x, y)]
-        .set_symbol(rule_symbol(merged, incoming))
-        .set_style(style);
-}
-
-fn set_rule_cell(frame: &mut Frame<'_>, x: u16, y: u16, symbol: &'static str, style: Style) {
-    frame.buffer_mut()[(x, y)]
-        .set_symbol(symbol)
-        .set_style(style);
-}
-
-fn subject_context_fits(editor: &TextArea<'_>, viewport_height: u16) -> bool {
-    if editor.cursor().0 != SCOPE_VALUE_LINE {
-        return false;
-    }
-    let Some(lines) = editor.lines().get(..=SCOPE_VALUE_LINE) else {
-        return false;
-    };
-    let mut subject = TextArea::new(lines.to_vec());
-    subject.set_wrap_mode(editor.wrap_mode());
-    subject.measure(MAX_EDITOR_INNER_WIDTH).content_rows <= viewport_height
-}
-
 /// The message without its provenance trailers, then the highlighted `target` row
 /// that enter commits, then any recommendations the message leaves out, dimmed.
 fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession, target: &str) {
@@ -1027,10 +291,9 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
     };
     let area = inset_horizontally(area, 1);
     let recommendations: Vec<_> = session
-        .composer
-        .warnings
-        .iter()
-        .map(|warning| Line::styled(warning.message.clone(), Style::new().fg(theme().dim)))
+        .cards
+        .recommendations()
+        .map(|message| Line::styled(message.to_owned(), Style::new().fg(theme().dim)))
         .collect();
     let recommendation_rows = u16::try_from(recommendations.len())
         .unwrap_or(u16::MAX)
@@ -1079,24 +342,6 @@ fn render_confirmation(frame: &mut Frame<'_>, session: &mut AuthoringSession) {
     );
 }
 
-fn field_columns(id: FieldId, definition: &CommitTypeDefinition) -> (String, &'static str) {
-    match id {
-        FieldId::Scope => ("scope".to_owned(), "optional"),
-        FieldId::Description => ("description".to_owned(), "required"),
-        FieldId::Property(index) => {
-            let property = &definition.properties()[index];
-            let requirement = match property.requirement() {
-                PropertyRequirement::Required => "required",
-                PropertyRequirement::Recommended => "recommended",
-                PropertyRequirement::Optional => "optional",
-                PropertyRequirement::Conditional(_) => "conditional",
-            };
-            (property.key().to_string(), requirement)
-        }
-        FieldId::BreakingChange => ("breaking-change".to_owned(), "optional"),
-    }
-}
-
 /// The widest type key plus a gap, so the property column lines up for every type.
 fn picker_key_width(definitions: &[CommitTypeDefinition], content_width: u16) -> u16 {
     definitions
@@ -1106,114 +351,6 @@ fn picker_key_width(definitions: &[CommitTypeDefinition], content_width: u16) ->
         .unwrap_or(1)
         .saturating_add(PICKER_KEY_GAP)
         .min(content_width / 2)
-}
-
-fn field_hud_ids(definition: &CommitTypeDefinition) -> impl Iterator<Item = FieldId> + '_ {
-    std::iter::once(FieldId::Scope)
-        .chain(std::iter::once(FieldId::Description))
-        .chain((0..definition.properties().len()).map(FieldId::Property))
-        .chain(std::iter::once(FieldId::BreakingChange))
-}
-
-fn field_hud_name_width(definition: &CommitTypeDefinition) -> u16 {
-    field_hud_ids(definition)
-        .map(|id| field_columns(id, definition).0)
-        .map(|name| u16::try_from(Line::from(name).width()).unwrap_or(u16::MAX))
-        .max()
-        .unwrap_or(1)
-}
-
-fn field_hud_requirement_width(definition: &CommitTypeDefinition) -> u16 {
-    field_hud_ids(definition)
-        .map(|id| field_columns(id, definition).1)
-        .map(|requirement| u16::try_from(Line::from(requirement).width()).unwrap_or(u16::MAX))
-        .max()
-        .unwrap_or(1)
-}
-
-fn field_hud_content_width(definition: &CommitTypeDefinition) -> u16 {
-    FIELD_MARKER_WIDTH
-        .saturating_add(field_hud_name_width(definition))
-        .saturating_add(field_hud_requirement_width(definition))
-        .saturating_add(FIELD_COLUMN_SPACING.saturating_mul(2))
-}
-
-fn composer_minimum_width(definition: &CommitTypeDefinition) -> u16 {
-    MINIMUM_WIDTH
-        .max(field_hud_content_width(definition).saturating_add(COMPOSER_FRAME_WIDTH_OVERHEAD))
-}
-
-struct FieldGuidance {
-    paragraphs: Vec<String>,
-}
-
-impl FieldGuidance {
-    fn new(description: impl Into<String>) -> Self {
-        Self {
-            paragraphs: vec![description.into()],
-        }
-    }
-}
-
-fn field_guidance(kind: FieldId, definition: &CommitTypeDefinition) -> FieldGuidance {
-    match kind {
-        FieldId::Scope => FieldGuidance::new(
-            "Optional affected area in a Conventional Commit: type(scope): description. Leave blank for type: description."
-                .to_owned(),
-        ),
-        FieldId::Description => FieldGuidance::new(
-            "Required concise description in a Conventional Commit: type(scope): description, or type: description without a scope."
-                .to_owned(),
-        ),
-        FieldId::Property(definition_index) => {
-            let property = &definition.properties()[definition_index];
-            let mut guidance = FieldGuidance::new(property.description());
-            if let PropertyRequirement::Conditional(condition) = property.requirement() {
-                guidance.paragraphs.push(condition.rationale().to_owned());
-            }
-            guidance
-        }
-        FieldId::BreakingChange => FieldGuidance::new(
-            "Describe an incompatible change. Review adds ! before the header colon and renders this value as an uppercase BREAKING CHANGE footer."
-                .to_owned(),
-        ),
-    }
-}
-
-fn session_field_guidance(kind: FieldId, session: &AuthoringSession) -> FieldGuidance {
-    let mut guidance = field_guidance(kind, session.definition());
-    if let FieldId::Property(definition_index) = kind {
-        let property = &session.definition().properties()[definition_index];
-        if matches!(property.requirement(), PropertyRequirement::Conditional(_)) {
-            let status = match session.composer.applicability[definition_index] {
-                None => "unanswered",
-                Some(gitserious_core::ConditionalApplicability::Applies) => {
-                    "applicable (value required)"
-                }
-                Some(gitserious_core::ConditionalApplicability::DoesNotApply) => {
-                    "not applicable (leave empty)"
-                }
-            };
-            guidance.paragraphs.push(format!(
-                "Applicability: {status}. alt+a: applicable | alt+n: not applicable"
-            ));
-        }
-    }
-    guidance
-}
-
-fn context_content_height(description_width: u16, session: &AuthoringSession) -> u16 {
-    let hud_height =
-        u16::try_from(session.composer.hud_fields(session.definition()).len()).unwrap_or(u16::MAX);
-    let definition = session.definition().clone();
-    let guidance = session.composer.current_field(&definition).map_or_else(
-        || FieldGuidance::new("Edit values beneath the schema-generated field headers."),
-        |kind| session_field_guidance(kind, session),
-    );
-    let guidance_height = guidance.paragraphs.iter().fold(0_u16, |height, paragraph| {
-        height.saturating_add(wrapped_line_count(paragraph, description_width))
-    });
-    hud_height.max(guidance_height)
 }
 
 fn wrapped_line_count(text: &str, width: u16) -> u16 {
@@ -1237,18 +374,6 @@ fn wrapped_line_count(text: &str, width: u16) -> u16 {
         }
     }
     rows
-}
-
-fn section_heading_style() -> Style {
-    crate::theme::section_heading_style()
-}
-
-fn frame_style() -> Style {
-    crate::theme::frame_style()
-}
-
-fn render_section_heading(frame: &mut Frame<'_>, area: Rect, title: &'static str) {
-    frame.render_widget(Paragraph::new(title).style(section_heading_style()), area);
 }
 
 fn render_centered_notice(
@@ -1285,20 +410,6 @@ fn render_centered_notice(
 
 fn label_width(label: &str) -> u16 {
     u16::try_from(Line::from(label).width()).unwrap_or(u16::MAX)
-}
-
-fn navigation_key_style() -> Style {
-    crate::theme::navigation_key_style()
-}
-
-fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
-    crate::theme::centered_rect(width, height, area)
-}
-
-fn stage_shell(area: Rect, header_rows: u16) -> StageShell {
-    let [header, frame] =
-        Layout::vertical([Constraint::Length(header_rows), Constraint::Min(1)]).areas(area);
-    StageShell { header, frame }
 }
 
 const fn inset_horizontally(area: Rect, amount: u16) -> Rect {

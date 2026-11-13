@@ -218,10 +218,21 @@ leaves authoring. Left and Right switch taxonomy and keep the filter, Up and
 Down move, and Enter opens the composer for the highlighted type. Switching
 taxonomy never mutates project policy.
 
-The composer retains the established schema-document interaction: immutable
-section headings, contextual property guidance, completion markers, explicit
-conditional applicability, and discard confirmation. Generated messages contain
-`Gitserious-Taxonomy` and `Gitserious-Schema` provenance trailers.
+The composer shows a subject card, one card for each property, and an optional
+breaking-change card. The selected type is fixed on the subject line; write
+`(scope): description` or `: description` after it. The subject shows its length
+against 72 columns. Each property shows its policy on the right and its description
+as guidance while focused and empty. The marks mean complete (✓), focused (●),
+conditional and undecided (◐), or empty (○).
+
+Up and Down move through wrapped body rows and cross card boundaries at their
+edges. Enter leaves the subject and inserts a newline in a body. Ctrl+U and
+Ctrl+R undo and redo within the focused card. Alt+A and Alt+N answer whether a
+conditional property applies; their hints appear in the footer while that card
+is focused. The status line lists cards still blocking review and the cursor's
+column in the 80-column message. Esc asks before discarding text or decisions.
+Generated messages contain `Gitserious-Taxonomy` and `Gitserious-Schema`
+provenance trailers, which the editor and review hide.
 
 Ctrl+S opens the review under the staged header: the message as written, without
 the provenance trailers, then a highlighted `commit to <branch>` row. An unborn

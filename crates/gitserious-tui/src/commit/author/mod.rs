@@ -1,3 +1,4 @@
+mod cards;
 mod render;
 mod state;
 #[cfg(test)]

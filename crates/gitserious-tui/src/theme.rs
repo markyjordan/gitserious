@@ -7,7 +7,6 @@ use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 pub(crate) const MINIMUM_WIDTH: u16 = 66;
 pub(crate) const MINIMUM_HEIGHT: u16 = 18;
 pub(crate) const JET_BLACK: Color = Color::Rgb(0, 0, 0);
-pub(crate) const ZEBRA_BACKGROUND: Color = Color::Rgb(16, 16, 16);
 pub(crate) const ACCENT: Color = Color::Rgb(80, 160, 255);
 
 /// One appearance: the semantic colors every redesigned screen draws with.
@@ -173,23 +172,49 @@ pub(crate) const EDIT_BADGE: Style = Style::new()
     .bg(theme().pending)
     .add_modifier(Modifier::BOLD);
 
-/// An EDIT badge, then `hints`, for an editor that leaves the root only tab.
+/// The editor keeps every contextual key visible, wrapping between hints.
+pub(crate) fn edit_footer_height(width: u16, hints: &[(&str, &str)]) -> u16 {
+    let available = width.saturating_sub(2 + 7 + 11 + 2);
+    u16::try_from(edit_hint_rows(hints, available).len()).unwrap_or(u16::MAX)
+}
+
+fn edit_hint_rows<'a>(hints: &'a [(&str, &str)], width: u16) -> Vec<&'a [(&'a str, &'a str)]> {
+    let mut rows = Vec::new();
+    let mut start = 0;
+    for end in 1..=hints.len() {
+        if end > start + 1 && footer_hints(&hints[start..end]).width() > usize::from(width) {
+            rows.push(&hints[start..end - 1]);
+            start = end - 1;
+        }
+    }
+    rows.push(&hints[start..]);
+    rows
+}
+
+/// An EDIT badge, all contextual keys, and the nav key for the open editor.
 pub(crate) fn render_edit_footer(frame: &mut Frame<'_>, area: Rect, hints: &[(&str, &str)]) {
-    let badge = Span::styled(" EDIT ", EDIT_BADGE);
-    let width = u16::try_from(badge.width() + 1)
+    let badge_width = 7.min(area.width);
+    frame.render_widget(
+        Paragraph::new(Span::styled(" EDIT ", EDIT_BADGE)),
+        Rect::new(area.x, area.y, badge_width, 1),
+    );
+    let navigation = footer_hints(&ROOT_HINTS[..1]);
+    let navigation_width = u16::try_from(navigation.width())
         .unwrap_or(u16::MAX)
         .min(area.width);
-    frame.render_widget(Paragraph::new(badge), Rect { width, ..area });
-    render_footer(
-        frame,
-        Rect {
-            x: area.x + width,
-            width: area.width - width,
-            ..area
-        },
-        hints,
-        &ROOT_HINTS[..1],
+    frame.render_widget(
+        Paragraph::new(navigation).right_aligned(),
+        Rect::new(area.right() - navigation_width, area.y, navigation_width, 1),
     );
+    let width = area
+        .width
+        .saturating_sub(badge_width + navigation_width + 2);
+    for (y, hints) in (area.y..area.bottom()).zip(edit_hint_rows(hints, width)) {
+        frame.render_widget(
+            Paragraph::new(footer_hints(hints)),
+            Rect::new(area.x + badge_width, y, width, 1),
+        );
+    }
 }
 
 /// Render the footer background and return its content area.

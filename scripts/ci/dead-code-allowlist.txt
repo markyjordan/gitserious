@@ -1,3 +1,9 @@
 # Dead code that check-dead-code.sh accepts, one tab-separated "file<TAB>item"
 # row each. Add a row only with an issue that decides it; the check fails on
 # new offenders and on stale entries.
+
+# AuthoredProperty is the public value of CommitDraft::new. No library names
+# it after drafts moved to from_responses. Integration tests still construct
+# it, and the scan does not check tests. #390
+crates/gitserious-core/src/lib.rs	AuthoredProperty
+
