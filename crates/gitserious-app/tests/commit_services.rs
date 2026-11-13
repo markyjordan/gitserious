@@ -7,7 +7,7 @@ use gitserious_app::{
     CommitTaxonomy, CommitWorkspace, CommitWriter, ConfigurationServices, ConfigurationWorkspace,
     GlobalConfiguration, GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore,
     ProjectRevision, RepositoryLocator, RepositoryRoot, RepositoryStatus, RepositoryStatusReader,
-    StatusEntry, StoredProject,
+    StatusEntry, StoredProject, WorktreePaths,
 };
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitProvenance, CommitSubject,
@@ -735,6 +735,36 @@ fn a_writer_failure_is_reported_after_one_write_attempt() -> Result<(), Box<dyn 
         Some("writer failed")
     );
     assert_eq!(writer.0.get(), 1);
+    Ok(())
+}
+
+struct FixedPaths(Vec<String>);
+
+impl WorktreePaths for FixedPaths {
+    fn paths(&self, _: &RepositoryRoot) -> Result<Vec<String>, String> {
+        Ok(self.0.clone())
+    }
+}
+
+struct BrokenPaths;
+
+impl WorktreePaths for BrokenPaths {
+    fn paths(&self, _: &RepositoryRoot) -> Result<Vec<String>, String> {
+        Err("ls-files failed".into())
+    }
+}
+
+#[test]
+fn cite_paths_follow_the_worktree_reader() -> Result<(), Box<dyn Error>> {
+    let session = Session::new(Vec::new())?;
+    let reader = FixedPaths(vec!["src/".into(), "src/net/retry.rs".into()]);
+    let commit = session.commit().citing(&reader);
+    assert_eq!(CommitWorkspace::cite_paths(&commit), reader.0);
+
+    assert!(CommitWorkspace::cite_paths(&session.commit()).is_empty());
+    assert!(CommitWorkspace::cite_paths(&session.commit().citing(&BrokenPaths)).is_empty());
+    session.locator.failure.set(Some("not a repository"));
+    assert!(CommitWorkspace::cite_paths(&session.commit().citing(&reader)).is_empty());
     Ok(())
 }
 

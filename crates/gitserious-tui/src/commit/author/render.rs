@@ -6,6 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use super::cards;
+use super::cite;
 use super::state::{AuthoringSession, CatalogTab, ConfirmationAction, Stage};
 use crate::confirmation::{Confirmation, DISCARD};
 use crate::theme::{JET_BLACK, centered_rect, popup_selected_style, section_heading_style, theme};
@@ -60,6 +61,9 @@ pub(crate) fn render(
         Stage::Review => render_review(frame, area, session, target),
         Stage::Confirm => unreachable!("confirmation resolves to its underlying stage"),
     }
+    if session.stage == Stage::Compose {
+        cite::render(frame, area, &mut session.cite, &session.paths);
+    }
     if session.stage == Stage::Confirm {
         render_confirmation(frame, session);
     }
@@ -68,6 +72,9 @@ pub(crate) fn render(
 /// The footer keys of the stage on screen. A conditional card adds the keys
 /// that answer whether it applies.
 pub(crate) fn hints(session: &AuthoringSession) -> Vec<(&'static str, &'static str)> {
+    if session.cite.is_some() && session.stage == Stage::Compose {
+        return vec![("enter", "cite"), ("↑/↓", "move"), ("esc", "cancel")];
+    }
     match session.visible_stage() {
         Stage::SelectType => vec![
             ("enter", "choose"),

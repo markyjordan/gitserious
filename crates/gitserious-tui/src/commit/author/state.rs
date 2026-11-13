@@ -1,4 +1,5 @@
 use super::cards::Cards;
+use super::cite::{Cite, CiteAction};
 use crate::confirmation::{Answer, ConfirmDialog, DISCARD};
 use gitserious_app::{AuthoredCommit, CommitAuthoringContext, CommitTaxonomy};
 use gitserious_core::{CommitDraft, CommitMessage, CommitTypeDefinition, ConditionalApplicability};
@@ -78,6 +79,9 @@ pub(crate) struct AuthoringSession {
     pub(crate) type_rows: Vec<(usize, Rect)>,
     pub(crate) too_small: bool,
     type_change: Option<TypeChange>,
+    /// Files and directories `@` can insert. A directory ends with `/`.
+    pub(crate) paths: Vec<String>,
+    pub(crate) cite: Option<Cite>,
 }
 
 impl AuthoringSession {
@@ -108,7 +112,14 @@ impl AuthoringSession {
             type_rows: Vec::new(),
             too_small: false,
             type_change: None,
+            paths: Vec::new(),
+            cite: None,
         }
+    }
+
+    /// Replaces the paths `@` offers. The Commit page supplies the worktree list.
+    pub(crate) fn set_cite_paths(&mut self, paths: Vec<String>) {
+        self.paths = paths;
     }
 
     /// Shows the review of `authored` again after Git rejected it.
@@ -243,6 +254,12 @@ impl AuthoringSession {
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => self.handle_key(key),
             Event::Mouse(mouse) => self.handle_mouse(mouse),
+            Event::Paste(text) if self.stage == Stage::Compose && self.cite.is_some() => {
+                if let Some(cite) = &mut self.cite {
+                    cite.push_text(&text);
+                }
+                None
+            }
             Event::Paste(text) if self.stage == Stage::Compose => {
                 self.cards.paste(&text);
                 None
@@ -299,10 +316,29 @@ impl AuthoringSession {
     fn handle_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
         match self.stage {
             Stage::SelectType => self.handle_picker_key(key),
+            Stage::Compose if self.cite.is_some() => self.handle_cite_key(key),
             Stage::Compose => self.handle_cards_key(key),
             Stage::Review => self.handle_review_key(key),
             Stage::Confirm => self.handle_confirmation_key(key),
         }
+    }
+
+    fn handle_cite_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
+        let action = {
+            let Some(cite) = &mut self.cite else {
+                return None;
+            };
+            cite.key(key, &self.paths)
+        };
+        match action {
+            CiteAction::Stay => {}
+            CiteAction::Close => self.cite = None,
+            CiteAction::Insert(text) => {
+                self.cite = None;
+                self.cards.paste(&text);
+            }
+        }
+        None
     }
 
     fn handle_picker_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
@@ -397,6 +433,14 @@ impl AuthoringSession {
                 ConfirmationAction::ChangeType
             };
             return self.request_confirmation(action);
+        }
+        if key.code == KeyCode::Char('@')
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            self.cite = Some(Cite::new());
+            return None;
         }
         self.cards.key(key);
         None

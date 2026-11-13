@@ -1016,3 +1016,161 @@ fn ctrl_t_restores_the_taxonomy_when_the_picker_is_cancelled() -> Result<(), Str
     );
     Ok(())
 }
+
+fn citing(paths: &[&str]) -> AuthoringSession {
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    session.set_cite_paths(paths.iter().map(|path| (*path).to_owned()).collect());
+    session
+}
+
+fn focused_text(session: &AuthoringSession) -> String {
+    session.cards.text(session.cards.focus).lines().join("\n")
+}
+
+#[test]
+fn at_opens_a_list_and_does_not_write_at() {
+    let mut session = citing(&["src/net/retry.rs"]);
+    paste(&mut session, "see ");
+    press(&mut session, KeyCode::Char('@'));
+    assert!(session.cite.is_some());
+    assert_eq!(focused_text(&session), "see ");
+    assert_eq!(
+        hints(&session),
+        [("enter", "cite"), ("↑/↓", "move"), ("esc", "cancel")]
+    );
+}
+
+#[test]
+fn enter_inserts_the_path_and_esc_writes_nothing() {
+    let mut session = citing(&["src/net/retry.rs", "README.md"]);
+    press(&mut session, KeyCode::Char('@'));
+    press(&mut session, KeyCode::Enter);
+    assert!(session.cite.is_none());
+    assert_eq!(focused_text(&session), "@src/net/retry.rs");
+
+    let mut session = citing(&["src/net/retry.rs"]);
+    paste(&mut session, "see ");
+    press(&mut session, KeyCode::Char('@'));
+    typed(&mut session, "nope");
+    press(&mut session, KeyCode::Esc);
+    assert!(session.cite.is_none());
+    assert_eq!(focused_text(&session), "see ");
+}
+
+#[test]
+fn typing_keeps_paths_that_contain_the_query() -> Result<(), Box<dyn Error>> {
+    let mut session = citing(&["src/net/retry.rs", "README.md"]);
+    press(&mut session, KeyCode::Char('@'));
+    typed(&mut session, "retry");
+    let screen = rendered(&mut session, 80, 24)?;
+    assert!(screen.contains("src/net/retry.rs"), "{screen}");
+    assert!(!screen.contains("README.md"), "{screen}");
+    assert!(!screen.contains("Typing filters"), "{screen}");
+    assert!(!screen.contains("tab kind"), "{screen}");
+    press(&mut session, KeyCode::Enter);
+    assert_eq!(focused_text(&session), "@src/net/retry.rs");
+    Ok(())
+}
+
+#[test]
+fn down_wraps_and_sideways_keeps_the_row() {
+    let mut session = citing(&["README.md", "src/net/retry.rs"]);
+    press(&mut session, KeyCode::Char('@'));
+    press(&mut session, KeyCode::Down);
+    press(&mut session, KeyCode::Right);
+    press(&mut session, KeyCode::Enter);
+    assert_eq!(focused_text(&session), "@src/net/retry.rs");
+
+    let mut session = citing(&["README.md", "src/net/retry.rs"]);
+    press(&mut session, KeyCode::Char('@'));
+    press(&mut session, KeyCode::Up);
+    press(&mut session, KeyCode::Enter);
+    assert_eq!(focused_text(&session), "@src/net/retry.rs");
+}
+
+#[test]
+fn a_directory_keeps_its_trailing_slash() {
+    let mut session = citing(&["src/net/retry.rs", "src/net/"]);
+    press(&mut session, KeyCode::Char('@'));
+    press(&mut session, KeyCode::Down);
+    press(&mut session, KeyCode::Enter);
+    assert_eq!(focused_text(&session), "@src/net/");
+}
+
+#[test]
+fn enter_on_no_match_leaves_the_list_open() -> Result<(), Box<dyn Error>> {
+    let mut session = citing(&["src/net/retry.rs"]);
+    press(&mut session, KeyCode::Char('@'));
+    typed(&mut session, "zzz");
+    let screen = rendered(&mut session, 80, 24)?;
+    assert!(screen.contains("no match"), "{screen}");
+    press(&mut session, KeyCode::Enter);
+    assert!(session.cite.is_some());
+    assert_eq!(focused_text(&session), "");
+    Ok(())
+}
+
+#[test]
+fn cite_lands_at_the_cursor() {
+    let mut session = citing(&["src/net/retry.rs"]);
+    press(&mut session, KeyCode::Down);
+    paste(&mut session, "abXcd");
+    press(&mut session, KeyCode::Left);
+    press(&mut session, KeyCode::Left);
+    press(&mut session, KeyCode::Char('@'));
+    press(&mut session, KeyCode::Enter);
+    assert_eq!(focused_text(&session), "abX@src/net/retry.rscd");
+}
+
+#[test]
+fn the_list_takes_the_keys_that_would_leave_the_cards() {
+    let mut session = citing(&["src/a.rs"]);
+    press(&mut session, KeyCode::Down);
+    press(&mut session, KeyCode::Down);
+    press(&mut session, KeyCode::Down);
+    press(&mut session, KeyCode::Char('@'));
+    control(&mut session, 's');
+    control(&mut session, 't');
+    alt(&mut session, 'n');
+    assert_eq!(session.stage, Stage::Compose);
+    assert!(session.cite.is_some());
+    assert!(session.review.is_none());
+    assert_eq!(
+        session
+            .cards
+            .card(session.cards.focus)
+            .map(|card| card.policy.word()),
+        Some("conditional")
+    );
+}
+
+#[test]
+fn the_selected_path_uses_the_popup_row() -> Result<(), Box<dyn Error>> {
+    let mut session = citing(&["src/net/retry.rs", "README.md"]);
+    press(&mut session, KeyCode::Char('@'));
+    let buffer = rendered_buffer(&mut session, 80, 24)?;
+    let (column, row) = find_ascii(&buffer, 80, 24, "src/net/retry.rs").ok_or("missing path")?;
+    assert_eq!(buffer[(column, row)].bg, theme().cursor);
+    let (column, row) = find_ascii(&buffer, 80, 24, "README.md").ok_or("missing readme")?;
+    assert_ne!(buffer[(column, row)].bg, theme().cursor);
+    assert!(rendered(&mut session, 80, 24)?.contains("Cite"));
+    Ok(())
+}
+
+#[test]
+fn at_before_a_type_is_chosen_stays_in_the_picker() {
+    let mut session = AuthoringSession::new(built_in_commit_types(), None);
+    press(&mut session, KeyCode::Char('@'));
+    assert_eq!(session.stage, Stage::SelectType);
+    assert!(session.cite.is_none());
+    assert_eq!(session.filter, "@");
+}
+
+#[test]
+fn a_pasted_query_filters_the_list() {
+    let mut session = citing(&["src/net/retry.rs", "README.md"]);
+    press(&mut session, KeyCode::Char('@'));
+    paste(&mut session, "README");
+    press(&mut session, KeyCode::Enter);
+    assert_eq!(focused_text(&session), "@README.md");
+}
