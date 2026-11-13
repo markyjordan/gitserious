@@ -1,17 +1,11 @@
+use super::cards::Cards;
 use crate::confirmation::{Answer, ConfirmDialog, DISCARD};
-use crate::theme::ACCENT;
 use gitserious_app::{AuthoredCommit, CommitAuthoringContext, CommitTaxonomy};
-use gitserious_core::{
-    AuthoredProperty, CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitTypeDefinition,
-    ConditionalApplicability, PropertyKey, PropertyRequirement, PropertyResponse,
-    PropertyValidationIssueKind, PropertyValue, ValidationSeverity, validate_commit_draft,
-};
+use gitserious_core::{CommitDraft, CommitMessage, CommitTypeDefinition, ConditionalApplicability};
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use tui_textarea::{AtomicRange, CursorMove, CursorRenderMode, Input, TextArea, WrapMode};
 
 /// What the editor hands back when the user leaves it.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -21,8 +15,6 @@ pub(crate) enum AuthoringOutcome {
     /// The user left without approving a draft.
     Cancelled,
 }
-
-pub(crate) const SCOPE_VALUE_LINE: usize = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Stage {
@@ -36,909 +28,6 @@ pub(crate) enum Stage {
 pub(crate) enum ConfirmationAction {
     Cancel,
     ChangeType,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum FieldId {
-    Scope,
-    Description,
-    Property(usize),
-    BreakingChange,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum FieldStatus {
-    Incomplete,
-    Recommended,
-    Complete,
-    Invalid,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ValidationIssue {
-    pub(crate) field: Option<FieldId>,
-    pub(crate) line: usize,
-    pub(crate) message: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct HudField {
-    pub(crate) id: FieldId,
-    pub(crate) status: FieldStatus,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct DocumentSection {
-    kind: FieldId,
-    heading_line: usize,
-    end_line: usize,
-    text: String,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct ParsedDocument {
-    sections: Vec<DocumentSection>,
-    issues: Vec<ValidationIssue>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MessageSection {
-    Subject,
-    Body,
-    Footer,
-}
-
-impl MessageSection {
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Subject => "Message Subject",
-            Self::Body => "Message Body",
-            Self::Footer => "Message Footer",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DocumentMarker {
-    Section(MessageSection),
-    Field(FieldId),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum BoundaryKind {
-    Known(FieldId),
-    Group,
-    Invalid,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Boundary {
-    line: usize,
-    kind: BoundaryKind,
-}
-
-pub(crate) struct ComposerState {
-    pub(crate) editor: TextArea<'static>,
-    pristine: Vec<String>,
-    pub(crate) issues: Vec<ValidationIssue>,
-    pub(crate) applicability: Vec<Option<ConditionalApplicability>>,
-    pub(crate) warnings: Vec<ValidationIssue>,
-}
-
-impl ComposerState {
-    fn new(definition: &CommitTypeDefinition) -> Self {
-        let pristine = scaffold_lines(definition);
-        let mut editor = text_area(pristine.clone(), definition);
-        editor.move_cursor(CursorMove::Jump(terminal_line(SCOPE_VALUE_LINE), 0));
-        Self {
-            editor,
-            pristine,
-            issues: Vec::new(),
-            applicability: vec![None; definition.properties().len()],
-            warnings: Vec::new(),
-        }
-    }
-
-    pub(crate) fn dirty(&self) -> bool {
-        self.editor.lines() != self.pristine || self.applicability.iter().any(Option::is_some)
-    }
-
-    pub(crate) fn current_field(&self, definition: &CommitTypeDefinition) -> Option<FieldId> {
-        let cursor_line = self.editor.cursor().0;
-        self.parse(definition)
-            .sections
-            .into_iter()
-            .find(|section| cursor_line >= section.heading_line && cursor_line < section.end_line)
-            .map(|section| section.kind)
-    }
-
-    pub(crate) fn hud_fields(&self, definition: &CommitTypeDefinition) -> Vec<HudField> {
-        let parsed = self.parse(definition);
-        let mut issues = parsed.issues;
-        issues.extend(self.issues.iter().cloned());
-        let mut fields = Vec::with_capacity(definition.properties().len() + 3);
-        for id in std::iter::once(FieldId::Scope)
-            .chain(std::iter::once(FieldId::Description))
-            .chain((0..definition.properties().len()).map(FieldId::Property))
-            .chain(std::iter::once(FieldId::BreakingChange))
-        {
-            let sections = parsed
-                .sections
-                .iter()
-                .filter(|section| section.kind == id)
-                .collect::<Vec<_>>();
-            let invalid = issues.iter().any(|issue| issue.field == Some(id))
-                || sections.iter().any(|section| match id {
-                    FieldId::Scope => {
-                        !section.text.is_empty() && CommitScope::new(&section.text).is_err()
-                    }
-                    FieldId::Description => {
-                        !section.text.is_empty() && CommitSubject::new(&section.text).is_err()
-                    }
-                    FieldId::Property(_) | FieldId::BreakingChange => false,
-                });
-            let has_value = sections.iter().any(|section| !section.text.is_empty());
-            let decision = match id {
-                FieldId::Property(index) => self.applicability[index],
-                _ => None,
-            };
-            let conditional = matches!(id, FieldId::Property(index) if matches!(definition.properties()[index].requirement(), PropertyRequirement::Conditional(_)));
-            let invalid =
-                invalid || (decision == Some(ConditionalApplicability::DoesNotApply) && has_value);
-            let complete = if conditional {
-                match decision {
-                    Some(ConditionalApplicability::Applies) => has_value,
-                    Some(ConditionalApplicability::DoesNotApply) => !has_value,
-                    None => false,
-                }
-            } else {
-                has_value
-            };
-            fields.push(HudField {
-                id,
-                status: if invalid {
-                    FieldStatus::Invalid
-                } else if complete {
-                    FieldStatus::Complete
-                } else if self
-                    .warnings
-                    .iter()
-                    .any(|warning| warning.field == Some(id))
-                {
-                    FieldStatus::Recommended
-                } else {
-                    FieldStatus::Incomplete
-                },
-            });
-        }
-        fields
-    }
-
-    /// The issue the validation row shows: the cursor field's error, then its
-    /// recommendation, then the first error.
-    pub(crate) fn notice(
-        &self,
-        definition: &CommitTypeDefinition,
-    ) -> Option<(&ValidationIssue, ValidationSeverity)> {
-        let current = self.current_field(definition);
-        let on_current = |issue: &&ValidationIssue| current.is_some() && issue.field == current;
-        self.issues
-            .iter()
-            .find(on_current)
-            .map(|issue| (issue, ValidationSeverity::Error))
-            .or_else(|| {
-                self.warnings
-                    .iter()
-                    .find(on_current)
-                    .map(|warning| (warning, ValidationSeverity::Warning))
-            })
-            .or_else(|| {
-                self.issues
-                    .first()
-                    .map(|issue| (issue, ValidationSeverity::Error))
-            })
-    }
-
-    fn parse(&self, definition: &CommitTypeDefinition) -> ParsedDocument {
-        parse_document(self.editor.lines(), definition)
-    }
-
-    fn validate(
-        &mut self,
-        definition: &CommitTypeDefinition,
-        taxonomy: Option<&CommitTaxonomy>,
-    ) -> Option<(CommitDraft, CommitMessage)> {
-        let parsed = self.parse(definition);
-        let mut issues = parsed.issues.clone();
-        let scope = parse_scope(&parsed, &mut issues);
-        let subject = parse_description(&parsed, &mut issues);
-        let authored = build_properties(&parsed, definition, &mut issues);
-        let breaking_change = parse_breaking_change(&parsed, &mut issues);
-        self.warnings.clear();
-
-        let Some(subject) = subject else {
-            return self.reject(issues);
-        };
-        let responses = definition
-            .properties()
-            .iter()
-            .enumerate()
-            .map(|(index, property)| {
-                PropertyResponse::new(
-                    property.key().clone(),
-                    authored
-                        .iter()
-                        .find(|item| item.key() == property.key())
-                        .map(|item| item.value().clone()),
-                    self.applicability[index],
-                )
-            })
-            .collect();
-        let draft =
-            match CommitDraft::from_responses(definition.id().clone(), scope, subject, responses) {
-                Ok(draft) => draft,
-                Err(error) => {
-                    issues.push(ValidationIssue {
-                        field: self.current_field(definition),
-                        line: self.editor.cursor().0,
-                        message: error.to_string(),
-                    });
-                    return self.reject(issues);
-                }
-            };
-        let draft = match breaking_change {
-            Some(value) => draft.with_breaking_change(value),
-            None => draft,
-        };
-        let report = taxonomy.map_or_else(
-            || validate_commit_draft(definition, &draft),
-            |taxonomy| taxonomy.validate(&draft),
-        );
-        // The report would repeat the issue of a field the composer already
-        // flagged, which it sees as empty.
-        let flagged = issues
-            .iter()
-            .filter_map(|issue| issue.field)
-            .collect::<Vec<_>>();
-        let cursor = self.editor.cursor().0;
-        let on_field = |field: Option<FieldId>, message: String| ValidationIssue {
-            field,
-            line: parsed
-                .sections
-                .iter()
-                .find(|section| Some(section.kind) == field)
-                .map_or(cursor, |section| section.heading_line + 1),
-            message,
-        };
-        let unrepeated =
-            |issue: &ValidationIssue| issue.field.is_none_or(|field| !flagged.contains(&field));
-        issues.extend(
-            report
-                .errors()
-                .iter()
-                .map(|error| on_field(validation_field(error, definition), error.to_string()))
-                .filter(unrepeated),
-        );
-        self.warnings = report
-            .warnings()
-            .iter()
-            .map(|warning| {
-                on_field(
-                    property_field(issue_key(warning.kind()), definition),
-                    warning.kind().to_string(),
-                )
-            })
-            .filter(unrepeated)
-            .collect();
-        if !issues.is_empty() {
-            return self.reject(issues);
-        }
-        let message = report.into_message().ok()?;
-        self.issues.clear();
-        Some((draft, message))
-    }
-
-    fn reject(&mut self, mut issues: Vec<ValidationIssue>) -> Option<(CommitDraft, CommitMessage)> {
-        issues.sort_by_key(|issue| issue.line);
-        if let Some(issue) = issues.first() {
-            self.editor
-                .move_cursor(CursorMove::Jump(terminal_line(issue.line), 0));
-        }
-        self.issues = issues;
-        None
-    }
-
-    fn edit_preserving_headings(
-        &mut self,
-        definition: &CommitTypeDefinition,
-        edit: impl FnOnce(&mut TextArea<'static>),
-    ) {
-        let previous = self.editor.clone();
-        let previous_cursor = self.editor.cursor();
-        edit(&mut self.editor);
-        if headings_are_intact(self.editor.lines(), definition) {
-            apply_heading_guards(&mut self.editor, definition);
-            skip_noneditable_cursor(&mut self.editor, definition, previous_cursor);
-            self.issues.clear();
-        } else {
-            self.editor = previous;
-        }
-    }
-
-    fn edit_within_current_field(
-        &mut self,
-        definition: &CommitTypeDefinition,
-        edit: impl FnOnce(&mut TextArea<'static>),
-    ) {
-        let previous_editor = self.editor.clone();
-        let previous_issues = self.issues.clone();
-        let previous_field = self.current_field(definition);
-        if previous_field.is_none() {
-            return;
-        }
-        self.edit_preserving_headings(definition, edit);
-        if self.current_field(definition) != previous_field {
-            self.editor = previous_editor;
-            self.issues = previous_issues;
-        }
-    }
-
-    fn move_cursor(&mut self, definition: &CommitTypeDefinition, movement: CursorMove) {
-        let previous_cursor = self.editor.cursor();
-        self.editor.move_cursor(movement);
-        skip_noneditable_cursor(&mut self.editor, definition, previous_cursor);
-        self.issues.clear();
-    }
-
-    fn move_horizontally_within_field(&mut self, definition: &CommitTypeDefinition, key: KeyEvent) {
-        let previous = self.editor.clone();
-        let previous_cursor = self.editor.cursor();
-        let previous_field = self.current_field(definition);
-        self.editor.input(Input::from(key));
-        skip_noneditable_cursor(&mut self.editor, definition, previous_cursor);
-        let current_field = self.current_field(definition);
-        if previous_field.is_none() || current_field != previous_field {
-            self.editor = previous;
-        } else {
-            self.issues.clear();
-        }
-    }
-
-    fn advance_on_enter(&mut self, definition: &CommitTypeDefinition) -> bool {
-        let cursor_line = self.editor.cursor().0;
-        let parsed = self.parse(definition);
-        let Some(current_index) = parsed.sections.iter().position(|section| {
-            cursor_line >= section.heading_line && cursor_line < section.end_line
-        }) else {
-            return false;
-        };
-        let current = &parsed.sections[current_index];
-        let should_advance = matches!(current.kind, FieldId::Scope | FieldId::Description)
-            || current.text.is_empty();
-        if !should_advance {
-            return false;
-        }
-        if let Some(next) = parsed.sections.get(current_index + 1) {
-            self.editor
-                .move_cursor(CursorMove::Jump(terminal_line(next.heading_line + 1), 0));
-            self.issues.clear();
-        }
-        true
-    }
-}
-
-fn validation_field(
-    error: &gitserious_core::CommitValidationError,
-    definition: &CommitTypeDefinition,
-) -> Option<FieldId> {
-    use gitserious_core::CommitValidationError as E;
-    let key = match error {
-        E::UnknownProperty(key) | E::MissingRequired(key) => key,
-        E::PropertyResponse(kind) => issue_key(kind),
-        E::UnknownCommitType { .. } | E::TypeMismatch { .. } => return None,
-    };
-    property_field(key, definition)
-}
-
-fn issue_key(kind: &PropertyValidationIssueKind) -> &PropertyKey {
-    use PropertyValidationIssueKind as P;
-    match kind {
-        P::UnknownProperty(key)
-        | P::DuplicateProperty(key)
-        | P::MissingRequired(key)
-        | P::MissingRecommended(key)
-        | P::MissingConditionalDecision(key)
-        | P::MissingApplicableValue(key)
-        | P::ValueForNonApplicableProperty(key)
-        | P::UnexpectedConditionalDecision(key) => key,
-    }
-}
-
-fn property_field(key: &PropertyKey, definition: &CommitTypeDefinition) -> Option<FieldId> {
-    definition
-        .properties()
-        .iter()
-        .position(|property| property.key() == key)
-        .map(FieldId::Property)
-}
-
-fn text_area(lines: Vec<String>, definition: &CommitTypeDefinition) -> TextArea<'static> {
-    let mut editor = TextArea::new(lines);
-    editor.set_wrap_mode(WrapMode::WordOrGlyph);
-    editor.set_cursor_line_style(Style::default());
-    editor.set_cursor_render_mode(CursorRenderMode::Hidden);
-    apply_heading_guards(&mut editor, definition);
-    editor
-}
-
-fn apply_heading_guards(editor: &mut TextArea<'static>, definition: &CommitTypeDefinition) {
-    let ranges = editor
-        .lines()
-        .iter()
-        .enumerate()
-        .filter_map(|(row, line)| {
-            structural_marker(line, definition).map(|marker| {
-                (
-                    AtomicRange {
-                        row,
-                        start_col: 0,
-                        end_col: line.chars().count(),
-                    },
-                    marker,
-                )
-            })
-        })
-        .collect::<Vec<_>>();
-    editor.set_atomic_ranges(ranges.iter().map(|(range, _)| *range));
-    editor.clear_custom_highlight();
-    for (range, marker) in ranges {
-        let style = match marker {
-            DocumentMarker::Section(_) => Style::default().fg(ACCENT),
-            DocumentMarker::Field(_) => Style::default(),
-        }
-        .add_modifier(Modifier::BOLD);
-        editor.custom_highlight(
-            ((range.row, range.start_col), (range.row, range.end_col)),
-            style,
-            1,
-        );
-    }
-}
-
-fn expected_marker_signature(definition: &CommitTypeDefinition) -> Vec<DocumentMarker> {
-    std::iter::once(DocumentMarker::Section(MessageSection::Subject))
-        .chain(std::iter::once(DocumentMarker::Field(FieldId::Scope)))
-        .chain(std::iter::once(DocumentMarker::Field(FieldId::Description)))
-        .chain(std::iter::once(DocumentMarker::Section(
-            MessageSection::Body,
-        )))
-        .chain(
-            (0..definition.properties().len())
-                .map(FieldId::Property)
-                .map(DocumentMarker::Field),
-        )
-        .chain(std::iter::once(DocumentMarker::Section(
-            MessageSection::Footer,
-        )))
-        .chain(std::iter::once(DocumentMarker::Field(
-            FieldId::BreakingChange,
-        )))
-        .collect()
-}
-
-fn headings_are_intact(lines: &[String], definition: &CommitTypeDefinition) -> bool {
-    let markers = lines
-        .iter()
-        .enumerate()
-        .filter_map(|(line_index, line)| {
-            structural_marker(line, definition).map(|marker| (line_index, marker))
-        })
-        .collect::<Vec<_>>();
-    let signature = markers
-        .iter()
-        .map(|(_, marker)| *marker)
-        .collect::<Vec<_>>();
-    let headings = markers
-        .iter()
-        .filter(|(_, marker)| matches!(marker, DocumentMarker::Field(_)))
-        .collect::<Vec<_>>();
-    let separated = headings
-        .windows(2)
-        .all(|pair| pair[1].0.saturating_sub(pair[0].0) >= 3);
-    let groups_are_separated = markers.windows(2).all(|pair| {
-        let distance = pair[1].0.saturating_sub(pair[0].0);
-        match (pair[0].1, pair[1].1) {
-            (DocumentMarker::Section(_), DocumentMarker::Field(_)) => distance >= 1,
-            (DocumentMarker::Field(_), DocumentMarker::Section(_)) => distance >= 4,
-            _ => true,
-        }
-    });
-    let final_field_is_separated = headings
-        .last()
-        .is_some_and(|(line, _)| lines.len().saturating_sub(*line) >= 3);
-
-    signature == expected_marker_signature(definition)
-        && separated
-        && groups_are_separated
-        && final_field_is_separated
-        && lines.last().is_some_and(String::is_empty)
-}
-
-fn terminal_line(line: usize) -> u16 {
-    u16::try_from(line).unwrap_or(u16::MAX)
-}
-
-fn terminal_column(column: usize) -> u16 {
-    u16::try_from(column).unwrap_or(u16::MAX)
-}
-
-fn skip_noneditable_cursor(
-    editor: &mut TextArea<'static>,
-    definition: &CommitTypeDefinition,
-    previous_cursor: (usize, usize),
-) {
-    let moving_forward = editor.cursor() > previous_cursor;
-    loop {
-        let cursor = editor.cursor();
-        let Some(line) = editor.lines().get(cursor.0) else {
-            return;
-        };
-        let target_line = if structural_marker(line, definition).is_some()
-            || reserved_separator(editor.lines(), cursor.0, definition)
-        {
-            let direction = if moving_forward { 1 } else { -1 };
-            let mut target = cursor.0;
-            loop {
-                let Some(next) = target.checked_add_signed(direction) else {
-                    editor.move_cursor(CursorMove::Jump(
-                        terminal_line(previous_cursor.0),
-                        terminal_column(previous_cursor.1),
-                    ));
-                    return;
-                };
-                let Some(candidate) = editor.lines().get(next) else {
-                    editor.move_cursor(CursorMove::Jump(
-                        terminal_line(previous_cursor.0),
-                        terminal_column(previous_cursor.1),
-                    ));
-                    return;
-                };
-                target = next;
-                if structural_marker(candidate, definition).is_none()
-                    && !reserved_separator(editor.lines(), target, definition)
-                {
-                    break target;
-                }
-            }
-        } else {
-            return;
-        };
-        editor.move_cursor(CursorMove::Jump(
-            terminal_line(target_line),
-            terminal_column(previous_cursor.1),
-        ));
-    }
-}
-
-fn reserved_separator(lines: &[String], line: usize, definition: &CommitTypeDefinition) -> bool {
-    if !lines.get(line).is_some_and(String::is_empty) {
-        return false;
-    }
-    let Some((heading_line, marker)) =
-        lines[..line]
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(index, candidate)| {
-                structural_marker(candidate, definition).map(|marker| (index, marker))
-            })
-    else {
-        return false;
-    };
-    let next_content = lines[line + 1..]
-        .iter()
-        .enumerate()
-        .find(|(_, candidate)| !candidate.is_empty());
-    let (boundary_line, next_marker) = match next_content {
-        Some((offset, candidate)) => {
-            let Some(marker) = structural_marker(candidate, definition) else {
-                return false;
-            };
-            (line.saturating_add(offset).saturating_add(1), Some(marker))
-        }
-        None => (lines.len(), None),
-    };
-    match marker {
-        DocumentMarker::Field(_) => {
-            let reserved_rows = if matches!(next_marker, Some(DocumentMarker::Section(_))) {
-                2
-            } else {
-                1
-            };
-            line > heading_line.saturating_add(1)
-                && boundary_line.saturating_sub(line) <= reserved_rows
-        }
-        DocumentMarker::Section(MessageSection::Body | MessageSection::Footer) => true,
-        DocumentMarker::Section(MessageSection::Subject) => false,
-    }
-}
-
-fn scaffold_lines(definition: &CommitTypeDefinition) -> Vec<String> {
-    let mut lines = Vec::with_capacity((definition.properties().len() + 2) * 3 + 7);
-    lines.push(MessageSection::Subject.label().to_owned());
-    lines.push("scope:".to_owned());
-    lines.push(String::new());
-    lines.push(String::new());
-    lines.push("description:".to_owned());
-    lines.push(String::new());
-    lines.push(String::new());
-    lines.push(String::new());
-    lines.push(MessageSection::Body.label().to_owned());
-    for (index, property) in definition.properties().iter().enumerate() {
-        lines.push(property_heading(property.key().as_str()));
-        lines.push(String::new());
-        lines.push(String::new());
-        if index + 1 == definition.properties().len() {
-            lines.push(String::new());
-        }
-    }
-    if definition.properties().is_empty() {
-        lines.push(String::new());
-    }
-    lines.push(MessageSection::Footer.label().to_owned());
-    lines.push("breaking-change:".to_owned());
-    lines.push(String::new());
-    lines.push(String::new());
-    lines
-}
-
-fn parse_document(lines: &[String], definition: &CommitTypeDefinition) -> ParsedDocument {
-    let mut parsed = ParsedDocument::default();
-    let mut boundaries = Vec::new();
-    for (line_index, line) in lines.iter().enumerate() {
-        if let Some(marker) = structural_marker(line, definition) {
-            let kind = match marker {
-                DocumentMarker::Field(id) => BoundaryKind::Known(id),
-                DocumentMarker::Section(_) => BoundaryKind::Group,
-            };
-            boundaries.push(Boundary {
-                line: line_index,
-                kind,
-            });
-        } else if looks_like_heading(line) || looks_like_malformed_known_heading(line, definition) {
-            parsed.issues.push(ValidationIssue {
-                field: None,
-                line: line_index,
-                message: format!("unknown or malformed field header {line:?}"),
-            });
-            boundaries.push(Boundary {
-                line: line_index,
-                kind: BoundaryKind::Invalid,
-            });
-        }
-    }
-
-    for (index, boundary) in boundaries.iter().copied().enumerate() {
-        let BoundaryKind::Known(id) = boundary.kind else {
-            continue;
-        };
-        let end_line = boundaries
-            .get(index + 1)
-            .map_or(lines.len(), |next| next.line);
-        let text = section_text(&lines[boundary.line + 1..end_line]);
-        parsed.sections.push(DocumentSection {
-            kind: id,
-            heading_line: boundary.line,
-            end_line,
-            text,
-        });
-    }
-
-    for id in std::iter::once(FieldId::Scope)
-        .chain(std::iter::once(FieldId::Description))
-        .chain((0..definition.properties().len()).map(FieldId::Property))
-        .chain(std::iter::once(FieldId::BreakingChange))
-    {
-        let matching = parsed
-            .sections
-            .iter()
-            .filter(|section| section.kind == id)
-            .collect::<Vec<_>>();
-        if matching.len() > 1 {
-            for duplicate in matching.into_iter().skip(1) {
-                parsed.issues.push(ValidationIssue {
-                    field: Some(id),
-                    line: duplicate.heading_line,
-                    message: format!("field {} may appear only once", field_name(id, definition)),
-                });
-            }
-        }
-    }
-    parsed
-}
-
-fn structural_marker(line: &str, definition: &CommitTypeDefinition) -> Option<DocumentMarker> {
-    let section = [
-        MessageSection::Subject,
-        MessageSection::Body,
-        MessageSection::Footer,
-    ]
-    .into_iter()
-    .find(|section| line == section.label())
-    .map(DocumentMarker::Section);
-    section.or_else(|| exact_heading(line, definition).map(DocumentMarker::Field))
-}
-
-pub(crate) fn property_heading(key: &str) -> String {
-    if matches!(key, "scope" | "description" | "breaking-change") {
-        format!("property[{key}]:")
-    } else {
-        format!("{key}:")
-    }
-}
-
-fn exact_heading(line: &str, definition: &CommitTypeDefinition) -> Option<FieldId> {
-    match line {
-        "scope:" => Some(FieldId::Scope),
-        "description:" => Some(FieldId::Description),
-        "breaking-change:" => Some(FieldId::BreakingChange),
-        _ => definition
-            .properties()
-            .iter()
-            .position(|property| line == property_heading(property.key().as_str()))
-            .map(FieldId::Property),
-    }
-}
-
-fn looks_like_heading(line: &str) -> bool {
-    let Some(name) = line.strip_suffix(':') else {
-        return false;
-    };
-    !name.is_empty()
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-}
-
-fn looks_like_malformed_known_heading(line: &str, definition: &CommitTypeDefinition) -> bool {
-    let trimmed = line.trim();
-    trimmed == "scope"
-        || trimmed == "description"
-        || trimmed == "breaking-change"
-        || definition
-            .properties()
-            .iter()
-            .any(|property| trimmed == property.key().as_str())
-}
-
-fn section_text(lines: &[String]) -> String {
-    let start = lines
-        .iter()
-        .position(|line| !line.trim().is_empty())
-        .unwrap_or(lines.len());
-    let end = lines
-        .iter()
-        .rposition(|line| !line.trim().is_empty())
-        .map_or(start, |index| index + 1);
-    lines[start..end]
-        .iter()
-        .map(|line| line.trim_end())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn parse_scope(parsed: &ParsedDocument, issues: &mut Vec<ValidationIssue>) -> Option<CommitScope> {
-    let section = parsed
-        .sections
-        .iter()
-        .find(|section| section.kind == FieldId::Scope)?;
-    if section.text.is_empty() {
-        return None;
-    }
-    match CommitScope::new(&section.text) {
-        Ok(scope) => Some(scope),
-        Err(error) => {
-            issues.push(ValidationIssue {
-                field: Some(FieldId::Scope),
-                line: section.heading_line + 1,
-                message: error.to_string(),
-            });
-            None
-        }
-    }
-}
-
-fn parse_description(
-    parsed: &ParsedDocument,
-    issues: &mut Vec<ValidationIssue>,
-) -> Option<CommitSubject> {
-    let Some(section) = parsed
-        .sections
-        .iter()
-        .find(|section| section.kind == FieldId::Description)
-    else {
-        issues.push(ValidationIssue {
-            field: Some(FieldId::Description),
-            line: 0,
-            message: "restore the description field header".to_owned(),
-        });
-        return None;
-    };
-    match CommitSubject::new(&section.text) {
-        Ok(subject) => Some(subject),
-        Err(error) => {
-            issues.push(ValidationIssue {
-                field: Some(FieldId::Description),
-                line: section.heading_line + 1,
-                message: error.to_string(),
-            });
-            None
-        }
-    }
-}
-
-fn build_properties(
-    parsed: &ParsedDocument,
-    definition: &CommitTypeDefinition,
-    issues: &mut Vec<ValidationIssue>,
-) -> Vec<AuthoredProperty> {
-    let mut authored = Vec::new();
-    for (definition_index, property) in definition.properties().iter().enumerate() {
-        let id = FieldId::Property(definition_index);
-        let section = parsed.sections.iter().find(|section| section.kind == id);
-        let Some(section) = section.filter(|section| !section.text.is_empty()) else {
-            if property.requirement() == &PropertyRequirement::Required {
-                issues.push(ValidationIssue {
-                    field: Some(id),
-                    line: section.map_or(0, |section| section.heading_line + 1),
-                    message: format!("complete required property \"{}\"", property.key()),
-                });
-            }
-            continue;
-        };
-        match PropertyValue::new(&section.text) {
-            Ok(value) => authored.push(AuthoredProperty::new(property.key().clone(), value)),
-            Err(error) => issues.push(ValidationIssue {
-                field: Some(id),
-                line: section.heading_line + 1,
-                message: error.to_string(),
-            }),
-        }
-    }
-    authored
-}
-
-fn parse_breaking_change(
-    parsed: &ParsedDocument,
-    issues: &mut Vec<ValidationIssue>,
-) -> Option<PropertyValue> {
-    let section = parsed
-        .sections
-        .iter()
-        .find(|section| section.kind == FieldId::BreakingChange)?;
-    if section.text.is_empty() {
-        return None;
-    }
-    match PropertyValue::new(&section.text) {
-        Ok(value) => Some(value),
-        Err(error) => {
-            issues.push(ValidationIssue {
-                field: Some(FieldId::BreakingChange),
-                line: section.heading_line + 1,
-                message: error.to_string(),
-            });
-            None
-        }
-    }
-}
-
-fn field_name(id: FieldId, definition: &CommitTypeDefinition) -> String {
-    match id {
-        FieldId::Scope => "scope".to_owned(),
-        FieldId::Description => "description".to_owned(),
-        FieldId::Property(index) => definition.properties()[index].key().to_string(),
-        FieldId::BreakingChange => "breaking-change".to_owned(),
-    }
 }
 
 pub(crate) struct ReviewState {
@@ -969,7 +58,7 @@ pub(crate) struct AuthoringSession {
     pub(crate) type_catalog: TypeCatalogKind,
     pub(crate) preselected: bool,
     pub(crate) stage: Stage,
-    pub(crate) composer: ComposerState,
+    pub(crate) cards: Cards,
     pub(crate) review: Option<ReviewState>,
     pub(crate) confirmation: ConfirmationAction,
     pub(crate) discard_dialog: ConfirmDialog,
@@ -1001,7 +90,7 @@ impl AuthoringSession {
             } else {
                 Stage::SelectType
             },
-            composer: ComposerState::new(&definitions[selected_type]),
+            cards: Cards::new(definitions[selected_type].clone()),
             review: None,
             confirmation: ConfirmationAction::Cancel,
             discard_dialog: ConfirmDialog::default(),
@@ -1094,7 +183,7 @@ impl AuthoringSession {
             };
             self.definitions = taxonomy.definitions().to_vec();
             self.selected_type = self.matching_types().first().copied().unwrap_or(0);
-            self.composer = ComposerState::new(self.definition());
+            self.cards = Cards::new(self.definition().clone());
             self.review = None;
             self.approved_message = None;
         }
@@ -1121,7 +210,7 @@ impl AuthoringSession {
         }
     }
 
-    /// The stage on screen: a discard confirmation shows over the composer.
+    /// The stage on screen: a discard confirmation shows over the cards.
     pub(crate) fn visible_stage(&self) -> Stage {
         if self.stage == Stage::Confirm {
             Stage::Compose
@@ -1144,19 +233,7 @@ impl AuthoringSession {
             Event::Key(key) if key.kind == KeyEventKind::Press => self.handle_key(key),
             Event::Mouse(mouse) => self.handle_mouse(mouse),
             Event::Paste(text) if self.stage == Stage::Compose => {
-                let definition = self.definition().clone();
-                if text.contains(['\n', '\r'])
-                    && self
-                        .composer
-                        .current_field(&definition)
-                        .is_some_and(|field| matches!(field, FieldId::Scope | FieldId::Description))
-                {
-                    return None;
-                }
-                self.composer
-                    .edit_preserving_headings(&definition, |editor| {
-                        editor.insert_str(text);
-                    });
+                self.cards.paste(&text);
                 None
             }
             Event::Resize(_, _)
@@ -1211,7 +288,7 @@ impl AuthoringSession {
     fn handle_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
         match self.stage {
             Stage::SelectType => self.handle_picker_key(key),
-            Stage::Compose => self.handle_composer_key(key),
+            Stage::Compose => self.handle_cards_key(key),
             Stage::Review => self.handle_review_key(key),
             Stage::Confirm => self.handle_confirmation_key(key),
         }
@@ -1236,7 +313,7 @@ impl AuthoringSession {
             KeyCode::Left | KeyCode::Right => self.cycle_type_catalog(key.code == KeyCode::Left),
             KeyCode::Enter if !matches.is_empty() => {
                 self.filter.clear();
-                self.composer = ComposerState::new(self.definition());
+                self.cards = Cards::new(self.definition().clone());
                 self.stage = Stage::Compose;
             }
             KeyCode::Esc if self.filter.is_empty() => return Some(AuthoringOutcome::Cancelled),
@@ -1262,29 +339,19 @@ impl AuthoringSession {
         None
     }
 
-    fn handle_composer_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
-        if key.modifiers.contains(KeyModifiers::ALT)
-            && matches!(key.code, KeyCode::Char('a' | 'n'))
-            && let Some(FieldId::Property(definition_index)) =
-                self.composer.current_field(self.definition())
-            && matches!(
-                self.definition().properties()[definition_index].requirement(),
-                PropertyRequirement::Conditional(_)
-            )
+    fn handle_cards_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
+        if key.modifiers.contains(KeyModifiers::ALT) && matches!(key.code, KeyCode::Char('a' | 'n'))
         {
-            self.composer.applicability[definition_index] =
-                Some(if key.code == KeyCode::Char('a') {
-                    ConditionalApplicability::Applies
-                } else {
-                    ConditionalApplicability::DoesNotApply
-                });
-            self.composer.issues.clear();
+            self.cards.decide(if key.code == KeyCode::Char('a') {
+                ConditionalApplicability::Applies
+            } else {
+                ConditionalApplicability::DoesNotApply
+            });
             return None;
         }
         if control(key, 's') {
-            let definition = self.definition().clone();
             let taxonomy = catalog_taxonomy(self.context.as_ref(), self.type_catalog);
-            if let Some((draft, message)) = self.composer.validate(&definition, taxonomy) {
+            if let Some((draft, message)) = self.cards.review(taxonomy) {
                 self.approved_message = None;
                 self.review = Some(ReviewState {
                     draft,
@@ -1304,79 +371,8 @@ impl AuthoringSession {
             };
             return self.request_confirmation(action);
         }
-        self.input_key(key);
+        self.cards.key(key);
         None
-    }
-
-    fn input_key(&mut self, key: KeyEvent) {
-        let definition = self.definition().clone();
-        if control(key, 'u') || control(key, 'r') {
-            self.composer
-                .edit_preserving_headings(&definition, |editor| {
-                    // Selection replacement records deletion and insertion separately.
-                    // Never expose the intermediate document without its field headers.
-                    for _ in 0..2 {
-                        let changed = if control(key, 'u') {
-                            editor.undo()
-                        } else {
-                            editor.redo()
-                        };
-                        if !changed || headings_are_intact(editor.lines(), &definition) {
-                            break;
-                        }
-                    }
-                });
-            return;
-        }
-        if key.code == KeyCode::Enter && self.composer.advance_on_enter(&definition) {
-            return;
-        }
-        if matches!(key.code, KeyCode::Left | KeyCode::Right) {
-            self.composer
-                .move_horizontally_within_field(&definition, key);
-            return;
-        }
-        if !key.modifiers.contains(KeyModifiers::SHIFT) {
-            let movement = match key.code {
-                KeyCode::Up => Some(CursorMove::Up),
-                KeyCode::Down => Some(CursorMove::Down),
-                _ => None,
-            };
-            if let Some(movement) = movement {
-                self.composer.move_cursor(&definition, movement);
-                return;
-            }
-        }
-        if matches!(key.code, KeyCode::Backspace | KeyCode::Delete) {
-            let (line, column) = self.composer.editor.cursor();
-            let join_empty_previous = column == 0
-                && line > 0
-                && self
-                    .composer
-                    .editor
-                    .lines()
-                    .get(line - 1)
-                    .is_some_and(String::is_empty)
-                && self
-                    .composer
-                    .editor
-                    .lines()
-                    .get(line)
-                    .is_some_and(|current| structural_marker(current, &definition).is_none());
-            self.composer
-                .edit_within_current_field(&definition, |editor| {
-                    if join_empty_previous {
-                        editor.delete_char();
-                    } else {
-                        editor.input(Input::from(key));
-                    }
-                });
-            return;
-        }
-        self.composer
-            .edit_preserving_headings(&definition, |editor| {
-                editor.input(Input::from(key));
-            });
     }
 
     fn handle_review_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
@@ -1442,7 +438,7 @@ impl AuthoringSession {
         match self.confirmation {
             ConfirmationAction::Cancel => Some(AuthoringOutcome::Cancelled),
             ConfirmationAction::ChangeType => {
-                self.composer = ComposerState::new(self.definition());
+                self.cards = Cards::new(self.definition().clone());
                 self.review = None;
                 self.stage = Stage::SelectType;
                 None
@@ -1456,11 +452,11 @@ impl AuthoringSession {
     }
 
     fn request_confirmation(&mut self, action: ConfirmationAction) -> Option<AuthoringOutcome> {
-        if !self.composer.dirty() {
+        if !self.cards.dirty() {
             return match action {
                 ConfirmationAction::Cancel => Some(AuthoringOutcome::Cancelled),
                 ConfirmationAction::ChangeType => {
-                    self.composer = ComposerState::new(self.definition());
+                    self.cards = Cards::new(self.definition().clone());
                     self.review = None;
                     self.stage = Stage::SelectType;
                     None
@@ -1519,9 +515,9 @@ mod confirmation_tests {
         for (width, height) in [(60, 18), (100, 24)] {
             let mut session =
                 AuthoringSession::new(gitserious_core::built_in_commit_types(), Some(0));
-            session.composer.editor.insert_str("draft");
-            let text = session.composer.editor.lines().to_vec();
-            let cursor = session.composer.editor.cursor();
+            session.cards.paste(": draft");
+            let text = session.cards.subject.lines().to_vec();
+            let cursor = session.cards.subject.cursor();
             session.request_confirmation(ConfirmationAction::Cancel);
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| draw(frame, &mut session))?;
@@ -1531,8 +527,8 @@ mod confirmation_tests {
             assert_eq!(session.stage, Stage::Confirm);
             session.handle_event(click(buttons.keep));
             assert_eq!(session.stage, Stage::Compose);
-            assert_eq!(session.composer.editor.lines(), text);
-            assert_eq!(session.composer.editor.cursor(), cursor);
+            assert_eq!(session.cards.subject.lines(), text);
+            assert_eq!(session.cards.subject.cursor(), cursor);
             assert!(session.discard_dialog.buttons.is_none());
             session.request_confirmation(ConfirmationAction::Cancel);
             terminal.draw(|frame| draw(frame, &mut session))?;
@@ -1557,17 +553,16 @@ mod confirmation_tests {
     #[test]
     fn empty_required_property_is_named_by_its_key() {
         let mut session = AuthoringSession::new(gitserious_core::built_in_commit_types(), Some(0));
-        session.handle_event(key(KeyCode::Down));
-        session.handle_event(Event::Paste("add a thing".into()));
+        session.handle_event(Event::Paste(": add a thing".into()));
         session.handle_event(Event::Key(KeyEvent::new(
             KeyCode::Char('s'),
             KeyModifiers::CONTROL,
         )));
         let messages = session
-            .composer
-            .issues
+            .cards
+            .notes
             .iter()
-            .map(|issue| issue.message.as_str())
+            .map(|note| note.message.as_str())
             .collect::<Vec<_>>();
         assert_eq!(
             messages,
@@ -1590,7 +585,7 @@ mod confirmation_tests {
         assert_eq!(session.confirmation, ConfirmationAction::ChangeType);
         session.handle_event(key(KeyCode::Esc));
         assert_eq!(session.stage, Stage::Compose);
-        assert!(session.composer.dirty());
+        assert!(session.cards.dirty());
         session.handle_event(key(KeyCode::Esc));
         let mut terminal = Terminal::new(TestBackend::new(100, 24))?;
         terminal
@@ -1598,7 +593,7 @@ mod confirmation_tests {
         let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
         assert!(session.handle_event(click(buttons.confirm)).is_none());
         assert_eq!(session.stage, Stage::SelectType);
-        assert!(!session.composer.dirty());
+        assert!(!session.cards.dirty());
         Ok(())
     }
 }
@@ -1642,9 +637,8 @@ mod tests {
             KeyCode::Enter,
             KeyModifiers::NONE,
         )));
-        session.composer.editor.move_cursor(CursorMove::Jump(5, 0));
-        session.handle_event(Event::Paste("Preserve this message".into()));
-        let original_lines = session.composer.editor.lines().to_vec();
+        session.handle_event(Event::Paste(": Preserve this message".into()));
+        let original_lines = session.cards.subject.lines().to_vec();
         session.handle_event(Event::Key(KeyEvent::new(
             KeyCode::Char('s'),
             KeyModifiers::CONTROL,
@@ -1668,7 +662,7 @@ mod tests {
         );
         session.reopen_review(&authored);
         assert_eq!(session.stage, Stage::Review);
-        assert_eq!(session.composer.editor.lines(), original_lines);
+        assert_eq!(session.cards.subject.lines(), original_lines);
         assert_eq!(
             session
                 .review
@@ -1680,7 +674,7 @@ mod tests {
         assert!(session.approved_message.is_none());
         session.handle_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
         assert_eq!(session.stage, Stage::Compose);
-        assert_eq!(session.composer.editor.lines(), original_lines);
+        assert_eq!(session.cards.subject.lines(), original_lines);
         Ok(())
     }
 

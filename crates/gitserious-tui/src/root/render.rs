@@ -7,8 +7,8 @@ use super::Root;
 use super::navigation::{Section, Tabs};
 use crate::help::HelpPage;
 use crate::theme::{
-    FOOTER_HEIGHT, MINIMUM_HEIGHT, MINIMUM_WIDTH, ROOT_HINTS, centered_rect, normalize_background,
-    render_edit_footer, render_footer, render_footer_block, theme,
+    FOOTER_HEIGHT, MINIMUM_HEIGHT, MINIMUM_WIDTH, ROOT_HINTS, centered_rect, edit_footer_height,
+    normalize_background, render_edit_footer, render_footer, render_footer_block, theme,
 };
 
 impl Root {
@@ -40,8 +40,14 @@ impl Root {
                     crate::theme::dim_region(frame, header);
                 }
             } else {
+                let commit_hints = self.commit.hints();
+                let footer_height = if self.section == Section::Commit && self.commit.editing() {
+                    edit_footer_height(body.width, &commit_hints)
+                } else {
+                    FOOTER_HEIGHT
+                };
                 let [content, footer] =
-                    Layout::vertical([Constraint::Min(1), Constraint::Length(FOOTER_HEIGHT)])
+                    Layout::vertical([Constraint::Min(1), Constraint::Length(footer_height)])
                         .areas(body);
                 let footer = render_footer_block(frame, footer);
                 match self.section {
@@ -50,7 +56,6 @@ impl Root {
                     Section::Help => self.help.render(frame, content, help),
                     Section::Config => {}
                 }
-                let commit_hints = self.commit.hints();
                 let home_hints = self.home.hints();
                 let help_hints = self.help.hints(help.len());
                 let hints: &[(&str, &str)] = match self.section {

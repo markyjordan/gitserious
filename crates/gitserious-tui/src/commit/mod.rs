@@ -184,7 +184,7 @@ impl CommitView {
     pub(crate) fn hints(&self) -> Vec<(&'static str, &'static str)> {
         self.authoring.as_ref().map_or_else(
             || vec![("↑/↓", "move"), ("←/→", "tree"), ("r", "refresh")],
-            |session| author::hints(session).to_vec(),
+            author::hints,
         )
     }
 
@@ -299,7 +299,7 @@ impl CommitView {
             || self
                 .authoring
                 .as_ref()
-                .is_some_and(|session| session.composer.dirty())
+                .is_some_and(|session| session.cards.dirty())
     }
 
     /// Hands the approved commit to Git with the terminal restored, since hooks and
