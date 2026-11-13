@@ -76,7 +76,7 @@ pub(crate) fn hints(session: &AuthoringSession) -> Vec<(&'static str, &'static s
             ("esc", "back"),
         ],
         Stage::Compose => {
-            let mut hints = vec![("ctrl+s", "review"), ("↑/↓", "move")];
+            let mut hints = vec![("ctrl+s", "review"), ("ctrl+t", "type"), ("↑/↓", "move")];
             if session.cards.focused_conditional() {
                 hints.extend([("alt+a", "applies"), ("alt+n", "doesn't apply")]);
             }

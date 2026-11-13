@@ -227,9 +227,11 @@ conditional and undecided (◐), or empty (○).
 
 Up and Down move through wrapped body rows and cross card boundaries at their
 edges. Enter leaves the subject and inserts a newline in a body. Ctrl+U and
-Ctrl+R undo and redo within the focused card. Alt+A and Alt+N answer whether a
-conditional property applies; their hints appear in the footer while that card
-is focused. The status line lists cards still blocking review and the cursor's
+Ctrl+R undo and redo within the focused card. Ctrl+T opens the type picker
+again. Choosing a type keeps the subject and every answer whose key the new
+type also asks for. Esc from that picker returns to the cards unchanged.
+Alt+A and Alt+N answer whether a conditional property applies; their hints
+appear in the footer while that card is focused. The status line lists cards still blocking review and the cursor's
 column in the 80-column message. Esc asks before discarding text or decisions.
 Generated messages contain `Gitserious-Taxonomy` and `Gitserious-Schema`
 provenance trailers, which the editor and review hide.
