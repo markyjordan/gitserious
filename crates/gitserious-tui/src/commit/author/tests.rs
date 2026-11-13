@@ -1,5 +1,6 @@
 use std::error::Error;
 
+use gitserious_app::CitedCommit;
 use gitserious_core::{
     COMMIT_MESSAGE_WIDTH, CommitTypeDefinition, CommitTypeId, ConditionId, PropertyCondition,
     PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion, built_in_commit_types,
@@ -1036,7 +1037,12 @@ fn at_opens_a_list_and_does_not_write_at() {
     assert_eq!(focused_text(&session), "see ");
     assert_eq!(
         hints(&session),
-        [("enter", "cite"), ("↑/↓", "move"), ("esc", "cancel")]
+        [
+            ("enter", "cite"),
+            ("↑/↓", "move"),
+            ("←/→", "kind"),
+            ("esc", "cancel"),
+        ]
     );
 }
 
@@ -1073,11 +1079,10 @@ fn typing_keeps_paths_that_contain_the_query() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn down_wraps_and_sideways_keeps_the_row() {
+fn down_and_up_wrap_the_list() {
     let mut session = citing(&["README.md", "src/net/retry.rs"]);
     press(&mut session, KeyCode::Char('@'));
     press(&mut session, KeyCode::Down);
-    press(&mut session, KeyCode::Right);
     press(&mut session, KeyCode::Enter);
     assert_eq!(focused_text(&session), "@src/net/retry.rs");
 
@@ -1173,4 +1178,67 @@ fn a_pasted_query_filters_the_list() {
     paste(&mut session, "README");
     press(&mut session, KeyCode::Enter);
     assert_eq!(focused_text(&session), "@README.md");
+}
+
+fn with_commits(paths: &[&str], commits: &[(&str, &str)]) -> AuthoringSession {
+    let mut session = citing(paths);
+    session.set_cite_commits(
+        commits
+            .iter()
+            .map(|(sha, subject)| CitedCommit {
+                sha: (*sha).to_owned(),
+                subject: (*subject).to_owned(),
+            })
+            .collect(),
+    );
+    session
+}
+
+#[test]
+fn right_keeps_the_query_and_inserts_the_short_sha() {
+    let mut session = with_commits(
+        &["src/net/retry.rs"],
+        &[
+            ("def5678", "rename the pool"),
+            ("abc1234", "back off on 429"),
+        ],
+    );
+    press(&mut session, KeyCode::Char('@'));
+    typed(&mut session, "429");
+    press(&mut session, KeyCode::Right);
+    press(&mut session, KeyCode::Enter);
+    assert!(session.cite.is_none());
+    assert_eq!(focused_text(&session), "@abc1234");
+}
+
+#[test]
+fn left_returns_to_files_and_esc_on_a_commit_writes_nothing() {
+    let mut session = with_commits(&["README.md"], &[("abc1234", "back off")]);
+    press(&mut session, KeyCode::Char('@'));
+    press(&mut session, KeyCode::Right);
+    press(&mut session, KeyCode::Left);
+    press(&mut session, KeyCode::Enter);
+    assert_eq!(focused_text(&session), "@README.md");
+
+    let mut session = with_commits(&["README.md"], &[("abc1234", "back off")]);
+    paste(&mut session, "see ");
+    press(&mut session, KeyCode::Char('@'));
+    press(&mut session, KeyCode::Right);
+    press(&mut session, KeyCode::Esc);
+    assert!(session.cite.is_none());
+    assert_eq!(focused_text(&session), "see ");
+}
+
+#[test]
+fn the_commit_list_shows_the_sha_and_subject() -> Result<(), Box<dyn Error>> {
+    let mut session = with_commits(&["README.md"], &[("abc1234", "back off on 429")]);
+    press(&mut session, KeyCode::Char('@'));
+    press(&mut session, KeyCode::Right);
+    let screen = rendered(&mut session, 80, 24)?;
+    assert!(screen.contains("Commits"), "{screen}");
+    assert!(screen.contains("abc1234"), "{screen}");
+    assert!(screen.contains("back off on 429"), "{screen}");
+    assert!(!screen.contains("Typing filters"), "{screen}");
+    assert!(!screen.contains("@abc1234"), "{screen}");
+    Ok(())
 }

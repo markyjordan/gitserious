@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::Command;
 
-use gitserious_app::{RepositoryRoot, WorktreePaths};
+use gitserious_app::{CitedCommit, RepositoryRoot, WorktreePaths};
+
+const COMMIT_CITE_LIMIT: usize = 200;
 
 /// Lists cite paths with `git ls-files`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -28,6 +30,37 @@ impl WorktreePaths for GitWorktreePaths {
         }
         Ok(catalog(files(&output.stdout)?))
     }
+
+    fn commits(&self, root: &RepositoryRoot) -> Result<Vec<CitedCommit>, String> {
+        let limit = COMMIT_CITE_LIMIT.to_string();
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root.as_path())
+            .args(["log", "-n", limit.as_str(), "--pretty=format:%h%x1f%s"])
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .output()
+            .map_err(|error| format!("could not execute git log: {error}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+        }
+        Ok(parse_commits(&String::from_utf8_lossy(&output.stdout)))
+    }
+}
+
+fn parse_commits(text: &str) -> Vec<CitedCommit> {
+    text.lines()
+        .filter_map(|line| {
+            let (sha, subject) = line.split_once('\u{1f}')?;
+            if sha.is_empty() {
+                None
+            } else {
+                Some(CitedCommit {
+                    sha: sha.to_owned(),
+                    subject: subject.to_owned(),
+                })
+            }
+        })
+        .collect()
 }
 
 fn files(bytes: &[u8]) -> Result<Vec<String>, String> {
@@ -91,7 +124,16 @@ fn path(bytes: &[u8]) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::catalog;
+    use super::{catalog, parse_commits};
+
+    #[test]
+    fn commit_rows_keep_the_short_sha_and_subject() {
+        let commits = parse_commits("abc1234\u{1f}back off\ndef5678\u{1f}\n");
+        assert_eq!(commits[0].sha, "abc1234");
+        assert_eq!(commits[0].subject, "back off");
+        assert_eq!(commits[1].subject, "");
+        assert_eq!(parse_commits("not a row\n").len(), 0);
+    }
 
     #[test]
     fn directories_are_added_for_every_parent() {

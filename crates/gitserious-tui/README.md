@@ -238,6 +238,9 @@ column in the 80-column message. Esc asks before discarding text or decisions.
 files stay off that list. Typing keeps paths that contain those characters.
 Up and Down move. Enter inserts `@` and the path at the cursor. Esc closes
 the list and leaves the cards unchanged. A directory path ends with a slash.
+Left and Right switch the list to commits and back, and keep what was typed.
+A commit cite inserts `@` and the short sha. The list shows the latest 200
+commits on HEAD.
 Generated messages contain `Gitserious-Taxonomy` and `Gitserious-Schema`
 provenance trailers, which the editor and review hide.
 

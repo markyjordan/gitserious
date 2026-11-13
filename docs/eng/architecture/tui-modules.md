@@ -69,7 +69,7 @@ crates/gitserious-tui/src/
 | [`home/`](../../../crates/gitserious-tui/src/home/mod.rs) | The project overview, the initialization editor, which keys the editor captures, Enter's step, and Home's palette command | Reloading Config |
 | [`commit/`](../../../crates/gitserious-tui/src/commit/mod.rs) | The status tree, its keys and hints, the Git result and staged views, palette commands, the in-page editor and its staged header, and failed-review retention | Suspending the terminal for submission, which the adapter starts |
 | `commit/author/state.rs` | The authoring stages, taxonomy and type picker, changing type with ctrl+t, review, discard confirmation, and the cite list's keys | Card text layout and draft field parsing |
-| `commit/author/cite.rs` | The cite list opened by `@`, its query, its selection, and its drawing | Reading the worktree. The Commit page supplies the paths |
+| `commit/author/cite.rs` | The cite list opened by `@`, its query, its kind, its selection, and its drawing | Reading the worktree. The Commit page supplies the paths and commits |
 | `commit/author/cards/` | The fixed subject type and editable tail, property cards and their applicability, per-card text histories, validation notes, and draft construction | Taxonomy selection and Git submission |
 | `commit/author/cards/layout.rs` | Wrapped rows, vertical cursor movement, and message columns | Terminal drawing |
 | `commit/author/cards/render.rs` | Card marks, policy words, guidance, counters, validation notes, and scrolling | Draft validation rules |

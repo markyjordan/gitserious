@@ -18,6 +18,10 @@ pub trait CommitWorkspace {
     fn cite_paths(&self) -> Vec<String> {
         Vec::new()
     }
+    /// Recent commits the message can cite. Empty when this page has no reader.
+    fn cite_commits(&self) -> Vec<crate::CitedCommit> {
+        Vec::new()
+    }
 }
 
 /// Commit operations over the repository that contains `start`.
@@ -117,6 +121,17 @@ where
             .locate(self.start)
             .ok()
             .and_then(|root| paths.paths(&root).ok())
+            .unwrap_or_default()
+    }
+
+    fn cite_commits(&self) -> Vec<crate::CitedCommit> {
+        let Some(paths) = self.paths else {
+            return Vec::new();
+        };
+        self.locator
+            .locate(self.start)
+            .ok()
+            .and_then(|root| paths.commits(&root).ok())
             .unwrap_or_default()
     }
 }
