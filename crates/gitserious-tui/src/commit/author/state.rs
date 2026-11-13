@@ -50,6 +50,13 @@ pub(crate) struct CatalogTab {
     pub(crate) area: Rect,
 }
 
+/// The picker opened by ctrl+t, and the type to restore if the user leaves it.
+struct TypeChange {
+    catalog: TypeCatalogKind,
+    selected: usize,
+    definitions: Vec<CommitTypeDefinition>,
+}
+
 pub(crate) struct AuthoringSession {
     context: Option<CommitAuthoringContext>,
     pub(crate) approved_message: Option<CommitMessage>,
@@ -70,6 +77,7 @@ pub(crate) struct AuthoringSession {
     /// The definition index of each drawn type row, and where it was drawn.
     pub(crate) type_rows: Vec<(usize, Rect)>,
     pub(crate) too_small: bool,
+    type_change: Option<TypeChange>,
 }
 
 impl AuthoringSession {
@@ -99,6 +107,7 @@ impl AuthoringSession {
             type_offset: 0,
             type_rows: Vec::new(),
             too_small: false,
+            type_change: None,
         }
     }
 
@@ -174,7 +183,7 @@ impl AuthoringSession {
     }
 
     fn select_type_catalog(&mut self, kind: TypeCatalogKind) {
-        if self.preselected || self.type_catalog == kind {
+        if self.type_catalog == kind || (self.preselected && self.type_change.is_none()) {
             return;
         }
         if let TypeCatalogKind::Taxonomy(_) = kind {
@@ -183,9 +192,11 @@ impl AuthoringSession {
             };
             self.definitions = taxonomy.definitions().to_vec();
             self.selected_type = self.matching_types().first().copied().unwrap_or(0);
-            self.cards = Cards::new(self.definition().clone());
-            self.review = None;
-            self.approved_message = None;
+            if self.type_change.is_none() {
+                self.cards = Cards::new(self.definition().clone());
+                self.review = None;
+                self.approved_message = None;
+            }
         }
         self.type_catalog = kind;
     }
@@ -313,14 +324,20 @@ impl AuthoringSession {
             KeyCode::Left | KeyCode::Right => self.cycle_type_catalog(key.code == KeyCode::Left),
             KeyCode::Enter if !matches.is_empty() => {
                 self.filter.clear();
-                self.cards = Cards::new(self.definition().clone());
+                if self.type_change.take().is_some() {
+                    self.cards.retarget(self.definition().clone());
+                } else {
+                    self.cards = Cards::new(self.definition().clone());
+                }
+                self.review = None;
                 self.stage = Stage::Compose;
             }
-            KeyCode::Esc if self.filter.is_empty() => return Some(AuthoringOutcome::Cancelled),
-            KeyCode::Esc => {
+            KeyCode::Esc if !self.filter.is_empty() => {
                 self.filter.clear();
                 self.select_first_match();
             }
+            KeyCode::Esc if self.type_change.is_some() => self.cancel_type_change(),
+            KeyCode::Esc => return Some(AuthoringOutcome::Cancelled),
             KeyCode::Backspace => {
                 if self.filter.pop().is_some() {
                     self.select_first_match();
@@ -347,6 +364,16 @@ impl AuthoringSession {
             } else {
                 ConditionalApplicability::DoesNotApply
             });
+            return None;
+        }
+        if control(key, 't') {
+            self.type_change = Some(TypeChange {
+                catalog: self.type_catalog,
+                selected: self.selected_type,
+                definitions: self.definitions.clone(),
+            });
+            self.filter.clear();
+            self.stage = Stage::SelectType;
             return None;
         }
         if control(key, 's') {
@@ -431,6 +458,17 @@ impl AuthoringSession {
                 None
             }
         }
+    }
+
+    fn cancel_type_change(&mut self) {
+        let Some(saved) = self.type_change.take() else {
+            return;
+        };
+        self.definitions = saved.definitions;
+        self.selected_type = saved.selected;
+        self.type_catalog = saved.catalog;
+        self.filter.clear();
+        self.stage = Stage::Compose;
     }
 
     fn confirm_discard(&mut self) -> Option<AuthoringOutcome> {

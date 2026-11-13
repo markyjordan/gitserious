@@ -17,6 +17,7 @@ use ratatui::{Frame, Terminal};
 
 use crate::theme::{ACCENT, JET_BLACK, theme};
 
+use super::cards::CardId;
 use super::render::{hints, render};
 use super::state::{AuthoringOutcome, AuthoringSession, ConfirmationAction, Stage};
 
@@ -899,5 +900,119 @@ fn non_press_resize_and_paste_events_obey_stage_boundaries() -> Result<(), Box<d
     assert_eq!(review_text(&review)?, message);
     press(&mut review, KeyCode::Esc);
     assert_eq!(review.cards.subject.lines(), [": compose durable message"]);
+    Ok(())
+}
+
+#[test]
+fn ctrl_t_keeps_answers_the_new_type_asks_for_and_esc_restores_the_old_one()
+-> Result<(), Box<dyn Error>> {
+    let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
+    write(
+        &mut session,
+        "(net): retry sooner",
+        &["why it exists", "this repair", "a bound"],
+    );
+    press(&mut session, KeyCode::Down);
+    paste(&mut session, "callers must migrate");
+    control(&mut session, 't');
+    assert_eq!(session.stage, Stage::SelectType);
+    press(&mut session, KeyCode::Down);
+    press(&mut session, KeyCode::Esc);
+    assert_eq!(session.stage, Stage::Compose);
+    assert_eq!(session.cards.definition().id().as_str(), "feat");
+    assert_eq!(session.cards.subject.lines(), ["(net): retry sooner"]);
+    assert_eq!(
+        session.cards.text(CardId::Property(0)).lines(),
+        ["why it exists"]
+    );
+
+    control(&mut session, 't');
+    typed(&mut session, "fi");
+    press(&mut session, KeyCode::Enter);
+    assert_eq!(session.stage, Stage::Compose);
+    assert_eq!(session.cards.definition().id().as_str(), "fix");
+    assert_eq!(session.cards.subject.lines(), ["(net): retry sooner"]);
+    assert_eq!(
+        session
+            .cards
+            .properties
+            .iter()
+            .map(|card| card.body.lines().join("\n"))
+            .collect::<Vec<_>>(),
+        vec!["", "this repair", "a bound"]
+    );
+    assert_eq!(
+        session.cards.properties[2].policy.word(),
+        "applies",
+        "carried constraint text answers that the property applies"
+    );
+    assert_eq!(
+        session.cards.text(CardId::BreakingChange).lines(),
+        ["callers must migrate"]
+    );
+    let text = rendered(&mut session, 100, 30)?;
+    assert!(text.contains("fix(net): retry sooner"), "{text}");
+    assert!(!text.contains("intent:"), "{text}");
+    assert!(text.contains("cause:"), "{text}");
+
+    control(&mut session, 's');
+    assert_eq!(session.stage, Stage::Compose);
+    assert!(
+        session
+            .cards
+            .notes
+            .iter()
+            .any(|note| note.message.contains("cause"))
+    );
+    assert!(
+        session
+            .cards
+            .notes
+            .iter()
+            .all(|note| !note.message.contains("intent"))
+    );
+    Ok(())
+}
+
+#[test]
+fn ctrl_t_restores_the_taxonomy_when_the_picker_is_cancelled() -> Result<(), String> {
+    let mut session = AuthoringSession::with_context(super::built_in_context()?);
+    press(&mut session, KeyCode::Enter);
+    write(&mut session, ": keep this", &["why it exists"]);
+    let taxonomy = session
+        .taxonomy()
+        .ok_or("missing taxonomy")?
+        .id()
+        .to_string();
+    control(&mut session, 't');
+    press(&mut session, KeyCode::Right);
+    assert_ne!(
+        session
+            .taxonomy()
+            .ok_or("missing switched taxonomy")?
+            .id()
+            .as_str(),
+        taxonomy
+    );
+    assert_eq!(session.cards.definition().id().as_str(), "feat");
+    assert_eq!(
+        session.cards.text(CardId::Property(0)).lines(),
+        ["why it exists"]
+    );
+    press(&mut session, KeyCode::Esc);
+    assert_eq!(session.stage, Stage::Compose);
+    assert_eq!(
+        session
+            .taxonomy()
+            .ok_or("missing restored taxonomy")?
+            .id()
+            .as_str(),
+        taxonomy
+    );
+    assert_eq!(session.cards.definition().id().as_str(), "feat");
+    assert_eq!(
+        session.cards.text(CardId::Property(0)).lines(),
+        ["why it exists"]
+    );
     Ok(())
 }

@@ -321,6 +321,7 @@ fn a_conditional_card_keeps_every_footer_key_at_80_columns()
     let footer = rows[rows.len() - 2..].join("\n");
     for key in [
         "ctrl+s review",
+        "ctrl+t type",
         "↑/↓ move",
         "alt+a applies",
         "alt+n doesn't apply",

@@ -141,6 +141,54 @@ impl Cards {
         }
     }
 
+    /// Keeps the subject, breaking change, and every property card whose key
+    /// `definition` also asks for. A carried body makes a conditional property
+    /// apply. A decision carries only when the new property is conditional too.
+    pub(crate) fn retarget(&mut self, definition: CommitTypeDefinition) {
+        let focus_key = match self.focus {
+            CardId::Subject => None,
+            CardId::BreakingChange => Some(String::from("breaking-change")),
+            CardId::Property(index) => self
+                .definition
+                .properties()
+                .get(index)
+                .map(|property| property.key().as_str().to_owned()),
+        };
+        let mut previous: Vec<(String, Card)> = self
+            .definition
+            .properties()
+            .iter()
+            .map(|property| property.key().as_str().to_owned())
+            .zip(std::mem::take(&mut self.properties))
+            .collect();
+        self.properties = definition
+            .properties()
+            .iter()
+            .map(|property| {
+                previous
+                    .iter()
+                    .position(|(key, _)| key == property.key().as_str())
+                    .map_or_else(
+                        || Card::new(Policy::new(property.requirement())),
+                        |index| adopt(previous.swap_remove(index).1, property.requirement()),
+                    )
+            })
+            .collect();
+        self.definition = definition;
+        self.notes.clear();
+        self.scroll = 0;
+        self.focus = match focus_key.as_deref() {
+            Some("breaking-change") => CardId::BreakingChange,
+            Some(key) => self
+                .definition
+                .properties()
+                .iter()
+                .position(|property| property.key().as_str() == key)
+                .map_or(CardId::Subject, CardId::Property),
+            None => CardId::Subject,
+        };
+    }
+
     pub(crate) const fn definition(&self) -> &CommitTypeDefinition {
         &self.definition
     }
@@ -473,6 +521,19 @@ impl Cards {
             text.move_cursor(CursorMove::End);
         }
     }
+}
+
+fn adopt(mut card: Card, requirement: &PropertyRequirement) -> Card {
+    card.policy = match (card.policy, Policy::new(requirement)) {
+        (Policy::Conditional(decision @ Some(_)), Policy::Conditional(_)) => {
+            Policy::Conditional(decision)
+        }
+        (_, Policy::Conditional(_)) if value(&card.body).is_some() => {
+            Policy::Conditional(Some(ConditionalApplicability::Applies))
+        }
+        (_, policy) => policy,
+    };
+    card
 }
 
 /// Reads `(scope): description` or `: description`, the subject after its type.
