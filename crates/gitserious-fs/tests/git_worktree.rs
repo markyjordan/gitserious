@@ -61,3 +61,38 @@ fn lists_tracked_and_untracked_paths_and_skips_ignored_files() -> Result<(), Box
     );
     Ok(())
 }
+
+#[test]
+fn lists_the_newest_commits_and_stops_after_two_hundred() -> Result<(), Box<dyn Error>> {
+    let temp = repository()?;
+    for number in 0..=200 {
+        let message = format!("commit {number}");
+        git(temp.path(), &["commit", "--allow-empty", "-m", &message])?;
+    }
+    let root = RepositoryRoot::new(temp.path().to_path_buf())?;
+    let commits = GitWorktreePaths.commits(&root)?;
+    let head = String::from_utf8(git(temp.path(), &["rev-parse", "--short", "HEAD"])?.stdout)?;
+    assert_eq!(commits.len(), 200);
+    assert_eq!(
+        commits.first().map(|commit| commit.sha.as_str()),
+        Some(head.trim())
+    );
+    assert_eq!(
+        commits.first().map(|commit| commit.subject.as_str()),
+        Some("commit 200")
+    );
+    assert_eq!(
+        commits.last().map(|commit| commit.subject.as_str()),
+        Some("commit 1")
+    );
+    assert!(commits.iter().all(|commit| commit.subject != "commit 0"));
+    Ok(())
+}
+
+#[test]
+fn an_unborn_repository_does_not_list_commits() -> Result<(), Box<dyn Error>> {
+    let temp = repository()?;
+    let root = RepositoryRoot::new(temp.path().to_path_buf())?;
+    assert!(GitWorktreePaths.commits(&root).is_err());
+    Ok(())
+}
