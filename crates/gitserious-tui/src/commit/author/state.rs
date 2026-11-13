@@ -974,6 +974,12 @@ pub(crate) struct AuthoringSession {
     pub(crate) confirmation: ConfirmationAction,
     pub(crate) discard_dialog: ConfirmDialog,
     pub(crate) catalog_tabs: Vec<CatalogTab>,
+    /// What the user typed on the subject line while choosing a type.
+    pub(crate) filter: String,
+    /// The first matching type the list shows when it is taller than the picker.
+    pub(crate) type_offset: usize,
+    /// The definition index of each drawn type row, and where it was drawn.
+    pub(crate) type_rows: Vec<(usize, Rect)>,
     pub(crate) too_small: bool,
 }
 
@@ -1000,6 +1006,9 @@ impl AuthoringSession {
             confirmation: ConfirmationAction::Cancel,
             discard_dialog: ConfirmDialog::default(),
             catalog_tabs: Vec::new(),
+            filter: String::new(),
+            type_offset: 0,
+            type_rows: Vec::new(),
             too_small: false,
         }
     }
@@ -1058,7 +1067,7 @@ impl AuthoringSession {
 
     pub(crate) fn catalog_label(&self, kind: TypeCatalogKind) -> String {
         match kind {
-            TypeCatalogKind::Conventional => "CONVENTIONAL".to_owned(),
+            TypeCatalogKind::Conventional => "conventional".to_owned(),
             TypeCatalogKind::Taxonomy(_) => catalog_taxonomy(self.context.as_ref(), kind)
                 .map_or_else(String::new, |taxonomy| taxonomy.id().to_string()),
         }
@@ -1084,12 +1093,32 @@ impl AuthoringSession {
                 return;
             };
             self.definitions = taxonomy.definitions().to_vec();
-            self.selected_type = 0;
+            self.selected_type = self.matching_types().first().copied().unwrap_or(0);
             self.composer = ComposerState::new(self.definition());
             self.review = None;
             self.approved_message = None;
         }
         self.type_catalog = kind;
+    }
+
+    /// The indexes of the types whose key starts with the filter, in catalog order.
+    ///
+    /// A prefix match, because the filter is the start of the subject line, which
+    /// begins with the type key.
+    pub(crate) fn matching_types(&self) -> Vec<usize> {
+        let filter = self.filter.to_lowercase();
+        self.definitions
+            .iter()
+            .enumerate()
+            .filter(|(_, definition)| definition.id().as_str().starts_with(&filter))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    fn select_first_match(&mut self) {
+        if let Some(first) = self.matching_types().first() {
+            self.selected_type = *first;
+        }
     }
 
     /// The stage on screen: a discard confirmation shows over the composer.
@@ -1168,6 +1197,13 @@ impl AuthoringSession {
                 .find(|tab| contains(tab.area, mouse.column, mouse.row))
         {
             self.select_type_catalog(tab.kind);
+        } else if self.stage == Stage::SelectType
+            && let Some((index, _)) = self
+                .type_rows
+                .iter()
+                .find(|(_, area)| contains(*area, mouse.column, mouse.row))
+        {
+            self.selected_type = *index;
         }
         None
     }
@@ -1182,24 +1218,44 @@ impl AuthoringSession {
     }
 
     fn handle_picker_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
+        let matches = self.matching_types();
         match key.code {
-            KeyCode::Up => {
-                self.selected_type = if self.selected_type == 0 {
-                    self.definitions.len() - 1
-                } else {
-                    self.selected_type - 1
-                };
-            }
-            KeyCode::Down => {
-                self.selected_type = (self.selected_type + 1) % self.definitions.len();
+            KeyCode::Up | KeyCode::Down => {
+                if let Some(position) = matches
+                    .iter()
+                    .position(|index| *index == self.selected_type)
+                {
+                    let step = if key.code == KeyCode::Up {
+                        matches.len() - 1
+                    } else {
+                        1
+                    };
+                    self.selected_type = matches[(position + step) % matches.len()];
+                }
             }
             KeyCode::Left | KeyCode::Right => self.cycle_type_catalog(key.code == KeyCode::Left),
-            KeyCode::Enter => {
+            KeyCode::Enter if !matches.is_empty() => {
+                self.filter.clear();
                 self.composer = ComposerState::new(self.definition());
                 self.stage = Stage::Compose;
             }
-            KeyCode::Esc | KeyCode::Char('q') => {
-                return Some(AuthoringOutcome::Cancelled);
+            KeyCode::Esc if self.filter.is_empty() => return Some(AuthoringOutcome::Cancelled),
+            KeyCode::Esc => {
+                self.filter.clear();
+                self.select_first_match();
+            }
+            KeyCode::Backspace => {
+                if self.filter.pop().is_some() {
+                    self.select_first_match();
+                }
+            }
+            KeyCode::Char(character)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.filter.push(character);
+                self.select_first_match();
             }
             _ => {}
         }
