@@ -39,12 +39,6 @@ pub(crate) enum ConfirmationAction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ResumeStage {
-    Compose,
-    Review,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FieldId {
     Scope,
     Description,
@@ -980,7 +974,6 @@ pub(crate) struct AuthoringSession {
     pub(crate) confirmation: ConfirmationAction,
     pub(crate) discard_dialog: ConfirmDialog,
     pub(crate) catalog_tabs: Vec<CatalogTab>,
-    confirmation_resume: ResumeStage,
     pub(crate) too_small: bool,
 }
 
@@ -1007,7 +1000,6 @@ impl AuthoringSession {
             confirmation: ConfirmationAction::Cancel,
             discard_dialog: ConfirmDialog::default(),
             catalog_tabs: Vec::new(),
-            confirmation_resume: ResumeStage::Compose,
             too_small: false,
         }
     }
@@ -1100,13 +1092,12 @@ impl AuthoringSession {
         self.type_catalog = kind;
     }
 
+    /// The stage on screen: a discard confirmation shows over the composer.
     pub(crate) fn visible_stage(&self) -> Stage {
-        if self.stage != Stage::Confirm {
-            return self.stage;
-        }
-        match self.confirmation_resume {
-            ResumeStage::Compose => Stage::Compose,
-            ResumeStage::Review => Stage::Review,
+        if self.stage == Stage::Confirm {
+            Stage::Compose
+        } else {
+            self.stage
         }
     }
 
@@ -1153,7 +1144,7 @@ impl AuthoringSession {
                 if self.stage == Stage::Confirm {
                     self.handle_confirmation_key(*key)
                 } else if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
-                    self.request_confirmation(ConfirmationAction::Cancel, ResumeStage::Compose)
+                    self.request_confirmation(ConfirmationAction::Cancel)
                 } else {
                     None
                 }
@@ -1255,7 +1246,7 @@ impl AuthoringSession {
             } else {
                 ConfirmationAction::ChangeType
             };
-            return self.request_confirmation(action, ResumeStage::Compose);
+            return self.request_confirmation(action);
         }
         self.input_key(key);
         None
@@ -1343,9 +1334,6 @@ impl AuthoringSession {
                 self.review = None;
                 self.stage = Stage::Compose;
             }
-            KeyCode::Char('q') => {
-                return self.request_confirmation(ConfirmationAction::Cancel, ResumeStage::Review);
-            }
             KeyCode::Up => {
                 if let Some(review) = &mut self.review
                     && review.scrollable
@@ -1408,17 +1396,10 @@ impl AuthoringSession {
 
     fn resume_after_confirmation(&mut self) {
         self.discard_dialog.invalidate();
-        self.stage = match self.confirmation_resume {
-            ResumeStage::Compose => Stage::Compose,
-            ResumeStage::Review => Stage::Review,
-        };
+        self.stage = Stage::Compose;
     }
 
-    fn request_confirmation(
-        &mut self,
-        action: ConfirmationAction,
-        resume: ResumeStage,
-    ) -> Option<AuthoringOutcome> {
+    fn request_confirmation(&mut self, action: ConfirmationAction) -> Option<AuthoringOutcome> {
         if !self.composer.dirty() {
             return match action {
                 ConfirmationAction::Cancel => Some(AuthoringOutcome::Cancelled),
@@ -1431,7 +1412,6 @@ impl AuthoringSession {
             };
         }
         self.confirmation = action;
-        self.confirmation_resume = resume;
         self.discard_dialog.invalidate();
         self.stage = Stage::Confirm;
         None
@@ -1475,50 +1455,45 @@ mod confirmation_tests {
     }
 
     #[test]
-    fn shared_commit_dialog_keeps_compose_and_review_state_and_can_cancel_by_mouse()
+    fn shared_commit_dialog_keeps_the_draft_and_can_cancel_by_mouse()
     -> Result<(), Box<dyn std::error::Error>> {
+        let draw = |frame: &mut ratatui::Frame<'_>, session: &mut AuthoringSession| {
+            render::render(frame, frame.area(), session, "commit to main");
+        };
         for (width, height) in [(60, 18), (100, 24)] {
-            for resume in [ResumeStage::Compose, ResumeStage::Review] {
-                let mut session =
-                    AuthoringSession::new(gitserious_core::built_in_commit_types(), Some(0));
-                session.composer.editor.insert_str("draft");
-                let text = session.composer.editor.lines().to_vec();
-                let cursor = session.composer.editor.cursor();
-                session.request_confirmation(ConfirmationAction::Cancel, resume);
-                let mut terminal = Terminal::new(TestBackend::new(width, height))?;
-                terminal.draw(|frame| render::render(frame, frame.area(), &mut session))?;
-                let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
-                session.handle_event(click(Rect::new(0, 0, 1, 1)));
-                session.handle_event(Event::Paste("ignored".into()));
-                assert_eq!(session.stage, Stage::Confirm);
-                session.handle_event(click(buttons.keep));
-                assert_eq!(
-                    session.stage,
-                    match resume {
-                        ResumeStage::Compose => Stage::Compose,
-                        ResumeStage::Review => Stage::Review,
-                    }
-                );
-                assert_eq!(session.composer.editor.lines(), text);
-                assert_eq!(session.composer.editor.cursor(), cursor);
-                assert!(session.discard_dialog.buttons.is_none());
-                session.request_confirmation(ConfirmationAction::Cancel, resume);
-                terminal.draw(|frame| render::render(frame, frame.area(), &mut session))?;
-                let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
-                session.handle_event(Event::Resize(30, 7));
-                assert!(session.discard_dialog.buttons.is_none());
-                assert!(session.handle_event(click(buttons.confirm)).is_none());
-                assert_eq!(session.stage, Stage::Confirm);
-                session.handle_event(key(KeyCode::Enter));
-                session.request_confirmation(ConfirmationAction::Cancel, resume);
-                terminal.draw(|frame| render::render(frame, frame.area(), &mut session))?;
-                let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
-                assert!(matches!(
-                    session.handle_event(click(buttons.confirm)),
-                    Some(AuthoringOutcome::Cancelled)
-                ));
-                assert!(session.discard_dialog.buttons.is_none());
-            }
+            let mut session =
+                AuthoringSession::new(gitserious_core::built_in_commit_types(), Some(0));
+            session.composer.editor.insert_str("draft");
+            let text = session.composer.editor.lines().to_vec();
+            let cursor = session.composer.editor.cursor();
+            session.request_confirmation(ConfirmationAction::Cancel);
+            let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+            terminal.draw(|frame| draw(frame, &mut session))?;
+            let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
+            session.handle_event(click(Rect::new(0, 0, 1, 1)));
+            session.handle_event(Event::Paste("ignored".into()));
+            assert_eq!(session.stage, Stage::Confirm);
+            session.handle_event(click(buttons.keep));
+            assert_eq!(session.stage, Stage::Compose);
+            assert_eq!(session.composer.editor.lines(), text);
+            assert_eq!(session.composer.editor.cursor(), cursor);
+            assert!(session.discard_dialog.buttons.is_none());
+            session.request_confirmation(ConfirmationAction::Cancel);
+            terminal.draw(|frame| draw(frame, &mut session))?;
+            let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
+            session.handle_event(Event::Resize(30, 7));
+            assert!(session.discard_dialog.buttons.is_none());
+            assert!(session.handle_event(click(buttons.confirm)).is_none());
+            assert_eq!(session.stage, Stage::Confirm);
+            session.handle_event(key(KeyCode::Enter));
+            session.request_confirmation(ConfirmationAction::Cancel);
+            terminal.draw(|frame| draw(frame, &mut session))?;
+            let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
+            assert!(matches!(
+                session.handle_event(click(buttons.confirm)),
+                Some(AuthoringOutcome::Cancelled)
+            ));
+            assert!(session.discard_dialog.buttons.is_none());
         }
         Ok(())
     }
@@ -1562,7 +1537,8 @@ mod confirmation_tests {
         assert!(session.composer.dirty());
         session.handle_event(key(KeyCode::Esc));
         let mut terminal = Terminal::new(TestBackend::new(100, 24))?;
-        terminal.draw(|frame| render::render(frame, frame.area(), &mut session))?;
+        terminal
+            .draw(|frame| render::render(frame, frame.area(), &mut session, "commit to main"))?;
         let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
         assert!(session.handle_event(click(buttons.confirm)).is_none());
         assert_eq!(session.stage, Stage::SelectType);
@@ -1646,16 +1622,9 @@ mod tests {
             expected
         );
         assert!(session.approved_message.is_none());
-        session.handle_event(Event::Key(KeyEvent::new(
-            KeyCode::Char('q'),
-            KeyModifiers::NONE,
-        )));
-        assert_eq!(session.stage, Stage::Confirm);
-        session.handle_event(Event::Key(KeyEvent::new(
-            KeyCode::Char('n'),
-            KeyModifiers::NONE,
-        )));
-        assert_eq!(session.stage, Stage::Review);
+        session.handle_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        assert_eq!(session.stage, Stage::Compose);
+        assert_eq!(session.composer.editor.lines(), original_lines);
         Ok(())
     }
 

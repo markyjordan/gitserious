@@ -376,9 +376,9 @@ pub(super) fn modified(code: KeyCode, modifiers: KeyModifiers) -> Event {
     Event::Key(KeyEvent::new(code, modifiers))
 }
 
-/// Writes and approves a feat commit on the Commit page the way a user does, from the
-/// overview to the review's enter, and returns what that enter asks of the root.
-pub(super) fn approve_a_commit(root: &mut Root) -> Option<Action> {
+/// Writes a feat commit on the Commit page the way a user does, from the overview to
+/// its review.
+pub(super) fn review_a_commit(root: &mut Root) {
     let events = [
         key(KeyCode::Enter),
         key(KeyCode::Enter),
@@ -395,6 +395,12 @@ pub(super) fn approve_a_commit(root: &mut Root) -> Option<Action> {
     for event in events {
         assert_eq!(root.handle_event(event, of(&Ready), &[]), None);
     }
+}
+
+/// Reviews a feat commit and approves it, returning what the review's enter asks of the
+/// root.
+pub(super) fn approve_a_commit(root: &mut Root) -> Option<Action> {
+    review_a_commit(root);
     root.handle_event(key(KeyCode::Enter), of(&Ready), &[])
 }
 

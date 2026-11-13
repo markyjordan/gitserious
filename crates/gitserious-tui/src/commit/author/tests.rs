@@ -47,7 +47,10 @@ fn conditional_decisions_block_contradictions_and_survive_review() -> Result<(),
     modified_press(&mut session, KeyCode::Char('s'), KeyModifiers::CONTROL);
     assert_eq!(session.stage, Stage::Review);
     assert!(!session.composer.warnings.is_empty());
-    assert!(rendered(&mut session, 100, 40)?.contains("nonblocking"));
+    assert!(
+        rendered(&mut session, 100, 40)?
+            .contains("consider completing recommended property \"recommended-field\"")
+    );
     let draft = &session.review.as_ref().ok_or("missing review")?.draft;
     assert_eq!(
         draft.responses().ok_or("missing responses")?[3].applicability(),
@@ -109,8 +112,7 @@ fn taxonomy_picker_switches_schema_and_confirms_discard() -> Result<(), Box<dyn 
 }
 
 #[test]
-fn context_review_includes_provenance_and_returns_the_latest_approved_bytes()
--> Result<(), Box<dyn Error>> {
+fn context_review_hides_provenance_the_approved_bytes_keep() -> Result<(), Box<dyn Error>> {
     let taxonomy = built_in_taxonomies()[0].clone();
     let id = taxonomy.id().clone();
     let context = gitserious_app::CommitAuthoringContext::new(
@@ -136,7 +138,8 @@ fn context_review_includes_provenance_and_returns_the_latest_approved_bytes()
             .contains("Gitserious-Taxonomy: conventional-v1\n")
     );
     let frame = rendered(&mut session, 100, 32)?;
-    assert!(frame.contains("Gitserious-Schema:"));
+    assert!(frame.contains("feat: compose durable message"));
+    assert!(!frame.contains("Gitserious-"), "{frame}");
     press(&mut session, KeyCode::Esc);
     assert!(session.approved_message.is_none());
     set_document(
@@ -226,6 +229,7 @@ fn draw(frame: &mut Frame<'_>, session: &mut AuthoringSession) {
         frame,
         Rect::new(0, 1, area.width, area.height.saturating_sub(2)),
         session,
+        "commit to main",
     );
     crate::theme::normalize_background(frame, area);
 }
@@ -1417,8 +1421,7 @@ fn untouched_and_dirty_cancellation_follow_distinct_confirmation_paths() {
 }
 
 #[test]
-fn review_cancellation_confirmation_can_resume_without_losing_the_preview()
--> Result<(), Box<dyn Error>> {
+fn review_ignores_q_and_esc_keeps_editing_the_same_text() -> Result<(), Box<dyn Error>> {
     let mut session = valid_feat_session();
     let message = session
         .review
@@ -1427,12 +1430,16 @@ fn review_cancellation_confirmation_can_resume_without_losing_the_preview()
         .message
         .clone();
     press(&mut session, KeyCode::Char('q'));
-    assert_eq!(session.stage, Stage::Confirm);
-    press(&mut session, KeyCode::Char('n'));
     assert_eq!(session.stage, Stage::Review);
     assert_eq!(
         session.review.as_ref().ok_or("missing review")?.message,
         message
+    );
+    press(&mut session, KeyCode::Esc);
+    assert_eq!(session.stage, Stage::Compose);
+    assert_eq!(
+        session.composer.editor.lines().join("\n"),
+        valid_feat_document()
     );
     Ok(())
 }
@@ -1501,19 +1508,24 @@ fn every_stage_hud_footer_and_responsive_boundary_render() -> Result<(), Box<dyn
     assert_rows_untouched(&review_buffer, 100, 24);
     assert_eq!(
         find_ascii(&review_buffer, 100, 24, "feat: compose durable message"),
-        Some((2, 4)),
+        Some((1, 1)),
     );
+    assert!(find_ascii(&review_buffer, 100, 24, "Final Git Commit Message").is_none());
+    assert_no_box_drawing(&review_buffer, 100, 24);
+    assert_eq!(row_text(&review_buffer, 100, 9).trim(), "");
     assert_eq!(
-        find_ascii(&review_buffer, 100, 24, "Final Git Commit Message"),
-        Some((2, 2)),
+        row_text(&review_buffer, 100, 10),
+        format!("  commit to main{}enter  ", " ".repeat(77))
     );
-    assert_bold_blue_heading(&review_buffer, 100, 24, "Final Git Commit Message")?;
-    assert!(find_ascii(&review_buffer, 100, 24, "Commit message").is_none());
-    assert_eq!(review_buffer[(0, 3)].symbol(), "├");
-    assert_eq!(review_buffer[(99, 3)].symbol(), "┤");
-    assert_eq!(review_buffer[(0, 1)].symbol(), "┌");
-    assert_eq!(review_buffer[(99, 22)].symbol(), "┘");
-    assert_black_canvas(&review_buffer);
+    for column in 0..100 {
+        let cell = &review_buffer[(column, 10)];
+        if (1..99).contains(&column) {
+            assert_eq!((cell.fg, cell.bg), (theme().ground, theme().cursor));
+            assert!(cell.modifier.contains(Modifier::BOLD));
+        } else {
+            assert_ne!(cell.bg, theme().cursor);
+        }
+    }
     Ok(())
 }
 
@@ -1553,13 +1565,14 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
         Ok(())
     };
     let mut review = valid_feat_session();
-    press(&mut review, KeyCode::Char('q'));
+    press(&mut review, KeyCode::Esc);
+    press(&mut review, KeyCode::Esc);
     let text = rendered(&mut review, 100, 24)?;
     assert!(text.contains("Discard Message"));
     assert!(text.contains("Discard this draft and cancel"));
     assert!(text.contains("y discard"));
     assert!(text.contains("enter/esc/n keep editing"));
-    assert!(text.contains("Final Git Commit Message"));
+    assert!(text.contains("Message Properties"));
     let buffer = rendered_buffer(&mut review, 100, 24)?;
     let buttons = review
         .discard_dialog
@@ -1591,9 +1604,9 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
             .handle_event(left_click(buttons.keep.x, buttons.keep.y))
             .is_none()
     );
-    assert_eq!(review.stage, Stage::Review);
+    assert_eq!(review.stage, Stage::Compose);
 
-    press(&mut review, KeyCode::Char('q'));
+    press(&mut review, KeyCode::Esc);
     let _ = rendered_buffer(&mut review, 100, 24)?;
     let buttons = review
         .discard_dialog
@@ -1702,9 +1715,8 @@ fn editor_and_navigation_styles_match_terminal_editor_conventions() -> Result<()
         hints(&review),
         [
             ("enter", "commit"),
-            ("esc", "edit"),
-            ("↑/↓", "scroll"),
-            ("q", "cancel")
+            ("esc", "keep editing"),
+            ("↑/↓", "scroll")
         ]
     );
     Ok(())
@@ -2491,10 +2503,10 @@ fn compose_review_and_final_encoding_share_the_80_column_boundary() -> Result<()
 
     let review = rendered_buffer(&mut session, 120, 32)?;
     let intent_label = find_ascii(&review, 120, 32, "intent:").ok_or("missing intent label")?;
-    assert_eq!(intent_label.0, 2);
+    assert_eq!(intent_label.0, 1);
     assert_eq!(
         find_ascii_on_row_from_right(&review, 120, intent_label.1 + 2, "x"),
-        Some(2)
+        Some(1)
     );
 
     let outcome = session

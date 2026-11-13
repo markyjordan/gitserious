@@ -215,6 +215,12 @@ show taxonomy identities and never mutate project policy.
 
 The composer retains the established schema-document interaction: immutable
 section headings, contextual property guidance, completion markers, explicit
-conditional applicability, canonical review, and
-discard confirmation. Generated messages contain `Gitserious-Taxonomy` and
-`Gitserious-Schema` provenance trailers.
+conditional applicability, and discard confirmation. Generated messages contain
+`Gitserious-Taxonomy` and `Gitserious-Schema` provenance trailers.
+
+Ctrl+S opens the review under the staged header: the message as written, without
+the provenance trailers, then a highlighted `commit to <branch>` row. An unborn
+branch reads `(first commit)` and a detached HEAD reads `commit on detached
+HEAD`. Enter commits, Esc returns to the composer with the text intact, and
+Up/Down scroll a message taller than the page. Recommendations the message
+leaves out appear dimmed under the commit row.
