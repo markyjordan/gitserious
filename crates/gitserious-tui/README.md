@@ -236,7 +236,8 @@ column in the 80-column message. Esc asks before discarding text or decisions.
 
 `@` opens a list of files and directories from the whole worktree under the
 line being written, or above it when the line sits near the bottom. Ignored
-files stay off that list. Typing keeps paths that contain those characters.
+files stay off that list. Typing keeps paths that contain those characters,
+and the list's last row shows what was typed.
 Up and Down move. Enter inserts `@` and the path at the cursor. Esc closes
 the list and leaves the cards unchanged. A directory path ends with a slash.
 Left and Right switch the list to commits and back, and keep what was typed.
