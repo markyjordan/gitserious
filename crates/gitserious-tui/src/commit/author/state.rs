@@ -1,7 +1,7 @@
 use super::cards::Cards;
 use super::cite::{Cite, CiteAction};
 use crate::confirmation::{Answer, ConfirmDialog, DISCARD};
-use gitserious_app::{AuthoredCommit, CommitAuthoringContext, CommitTaxonomy};
+use gitserious_app::{AuthoredCommit, CitedCommit, CommitAuthoringContext, CommitTaxonomy};
 use gitserious_core::{CommitDraft, CommitMessage, CommitTypeDefinition, ConditionalApplicability};
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -81,6 +81,8 @@ pub(crate) struct AuthoringSession {
     type_change: Option<TypeChange>,
     /// Files and directories `@` can insert. A directory ends with `/`.
     pub(crate) paths: Vec<String>,
+    /// Recent commits `@` can insert, as `@` and the short sha.
+    pub(crate) commits: Vec<CitedCommit>,
     pub(crate) cite: Option<Cite>,
 }
 
@@ -113,6 +115,7 @@ impl AuthoringSession {
             too_small: false,
             type_change: None,
             paths: Vec::new(),
+            commits: Vec::new(),
             cite: None,
         }
     }
@@ -120,6 +123,11 @@ impl AuthoringSession {
     /// Replaces the paths `@` offers. The Commit page supplies the worktree list.
     pub(crate) fn set_cite_paths(&mut self, paths: Vec<String>) {
         self.paths = paths;
+    }
+
+    /// Replaces the commits `@` offers. The Commit page supplies history.
+    pub(crate) fn set_cite_commits(&mut self, commits: Vec<CitedCommit>) {
+        self.commits = commits;
     }
 
     /// Shows the review of `authored` again after Git rejected it.
@@ -328,7 +336,7 @@ impl AuthoringSession {
             let Some(cite) = &mut self.cite else {
                 return None;
             };
-            cite.key(key, &self.paths)
+            cite.key(key, &self.paths, &self.commits)
         };
         match action {
             CiteAction::Stay => {}

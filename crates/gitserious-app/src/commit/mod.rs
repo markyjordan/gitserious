@@ -10,4 +10,4 @@ pub use commit_writer::{CommitOutput, CommitWriter};
 pub use create_taxonomy_commit::{prepare_commit_with_taxonomy, validate_reviewed_commit};
 pub use repository_status::{BranchState, RepositoryStatus, RepositoryStatusReader, StatusEntry};
 pub use taxonomy_authoring_context::{AuthoredCommit, CommitAuthoringContext, CommitTaxonomy};
-pub use worktree_paths::WorktreePaths;
+pub use worktree_paths::{CitedCommit, WorktreePaths};

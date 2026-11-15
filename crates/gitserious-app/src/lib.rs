@@ -15,7 +15,7 @@ mod storage_directory;
 pub mod test_support;
 
 pub use commit::{
-    AuthoredCommit, BranchState, CommitAuthoringContext, CommitOutput, CommitServices,
+    AuthoredCommit, BranchState, CitedCommit, CommitAuthoringContext, CommitOutput, CommitServices,
     CommitTaxonomy, CommitWorkspace, CommitWriter, RepositoryStatus, RepositoryStatusReader,
     StatusEntry, WorktreePaths, prepare_commit_with_taxonomy, validate_reviewed_commit,
 };

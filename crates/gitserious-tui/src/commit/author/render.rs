@@ -62,7 +62,13 @@ pub(crate) fn render(
         Stage::Confirm => unreachable!("confirmation resolves to its underlying stage"),
     }
     if session.stage == Stage::Compose {
-        cite::render(frame, area, &mut session.cite, &session.paths);
+        cite::render(
+            frame,
+            area,
+            &mut session.cite,
+            &session.paths,
+            &session.commits,
+        );
     }
     if session.stage == Stage::Confirm {
         render_confirmation(frame, session);
@@ -73,7 +79,12 @@ pub(crate) fn render(
 /// that answer whether it applies.
 pub(crate) fn hints(session: &AuthoringSession) -> Vec<(&'static str, &'static str)> {
     if session.cite.is_some() && session.stage == Stage::Compose {
-        return vec![("enter", "cite"), ("↑/↓", "move"), ("esc", "cancel")];
+        return vec![
+            ("enter", "cite"),
+            ("↑/↓", "move"),
+            ("←/→", "kind"),
+            ("esc", "cancel"),
+        ];
     }
     match session.visible_stage() {
         Stage::SelectType => vec![

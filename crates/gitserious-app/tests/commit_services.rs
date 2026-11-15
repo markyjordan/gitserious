@@ -3,7 +3,7 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 
 use gitserious_app::{
-    AuthoredCommit, BranchState, CommitAuthoringContext, CommitOutput, CommitServices,
+    AuthoredCommit, BranchState, CitedCommit, CommitAuthoringContext, CommitOutput, CommitServices,
     CommitTaxonomy, CommitWorkspace, CommitWriter, ConfigurationServices, ConfigurationWorkspace,
     GlobalConfiguration, GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore,
     ProjectRevision, RepositoryLocator, RepositoryRoot, RepositoryStatus, RepositoryStatusReader,
@@ -746,11 +746,27 @@ impl WorktreePaths for FixedPaths {
     }
 }
 
+struct FixedCommits(Vec<CitedCommit>);
+
+impl WorktreePaths for FixedCommits {
+    fn paths(&self, _: &RepositoryRoot) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    fn commits(&self, _: &RepositoryRoot) -> Result<Vec<CitedCommit>, String> {
+        Ok(self.0.clone())
+    }
+}
+
 struct BrokenPaths;
 
 impl WorktreePaths for BrokenPaths {
     fn paths(&self, _: &RepositoryRoot) -> Result<Vec<String>, String> {
         Err("ls-files failed".into())
+    }
+
+    fn commits(&self, _: &RepositoryRoot) -> Result<Vec<CitedCommit>, String> {
+        Err("git log failed".into())
     }
 }
 
@@ -762,9 +778,20 @@ fn cite_paths_follow_the_worktree_reader() -> Result<(), Box<dyn Error>> {
     assert_eq!(CommitWorkspace::cite_paths(&commit), reader.0);
 
     assert!(CommitWorkspace::cite_paths(&session.commit()).is_empty());
+    assert!(CommitWorkspace::cite_commits(&session.commit()).is_empty());
     assert!(CommitWorkspace::cite_paths(&session.commit().citing(&BrokenPaths)).is_empty());
+    assert!(CommitWorkspace::cite_commits(&session.commit().citing(&BrokenPaths)).is_empty());
+    let history = FixedCommits(vec![CitedCommit {
+        sha: "abc1234".into(),
+        subject: "back off".into(),
+    }]);
+    assert_eq!(
+        CommitWorkspace::cite_commits(&session.commit().citing(&history)),
+        history.0
+    );
     session.locator.failure.set(Some("not a repository"));
     assert!(CommitWorkspace::cite_paths(&session.commit().citing(&reader)).is_empty());
+    assert!(CommitWorkspace::cite_commits(&session.commit().citing(&history)).is_empty());
     Ok(())
 }
 
