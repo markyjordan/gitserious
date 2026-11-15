@@ -159,6 +159,23 @@ mod tests {
     }
 
     #[test]
+    fn up_and_down_across_a_wide_glyph_keep_the_display_column() {
+        let lines = vec!["abcd".to_owned(), "🦀cd".to_owned()];
+        assert_eq!(
+            vertical(&lines, (0, 2), 80, true),
+            Some((1, 1)),
+            "two columns in is just past the crab"
+        );
+        assert_eq!(
+            vertical(&lines, (0, 1), 80, true),
+            Some((1, 0)),
+            "a column inside the crab stops before it"
+        );
+        assert_eq!(vertical(&lines, (1, 1), 80, false), Some((0, 2)));
+        assert_eq!(column(&lines, (1, 1), 80), 3);
+    }
+
+    #[test]
     fn the_column_counts_from_the_start_of_the_wrapped_row() {
         let lines = vec!["one two three".to_owned()];
         assert_eq!(column(&lines, (0, 0), 8), 1);
