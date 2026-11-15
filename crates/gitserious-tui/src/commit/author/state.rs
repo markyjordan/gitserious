@@ -1,4 +1,4 @@
-use super::citation_picker::{Cite, CiteAction};
+use super::citation_picker::{CitationPickerAction, CitationPickerState};
 use super::composer::MessageComposer;
 use crate::confirmation::{Answer, ConfirmDialog, DISCARD};
 use gitserious_app::{AuthoredCommit, CitedCommit, CommitAuthoringContext, CommitTaxonomy};
@@ -83,7 +83,7 @@ pub(crate) struct AuthoringSession {
     pub(crate) paths: Vec<String>,
     /// Recent commits `@` can insert, as `@` and the short sha.
     pub(crate) commits: Vec<CitedCommit>,
-    pub(crate) cite: Option<Cite>,
+    pub(crate) citation_picker: Option<CitationPickerState>,
 }
 
 impl AuthoringSession {
@@ -116,17 +116,17 @@ impl AuthoringSession {
             type_change: None,
             paths: Vec::new(),
             commits: Vec::new(),
-            cite: None,
+            citation_picker: None,
         }
     }
 
     /// Replaces the paths `@` offers. The Commit page supplies the worktree list.
-    pub(crate) fn set_cite_paths(&mut self, paths: Vec<String>) {
+    pub(crate) fn set_citation_paths(&mut self, paths: Vec<String>) {
         self.paths = paths;
     }
 
     /// Replaces the commits `@` offers. The Commit page supplies history.
-    pub(crate) fn set_cite_commits(&mut self, commits: Vec<CitedCommit>) {
+    pub(crate) fn set_citation_commits(&mut self, commits: Vec<CitedCommit>) {
         self.commits = commits;
     }
 
@@ -262,9 +262,11 @@ impl AuthoringSession {
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => self.handle_key(key),
             Event::Mouse(mouse) => self.handle_mouse(mouse),
-            Event::Paste(text) if self.stage == Stage::Compose && self.cite.is_some() => {
-                if let Some(cite) = &mut self.cite {
-                    cite.push_text(&text);
+            Event::Paste(text)
+                if self.stage == Stage::Compose && self.citation_picker.is_some() =>
+            {
+                if let Some(citation_picker) = &mut self.citation_picker {
+                    citation_picker.push_text(&text);
                 }
                 None
             }
@@ -324,25 +326,25 @@ impl AuthoringSession {
     fn handle_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
         match self.stage {
             Stage::SelectType => self.handle_picker_key(key),
-            Stage::Compose if self.cite.is_some() => self.handle_cite_key(key),
+            Stage::Compose if self.citation_picker.is_some() => self.handle_citation_key(key),
             Stage::Compose => self.handle_composer_key(key),
             Stage::Review => self.handle_review_key(key),
             Stage::Confirm => self.handle_confirmation_key(key),
         }
     }
 
-    fn handle_cite_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
+    fn handle_citation_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
         let action = {
-            let Some(cite) = &mut self.cite else {
+            let Some(citation_picker) = &mut self.citation_picker else {
                 return None;
             };
-            cite.key(key, &self.paths, &self.commits)
+            citation_picker.key(key, &self.paths, &self.commits)
         };
         match action {
-            CiteAction::Stay => {}
-            CiteAction::Close => self.cite = None,
-            CiteAction::Insert(text) => {
-                self.cite = None;
+            CitationPickerAction::Stay => {}
+            CitationPickerAction::Close => self.citation_picker = None,
+            CitationPickerAction::Insert(text) => {
+                self.citation_picker = None;
                 self.composer.paste(&text);
             }
         }
@@ -447,7 +449,7 @@ impl AuthoringSession {
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
         {
-            self.cite = Some(Cite::new());
+            self.citation_picker = Some(CitationPickerState::new());
             return None;
         }
         self.composer.key(key);

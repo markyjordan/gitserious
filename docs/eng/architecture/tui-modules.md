@@ -68,8 +68,8 @@ crates/gitserious-tui/src/
 | [`root/render.rs`](../../../crates/gitserious-tui/src/root/render.rs) | The frame: background, too-small message, header band and version, page body and footer (with the EDIT badge while Commit's editor is open), and overlays on top | Any page's drawing |
 | [`home/`](../../../crates/gitserious-tui/src/home/mod.rs) | The project overview, the initialization editor, which keys the editor captures, Enter's step, and Home's palette command | Reloading Config |
 | [`commit/`](../../../crates/gitserious-tui/src/commit/mod.rs) | The status tree, its keys and hints, the Git result and staged views, palette commands, the in-page editor and its staged header, and failed-review retention | Suspending the terminal for submission, which the adapter starts |
-| `commit/author/state.rs` | The authoring stages, taxonomy and type picker, changing type with ctrl+t, review, discard confirmation, and the cite list's keys | Field text layout and draft field parsing |
-| `commit/author/citation_picker.rs` | The cite list opened by `@`, its query, its kind, its selection, and its drawing | Reading the worktree. The Commit page supplies the paths and commits |
+| `commit/author/state.rs` | The authoring stages, taxonomy and type picker, changing type with ctrl+t, review, discard confirmation, and giving an open citation picker the keys first | Field text layout and draft field parsing |
+| `commit/author/citation_picker.rs` | `CitationPickerState`: the list opened by `@`, its query, its Files or Commits source, its selection, the reference Enter inserts, and its drawing | Reading the worktree. The Commit page supplies the paths and commits |
 | `commit/author/composer/` | `MessageComposer`: the fixed subject type and editable tail, property fields and their applicability, per-field text histories, validation feedback, and draft construction | Taxonomy selection and Git submission |
 | `commit/author/composer/layout.rs` | Wrapped rows, vertical cursor movement, and message columns | Terminal drawing |
 | `commit/author/composer/render.rs` | Field markers, requirement words, guidance, counters, validation feedback, and scrolling | Draft validation rules |
@@ -89,7 +89,7 @@ Name a module or type after the job it does on screen, not after how it happens 
 | Session | `Session` | Workflow state that spans stages | `AuthoringSession` |
 | Editor or composer | `Editor`, `Composer` | An aggregate that edits one document | `InitEditor`, `MessageComposer` |
 | Field | `Field`, `FieldState` | One editable value in a form or message, apart from how it is drawn | `MessageFieldId`, `BodyFieldState` |
-| Picker | `Picker` | A component that chooses one item and acts on the choice | |
+| Picker | `Picker` | A component that chooses one item and acts on the choice | `CitationPickerState` |
 | Panel, outline, inspector, list | `Panel`, `Outline`, `Inspector`, `List` | A distinct region of a view | `config/taxonomies/outline.rs`, `inspector.rs` |
 | Dialog | `Dialog` | A modal choice | `ConfirmDialog` |
 | Layout, viewport, marker, feedback | `Layout`, `Viewport`, `Marker`, `Feedback` | State that exists only for drawing | |

@@ -1,4 +1,4 @@
-//! The cite list opened by `@` while the composer is on screen.
+//! The citation picker opened by `@` while the composer is on screen.
 
 use gitserious_app::CitedCommit;
 use ratatui::Frame;
@@ -13,43 +13,43 @@ use crate::theme::{popup_selected_style, theme};
 
 /// Columns between the panel's edge and its text.
 const PADDING: u16 = 2;
-/// The panel's rows besides the list: padding above and below, the kind row,
+/// The panel's rows besides the list: padding above and below, the source row,
 /// the query row, and a blank row on each side of the list.
 const FIXED_ROWS: u16 = 6;
 /// The most rows the list shows before it scrolls.
 const MAX_ROWS: usize = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CiteKind {
+enum CitationSource {
     Files,
     Commits,
 }
 
-pub(crate) struct Cite {
+pub(crate) struct CitationPickerState {
     query: String,
-    kind: CiteKind,
+    source: CitationSource,
     selected: usize,
     offset: usize,
 }
 
-struct CiteRow {
+struct CitationOption {
     /// A column the rows line up after, such as a commit's sha.
     lead: String,
     label: String,
     insert: String,
 }
 
-pub(crate) enum CiteAction {
+pub(crate) enum CitationPickerAction {
     Stay,
     Close,
     Insert(String),
 }
 
-impl Cite {
+impl CitationPickerState {
     pub(crate) fn new() -> Self {
         Self {
             query: String::new(),
-            kind: CiteKind::Files,
+            source: CitationSource::Files,
             selected: 0,
             offset: 0,
         }
@@ -69,19 +69,19 @@ impl Cite {
         key: KeyEvent,
         paths: &[String],
         commits: &[CitedCommit],
-    ) -> CiteAction {
+    ) -> CitationPickerAction {
         let matches = matching(self, paths, commits);
         if !matches.is_empty() {
             self.selected %= matches.len();
         }
         match key.code {
             KeyCode::Left | KeyCode::Right if key.modifiers.is_empty() => {
-                self.kind = match self.kind {
-                    CiteKind::Files => CiteKind::Commits,
-                    CiteKind::Commits => CiteKind::Files,
+                self.source = match self.source {
+                    CitationSource::Files => CitationSource::Commits,
+                    CitationSource::Commits => CitationSource::Files,
                 };
                 self.rewind();
-                CiteAction::Stay
+                CitationPickerAction::Stay
             }
             KeyCode::Up | KeyCode::Down if !matches.is_empty() && key.modifiers.is_empty() => {
                 let step = if key.code == KeyCode::Up {
@@ -90,16 +90,18 @@ impl Cite {
                     1
                 };
                 self.selected = (self.selected + step) % matches.len();
-                CiteAction::Stay
+                CitationPickerAction::Stay
             }
-            KeyCode::Enter => matches.get(self.selected).map_or(CiteAction::Stay, |row| {
-                CiteAction::Insert(row.insert.clone())
-            }),
-            KeyCode::Esc => CiteAction::Close,
+            KeyCode::Enter => matches
+                .get(self.selected)
+                .map_or(CitationPickerAction::Stay, |row| {
+                    CitationPickerAction::Insert(row.insert.clone())
+                }),
+            KeyCode::Esc => CitationPickerAction::Close,
             KeyCode::Backspace => {
                 self.query.pop();
                 self.rewind();
-                CiteAction::Stay
+                CitationPickerAction::Stay
             }
             KeyCode::Char(character)
                 if !key
@@ -108,9 +110,9 @@ impl Cite {
             {
                 self.query.push(character);
                 self.rewind();
-                CiteAction::Stay
+                CitationPickerAction::Stay
             }
-            _ => CiteAction::Stay,
+            _ => CitationPickerAction::Stay,
         }
     }
 
@@ -127,23 +129,23 @@ pub(crate) fn render(
     frame: &mut Frame<'_>,
     area: Rect,
     cursor_row: Option<u16>,
-    cite: &mut Option<Cite>,
+    picker: &mut Option<CitationPickerState>,
     paths: &[String],
     commits: &[CitedCommit],
 ) {
-    let Some(cite) = cite else {
+    let Some(picker) = picker else {
         return;
     };
-    let matches = matching(cite, paths, commits);
+    let matches = matching(picker, paths, commits);
     if matches.is_empty() {
-        cite.selected = 0;
-        cite.offset = 0;
-    } else if cite.selected >= matches.len() {
-        cite.selected = 0;
+        picker.selected = 0;
+        picker.offset = 0;
+    } else if picker.selected >= matches.len() {
+        picker.selected = 0;
     }
-    let total = match cite.kind {
-        CiteKind::Files => paths.len(),
-        CiteKind::Commits => commits.len(),
+    let total = match picker.source {
+        CitationSource::Files => paths.len(),
+        CitationSource::Commits => commits.len(),
     };
     let wanted = u16::try_from(total.clamp(1, MAX_ROWS))
         .unwrap_or(1)
@@ -157,7 +159,7 @@ pub(crate) fn render(
         Block::default().style(Style::new().fg(theme().text).bg(theme().band)),
         panel,
     );
-    let [_, kinds, _, list, _, query] = Layout::vertical([
+    let [_, sources, _, list, _, query] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -169,8 +171,8 @@ pub(crate) fn render(
         height: panel.height.saturating_sub(1),
         ..inset(panel)
     });
-    frame.render_widget(Paragraph::new(kind_line(cite.kind)), kinds);
-    frame.render_widget(Paragraph::new(query_line(cite, query.width)), query);
+    frame.render_widget(Paragraph::new(source_line(picker.source)), sources);
+    frame.render_widget(Paragraph::new(query_line(picker, query.width)), query);
     if matches.is_empty() {
         frame.render_widget(
             Paragraph::new("no match").style(Style::new().fg(theme().dim)),
@@ -179,16 +181,16 @@ pub(crate) fn render(
         return;
     }
     let rows = usize::from(list.height);
-    cite.offset = visible_offset(cite.selected, cite.offset, rows);
+    picker.offset = visible_offset(picker.selected, picker.offset, rows);
     let lead = matches
         .iter()
         .map(|row| row.lead.width())
         .max()
         .unwrap_or(0);
     for (y, (index, row)) in
-        (list.y..list.bottom()).zip(matches.iter().enumerate().skip(cite.offset))
+        (list.y..list.bottom()).zip(matches.iter().enumerate().skip(picker.offset))
     {
-        let style = if index == cite.selected {
+        let style = if index == picker.selected {
             frame.render_widget(
                 Block::default().style(popup_selected_style()),
                 Rect::new(panel.x, y, panel.width, 1),
@@ -240,22 +242,26 @@ fn inset(panel: Rect) -> Rect {
     )
 }
 
-fn matching(cite: &Cite, paths: &[String], commits: &[CitedCommit]) -> Vec<CiteRow> {
-    let query = cite.query.as_str();
-    match cite.kind {
-        CiteKind::Files => paths
+fn matching(
+    picker: &CitationPickerState,
+    paths: &[String],
+    commits: &[CitedCommit],
+) -> Vec<CitationOption> {
+    let query = picker.query.as_str();
+    match picker.source {
+        CitationSource::Files => paths
             .iter()
             .filter(|path| path.contains(query))
-            .map(|path| CiteRow {
+            .map(|path| CitationOption {
                 lead: String::new(),
                 label: path.clone(),
                 insert: format!("@{path}"),
             })
             .collect(),
-        CiteKind::Commits => commits
+        CitationSource::Commits => commits
             .iter()
             .filter(|commit| commit.sha.contains(query) || commit.subject.contains(query))
-            .map(|commit| CiteRow {
+            .map(|commit| CitationOption {
                 lead: commit.sha.clone(),
                 label: commit.subject.clone(),
                 insert: format!("@{}", commit.sha),
@@ -264,7 +270,7 @@ fn matching(cite: &Cite, paths: &[String], commits: &[CitedCommit]) -> Vec<CiteR
     }
 }
 
-fn kind_line(kind: CiteKind) -> Line<'static> {
+fn source_line(source: CitationSource) -> Line<'static> {
     let paint = |name: &'static str, active: bool| {
         Span::styled(
             name,
@@ -278,26 +284,26 @@ fn kind_line(kind: CiteKind) -> Line<'static> {
         )
     };
     Line::from(vec![
-        paint("Files", kind == CiteKind::Files),
+        paint("Files", source == CitationSource::Files),
         Span::raw("  "),
-        paint("Commits", kind == CiteKind::Commits),
+        paint("Commits", source == CitationSource::Commits),
     ])
 }
 
 /// What was typed, cut from the left to fit, or a dim prompt until something is.
-fn query_line(cite: &Cite, width: u16) -> Line<'static> {
-    if cite.query.is_empty() {
-        let kind = match cite.kind {
-            CiteKind::Files => "files",
-            CiteKind::Commits => "commits",
+fn query_line(picker: &CitationPickerState, width: u16) -> Line<'static> {
+    if picker.query.is_empty() {
+        let source = match picker.source {
+            CitationSource::Files => "files",
+            CitationSource::Commits => "commits",
         };
         return Line::styled(
-            format!("Type to filter {kind}"),
+            format!("Type to filter {source}"),
             Style::new().fg(theme().dim),
         );
     }
-    let mut hidden = cite.query.width().saturating_sub(usize::from(width));
-    let shown = cite.query.trim_start_matches(|character: char| {
+    let mut hidden = picker.query.width().saturating_sub(usize::from(width));
+    let shown = picker.query.trim_start_matches(|character: char| {
         let skip = hidden > 0;
         hidden = hidden.saturating_sub(character.width().unwrap_or(0));
         skip

@@ -1038,7 +1038,7 @@ fn ctrl_t_restores_the_taxonomy_when_the_picker_is_cancelled() -> Result<(), Str
 
 fn citing(paths: &[&str]) -> AuthoringSession {
     let mut session = AuthoringSession::new(built_in_commit_types(), Some(0));
-    session.set_cite_paths(paths.iter().map(|path| (*path).to_owned()).collect());
+    session.set_citation_paths(paths.iter().map(|path| (*path).to_owned()).collect());
     session
 }
 
@@ -1055,7 +1055,7 @@ fn at_opens_a_list_and_does_not_write_at() {
     let mut session = citing(&["src/net/retry.rs"]);
     paste(&mut session, "see ");
     press(&mut session, KeyCode::Char('@'));
-    assert!(session.cite.is_some());
+    assert!(session.citation_picker.is_some());
     assert_eq!(focused_text(&session), "see ");
     assert_eq!(
         hints(&session),
@@ -1073,7 +1073,7 @@ fn enter_inserts_the_path_and_esc_writes_nothing() {
     let mut session = citing(&["src/net/retry.rs", "README.md"]);
     press(&mut session, KeyCode::Char('@'));
     press(&mut session, KeyCode::Enter);
-    assert!(session.cite.is_none());
+    assert!(session.citation_picker.is_none());
     assert_eq!(focused_text(&session), "@src/net/retry.rs");
 
     let mut session = citing(&["src/net/retry.rs"]);
@@ -1081,7 +1081,7 @@ fn enter_inserts_the_path_and_esc_writes_nothing() {
     press(&mut session, KeyCode::Char('@'));
     typed(&mut session, "nope");
     press(&mut session, KeyCode::Esc);
-    assert!(session.cite.is_none());
+    assert!(session.citation_picker.is_none());
     assert_eq!(focused_text(&session), "see ");
 }
 
@@ -1132,7 +1132,7 @@ fn enter_on_no_match_leaves_the_list_open() -> Result<(), Box<dyn Error>> {
     let screen = rendered(&mut session, 80, 24)?;
     assert!(screen.contains("no match"), "{screen}");
     press(&mut session, KeyCode::Enter);
-    assert!(session.cite.is_some());
+    assert!(session.citation_picker.is_some());
     assert_eq!(focused_text(&session), "");
     Ok(())
 }
@@ -1160,7 +1160,7 @@ fn the_list_takes_the_keys_that_would_leave_the_composer() {
     control(&mut session, 't');
     alt(&mut session, 'n');
     assert_eq!(session.stage, Stage::Compose);
-    assert!(session.cite.is_some());
+    assert!(session.citation_picker.is_some());
     assert!(session.review.is_none());
     assert_eq!(
         session
@@ -1239,7 +1239,7 @@ fn at_before_a_type_is_chosen_stays_in_the_picker() {
     let mut session = AuthoringSession::new(built_in_commit_types(), None);
     press(&mut session, KeyCode::Char('@'));
     assert_eq!(session.stage, Stage::SelectType);
-    assert!(session.cite.is_none());
+    assert!(session.citation_picker.is_none());
     assert_eq!(session.filter, "@");
 }
 
@@ -1254,7 +1254,7 @@ fn a_pasted_query_filters_the_list() {
 
 fn with_commits(paths: &[&str], commits: &[(&str, &str)]) -> AuthoringSession {
     let mut session = citing(paths);
-    session.set_cite_commits(
+    session.set_citation_commits(
         commits
             .iter()
             .map(|(sha, subject)| CitedCommit {
@@ -1279,7 +1279,7 @@ fn right_keeps_the_query_and_inserts_the_short_sha() {
     typed(&mut session, "429");
     press(&mut session, KeyCode::Right);
     press(&mut session, KeyCode::Enter);
-    assert!(session.cite.is_none());
+    assert!(session.citation_picker.is_none());
     assert_eq!(focused_text(&session), "@abc1234");
 }
 
@@ -1297,7 +1297,7 @@ fn left_returns_to_files_and_esc_on_a_commit_writes_nothing() {
     press(&mut session, KeyCode::Char('@'));
     press(&mut session, KeyCode::Right);
     press(&mut session, KeyCode::Esc);
-    assert!(session.cite.is_none());
+    assert!(session.citation_picker.is_none());
     assert_eq!(focused_text(&session), "see ");
 }
 

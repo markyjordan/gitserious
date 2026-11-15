@@ -66,7 +66,7 @@ pub(crate) fn render(
             frame,
             area,
             session.composer.cursor_row,
-            &mut session.cite,
+            &mut session.citation_picker,
             &session.paths,
             &session.commits,
         );
@@ -79,7 +79,7 @@ pub(crate) fn render(
 /// The footer keys of the stage on screen. A conditional field adds the keys
 /// that answer whether it applies.
 pub(crate) fn hints(session: &AuthoringSession) -> Vec<(&'static str, &'static str)> {
-    if session.cite.is_some() && session.stage == Stage::Compose {
+    if session.citation_picker.is_some() && session.stage == Stage::Compose {
         return vec![
             ("enter", "cite"),
             ("↑/↓", "move"),
