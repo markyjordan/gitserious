@@ -234,7 +234,8 @@ Alt+A and Alt+N answer whether a conditional property applies; their hints
 appear in the footer while that card is focused. The status line lists cards still blocking review and the cursor's
 column in the 80-column message. Esc asks before discarding text or decisions.
 
-`@` opens a list of files and directories from the whole worktree. Ignored
+`@` opens a list of files and directories from the whole worktree under the
+line being written, or above it when the line sits near the bottom. Ignored
 files stay off that list. Typing keeps paths that contain those characters.
 Up and Down move. Enter inserts `@` and the path at the cursor. Esc closes
 the list and leaves the cards unchanged. A directory path ends with a slash.

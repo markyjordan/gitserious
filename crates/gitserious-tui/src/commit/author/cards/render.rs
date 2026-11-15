@@ -50,6 +50,12 @@ pub(crate) fn render(frame: &mut Frame<'_>, area: Rect, cards: &mut Cards) {
         .clamp(1, usize::from(COMMIT_MESSAGE_WIDTH));
     let sheet = sheet(cards, width);
     cards.scroll = scroll(cards.scroll, &sheet, usize::from(list.height));
+    cards.cursor_row = sheet
+        .cursor
+        .checked_sub(cards.scroll)
+        .and_then(|row| u16::try_from(row).ok())
+        .filter(|row| *row < list.height)
+        .map(|row| list.y + row);
     for (y, row) in (list.y..list.bottom()).zip(sheet.rows.iter().skip(cards.scroll)) {
         draw_row(frame, Rect::new(list.x, y, list.width, 1), row);
     }

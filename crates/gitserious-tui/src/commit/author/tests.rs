@@ -1158,7 +1158,36 @@ fn the_selected_path_uses_the_popup_row() -> Result<(), Box<dyn Error>> {
     assert_eq!(buffer[(column, row)].bg, theme().cursor);
     let (column, row) = find_ascii(&buffer, 80, 24, "README.md").ok_or("missing readme")?;
     assert_ne!(buffer[(column, row)].bg, theme().cursor);
-    assert!(rendered(&mut session, 80, 24)?.contains("Cite"));
+    assert_eq!(buffer[(column - 1, row)].bg, theme().band);
+    assert!(!rendered(&mut session, 80, 24)?.contains("Cite"));
+    Ok(())
+}
+
+#[test]
+fn the_list_opens_under_the_line_being_written() -> Result<(), Box<dyn Error>> {
+    let mut session = citing(&["src/net/retry.rs"]);
+    press(&mut session, KeyCode::Down);
+    paste(&mut session, "see ");
+    press(&mut session, KeyCode::Char('@'));
+    let buffer = rendered_buffer(&mut session, 80, 24)?;
+    let (_, line) = find_ascii(&buffer, 80, 24, "see ").ok_or("missing body")?;
+    let (_, kinds) = find_ascii(&buffer, 80, 24, "Files").ok_or("missing kinds")?;
+    let (_, path) = find_ascii(&buffer, 80, 24, "src/net/retry.rs").ok_or("missing path")?;
+    assert_eq!(kinds, line + 3);
+    assert_eq!(path, kinds + 2);
+    Ok(())
+}
+
+#[test]
+fn the_list_opens_above_a_line_near_the_bottom() -> Result<(), Box<dyn Error>> {
+    let mut session = citing(&["src/net/retry.rs"]);
+    press(&mut session, KeyCode::Down);
+    paste(&mut session, &format!("{}last ", "line\n".repeat(11)));
+    press(&mut session, KeyCode::Char('@'));
+    let buffer = rendered_buffer(&mut session, 80, 24)?;
+    let (_, line) = find_ascii(&buffer, 80, 24, "last ").ok_or("missing body")?;
+    let (_, path) = find_ascii(&buffer, 80, 24, "src/net/retry.rs").ok_or("missing path")?;
+    assert!(path < line, "{}", rendered(&mut session, 80, 24)?);
     Ok(())
 }
 
