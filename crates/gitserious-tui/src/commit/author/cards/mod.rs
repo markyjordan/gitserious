@@ -120,6 +120,8 @@ pub(crate) struct Cards {
     pub(crate) scroll: usize,
     /// The column bodies wrap at on screen, which ↑ and ↓ follow.
     pub(crate) wrap: usize,
+    /// The screen row the cursor was last drawn on, which the cite list opens under.
+    pub(crate) cursor_row: Option<u16>,
 }
 
 impl Cards {
@@ -138,6 +140,7 @@ impl Cards {
             notes: Vec::new(),
             scroll: 0,
             wrap: usize::from(COMMIT_MESSAGE_WIDTH),
+            cursor_row: None,
         }
     }
 

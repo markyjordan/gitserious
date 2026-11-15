@@ -65,6 +65,7 @@ pub(crate) fn render(
         cite::render(
             frame,
             area,
+            session.cards.cursor_row,
             &mut session.cite,
             &session.paths,
             &session.commits,
