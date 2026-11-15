@@ -1,11 +1,16 @@
 //! The composer a commit is written in: the subject line, one field for each
 //! property of the chosen type, then breaking-change.
 
+mod field;
+mod input;
 mod layout;
 mod render;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use field::{
+    BodyFieldState, FieldFeedback, FieldMarker, FieldRequirementState, MessageFieldId,
+};
 pub(crate) use render::render;
 
 use gitserious_app::CommitTaxonomy;
@@ -15,95 +20,7 @@ use gitserious_core::{
     PropertyKey, PropertyRequirement, PropertyResponse, PropertyValidationIssueKind, PropertyValue,
     ValidationSeverity, validate_commit_draft,
 };
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tui_textarea::{CursorMove, Input, TextArea};
-
-/// A field, in the order the page shows them.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum MessageFieldId {
-    Subject,
-    /// The property at this index of the type's definition.
-    Property(usize),
-    BreakingChange,
-}
-
-/// How the type asks for a property, with the answer to a conditional one.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum FieldRequirementState {
-    Required,
-    Recommended,
-    Optional,
-    /// Asked for only when it applies, which stays `None` until the user says.
-    Conditional(Option<ConditionalApplicability>),
-}
-
-impl FieldRequirementState {
-    const fn new(requirement: &PropertyRequirement) -> Self {
-        match requirement {
-            PropertyRequirement::Required => Self::Required,
-            PropertyRequirement::Recommended => Self::Recommended,
-            PropertyRequirement::Optional => Self::Optional,
-            PropertyRequirement::Conditional(_) => Self::Conditional(None),
-        }
-    }
-
-    /// The word on the right of the field.
-    pub(crate) const fn word(self) -> &'static str {
-        match self {
-            Self::Required => "required",
-            Self::Recommended => "recommended",
-            Self::Optional => "optional",
-            Self::Conditional(None) => "conditional",
-            Self::Conditional(Some(ConditionalApplicability::Applies)) => "applies",
-            Self::Conditional(Some(ConditionalApplicability::DoesNotApply)) => "doesn't apply",
-        }
-    }
-
-    const fn decision(self) -> Option<ConditionalApplicability> {
-        match self {
-            Self::Conditional(decision) => decision,
-            Self::Required | Self::Recommended | Self::Optional => None,
-        }
-    }
-}
-
-/// A property's field: its text, with its own undo history, and how the type
-/// asks for it.
-pub(crate) struct BodyFieldState {
-    pub(crate) body: TextArea<'static>,
-    pub(crate) requirement: FieldRequirementState,
-}
-
-impl BodyFieldState {
-    fn new(requirement: FieldRequirementState) -> Self {
-        Self {
-            body: TextArea::default(),
-            requirement,
-        }
-    }
-}
-
-/// The glyph left of a field's key.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum FieldMarker {
-    /// ✓ Nothing is left to write.
-    Done,
-    /// ● The field being written.
-    Focused,
-    /// ◐ A conditional property nobody has said applies or not.
-    Undecided,
-    /// ○ Empty, or a subject that does not read `(scope): description` yet.
-    Open,
-}
-
-/// What the last review attempt said about a field, shown under it until the
-/// field changes.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct FieldFeedback {
-    pub(crate) field: MessageFieldId,
-    pub(crate) severity: ValidationSeverity,
-    pub(crate) message: String,
-}
+use tui_textarea::TextArea;
 
 pub(crate) struct MessageComposer {
     definition: CommitTypeDefinition,
@@ -325,45 +242,6 @@ impl MessageComposer {
             .map(|feedback| feedback.message.as_str())
     }
 
-    /// Edits or moves through the focused field.
-    pub(crate) fn key(&mut self, key: KeyEvent) {
-        let control = key.modifiers.contains(KeyModifiers::CONTROL);
-        match key.code {
-            KeyCode::Up | KeyCode::Down if key.modifiers.is_empty() => {
-                self.move_vertically(key.code == KeyCode::Down);
-            }
-            KeyCode::Enter => self.enter(),
-            KeyCode::Char('m') if control => self.enter(),
-            _ => self.edit(|text| text.input(Input::from(key))),
-        }
-    }
-
-    /// Inserts `text` at the cursor. The subject is one line, so it refuses a
-    /// paste that has several.
-    pub(crate) fn paste(&mut self, text: &str) {
-        if self.focus == MessageFieldId::Subject && text.contains(['\n', '\r']) {
-            return;
-        }
-        self.edit(|area| area.insert_str(text));
-    }
-
-    /// Answers whether the focused conditional property applies. Saying it
-    /// does not clears the field, which ctrl+u undoes.
-    pub(crate) fn decide(&mut self, decision: ConditionalApplicability) {
-        let focus = self.focus;
-        let Some(field) = self.field_mut(focus) else {
-            return;
-        };
-        let FieldRequirementState::Conditional(answer) = &mut field.requirement else {
-            return;
-        };
-        *answer = Some(decision);
-        if decision == ConditionalApplicability::DoesNotApply {
-            field.body.clear();
-        }
-        self.feedback.retain(|feedback| feedback.field != focus);
-    }
-
     /// Validates the fields as a draft and renders its message, or notes what
     /// blocks it on the fields and focuses the first.
     pub(crate) fn review(
@@ -465,73 +343,6 @@ impl MessageComposer {
             .position(|property| property.key() == key)
             .map_or(MessageFieldId::Subject, MessageFieldId::Property)
     }
-
-    fn edit(&mut self, change: impl FnOnce(&mut TextArea<'static>) -> bool) {
-        let focus = self.focus;
-        if !change(self.text_mut(focus)) {
-            return;
-        }
-        self.feedback.retain(|feedback| feedback.field != focus);
-        // Writing in a conditional field answers that it applies.
-        if let Some(field) = self.field_mut(focus)
-            && let FieldRequirementState::Conditional(answer) = &mut field.requirement
-            && value(&field.body).is_some()
-        {
-            *answer = Some(ConditionalApplicability::Applies);
-        }
-    }
-
-    fn move_vertically(&mut self, down: bool) {
-        let text = self.text(self.focus);
-        let within = (self.focus != MessageFieldId::Subject)
-            .then(|| layout::vertical(text.lines(), text.cursor(), self.wrap, down))
-            .flatten();
-        match within {
-            Some((line, column)) => {
-                let focus = self.focus;
-                self.text_mut(focus)
-                    .move_cursor(CursorMove::Jump(terminal(line), terminal(column)));
-            }
-            None => self.step(down),
-        }
-    }
-
-    /// Enter leaves the subject for the next field and inserts a line break
-    /// in every body, including an empty one.
-    fn enter(&mut self) {
-        if self.focus == MessageFieldId::Subject {
-            self.step(true);
-        } else {
-            self.edit(|text| {
-                text.insert_newline();
-                true
-            });
-        }
-    }
-
-    /// Focuses the next field at its start, or the previous field at its end.
-    fn step(&mut self, down: bool) {
-        let ids: Vec<_> = self.ids().collect();
-        let position = ids.iter().position(|id| *id == self.focus).unwrap_or(0);
-        let next = if down {
-            ids.get(position + 1)
-        } else {
-            position
-                .checked_sub(1)
-                .and_then(|previous| ids.get(previous))
-        };
-        let Some(&next) = next else {
-            return;
-        };
-        self.focus = next;
-        let text = self.text_mut(next);
-        if down {
-            text.move_cursor(CursorMove::Jump(0, 0));
-        } else {
-            text.move_cursor(CursorMove::Bottom);
-            text.move_cursor(CursorMove::End);
-        }
-    }
 }
 
 fn adopt(mut field: BodyFieldState, requirement: &PropertyRequirement) -> BodyFieldState {
@@ -598,8 +409,4 @@ fn issue_key(kind: &PropertyValidationIssueKind) -> &PropertyKey {
         | Kind::ValueForNonApplicableProperty(key)
         | Kind::UnexpectedConditionalDecision(key) => key,
     }
-}
-
-fn terminal(index: usize) -> u16 {
-    u16::try_from(index).unwrap_or(u16::MAX)
 }
