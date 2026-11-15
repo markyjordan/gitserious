@@ -153,7 +153,11 @@ impl CommitView {
             CommitRequest::Author => {
                 self.refresh(commit);
                 match commit.prepare_commit() {
-                    Ok(context) => self.authoring = Some(AuthoringSession::with_context(context)),
+                    Ok(context) => {
+                        let mut session = AuthoringSession::with_context(context);
+                        session.set_cite_paths(commit.cite_paths());
+                        self.authoring = Some(session);
+                    }
                     Err(error) => self.notice = error,
                 }
             }

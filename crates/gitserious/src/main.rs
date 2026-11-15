@@ -11,7 +11,7 @@ use gitserious_cli::{
 };
 use gitserious_fs::{
     GitCommitWriter, GitRepositoryInitializer, GitRepositoryLocator, GitRepositoryStatusReader,
-    SystemGlobalPathResolver, TomlGlobalConfigurationStore, TomlProjectStore,
+    GitWorktreePaths, SystemGlobalPathResolver, TomlGlobalConfigurationStore, TomlProjectStore,
 };
 use gitserious_tui::{Capabilities, HelpPage, InitialPage, RatatuiInteractiveUi};
 
@@ -37,13 +37,15 @@ fn main() -> ExitCode {
                 Destination::Config => InitialPage::Config,
                 Destination::Help { command } => InitialPage::Help { command },
             };
+            let worktree = GitWorktreePaths;
             let commit = CommitServices::new(
                 &GitRepositoryLocator,
                 &TomlProjectStore,
                 &GitRepositoryStatusReader,
                 &GitCommitWriter,
                 &directory,
-            );
+            )
+            .citing(&worktree);
             let config = ConfigurationServices::new(
                 &GitRepositoryLocator,
                 &TomlProjectStore,
