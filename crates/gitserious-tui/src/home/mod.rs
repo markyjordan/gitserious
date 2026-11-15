@@ -69,7 +69,7 @@ impl HomeAction {
 }
 
 /// The project overview Home shows, and the editor that initializes the project.
-pub(crate) struct HomePage {
+pub(crate) struct HomeView {
     overview: ProjectOverview,
     /// Open while the user chooses the new project's taxonomies.
     editor: Option<InitEditor>,
@@ -87,7 +87,7 @@ pub(crate) enum HomeRequest {
     Initialized,
 }
 
-impl HomePage {
+impl HomeView {
     pub(crate) fn new(project: &dyn ProjectWorkspace) -> Self {
         Self {
             overview: project.overview(),
