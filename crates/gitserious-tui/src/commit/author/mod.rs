@@ -4,6 +4,7 @@ mod render;
 mod state;
 #[cfg(test)]
 mod tests;
+mod type_picker;
 
 pub(crate) use render::{hints, render};
 pub(crate) use state::{AuthoringOutcome, AuthoringSession};
