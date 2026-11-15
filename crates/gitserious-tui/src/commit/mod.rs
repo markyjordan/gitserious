@@ -155,8 +155,8 @@ impl CommitView {
                 match commit.prepare_commit() {
                     Ok(context) => {
                         let mut session = AuthoringSession::with_context(context);
-                        session.set_cite_paths(commit.cite_paths());
-                        session.set_cite_commits(commit.cite_commits());
+                        session.set_citation_paths(commit.cite_paths());
+                        session.set_citation_commits(commit.cite_commits());
                         self.authoring = Some(session);
                     }
                     Err(error) => self.notice = error,

@@ -1,4 +1,4 @@
-mod cite;
+mod citation_picker;
 mod composer;
 mod render;
 mod state;

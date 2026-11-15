@@ -5,7 +5,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
-use super::cite;
+use super::citation_picker;
 use super::composer;
 use super::state::{AuthoringSession, CatalogTab, ConfirmationAction, Stage};
 use crate::confirmation::{Confirmation, DISCARD};
@@ -62,11 +62,11 @@ pub(crate) fn render(
         Stage::Confirm => unreachable!("confirmation resolves to its underlying stage"),
     }
     if session.stage == Stage::Compose {
-        cite::render(
+        citation_picker::render(
             frame,
             area,
             session.composer.cursor_row,
-            &mut session.cite,
+            &mut session.citation_picker,
             &session.paths,
             &session.commits,
         );
@@ -79,7 +79,7 @@ pub(crate) fn render(
 /// The footer keys of the stage on screen. A conditional field adds the keys
 /// that answer whether it applies.
 pub(crate) fn hints(session: &AuthoringSession) -> Vec<(&'static str, &'static str)> {
-    if session.cite.is_some() && session.stage == Stage::Compose {
+    if session.citation_picker.is_some() && session.stage == Stage::Compose {
         return vec![
             ("enter", "cite"),
             ("↑/↓", "move"),

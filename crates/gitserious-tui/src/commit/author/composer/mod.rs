@@ -120,7 +120,7 @@ pub(crate) struct MessageComposer {
     pub(crate) scroll: usize,
     /// The column bodies wrap at on screen, which ↑ and ↓ follow.
     pub(crate) wrap: usize,
-    /// The screen row the cursor was last drawn on, which the cite list opens under.
+    /// The screen row the cursor was last drawn on, which the citation picker opens under.
     pub(crate) cursor_row: Option<u16>,
 }
 
