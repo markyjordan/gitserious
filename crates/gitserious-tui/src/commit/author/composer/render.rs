@@ -8,25 +8,25 @@ use tui_textarea::TextArea;
 use unicode_width::UnicodeWidthStr;
 
 use super::layout::{self, char_width};
-use super::{CardId, Cards, Mark};
+use super::{FieldMarker, MessageComposer, MessageFieldId};
 use crate::theme::theme;
 
-/// Columns left of a card's text: the focus bar, the mark, and a space.
+/// Columns left of a field's text: the focus bar, the marker, and a space.
 const GUTTER: u16 = 3;
 const MARGIN: u16 = 1;
 /// The subject length `git log --oneline` and most forges show uncut.
 const SUBJECT_LIMIT: usize = 72;
 
-/// One row of the card list.
+/// One row of the field list.
 #[derive(Default)]
 struct Row {
-    mark: Option<Span<'static>>,
+    marker: Option<Span<'static>>,
     text: Line<'static>,
     right: Option<Span<'static>>,
     focused: bool,
 }
 
-/// Every card's rows, with the focused card's first row and the cursor's row.
+/// Every field's rows, with the focused field's first row and the cursor's row.
 #[derive(Default)]
 struct Sheet {
     rows: Vec<Row>,
@@ -34,9 +34,9 @@ struct Sheet {
     cursor: usize,
 }
 
-/// Draws the cards in `area`, scrolled so the cursor shows, with the status
+/// Draws the composer in `area`, scrolled so the cursor shows, with the status
 /// line under them.
-pub(crate) fn render(frame: &mut Frame<'_>, area: Rect, cards: &mut Cards) {
+pub(crate) fn render(frame: &mut Frame<'_>, area: Rect, composer: &mut MessageComposer) {
     let [list, _, status] = Layout::vertical([
         Constraint::Min(1),
         Constraint::Length(1),
@@ -45,59 +45,59 @@ pub(crate) fn render(frame: &mut Frame<'_>, area: Rect, cards: &mut Cards) {
     .areas(area);
     let width = usize::from(list.width.saturating_sub(GUTTER + MARGIN));
     // One column stays free past the wrap, so a cursor after a full row shows.
-    cards.wrap = width
+    composer.wrap = width
         .saturating_sub(1)
         .clamp(1, usize::from(COMMIT_MESSAGE_WIDTH));
-    let sheet = sheet(cards, width);
-    cards.scroll = scroll(cards.scroll, &sheet, usize::from(list.height));
-    cards.cursor_row = sheet
+    let sheet = sheet(composer, width);
+    composer.scroll = scroll(composer.scroll, &sheet, usize::from(list.height));
+    composer.cursor_row = sheet
         .cursor
-        .checked_sub(cards.scroll)
+        .checked_sub(composer.scroll)
         .and_then(|row| u16::try_from(row).ok())
         .filter(|row| *row < list.height)
         .map(|row| list.y + row);
-    for (y, row) in (list.y..list.bottom()).zip(sheet.rows.iter().skip(cards.scroll)) {
+    for (y, row) in (list.y..list.bottom()).zip(sheet.rows.iter().skip(composer.scroll)) {
         draw_row(frame, Rect::new(list.x, y, list.width, 1), row);
     }
-    render_status(frame, status, cards);
+    render_status(frame, status, composer);
 }
 
-fn sheet(cards: &Cards, width: usize) -> Sheet {
+fn sheet(composer: &MessageComposer, width: usize) -> Sheet {
     let mut sheet = Sheet::default();
-    for id in cards.ids() {
+    for id in composer.ids() {
         if !sheet.rows.is_empty() {
             sheet.rows.push(Row::default());
         }
-        let focused = id == cards.focus;
+        let focused = id == composer.focus;
         if focused {
             sheet.focus_top = sheet.rows.len();
             sheet.cursor = sheet.rows.len();
         }
-        let failed = cards
-            .notes
+        let failed = composer
+            .feedback
             .iter()
-            .any(|note| note.card == id && note.severity == ValidationSeverity::Error);
-        let mark = Some(mark_span(cards.mark(id), failed));
-        let rows = match cards.card(id) {
+            .any(|feedback| feedback.field == id && feedback.severity == ValidationSeverity::Error);
+        let marker = Some(marker_span(composer.marker(id), failed));
+        let rows = match composer.field(id) {
             None => vec![Row {
-                mark,
+                marker,
                 focused,
-                ..subject_row(cards, width)
+                ..subject_row(composer, width)
             }],
-            Some(card) => {
+            Some(field) => {
                 let header = Row {
-                    mark,
-                    text: Line::styled(format!("{}:", cards.name(id)), bold()),
-                    right: Some(Span::styled(card.policy.word(), dim())),
+                    marker,
+                    text: Line::styled(format!("{}:", composer.name(id)), bold()),
+                    right: Some(Span::styled(field.requirement.word(), dim())),
                     focused,
                 };
                 let body = if !focused {
-                    text_lines(&card.body, cards.wrap, None)
-                } else if card.body.is_empty() {
+                    text_lines(&field.body, composer.wrap, None)
+                } else if field.body.is_empty() {
                     sheet.cursor += 1;
-                    guidance_lines(cards.guidance(id), cards.wrap)
+                    guidance_lines(composer.guidance(id), composer.wrap)
                 } else {
-                    let (lines, cursor) = cursor_lines(&card.body, cards.wrap);
+                    let (lines, cursor) = cursor_lines(&field.body, composer.wrap);
                     sheet.cursor += 1 + cursor;
                     lines
                 };
@@ -111,19 +111,25 @@ fn sheet(cards: &Cards, width: usize) -> Sheet {
             }
         };
         sheet.rows.extend(rows);
-        for note in cards.notes.iter().filter(|note| note.card == id) {
-            let style = match note.severity {
+        for feedback in composer
+            .feedback
+            .iter()
+            .filter(|feedback| feedback.field == id)
+        {
+            let style = match feedback.severity {
                 ValidationSeverity::Error => Style::new().fg(theme().blocks),
                 ValidationSeverity::Warning => dim(),
             };
-            let lines = vec![note.message.clone()];
-            sheet
-                .rows
-                .extend(layout::rows(&lines, cards.wrap).into_iter().map(|row| Row {
-                    text: Line::styled(slice(&lines[0], row.start, row.end), style),
-                    focused,
-                    ..Row::default()
-                }));
+            let lines = vec![feedback.message.clone()];
+            sheet.rows.extend(
+                layout::rows(&lines, composer.wrap)
+                    .into_iter()
+                    .map(|row| Row {
+                        text: Line::styled(slice(&lines[0], row.start, row.end), style),
+                        focused,
+                        ..Row::default()
+                    }),
+            );
         }
     }
     sheet
@@ -131,9 +137,9 @@ fn sheet(cards: &Cards, width: usize) -> Sheet {
 
 /// The type key and what follows it, scrolled sideways so the cursor shows,
 /// with the subject's length on the right.
-fn subject_row(cards: &Cards, width: usize) -> Row {
-    let key = cards.definition().id().as_str();
-    let tail = &cards.subject.lines()[0];
+fn subject_row(composer: &MessageComposer, width: usize) -> Row {
+    let key = composer.definition().id().as_str();
+    let tail = &composer.subject.lines()[0];
     let length = UnicodeWidthStr::width(key) + UnicodeWidthStr::width(tail.as_str());
     let counter = format!("{length}/{SUBJECT_LIMIT}");
     let room = width.saturating_sub(counter.width() + 1);
@@ -142,10 +148,15 @@ fn subject_row(cards: &Cards, width: usize) -> Row {
         .chain(tail.chars())
         .map(|c| (c, bold()))
         .collect();
-    if cards.focus == CardId::Subject {
-        let cursor = key.chars().count() + cards.subject.cursor().1;
+    if composer.focus == MessageFieldId::Subject {
+        let cursor = key.chars().count() + composer.subject.cursor().1;
         if tail.is_empty() {
-            cells.extend(cards.guidance(CardId::Subject).chars().map(|c| (c, dim())));
+            cells.extend(
+                composer
+                    .guidance(MessageFieldId::Subject)
+                    .chars()
+                    .map(|c| (c, dim())),
+            );
         }
         place_cursor(&mut cells, cursor);
         let before: usize = cells[..cursor].iter().map(|(c, _)| char_width(*c)).sum();
@@ -154,7 +165,12 @@ fn subject_row(cards: &Cards, width: usize) -> Row {
             hidden = hidden.saturating_sub(char_width(cells.remove(0).0));
         }
     } else if tail.is_empty() {
-        cells.extend(cards.guidance(CardId::Subject).chars().map(|c| (c, dim())));
+        cells.extend(
+            composer
+                .guidance(MessageFieldId::Subject)
+                .chars()
+                .map(|c| (c, dim())),
+        );
     }
     let over = if length > SUBJECT_LIMIT {
         Style::new().fg(theme().pending)
@@ -214,14 +230,14 @@ fn text_lines(
         .collect()
 }
 
-/// The focused card's text, and the row of its cursor.
+/// The focused field's text, and the row of its cursor.
 fn cursor_lines(text: &TextArea<'_>, wrap: usize) -> (Vec<Line<'static>>, usize) {
     let rows = layout::rows(text.lines(), wrap);
     let row = layout::locate(text.lines(), &rows, text.cursor()).0;
     (text_lines(text, wrap, Some(text.cursor())), row)
 }
 
-/// What an empty focused card is for, dimmed, under the cursor.
+/// What an empty focused field is for, dimmed, under the cursor.
 fn guidance_lines(guidance: &str, wrap: usize) -> Vec<Line<'static>> {
     let lines = vec![guidance.to_owned()];
     let mut rows: Vec<Vec<_>> = layout::rows(&lines, wrap)
@@ -266,12 +282,12 @@ fn slice(text: &str, start: usize, end: usize) -> String {
     text.chars().skip(start).take(end - start).collect()
 }
 
-fn mark_span(mark: Mark, failed: bool) -> Span<'static> {
-    let (symbol, color) = match mark {
-        Mark::Done => ("✓", theme().done),
-        Mark::Focused => ("●", theme().pending),
-        Mark::Undecided => ("◐", theme().text),
-        Mark::Open => ("○", theme().dim),
+fn marker_span(marker: FieldMarker, failed: bool) -> Span<'static> {
+    let (symbol, color) = match marker {
+        FieldMarker::Done => ("✓", theme().done),
+        FieldMarker::Focused => ("●", theme().pending),
+        FieldMarker::Undecided => ("◐", theme().text),
+        FieldMarker::Open => ("○", theme().dim),
     };
     Span::styled(
         symbol,
@@ -280,7 +296,7 @@ fn mark_span(mark: Mark, failed: bool) -> Span<'static> {
 }
 
 /// Keeps the top row unless the cursor would leave the list, then shows the
-/// focused card from its first row when it fits.
+/// focused field from its first row when it fits.
 fn scroll(previous: usize, sheet: &Sheet, height: usize) -> usize {
     let height = height.max(1);
     let top = previous.min(sheet.rows.len().saturating_sub(height));
@@ -304,9 +320,9 @@ fn draw_row(frame: &mut Frame<'_>, area: Rect, row: &Row) {
             area,
         );
     }
-    if let Some(mark) = &row.mark {
+    if let Some(marker) = &row.marker {
         frame.render_widget(
-            Paragraph::new(mark.clone()),
+            Paragraph::new(marker.clone()),
             Rect {
                 x: area.x + 1,
                 width: area.width.saturating_sub(1),
@@ -337,23 +353,23 @@ fn draw_row(frame: &mut Frame<'_>, area: Rect, row: &Row) {
 
 /// What review waits on, or that it waits on nothing, and the cursor's column
 /// in the message.
-fn render_status(frame: &mut Frame<'_>, area: Rect, cards: &Cards) {
+fn render_status(frame: &mut Frame<'_>, area: Rect, composer: &MessageComposer) {
     let area = Rect {
         x: area.x + 1,
         width: area.width.saturating_sub(2),
         ..area
     };
-    let column = format!("col {}/{COMMIT_MESSAGE_WIDTH}", cursor_column(cards));
+    let column = format!("col {}/{COMMIT_MESSAGE_WIDTH}", cursor_column(composer));
     let [left, right] = Layout::horizontal([
         Constraint::Min(0),
         Constraint::Length(u16::try_from(column.width()).unwrap_or(u16::MAX)),
     ])
     .areas(area);
-    let to_go = cards.to_go();
+    let to_go = composer.to_go();
     let summary = if to_go.is_empty() {
         Span::styled("ready for review", Style::new().fg(theme().done))
     } else {
-        let names: Vec<_> = to_go.iter().map(|id| cards.name(*id)).collect();
+        let names: Vec<_> = to_go.iter().map(|id| composer.name(*id)).collect();
         Span::styled(
             format!("{} to go: {}", to_go.len(), names.join(", ")),
             dim(),
@@ -364,11 +380,11 @@ fn render_status(frame: &mut Frame<'_>, area: Rect, cards: &Cards) {
 }
 
 /// Where the cursor falls in the message's 80-column lines, counting from 1.
-fn cursor_column(cards: &Cards) -> usize {
-    let text = cards.text(cards.focus);
-    match cards.focus {
-        CardId::Subject => {
-            let key = cards.definition().id().as_str();
+fn cursor_column(composer: &MessageComposer) -> usize {
+    let text = composer.text(composer.focus);
+    match composer.focus {
+        MessageFieldId::Subject => {
+            let key = composer.definition().id().as_str();
             let before: usize = text.lines()[0]
                 .chars()
                 .take(text.cursor().1)
@@ -376,7 +392,7 @@ fn cursor_column(cards: &Cards) -> usize {
                 .sum();
             UnicodeWidthStr::width(key) + before + 1
         }
-        CardId::Property(_) | CardId::BreakingChange => layout::column(
+        MessageFieldId::Property(_) | MessageFieldId::BreakingChange => layout::column(
             text.lines(),
             text.cursor(),
             usize::from(COMMIT_MESSAGE_WIDTH),

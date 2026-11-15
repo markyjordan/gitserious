@@ -1,5 +1,5 @@
-use super::composer::Cards;
 use super::cite::{Cite, CiteAction};
+use super::composer::MessageComposer;
 use crate::confirmation::{Answer, ConfirmDialog, DISCARD};
 use gitserious_app::{AuthoredCommit, CitedCommit, CommitAuthoringContext, CommitTaxonomy};
 use gitserious_core::{CommitDraft, CommitMessage, CommitTypeDefinition, ConditionalApplicability};
@@ -66,7 +66,7 @@ pub(crate) struct AuthoringSession {
     pub(crate) type_catalog: TypeCatalogKind,
     pub(crate) preselected: bool,
     pub(crate) stage: Stage,
-    pub(crate) cards: Cards,
+    pub(crate) composer: MessageComposer,
     pub(crate) review: Option<ReviewState>,
     pub(crate) confirmation: ConfirmationAction,
     pub(crate) discard_dialog: ConfirmDialog,
@@ -104,7 +104,7 @@ impl AuthoringSession {
             } else {
                 Stage::SelectType
             },
-            cards: Cards::new(definitions[selected_type].clone()),
+            composer: MessageComposer::new(definitions[selected_type].clone()),
             review: None,
             confirmation: ConfirmationAction::Cancel,
             discard_dialog: ConfirmDialog::default(),
@@ -212,7 +212,7 @@ impl AuthoringSession {
             self.definitions = taxonomy.definitions().to_vec();
             self.selected_type = self.matching_types().first().copied().unwrap_or(0);
             if self.type_change.is_none() {
-                self.cards = Cards::new(self.definition().clone());
+                self.composer = MessageComposer::new(self.definition().clone());
                 self.review = None;
                 self.approved_message = None;
             }
@@ -240,7 +240,7 @@ impl AuthoringSession {
         }
     }
 
-    /// The stage on screen: a discard confirmation shows over the cards.
+    /// The stage on screen: a discard confirmation shows over the composer.
     pub(crate) fn visible_stage(&self) -> Stage {
         if self.stage == Stage::Confirm {
             Stage::Compose
@@ -269,7 +269,7 @@ impl AuthoringSession {
                 None
             }
             Event::Paste(text) if self.stage == Stage::Compose => {
-                self.cards.paste(&text);
+                self.composer.paste(&text);
                 None
             }
             Event::Resize(_, _)
@@ -325,7 +325,7 @@ impl AuthoringSession {
         match self.stage {
             Stage::SelectType => self.handle_picker_key(key),
             Stage::Compose if self.cite.is_some() => self.handle_cite_key(key),
-            Stage::Compose => self.handle_cards_key(key),
+            Stage::Compose => self.handle_composer_key(key),
             Stage::Review => self.handle_review_key(key),
             Stage::Confirm => self.handle_confirmation_key(key),
         }
@@ -343,7 +343,7 @@ impl AuthoringSession {
             CiteAction::Close => self.cite = None,
             CiteAction::Insert(text) => {
                 self.cite = None;
-                self.cards.paste(&text);
+                self.composer.paste(&text);
             }
         }
         None
@@ -369,9 +369,9 @@ impl AuthoringSession {
             KeyCode::Enter if !matches.is_empty() => {
                 self.filter.clear();
                 if self.type_change.take().is_some() {
-                    self.cards.retarget(self.definition().clone());
+                    self.composer.retarget(self.definition().clone());
                 } else {
-                    self.cards = Cards::new(self.definition().clone());
+                    self.composer = MessageComposer::new(self.definition().clone());
                 }
                 self.review = None;
                 self.stage = Stage::Compose;
@@ -400,10 +400,10 @@ impl AuthoringSession {
         None
     }
 
-    fn handle_cards_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
+    fn handle_composer_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
         if key.modifiers.contains(KeyModifiers::ALT) && matches!(key.code, KeyCode::Char('a' | 'n'))
         {
-            self.cards.decide(if key.code == KeyCode::Char('a') {
+            self.composer.decide(if key.code == KeyCode::Char('a') {
                 ConditionalApplicability::Applies
             } else {
                 ConditionalApplicability::DoesNotApply
@@ -422,7 +422,7 @@ impl AuthoringSession {
         }
         if control(key, 's') {
             let taxonomy = catalog_taxonomy(self.context.as_ref(), self.type_catalog);
-            if let Some((draft, message)) = self.cards.review(taxonomy) {
+            if let Some((draft, message)) = self.composer.review(taxonomy) {
                 self.approved_message = None;
                 self.review = Some(ReviewState {
                     draft,
@@ -450,7 +450,7 @@ impl AuthoringSession {
             self.cite = Some(Cite::new());
             return None;
         }
-        self.cards.key(key);
+        self.composer.key(key);
         None
     }
 
@@ -528,7 +528,7 @@ impl AuthoringSession {
         match self.confirmation {
             ConfirmationAction::Cancel => Some(AuthoringOutcome::Cancelled),
             ConfirmationAction::ChangeType => {
-                self.cards = Cards::new(self.definition().clone());
+                self.composer = MessageComposer::new(self.definition().clone());
                 self.review = None;
                 self.stage = Stage::SelectType;
                 None
@@ -542,11 +542,11 @@ impl AuthoringSession {
     }
 
     fn request_confirmation(&mut self, action: ConfirmationAction) -> Option<AuthoringOutcome> {
-        if !self.cards.dirty() {
+        if !self.composer.dirty() {
             return match action {
                 ConfirmationAction::Cancel => Some(AuthoringOutcome::Cancelled),
                 ConfirmationAction::ChangeType => {
-                    self.cards = Cards::new(self.definition().clone());
+                    self.composer = MessageComposer::new(self.definition().clone());
                     self.review = None;
                     self.stage = Stage::SelectType;
                     None
@@ -605,9 +605,9 @@ mod confirmation_tests {
         for (width, height) in [(60, 18), (100, 24)] {
             let mut session =
                 AuthoringSession::new(gitserious_core::built_in_commit_types(), Some(0));
-            session.cards.paste(": draft");
-            let text = session.cards.subject.lines().to_vec();
-            let cursor = session.cards.subject.cursor();
+            session.composer.paste(": draft");
+            let text = session.composer.subject.lines().to_vec();
+            let cursor = session.composer.subject.cursor();
             session.request_confirmation(ConfirmationAction::Cancel);
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| draw(frame, &mut session))?;
@@ -617,8 +617,8 @@ mod confirmation_tests {
             assert_eq!(session.stage, Stage::Confirm);
             session.handle_event(click(buttons.keep));
             assert_eq!(session.stage, Stage::Compose);
-            assert_eq!(session.cards.subject.lines(), text);
-            assert_eq!(session.cards.subject.cursor(), cursor);
+            assert_eq!(session.composer.subject.lines(), text);
+            assert_eq!(session.composer.subject.cursor(), cursor);
             assert!(session.discard_dialog.buttons.is_none());
             session.request_confirmation(ConfirmationAction::Cancel);
             terminal.draw(|frame| draw(frame, &mut session))?;
@@ -649,10 +649,10 @@ mod confirmation_tests {
             KeyModifiers::CONTROL,
         )));
         let messages = session
-            .cards
-            .notes
+            .composer
+            .feedback
             .iter()
-            .map(|note| note.message.as_str())
+            .map(|feedback| feedback.message.as_str())
             .collect::<Vec<_>>();
         assert_eq!(
             messages,
@@ -675,7 +675,7 @@ mod confirmation_tests {
         assert_eq!(session.confirmation, ConfirmationAction::ChangeType);
         session.handle_event(key(KeyCode::Esc));
         assert_eq!(session.stage, Stage::Compose);
-        assert!(session.cards.dirty());
+        assert!(session.composer.dirty());
         session.handle_event(key(KeyCode::Esc));
         let mut terminal = Terminal::new(TestBackend::new(100, 24))?;
         terminal
@@ -683,7 +683,7 @@ mod confirmation_tests {
         let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
         assert!(session.handle_event(click(buttons.confirm)).is_none());
         assert_eq!(session.stage, Stage::SelectType);
-        assert!(!session.cards.dirty());
+        assert!(!session.composer.dirty());
         Ok(())
     }
 }
@@ -728,7 +728,7 @@ mod tests {
             KeyModifiers::NONE,
         )));
         session.handle_event(Event::Paste(": Preserve this message".into()));
-        let original_lines = session.cards.subject.lines().to_vec();
+        let original_lines = session.composer.subject.lines().to_vec();
         session.handle_event(Event::Key(KeyEvent::new(
             KeyCode::Char('s'),
             KeyModifiers::CONTROL,
@@ -752,7 +752,7 @@ mod tests {
         );
         session.reopen_review(&authored);
         assert_eq!(session.stage, Stage::Review);
-        assert_eq!(session.cards.subject.lines(), original_lines);
+        assert_eq!(session.composer.subject.lines(), original_lines);
         assert_eq!(
             session
                 .review
@@ -764,7 +764,7 @@ mod tests {
         assert!(session.approved_message.is_none());
         session.handle_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
         assert_eq!(session.stage, Stage::Compose);
-        assert_eq!(session.cards.subject.lines(), original_lines);
+        assert_eq!(session.composer.subject.lines(), original_lines);
         Ok(())
     }
 

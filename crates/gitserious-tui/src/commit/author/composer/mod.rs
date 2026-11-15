@@ -1,4 +1,4 @@
-//! The cards a commit is written in: the subject line, one card for each
+//! The composer a commit is written in: the subject line, one field for each
 //! property of the chosen type, then breaking-change.
 
 mod layout;
@@ -18,9 +18,9 @@ use gitserious_core::{
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tui_textarea::{CursorMove, Input, TextArea};
 
-/// A card, in the order the page shows them.
+/// A field, in the order the page shows them.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CardId {
+pub(crate) enum MessageFieldId {
     Subject,
     /// The property at this index of the type's definition.
     Property(usize),
@@ -29,7 +29,7 @@ pub(crate) enum CardId {
 
 /// How the type asks for a property, with the answer to a conditional one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Policy {
+pub(crate) enum FieldRequirementState {
     Required,
     Recommended,
     Optional,
@@ -37,7 +37,7 @@ pub(crate) enum Policy {
     Conditional(Option<ConditionalApplicability>),
 }
 
-impl Policy {
+impl FieldRequirementState {
     const fn new(requirement: &PropertyRequirement) -> Self {
         match requirement {
             PropertyRequirement::Required => Self::Required,
@@ -47,7 +47,7 @@ impl Policy {
         }
     }
 
-    /// The word on the right of the card.
+    /// The word on the right of the field.
     pub(crate) const fn word(self) -> &'static str {
         match self {
             Self::Required => "required",
@@ -67,28 +67,28 @@ impl Policy {
     }
 }
 
-/// A property's card: its text, with its own undo history, and how the type
+/// A property's field: its text, with its own undo history, and how the type
 /// asks for it.
-pub(crate) struct Card {
+pub(crate) struct BodyFieldState {
     pub(crate) body: TextArea<'static>,
-    pub(crate) policy: Policy,
+    pub(crate) requirement: FieldRequirementState,
 }
 
-impl Card {
-    fn new(policy: Policy) -> Self {
+impl BodyFieldState {
+    fn new(requirement: FieldRequirementState) -> Self {
         Self {
             body: TextArea::default(),
-            policy,
+            requirement,
         }
     }
 }
 
-/// The glyph left of a card's key.
+/// The glyph left of a field's key.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Mark {
+pub(crate) enum FieldMarker {
     /// ✓ Nothing is left to write.
     Done,
-    /// ● The card being written.
+    /// ● The field being written.
     Focused,
     /// ◐ A conditional property nobody has said applies or not.
     Undecided,
@@ -96,26 +96,26 @@ pub(crate) enum Mark {
     Open,
 }
 
-/// What the last review attempt said about a card, shown under it until the
-/// card changes.
+/// What the last review attempt said about a field, shown under it until the
+/// field changes.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Note {
-    pub(crate) card: CardId,
+pub(crate) struct FieldFeedback {
+    pub(crate) field: MessageFieldId,
     pub(crate) severity: ValidationSeverity,
     pub(crate) message: String,
 }
 
-pub(crate) struct Cards {
+pub(crate) struct MessageComposer {
     definition: CommitTypeDefinition,
     /// What follows the type key on the subject line: `(scope): description`
     /// or `: description`. The type itself is not text, so it cannot be edited
     /// into another type.
     pub(crate) subject: TextArea<'static>,
-    pub(crate) properties: Vec<Card>,
-    pub(crate) breaking_change: Card,
-    pub(crate) focus: CardId,
-    pub(crate) notes: Vec<Note>,
-    /// The first row of the card list on screen, kept so the list scrolls only
+    pub(crate) properties: Vec<BodyFieldState>,
+    pub(crate) breaking_change: BodyFieldState,
+    pub(crate) focus: MessageFieldId,
+    pub(crate) feedback: Vec<FieldFeedback>,
+    /// The first row of the field list on screen, kept so the list scrolls only
     /// when the cursor would leave it.
     pub(crate) scroll: usize,
     /// The column bodies wrap at on screen, which ↑ and ↓ follow.
@@ -124,40 +124,40 @@ pub(crate) struct Cards {
     pub(crate) cursor_row: Option<u16>,
 }
 
-impl Cards {
+impl MessageComposer {
     pub(crate) fn new(definition: CommitTypeDefinition) -> Self {
         let properties = definition
             .properties()
             .iter()
-            .map(|property| Card::new(Policy::new(property.requirement())))
+            .map(|property| BodyFieldState::new(FieldRequirementState::new(property.requirement())))
             .collect();
         Self {
             definition,
             subject: TextArea::default(),
             properties,
-            breaking_change: Card::new(Policy::Optional),
-            focus: CardId::Subject,
-            notes: Vec::new(),
+            breaking_change: BodyFieldState::new(FieldRequirementState::Optional),
+            focus: MessageFieldId::Subject,
+            feedback: Vec::new(),
             scroll: 0,
             wrap: usize::from(COMMIT_MESSAGE_WIDTH),
             cursor_row: None,
         }
     }
 
-    /// Keeps the subject, breaking change, and every property card whose key
+    /// Keeps the subject, breaking change, and every property field whose key
     /// `definition` also asks for. A carried body makes a conditional property
     /// apply. A decision carries only when the new property is conditional too.
     pub(crate) fn retarget(&mut self, definition: CommitTypeDefinition) {
         let focus_key = match self.focus {
-            CardId::Subject => None,
-            CardId::BreakingChange => Some(String::from("breaking-change")),
-            CardId::Property(index) => self
+            MessageFieldId::Subject => None,
+            MessageFieldId::BreakingChange => Some(String::from("breaking-change")),
+            MessageFieldId::Property(index) => self
                 .definition
                 .properties()
                 .get(index)
                 .map(|property| property.key().as_str().to_owned()),
         };
-        let mut previous: Vec<(String, Card)> = self
+        let mut previous: Vec<(String, BodyFieldState)> = self
             .definition
             .properties()
             .iter()
@@ -172,23 +172,23 @@ impl Cards {
                     .iter()
                     .position(|(key, _)| key == property.key().as_str())
                     .map_or_else(
-                        || Card::new(Policy::new(property.requirement())),
+                        || BodyFieldState::new(FieldRequirementState::new(property.requirement())),
                         |index| adopt(previous.swap_remove(index).1, property.requirement()),
                     )
             })
             .collect();
         self.definition = definition;
-        self.notes.clear();
+        self.feedback.clear();
         self.scroll = 0;
         self.focus = match focus_key.as_deref() {
-            Some("breaking-change") => CardId::BreakingChange,
+            Some("breaking-change") => MessageFieldId::BreakingChange,
             Some(key) => self
                 .definition
                 .properties()
                 .iter()
                 .position(|property| property.key().as_str() == key)
-                .map_or(CardId::Subject, CardId::Property),
-            None => CardId::Subject,
+                .map_or(MessageFieldId::Subject, MessageFieldId::Property),
+            None => MessageFieldId::Subject,
         };
     }
 
@@ -196,57 +196,57 @@ impl Cards {
         &self.definition
     }
 
-    /// Every card, top to bottom.
-    pub(crate) fn ids(&self) -> impl Iterator<Item = CardId> + use<> {
-        std::iter::once(CardId::Subject)
-            .chain((0..self.properties.len()).map(CardId::Property))
-            .chain(std::iter::once(CardId::BreakingChange))
+    /// Every field, top to bottom.
+    pub(crate) fn ids(&self) -> impl Iterator<Item = MessageFieldId> + use<> {
+        std::iter::once(MessageFieldId::Subject)
+            .chain((0..self.properties.len()).map(MessageFieldId::Property))
+            .chain(std::iter::once(MessageFieldId::BreakingChange))
     }
 
-    /// The property card `id` names, which the subject is not.
-    pub(crate) fn card(&self, id: CardId) -> Option<&Card> {
+    /// The property field `id` names, which the subject is not.
+    pub(crate) fn field(&self, id: MessageFieldId) -> Option<&BodyFieldState> {
         match id {
-            CardId::Subject => None,
-            CardId::Property(index) => self.properties.get(index),
-            CardId::BreakingChange => Some(&self.breaking_change),
+            MessageFieldId::Subject => None,
+            MessageFieldId::Property(index) => self.properties.get(index),
+            MessageFieldId::BreakingChange => Some(&self.breaking_change),
         }
     }
 
-    fn card_mut(&mut self, id: CardId) -> Option<&mut Card> {
+    fn field_mut(&mut self, id: MessageFieldId) -> Option<&mut BodyFieldState> {
         match id {
-            CardId::Subject => None,
-            CardId::Property(index) => self.properties.get_mut(index),
-            CardId::BreakingChange => Some(&mut self.breaking_change),
+            MessageFieldId::Subject => None,
+            MessageFieldId::Property(index) => self.properties.get_mut(index),
+            MessageFieldId::BreakingChange => Some(&mut self.breaking_change),
         }
     }
 
-    pub(crate) fn text(&self, id: CardId) -> &TextArea<'static> {
-        self.card(id).map_or(&self.subject, |card| &card.body)
+    pub(crate) fn text(&self, id: MessageFieldId) -> &TextArea<'static> {
+        self.field(id).map_or(&self.subject, |field| &field.body)
     }
 
-    fn text_mut(&mut self, id: CardId) -> &mut TextArea<'static> {
+    fn text_mut(&mut self, id: MessageFieldId) -> &mut TextArea<'static> {
         match id {
-            CardId::Subject => &mut self.subject,
-            CardId::Property(index) => &mut self.properties[index].body,
-            CardId::BreakingChange => &mut self.breaking_change.body,
+            MessageFieldId::Subject => &mut self.subject,
+            MessageFieldId::Property(index) => &mut self.properties[index].body,
+            MessageFieldId::BreakingChange => &mut self.breaking_change.body,
         }
     }
 
-    /// The key a card shows, or `subject`.
-    pub(crate) fn name(&self, id: CardId) -> &str {
+    /// The key a field shows, or `subject`.
+    pub(crate) fn name(&self, id: MessageFieldId) -> &str {
         match id {
-            CardId::Subject => "subject",
-            CardId::Property(index) => self.definition.properties()[index].key().as_str(),
-            CardId::BreakingChange => "breaking-change",
+            MessageFieldId::Subject => "subject",
+            MessageFieldId::Property(index) => self.definition.properties()[index].key().as_str(),
+            MessageFieldId::BreakingChange => "breaking-change",
         }
     }
 
-    /// What an empty card says it is for while it is focused.
-    pub(crate) fn guidance(&self, id: CardId) -> &str {
+    /// What an empty field says it is for while it is focused.
+    pub(crate) fn guidance(&self, id: MessageFieldId) -> &str {
         match id {
-            CardId::Subject => "(scope): description",
-            CardId::Property(index) => self.definition.properties()[index].description(),
-            CardId::BreakingChange => {
+            MessageFieldId::Subject => "(scope): description",
+            MessageFieldId::Property(index) => self.definition.properties()[index].description(),
+            MessageFieldId::BreakingChange => {
                 "An incompatible change. Review adds ! before the subject's colon and a BREAKING CHANGE footer."
             }
         }
@@ -259,54 +259,57 @@ impl Cards {
                 .properties
                 .iter()
                 .chain(std::iter::once(&self.breaking_change))
-                .any(|card| !card.body.is_empty() || card.policy.decision().is_some())
+                .any(|field| !field.body.is_empty() || field.requirement.decision().is_some())
     }
 
-    pub(crate) fn mark(&self, id: CardId) -> Mark {
+    pub(crate) fn marker(&self, id: MessageFieldId) -> FieldMarker {
         if id == self.focus {
-            return Mark::Focused;
+            return FieldMarker::Focused;
         }
-        let Some(card) = self.card(id) else {
+        let Some(field) = self.field(id) else {
             return if self.subject_parts().is_ok() {
-                Mark::Done
+                FieldMarker::Done
             } else {
-                Mark::Open
+                FieldMarker::Open
             };
         };
-        match (card.policy, value(&card.body).is_some()) {
-            (Policy::Conditional(None), _) => Mark::Undecided,
-            (Policy::Conditional(Some(ConditionalApplicability::DoesNotApply)), _) | (_, true) => {
-                Mark::Done
-            }
-            (_, false) => Mark::Open,
+        match (field.requirement, value(&field.body).is_some()) {
+            (FieldRequirementState::Conditional(None), _) => FieldMarker::Undecided,
+            (
+                FieldRequirementState::Conditional(Some(ConditionalApplicability::DoesNotApply)),
+                _,
+            )
+            | (_, true) => FieldMarker::Done,
+            (_, false) => FieldMarker::Open,
         }
     }
 
-    /// The cards review waits on, top to bottom.
-    pub(crate) fn to_go(&self) -> Vec<CardId> {
+    /// The fields review waits on, top to bottom.
+    pub(crate) fn to_go(&self) -> Vec<MessageFieldId> {
         self.ids().filter(|id| self.blocks(*id)).collect()
     }
 
-    fn blocks(&self, id: CardId) -> bool {
-        let Some(card) = self.card(id) else {
+    fn blocks(&self, id: MessageFieldId) -> bool {
+        let Some(field) = self.field(id) else {
             return self.subject_parts().is_err();
         };
-        let empty = value(&card.body).is_none();
-        match card.policy {
-            Policy::Required | Policy::Conditional(Some(ConditionalApplicability::Applies)) => {
-                empty
+        let empty = value(&field.body).is_none();
+        match field.requirement {
+            FieldRequirementState::Required
+            | FieldRequirementState::Conditional(Some(ConditionalApplicability::Applies)) => empty,
+            FieldRequirementState::Conditional(None) => true,
+            FieldRequirementState::Recommended
+            | FieldRequirementState::Optional
+            | FieldRequirementState::Conditional(Some(ConditionalApplicability::DoesNotApply)) => {
+                false
             }
-            Policy::Conditional(None) => true,
-            Policy::Recommended
-            | Policy::Optional
-            | Policy::Conditional(Some(ConditionalApplicability::DoesNotApply)) => false,
         }
     }
 
-    /// Whether alt+a and alt+n answer the focused card.
+    /// Whether alt+a and alt+n answer the focused field.
     pub(crate) fn focused_conditional(&self) -> bool {
-        self.card(self.focus)
-            .is_some_and(|card| matches!(card.policy, Policy::Conditional(_)))
+        self.field(self.focus)
+            .is_some_and(|field| matches!(field.requirement, FieldRequirementState::Conditional(_)))
     }
 
     /// The subject line's scope and description.
@@ -316,13 +319,13 @@ impl Cards {
 
     /// The recommendations the last review attempt made, top to bottom.
     pub(crate) fn recommendations(&self) -> impl Iterator<Item = &str> {
-        self.notes
+        self.feedback
             .iter()
-            .filter(|note| note.severity == ValidationSeverity::Warning)
-            .map(|note| note.message.as_str())
+            .filter(|feedback| feedback.severity == ValidationSeverity::Warning)
+            .map(|feedback| feedback.message.as_str())
     }
 
-    /// Edits or moves through the focused card.
+    /// Edits or moves through the focused field.
     pub(crate) fn key(&mut self, key: KeyEvent) {
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
@@ -338,40 +341,40 @@ impl Cards {
     /// Inserts `text` at the cursor. The subject is one line, so it refuses a
     /// paste that has several.
     pub(crate) fn paste(&mut self, text: &str) {
-        if self.focus == CardId::Subject && text.contains(['\n', '\r']) {
+        if self.focus == MessageFieldId::Subject && text.contains(['\n', '\r']) {
             return;
         }
         self.edit(|area| area.insert_str(text));
     }
 
     /// Answers whether the focused conditional property applies. Saying it
-    /// does not clears the card, which ctrl+u undoes.
+    /// does not clears the field, which ctrl+u undoes.
     pub(crate) fn decide(&mut self, decision: ConditionalApplicability) {
         let focus = self.focus;
-        let Some(card) = self.card_mut(focus) else {
+        let Some(field) = self.field_mut(focus) else {
             return;
         };
-        let Policy::Conditional(answer) = &mut card.policy else {
+        let FieldRequirementState::Conditional(answer) = &mut field.requirement else {
             return;
         };
         *answer = Some(decision);
         if decision == ConditionalApplicability::DoesNotApply {
-            card.body.clear();
+            field.body.clear();
         }
-        self.notes.retain(|note| note.card != focus);
+        self.feedback.retain(|feedback| feedback.field != focus);
     }
 
-    /// Validates the cards as a draft and renders its message, or notes what
-    /// blocks it on the cards and focuses the first.
+    /// Validates the fields as a draft and renders its message, or notes what
+    /// blocks it on the fields and focuses the first.
     pub(crate) fn review(
         &mut self,
         taxonomy: Option<&CommitTaxonomy>,
     ) -> Option<(CommitDraft, CommitMessage)> {
-        self.notes.clear();
+        self.feedback.clear();
         let draft = match self.draft() {
             Ok(draft) => draft,
             Err(message) => {
-                self.note(CardId::Subject, ValidationSeverity::Error, message);
+                self.add_feedback(MessageFieldId::Subject, ValidationSeverity::Error, message);
                 return self.reject();
             }
         };
@@ -380,13 +383,13 @@ impl Cards {
             |taxonomy| taxonomy.validate(&draft),
         );
         for error in report.errors() {
-            let card = self.error_card(error);
-            self.note(card, ValidationSeverity::Error, error.to_string());
+            let field = self.error_field(error);
+            self.add_feedback(field, ValidationSeverity::Error, error.to_string());
         }
         for warning in report.warnings() {
-            let card = self.property_card(issue_key(warning.kind()));
-            self.note(
-                card,
+            let field = self.property_field(issue_key(warning.kind()));
+            self.add_feedback(
+                field,
                 ValidationSeverity::Warning,
                 warning.kind().to_string(),
             );
@@ -404,11 +407,11 @@ impl Cards {
             .properties()
             .iter()
             .zip(&self.properties)
-            .map(|(property, card)| {
+            .map(|(property, field)| {
                 PropertyResponse::new(
                     property.key().clone(),
-                    value(&card.body),
-                    card.policy.decision(),
+                    value(&field.body),
+                    field.requirement.decision(),
                 )
             })
             .collect();
@@ -421,9 +424,14 @@ impl Cards {
         })
     }
 
-    fn note(&mut self, card: CardId, severity: ValidationSeverity, message: String) {
-        self.notes.push(Note {
-            card,
+    fn add_feedback(
+        &mut self,
+        field: MessageFieldId,
+        severity: ValidationSeverity,
+        message: String,
+    ) {
+        self.feedback.push(FieldFeedback {
+            field,
             severity,
             message,
         });
@@ -431,31 +439,31 @@ impl Cards {
 
     fn reject(&mut self) -> Option<(CommitDraft, CommitMessage)> {
         if let Some(first) = self.ids().find(|id| {
-            self.notes
-                .iter()
-                .any(|note| note.card == *id && note.severity == ValidationSeverity::Error)
+            self.feedback.iter().any(|feedback| {
+                feedback.field == *id && feedback.severity == ValidationSeverity::Error
+            })
         }) {
             self.focus = first;
         }
         None
     }
 
-    fn error_card(&self, error: &CommitValidationError) -> CardId {
+    fn error_field(&self, error: &CommitValidationError) -> MessageFieldId {
         match error {
             CommitValidationError::UnknownProperty(key)
-            | CommitValidationError::MissingRequired(key) => self.property_card(key),
-            CommitValidationError::PropertyResponse(kind) => self.property_card(issue_key(kind)),
+            | CommitValidationError::MissingRequired(key) => self.property_field(key),
+            CommitValidationError::PropertyResponse(kind) => self.property_field(issue_key(kind)),
             CommitValidationError::UnknownCommitType { .. }
-            | CommitValidationError::TypeMismatch { .. } => CardId::Subject,
+            | CommitValidationError::TypeMismatch { .. } => MessageFieldId::Subject,
         }
     }
 
-    fn property_card(&self, key: &PropertyKey) -> CardId {
+    fn property_field(&self, key: &PropertyKey) -> MessageFieldId {
         self.definition
             .properties()
             .iter()
             .position(|property| property.key() == key)
-            .map_or(CardId::Subject, CardId::Property)
+            .map_or(MessageFieldId::Subject, MessageFieldId::Property)
     }
 
     fn edit(&mut self, change: impl FnOnce(&mut TextArea<'static>) -> bool) {
@@ -463,11 +471,11 @@ impl Cards {
         if !change(self.text_mut(focus)) {
             return;
         }
-        self.notes.retain(|note| note.card != focus);
-        // Writing in a conditional card answers that it applies.
-        if let Some(card) = self.card_mut(focus)
-            && let Policy::Conditional(answer) = &mut card.policy
-            && value(&card.body).is_some()
+        self.feedback.retain(|feedback| feedback.field != focus);
+        // Writing in a conditional field answers that it applies.
+        if let Some(field) = self.field_mut(focus)
+            && let FieldRequirementState::Conditional(answer) = &mut field.requirement
+            && value(&field.body).is_some()
         {
             *answer = Some(ConditionalApplicability::Applies);
         }
@@ -475,7 +483,7 @@ impl Cards {
 
     fn move_vertically(&mut self, down: bool) {
         let text = self.text(self.focus);
-        let within = (self.focus != CardId::Subject)
+        let within = (self.focus != MessageFieldId::Subject)
             .then(|| layout::vertical(text.lines(), text.cursor(), self.wrap, down))
             .flatten();
         match within {
@@ -488,10 +496,10 @@ impl Cards {
         }
     }
 
-    /// Enter leaves the subject for the next card and inserts a line break
+    /// Enter leaves the subject for the next field and inserts a line break
     /// in every body, including an empty one.
     fn enter(&mut self) {
-        if self.focus == CardId::Subject {
+        if self.focus == MessageFieldId::Subject {
             self.step(true);
         } else {
             self.edit(|text| {
@@ -501,7 +509,7 @@ impl Cards {
         }
     }
 
-    /// Focuses the next card at its start, or the previous card at its end.
+    /// Focuses the next field at its start, or the previous field at its end.
     fn step(&mut self, down: bool) {
         let ids: Vec<_> = self.ids().collect();
         let position = ids.iter().position(|id| *id == self.focus).unwrap_or(0);
@@ -526,17 +534,18 @@ impl Cards {
     }
 }
 
-fn adopt(mut card: Card, requirement: &PropertyRequirement) -> Card {
-    card.policy = match (card.policy, Policy::new(requirement)) {
-        (Policy::Conditional(decision @ Some(_)), Policy::Conditional(_)) => {
-            Policy::Conditional(decision)
+fn adopt(mut field: BodyFieldState, requirement: &PropertyRequirement) -> BodyFieldState {
+    field.requirement = match (field.requirement, FieldRequirementState::new(requirement)) {
+        (
+            FieldRequirementState::Conditional(decision @ Some(_)),
+            FieldRequirementState::Conditional(_),
+        ) => FieldRequirementState::Conditional(decision),
+        (_, FieldRequirementState::Conditional(_)) if value(&field.body).is_some() => {
+            FieldRequirementState::Conditional(Some(ConditionalApplicability::Applies))
         }
-        (_, Policy::Conditional(_)) if value(&card.body).is_some() => {
-            Policy::Conditional(Some(ConditionalApplicability::Applies))
-        }
-        (_, policy) => policy,
+        (_, requirement) => requirement,
     };
-    card
+    field
 }
 
 /// Reads `(scope): description` or `: description`, the subject after its type.
@@ -561,7 +570,7 @@ fn parse_subject(tail: &str) -> Result<(Option<CommitScope>, CommitSubject), Str
     Ok((scope, subject))
 }
 
-/// A card's text as the message carries it: no trailing whitespace on any
+/// A field's text as the message carries it: no trailing whitespace on any
 /// line and no blank lines around it.
 fn value(text: &TextArea<'_>) -> Option<PropertyValue> {
     let lines = text.lines();

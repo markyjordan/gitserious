@@ -1,4 +1,4 @@
-//! The cite list opened by `@` while the cards are on screen.
+//! The cite list opened by `@` while the composer is on screen.
 
 use gitserious_app::CitedCommit;
 use ratatui::Frame;

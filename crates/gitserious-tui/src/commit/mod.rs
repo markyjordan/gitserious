@@ -304,7 +304,7 @@ impl CommitView {
             || self
                 .authoring
                 .as_ref()
-                .is_some_and(|session| session.cards.dirty())
+                .is_some_and(|session| session.composer.dirty())
     }
 
     /// Hands the approved commit to Git with the terminal restored, since hooks and
