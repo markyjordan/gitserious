@@ -274,7 +274,7 @@ fn long_body_scrolls_with_the_cursor_and_ready_status_survives() -> Result<(), B
         session.composer.focus = MessageFieldId::Property(0);
         paste(&mut session, &"\nbody line".repeat(50));
         let buffer = rendered_buffer(&mut session, width, height)?;
-        assert!(session.composer.scroll > 0);
+        assert!(session.composer.layout().scroll_offset > 0);
         assert!(!reversed_positions(&buffer, width, height).is_empty());
         modified_press(&mut session, KeyCode::Home, KeyModifiers::CONTROL);
         let buffer = rendered_buffer(&mut session, width, height)?;

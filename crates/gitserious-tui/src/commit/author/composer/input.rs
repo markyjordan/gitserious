@@ -65,7 +65,7 @@ impl MessageComposer {
     fn move_vertically(&mut self, down: bool) {
         let text = self.text(self.focus);
         let within = (self.focus != MessageFieldId::Subject)
-            .then(|| layout::vertical(text.lines(), text.cursor(), self.wrap, down))
+            .then(|| layout::vertical(text.lines(), text.cursor(), self.layout.wrap_width, down))
             .flatten();
         match within {
             Some((line, column)) => {

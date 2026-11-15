@@ -81,7 +81,7 @@ crates/gitserious-tui/src/
 | `commit/author/composer/` | `MessageComposer`: the fixed subject type and editable tail, property fields and their applicability, per-field text histories, validation feedback, and draft construction | Taxonomy selection and Git submission |
 | `commit/author/composer/field.rs` | `MessageFieldId`, `BodyFieldState`, `FieldRequirementState`, `FieldMarker`, and `FieldFeedback` | Which field is focused, which the composer decides |
 | `commit/author/composer/input.rs` | The keys and pastes the composer takes: editing, moving between rows and fields, and answering a conditional property | Keys the session or the citation picker takes first |
-| `commit/author/composer/layout.rs` | Wrapped rows, vertical cursor movement, and message columns | Terminal drawing |
+| `commit/author/composer/layout.rs` | Wrapped rows, vertical cursor movement, message columns, and `ComposerLayout`: the wrap width, scroll offset, and cursor row the last frame measured, which up and down and the citation picker read | Terminal drawing |
 | `commit/author/composer/render.rs` | Field markers, requirement words, guidance, counters, validation feedback, and scrolling | Draft validation rules |
 | [`config/`](../../../crates/gitserious-tui/src/config/mod.rs) | Library editing, the read-only Project view, its own palette, its modals, and which keys it gives the root (`RootKeys`) | Opening Home's editor |
 | [`help/`](../../../crates/gitserious-tui/src/help/mod.rs) | Help pages, the sidebar, scrolling, keys, and clicks | Which page opens first |

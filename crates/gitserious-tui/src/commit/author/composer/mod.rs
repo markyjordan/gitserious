@@ -15,12 +15,14 @@ pub(crate) use render::render;
 
 use gitserious_app::CommitTaxonomy;
 use gitserious_core::{
-    COMMIT_MESSAGE_WIDTH, CommitDraft, CommitMessage, CommitScope, CommitSubject,
-    CommitSubjectError, CommitTypeDefinition, CommitValidationError, ConditionalApplicability,
-    PropertyKey, PropertyRequirement, PropertyResponse, PropertyValidationIssueKind, PropertyValue,
+    CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitSubjectError,
+    CommitTypeDefinition, CommitValidationError, ConditionalApplicability, PropertyKey,
+    PropertyRequirement, PropertyResponse, PropertyValidationIssueKind, PropertyValue,
     ValidationSeverity, validate_commit_draft,
 };
 use tui_textarea::TextArea;
+
+use layout::ComposerLayout;
 
 pub(crate) struct MessageComposer {
     definition: CommitTypeDefinition,
@@ -32,13 +34,7 @@ pub(crate) struct MessageComposer {
     pub(crate) breaking_change: BodyFieldState,
     pub(crate) focus: MessageFieldId,
     pub(crate) feedback: Vec<FieldFeedback>,
-    /// The first row of the field list on screen, kept so the list scrolls only
-    /// when the cursor would leave it.
-    pub(crate) scroll: usize,
-    /// The column bodies wrap at on screen, which ↑ and ↓ follow.
-    pub(crate) wrap: usize,
-    /// The screen row the cursor was last drawn on, which the citation picker opens under.
-    pub(crate) cursor_row: Option<u16>,
+    layout: ComposerLayout,
 }
 
 impl MessageComposer {
@@ -55,9 +51,7 @@ impl MessageComposer {
             breaking_change: BodyFieldState::new(FieldRequirementState::Optional),
             focus: MessageFieldId::Subject,
             feedback: Vec::new(),
-            scroll: 0,
-            wrap: usize::from(COMMIT_MESSAGE_WIDTH),
-            cursor_row: None,
+            layout: ComposerLayout::default(),
         }
     }
 
@@ -96,7 +90,7 @@ impl MessageComposer {
             .collect();
         self.definition = definition;
         self.feedback.clear();
-        self.scroll = 0;
+        self.layout.scroll_offset = 0;
         self.focus = match focus_key.as_deref() {
             Some("breaking-change") => MessageFieldId::BreakingChange,
             Some(key) => self
@@ -107,6 +101,11 @@ impl MessageComposer {
                 .map_or(MessageFieldId::Subject, MessageFieldId::Property),
             None => MessageFieldId::Subject,
         };
+    }
+
+    /// What the last frame measured.
+    pub(crate) const fn layout(&self) -> ComposerLayout {
+        self.layout
     }
 
     pub(crate) const fn definition(&self) -> &CommitTypeDefinition {

@@ -1,7 +1,33 @@
 //! Where a field's text breaks into rows, which drawing, ↑ and ↓, and the
 //! column count all read.
 
+use gitserious_core::COMMIT_MESSAGE_WIDTH;
 use unicode_width::UnicodeWidthChar;
+
+/// What the composer's last frame measured. The renderer writes it each
+/// frame, ↑ and ↓ follow its wrap width, and the citation picker opens beside
+/// its cursor row, so all three agree on the frame the user sees.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ComposerLayout {
+    /// The column bodies wrap at on screen.
+    pub(super) wrap_width: usize,
+    /// The first row of the field list on screen, kept so the list scrolls only
+    /// when the cursor would leave it.
+    pub(super) scroll_offset: usize,
+    /// The screen row the cursor was last drawn on.
+    pub(crate) cursor_row: Option<u16>,
+}
+
+impl Default for ComposerLayout {
+    /// Before the first frame: the message's own width, unscrolled, with no cursor on screen.
+    fn default() -> Self {
+        Self {
+            wrap_width: usize::from(COMMIT_MESSAGE_WIDTH),
+            scroll_offset: 0,
+            cursor_row: None,
+        }
+    }
+}
 
 /// One row of a wrapped line: its chars from `start` up to `end`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
