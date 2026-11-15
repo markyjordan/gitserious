@@ -43,6 +43,9 @@ crates/gitserious-tui/src/
 │       ├── state.rs
 │       ├── render.rs
 │       ├── type_picker.rs
+│       ├── citation_picker.rs
+│       ├── components/
+│       │   └── selection_panel.rs
 │       └── composer/
 │           ├── mod.rs
 │           ├── layout.rs
@@ -71,6 +74,7 @@ crates/gitserious-tui/src/
 | [`commit/`](../../../crates/gitserious-tui/src/commit/mod.rs) | The status tree, its keys and hints, the Git result and staged views, palette commands, the in-page editor and its staged header, and failed-review retention | Suspending the terminal for submission, which the adapter starts |
 | `commit/author/state.rs` | The authoring stages, the type picker's selection, filter, and clicks, changing type with ctrl+t, review, discard confirmation, and giving an open citation picker the keys first | Field text layout and draft field parsing |
 | `commit/author/type_picker.rs` | Drawing the type picker: the subject filter, the taxonomy tabs and the rectangles clicks hit, the type rows, and the selected type's description | Which type is selected, which the session decides |
+| `commit/author/components/selection_panel.rs` | `SelectionPanel`: the band, the two-column inset, the selected row highlighted from edge to edge, the tab style, and the visible-offset rule that both pickers draw with | Where a panel goes, its height, what its rows say, and what choosing one does |
 | `commit/author/citation_picker.rs` | `CitationPickerState`: the list opened by `@`, its query, its Files or Commits source, its selection, the reference Enter inserts, and its drawing | Reading the worktree. The Commit page supplies the paths and commits |
 | `commit/author/composer/` | `MessageComposer`: the fixed subject type and editable tail, property fields and their applicability, per-field text histories, validation feedback, and draft construction | Taxonomy selection and Git submission |
 | `commit/author/composer/layout.rs` | Wrapped rows, vertical cursor movement, and message columns | Terminal drawing |
@@ -92,7 +96,7 @@ Name a module or type after the job it does on screen, not after how it happens 
 | Editor or composer | `Editor`, `Composer` | An aggregate that edits one document | `InitEditor`, `MessageComposer` |
 | Field | `Field`, `FieldState` | One editable value in a form or message, apart from how it is drawn | `MessageFieldId`, `BodyFieldState` |
 | Picker | `Picker` | A component that chooses one item and acts on the choice | `CitationPickerState` |
-| Panel, outline, inspector, list | `Panel`, `Outline`, `Inspector`, `List` | A distinct region of a view | `config/taxonomies/outline.rs`, `inspector.rs` |
+| Panel, outline, inspector, list | `Panel`, `Outline`, `Inspector`, `List` | A distinct region of a view | `SelectionPanel`, `config/taxonomies/outline.rs`, `inspector.rs` |
 | Dialog | `Dialog` | A modal choice | `ConfirmDialog` |
 | Layout, viewport, marker, feedback | `Layout`, `Viewport`, `Marker`, `Feedback` | State that exists only for drawing | |
 | Widget | `Widget` | A Ratatui rendering primitive, or a type that implements `Widget` or `StatefulWidget` | |

@@ -3,14 +3,13 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
+use super::components::selection_panel::{INSET, SelectionPanel, tab_style, visible_offset};
 use super::render::inset_horizontally;
 use super::state::{AuthoringSession, CatalogTab};
-use crate::theme::{popup_selected_style, theme};
+use crate::theme::theme;
 
-/// Columns between the picker panel's edge and its text.
-const PICKER_PADDING: u16 = 2;
 /// The picker panel's rows besides the type list and the description: padding
 /// above and below, the taxonomy row, and a blank row on each side of the list.
 const PICKER_FIXED_ROWS: u16 = 5;
@@ -28,7 +27,7 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringS
     .areas(area);
     render_subject_filter(frame, subject, &session.filter);
     let panel = inset_horizontally(below, 1);
-    let content_width = panel.width.saturating_sub(PICKER_PADDING * 2);
+    let content_width = panel.width.saturating_sub(INSET * 2);
     let key_width = picker_key_width(&session.definitions, content_width);
     let detail_width = content_width.saturating_sub(key_width);
     // The tallest description sizes the row, so moving the selection never moves the list.
@@ -53,10 +52,7 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringS
             .min(panel.height),
         ..panel
     };
-    frame.render_widget(
-        Block::default().style(Style::new().fg(theme().text).bg(theme().band)),
-        panel,
-    );
+    let surface = SelectionPanel::draw(frame, panel);
     let [_, taxonomies, _, list, _, detail] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
@@ -65,7 +61,7 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringS
         Constraint::Length(1),
         Constraint::Length(detail_height),
     ])
-    .areas(inset_horizontally(panel, PICKER_PADDING));
+    .areas(surface.content());
     render_catalog_tabs(frame, taxonomies, session);
     if matches.is_empty() {
         frame.render_widget(
@@ -80,19 +76,19 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringS
         .position(|index| *index == session.selected_type)
         .unwrap_or(0);
     let rows = usize::from(list.height);
-    let mut offset = session.type_offset.min(matches.len().saturating_sub(rows));
-    if position < offset {
-        offset = position;
-    } else if position >= offset + rows {
-        offset = position + 1 - rows;
-    }
+    // A taller list scrolls back up first, so it never shows blank rows below the last type.
+    let offset = visible_offset(
+        position,
+        session.type_offset.min(matches.len().saturating_sub(rows)),
+        rows,
+    );
     session.type_offset = offset;
     for (y, index) in (list.y..list.bottom()).zip(matches.into_iter().skip(offset)) {
         let definition = &session.definitions[index];
-        let row = Rect::new(panel.x, y, panel.width, 1);
+        let row = surface.row(y);
         let (key_style, property_style) = if index == session.selected_type {
-            frame.render_widget(Block::default().style(popup_selected_style()), row);
-            (popup_selected_style(), popup_selected_style())
+            let style = surface.select(frame, y);
+            (style, style)
         } else {
             (Style::new().fg(theme().text), Style::new().fg(theme().dim))
         };
@@ -132,8 +128,8 @@ fn render_subject_filter(frame: &mut Frame<'_>, area: Rect, filter: &str) {
         area,
     );
     let text = Rect {
-        x: area.x.saturating_add(PICKER_PADDING + 1),
-        width: area.width.saturating_sub(PICKER_PADDING + 1),
+        x: area.x.saturating_add(INSET + 1),
+        width: area.width.saturating_sub(INSET + 1),
         ..area
     };
     let room = usize::from(text.width.saturating_sub(1));
@@ -184,14 +180,10 @@ fn render_catalog_tabs(frame: &mut Frame<'_>, area: Rect, session: &mut Authorin
         let label = session.catalog_label(kind);
         let width = label_width(&label).min(area.right().saturating_sub(x));
         let tab = Rect::new(x, area.y, width, 1);
-        let style = if session.type_catalog == kind {
-            Style::new()
-                .fg(theme().text)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-        } else {
-            Style::new().fg(theme().dim)
-        };
-        frame.render_widget(Paragraph::new(label).style(style), tab);
+        frame.render_widget(
+            Paragraph::new(label).style(tab_style(session.type_catalog == kind)),
+            tab,
+        );
         session.catalog_tabs.push(CatalogTab { kind, area: tab });
         x = x.saturating_add(width).saturating_add(TAB_GAP);
     }

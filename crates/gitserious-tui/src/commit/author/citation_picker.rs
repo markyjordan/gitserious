@@ -6,13 +6,12 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::theme::{popup_selected_style, theme};
+use super::components::selection_panel::{INSET, SelectionPanel, tab_style, visible_offset};
+use crate::theme::theme;
 
-/// Columns between the panel's edge and its text.
-const PADDING: u16 = 2;
 /// The panel's rows besides the list: padding above and below, the source row,
 /// the query row, and a blank row on each side of the list.
 const FIXED_ROWS: u16 = 6;
@@ -151,14 +150,11 @@ pub(crate) fn render(
         .unwrap_or(1)
         .saturating_add(FIXED_ROWS);
     let panel = place(area, cursor_row, wanted);
-    if panel.width <= PADDING * 2 || panel.height == 0 {
+    if panel.width <= INSET * 2 || panel.height == 0 {
         return;
     }
     frame.render_widget(Clear, panel);
-    frame.render_widget(
-        Block::default().style(Style::new().fg(theme().text).bg(theme().band)),
-        panel,
-    );
+    let surface = SelectionPanel::draw(frame, panel);
     let [_, sources, _, list, _, query] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
@@ -169,7 +165,7 @@ pub(crate) fn render(
     ])
     .areas(Rect {
         height: panel.height.saturating_sub(1),
-        ..inset(panel)
+        ..surface.content()
     });
     frame.render_widget(Paragraph::new(source_line(picker.source)), sources);
     frame.render_widget(Paragraph::new(query_line(picker, query.width)), query);
@@ -191,11 +187,7 @@ pub(crate) fn render(
         (list.y..list.bottom()).zip(matches.iter().enumerate().skip(picker.offset))
     {
         let style = if index == picker.selected {
-            frame.render_widget(
-                Block::default().style(popup_selected_style()),
-                Rect::new(panel.x, y, panel.width, 1),
-            );
-            popup_selected_style()
+            surface.select(frame, y)
         } else {
             Style::new().fg(theme().text)
         };
@@ -233,15 +225,6 @@ fn place(area: Rect, cursor_row: Option<u16>, wanted: u16) -> Rect {
     }
 }
 
-fn inset(panel: Rect) -> Rect {
-    Rect::new(
-        panel.x + PADDING,
-        panel.y,
-        panel.width.saturating_sub(PADDING * 2),
-        panel.height,
-    )
-}
-
 fn matching(
     picker: &CitationPickerState,
     paths: &[String],
@@ -271,18 +254,7 @@ fn matching(
 }
 
 fn source_line(source: CitationSource) -> Line<'static> {
-    let paint = |name: &'static str, active: bool| {
-        Span::styled(
-            name,
-            if active {
-                Style::new()
-                    .fg(theme().text)
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-            } else {
-                Style::new().fg(theme().dim)
-            },
-        )
-    };
+    let paint = |name: &'static str, active: bool| Span::styled(name, tab_style(active));
     Line::from(vec![
         paint("Files", source == CitationSource::Files),
         Span::raw("  "),
@@ -312,17 +284,4 @@ fn query_line(picker: &CitationPickerState, width: u16) -> Line<'static> {
         shown.to_owned(),
         Style::new().fg(theme().text).add_modifier(Modifier::BOLD),
     )
-}
-
-fn visible_offset(selected: usize, offset: usize, rows: usize) -> usize {
-    if rows == 0 {
-        return 0;
-    }
-    if selected < offset {
-        selected
-    } else if selected >= offset.saturating_add(rows) {
-        selected + 1 - rows
-    } else {
-        offset
-    }
 }
