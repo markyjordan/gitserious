@@ -309,3 +309,45 @@ fn a_long_subject_keeps_its_counter_and_cursor_visible() -> Result<(), Box<dyn E
     assert!(!reversed_positions(&buffer, 80, 24).is_empty());
     Ok(())
 }
+
+#[test]
+fn a_resize_rewraps_the_body_so_down_and_the_caret_follow_the_new_rows()
+-> Result<(), Box<dyn Error>> {
+    let mut session = session();
+    press(&mut session, KeyCode::Down);
+    paste(&mut session, &"word ".repeat(30));
+    let down_from_the_start = |session: &mut AuthoringSession,
+                               width: u16,
+                               height: u16|
+     -> Result<usize, Box<dyn Error>> {
+        modified_press(session, KeyCode::Home, KeyModifiers::CONTROL);
+        rendered(session, width, height)?;
+        press(session, KeyCode::Down);
+        Ok(session.composer.text(session.composer.focus).cursor().1)
+    };
+    let wide = down_from_the_start(&mut session, 100, 30)?;
+    let narrow = down_from_the_start(&mut session, 60, 24)?;
+    assert!(narrow > 0 && narrow < wide, "{narrow} then {wide}");
+    assert_eq!(narrow % 5, 0, "a row starts at a word");
+
+    let buffer = rendered_buffer(&mut session, 60, 24)?;
+    let caret = reversed_positions(&buffer, 60, 24);
+    assert_eq!(caret.len(), 1, "{caret:?}");
+    assert_eq!(
+        buffer[caret[0]].symbol(),
+        "w",
+        "the caret sits on the row's first word"
+    );
+    let first = find_ascii(&buffer, 60, 24, "word").ok_or("missing body")?;
+    assert_eq!(
+        caret[0],
+        (first.0, first.1 + 1),
+        "the caret starts the second row"
+    );
+    assert_eq!(
+        down_from_the_start(&mut session, 100, 30)?,
+        wide,
+        "widening again restores the wide rows"
+    );
+    Ok(())
+}

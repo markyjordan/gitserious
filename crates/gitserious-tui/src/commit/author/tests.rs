@@ -1472,3 +1472,108 @@ fn both_pickers_draw_the_same_band_inset_and_highlight() -> Result<(), Box<dyn E
     }
     Ok(())
 }
+
+/// The rows the citation panel covers, read from its band at `column`.
+fn panel_rows(buffer: &Buffer, column: u16, height: u16) -> Vec<u16> {
+    (0..height)
+        .filter(|row| {
+            let bg = buffer[(column, *row)].bg;
+            bg == theme().band || bg == theme().cursor
+        })
+        .collect()
+}
+
+#[test]
+fn the_citation_panel_keeps_its_height_as_the_query_narrows() -> Result<(), Box<dyn Error>> {
+    let paths = [
+        "src/a.rs",
+        "src/b.rs",
+        "src/c.rs",
+        "README.md",
+        "Cargo.toml",
+    ];
+    let mut session = citing(&paths);
+    press(&mut session, KeyCode::Char('@'));
+    let rows = |session: &mut AuthoringSession| -> Result<Vec<u16>, Box<dyn Error>> {
+        Ok(panel_rows(&rendered_buffer(session, 80, 24)?, 2, 24))
+    };
+    let full = rows(&mut session)?;
+    assert_eq!(
+        full.len(),
+        11,
+        "five rows, the source row, the query row, and padding"
+    );
+    typed(&mut session, "src");
+    assert_eq!(rows(&mut session)?, full, "three matches");
+    typed(&mut session, "/a");
+    assert_eq!(rows(&mut session)?, full, "one match");
+    typed(&mut session, "zz");
+    assert_eq!(rows(&mut session)?, full, "no match");
+    Ok(())
+}
+
+#[test]
+fn no_composer_text_shows_through_the_citation_panel() -> Result<(), Box<dyn Error>> {
+    let mut session = citing(&["src/a.rs", "src/b.rs", "src/c.rs"]);
+    press(&mut session, KeyCode::Down);
+    paste(
+        &mut session,
+        &format!(
+            "{}\nsee ",
+            "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\n".repeat(3)
+        ),
+    );
+    for _ in 0..3 {
+        press(&mut session, KeyCode::Up);
+    }
+    press(&mut session, KeyCode::Char('@'));
+    let buffer = rendered_buffer(&mut session, 80, 24)?;
+    let rows = panel_rows(&buffer, 2, 24);
+    assert!(!rows.is_empty());
+    let (first, last) = panel_columns(&buffer, 80, rows[0]).ok_or("missing panel")?;
+    for row in &rows {
+        let text: String = (first..=last).map(|x| buffer[(x, *row)].symbol()).collect();
+        assert!(!text.contains('q'), "row {row}: {text}");
+    }
+    assert!(
+        rendered(&mut session, 80, 24)?.contains("qqqq"),
+        "the body still shows outside the panel"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_citation_panel_follows_the_caret_after_the_composer_scrolls() -> Result<(), Box<dyn Error>> {
+    let mut session = citing(&["src/net/retry.rs"]);
+    press(&mut session, KeyCode::Down);
+    let lines: Vec<String> = (0..40).map(|index| format!("line {index:02}")).collect();
+    paste(&mut session, &lines.join("\n"));
+    let open_at = |session: &mut AuthoringSession,
+                   ups: usize,
+                   caret_text: &str|
+     -> Result<(u16, Vec<u16>, u16), Box<dyn Error>> {
+        for _ in 0..ups {
+            press(session, KeyCode::Up);
+        }
+        rendered(session, 80, 24)?;
+        press(session, KeyCode::Char('@'));
+        let buffer = rendered_buffer(session, 80, 24)?;
+        assert!(
+            find_ascii(&buffer, 80, 24, "line 00").is_none(),
+            "the composer has scrolled"
+        );
+        let (_, caret) = find_ascii(&buffer, 80, 24, caret_text).ok_or("missing caret line")?;
+        let (_, sources) = find_ascii(&buffer, 80, 24, "Files").ok_or("missing panel")?;
+        press(session, KeyCode::Esc);
+        Ok((caret, panel_rows(&buffer, 2, 24), sources))
+    };
+    let (caret, panel, _) = open_at(&mut session, 12, "line 27")?;
+    assert_eq!(
+        panel.last(),
+        Some(&(caret - 2)),
+        "above, one blank row over the caret"
+    );
+    let (caret, _, sources) = open_at(&mut session, 8, "line 19")?;
+    assert_eq!(sources, caret + 3, "under, one blank row below the caret");
+    Ok(())
+}
