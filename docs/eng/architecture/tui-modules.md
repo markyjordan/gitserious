@@ -48,6 +48,8 @@ crates/gitserious-tui/src/
 │       │   └── selection_panel.rs
 │       └── composer/
 │           ├── mod.rs
+│           ├── field.rs
+│           ├── input.rs
 │           ├── layout.rs
 │           └── render.rs
 ├── config/
@@ -77,6 +79,8 @@ crates/gitserious-tui/src/
 | `commit/author/components/selection_panel.rs` | `SelectionPanel`: the band, the two-column inset, the selected row highlighted from edge to edge, the tab style, and the visible-offset rule that both pickers draw with | Where a panel goes, its height, what its rows say, and what choosing one does |
 | `commit/author/citation_picker.rs` | `CitationPickerState`: the list opened by `@`, its query, its Files or Commits source, its selection, the reference Enter inserts, and its drawing | Reading the worktree. The Commit page supplies the paths and commits |
 | `commit/author/composer/` | `MessageComposer`: the fixed subject type and editable tail, property fields and their applicability, per-field text histories, validation feedback, and draft construction | Taxonomy selection and Git submission |
+| `commit/author/composer/field.rs` | `MessageFieldId`, `BodyFieldState`, `FieldRequirementState`, `FieldMarker`, and `FieldFeedback` | Which field is focused, which the composer decides |
+| `commit/author/composer/input.rs` | The keys and pastes the composer takes: editing, moving between rows and fields, and answering a conditional property | Keys the session or the citation picker takes first |
 | `commit/author/composer/layout.rs` | Wrapped rows, vertical cursor movement, and message columns | Terminal drawing |
 | `commit/author/composer/render.rs` | Field markers, requirement words, guidance, counters, validation feedback, and scrolling | Draft validation rules |
 | [`config/`](../../../crates/gitserious-tui/src/config/mod.rs) | Library editing, the read-only Project view, its own palette, its modals, and which keys it gives the root (`RootKeys`) | Opening Home's editor |
