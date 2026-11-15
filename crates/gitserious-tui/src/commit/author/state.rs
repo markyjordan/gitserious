@@ -1,4 +1,4 @@
-use super::cite::{Cite, CiteAction};
+use super::citation_picker::{Cite, CiteAction};
 use super::composer::MessageComposer;
 use crate::confirmation::{Answer, ConfirmDialog, DISCARD};
 use gitserious_app::{AuthoredCommit, CitedCommit, CommitAuthoringContext, CommitTaxonomy};

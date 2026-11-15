@@ -69,7 +69,7 @@ crates/gitserious-tui/src/
 | [`home/`](../../../crates/gitserious-tui/src/home/mod.rs) | The project overview, the initialization editor, which keys the editor captures, Enter's step, and Home's palette command | Reloading Config |
 | [`commit/`](../../../crates/gitserious-tui/src/commit/mod.rs) | The status tree, its keys and hints, the Git result and staged views, palette commands, the in-page editor and its staged header, and failed-review retention | Suspending the terminal for submission, which the adapter starts |
 | `commit/author/state.rs` | The authoring stages, taxonomy and type picker, changing type with ctrl+t, review, discard confirmation, and the cite list's keys | Field text layout and draft field parsing |
-| `commit/author/cite.rs` | The cite list opened by `@`, its query, its kind, its selection, and its drawing | Reading the worktree. The Commit page supplies the paths and commits |
+| `commit/author/citation_picker.rs` | The cite list opened by `@`, its query, its kind, its selection, and its drawing | Reading the worktree. The Commit page supplies the paths and commits |
 | `commit/author/composer/` | `MessageComposer`: the fixed subject type and editable tail, property fields and their applicability, per-field text histories, validation feedback, and draft construction | Taxonomy selection and Git submission |
 | `commit/author/composer/layout.rs` | Wrapped rows, vertical cursor movement, and message columns | Terminal drawing |
 | `commit/author/composer/render.rs` | Field markers, requirement words, guidance, counters, validation feedback, and scrolling | Draft validation rules |

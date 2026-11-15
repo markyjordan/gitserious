@@ -5,7 +5,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
-use super::cite;
+use super::citation_picker;
 use super::composer;
 use super::state::{AuthoringSession, CatalogTab, ConfirmationAction, Stage};
 use crate::confirmation::{Confirmation, DISCARD};
@@ -62,7 +62,7 @@ pub(crate) fn render(
         Stage::Confirm => unreachable!("confirmation resolves to its underlying stage"),
     }
     if session.stage == Stage::Compose {
-        cite::render(
+        citation_picker::render(
             frame,
             area,
             session.composer.cursor_row,
