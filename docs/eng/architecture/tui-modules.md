@@ -15,7 +15,7 @@ RatatuiInteractiveUi            adapter.rs
     v
 Root                            root/
     |
-    +--- HomePage   ---> ProjectWorkspace
+    +--- HomeView   ---> ProjectWorkspace
     +--- CommitView ---> CommitWorkspace
     +--- ConfigView ---> ConfigurationWorkspace
     +--- HelpView
@@ -98,7 +98,7 @@ Name a module or type after the job it does on screen, not after how it happens 
 
 | Role | Suffix | Means | Example |
 |---|---|---|---|
-| View | `View` | A page the tab strip or the root can navigate to | `CommitView`, `ConfigView` |
+| View | `View` | A page the tab strip or the root can navigate to | `HomeView`, `CommitView`, `ConfigView`, `HelpView` |
 | Session | `Session` | Workflow state that spans stages | `AuthoringSession` |
 | Editor or composer | `Editor`, `Composer` | An aggregate that edits one document | `InitEditor`, `MessageComposer` |
 | Field | `Field`, `FieldState` | One editable value in a form or message, apart from how it is drawn | `MessageFieldId`, `BodyFieldState` |

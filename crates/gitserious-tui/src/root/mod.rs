@@ -13,7 +13,7 @@ use crate::commit::{CommitRequest, CommitView};
 use crate::components::confirmation_dialog::ConfirmationDialog;
 use crate::config::ConfigView;
 use crate::help::{HelpPage, HelpView};
-use crate::home::{HomePage, HomeRequest};
+use crate::home::{HomeRequest, HomeView};
 use navigation::{Section, Tabs};
 use overlay::Overlay;
 
@@ -58,7 +58,7 @@ pub(crate) struct Root {
     section: Section,
     config: ConfigView,
     commit: CommitView,
-    home: HomePage,
+    home: HomeView,
     overlay: Option<Overlay>,
     quit_dialog: ConfirmationDialog,
     help: HelpView,
@@ -89,7 +89,7 @@ impl Root {
             section,
             config: ConfigView::new(capabilities.config),
             commit: CommitView::default(),
-            home: HomePage::new(capabilities.project),
+            home: HomeView::new(capabilities.project),
             overlay: None,
             quit_dialog: ConfirmationDialog::default(),
             help,
