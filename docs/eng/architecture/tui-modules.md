@@ -42,6 +42,7 @@ crates/gitserious-tui/src/
 │   └── author/
 │       ├── state.rs
 │       ├── render.rs
+│       ├── type_picker.rs
 │       └── composer/
 │           ├── mod.rs
 │           ├── layout.rs
@@ -68,7 +69,8 @@ crates/gitserious-tui/src/
 | [`root/render.rs`](../../../crates/gitserious-tui/src/root/render.rs) | The frame: background, too-small message, header band and version, page body and footer (with the EDIT badge while Commit's editor is open), and overlays on top | Any page's drawing |
 | [`home/`](../../../crates/gitserious-tui/src/home/mod.rs) | The project overview, the initialization editor, which keys the editor captures, Enter's step, and Home's palette command | Reloading Config |
 | [`commit/`](../../../crates/gitserious-tui/src/commit/mod.rs) | The status tree, its keys and hints, the Git result and staged views, palette commands, the in-page editor and its staged header, and failed-review retention | Suspending the terminal for submission, which the adapter starts |
-| `commit/author/state.rs` | The authoring stages, taxonomy and type picker, changing type with ctrl+t, review, discard confirmation, and giving an open citation picker the keys first | Field text layout and draft field parsing |
+| `commit/author/state.rs` | The authoring stages, the type picker's selection, filter, and clicks, changing type with ctrl+t, review, discard confirmation, and giving an open citation picker the keys first | Field text layout and draft field parsing |
+| `commit/author/type_picker.rs` | Drawing the type picker: the subject filter, the taxonomy tabs and the rectangles clicks hit, the type rows, and the selected type's description | Which type is selected, which the session decides |
 | `commit/author/citation_picker.rs` | `CitationPickerState`: the list opened by `@`, its query, its Files or Commits source, its selection, the reference Enter inserts, and its drawing | Reading the worktree. The Commit page supplies the paths and commits |
 | `commit/author/composer/` | `MessageComposer`: the fixed subject type and editable tail, property fields and their applicability, per-field text histories, validation feedback, and draft construction | Taxonomy selection and Git submission |
 | `commit/author/composer/layout.rs` | Wrapped rows, vertical cursor movement, and message columns | Terminal drawing |
