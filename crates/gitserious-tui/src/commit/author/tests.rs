@@ -18,7 +18,7 @@ use ratatui::{Frame, Terminal};
 
 use crate::theme::{ACCENT, JET_BLACK, theme};
 
-use super::cards::CardId;
+use super::composer::CardId;
 use super::render::{hints, render};
 use super::state::{AuthoringOutcome, AuthoringSession, ConfirmationAction, Stage};
 
@@ -380,7 +380,7 @@ fn context_review_hides_provenance_the_approved_bytes_keep() -> Result<(), Box<d
     assert!(!frame.contains("Gitserious-"), "{frame}");
     press(&mut session, KeyCode::Esc);
     assert!(session.approved_message.is_none());
-    session.cards.focus = super::cards::CardId::Subject;
+    session.cards.focus = super::composer::CardId::Subject;
     for _ in "compose durable message".chars() {
         press(&mut session, KeyCode::Backspace);
     }

@@ -5,7 +5,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
-use super::cards;
+use super::composer;
 use super::cite;
 use super::state::{AuthoringSession, CatalogTab, ConfirmationAction, Stage};
 use crate::confirmation::{Confirmation, DISCARD};
@@ -57,7 +57,7 @@ pub(crate) fn render(
 
     match session.visible_stage() {
         Stage::SelectType => render_picker(frame, area, session),
-        Stage::Compose => cards::render(frame, area, &mut session.cards),
+        Stage::Compose => composer::render(frame, area, &mut session.cards),
         Stage::Review => render_review(frame, area, session, target),
         Stage::Confirm => unreachable!("confirmation resolves to its underlying stage"),
     }

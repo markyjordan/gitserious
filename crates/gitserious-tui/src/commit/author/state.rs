@@ -1,4 +1,4 @@
-use super::cards::Cards;
+use super::composer::Cards;
 use super::cite::{Cite, CiteAction};
 use crate::confirmation::{Answer, ConfirmDialog, DISCARD};
 use gitserious_app::{AuthoredCommit, CitedCommit, CommitAuthoringContext, CommitTaxonomy};

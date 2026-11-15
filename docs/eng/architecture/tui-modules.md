@@ -42,7 +42,7 @@ crates/gitserious-tui/src/
 │   └── author/
 │       ├── state.rs
 │       ├── render.rs
-│       └── cards/
+│       └── composer/
 │           ├── mod.rs
 │           ├── layout.rs
 │           └── render.rs
@@ -70,9 +70,9 @@ crates/gitserious-tui/src/
 | [`commit/`](../../../crates/gitserious-tui/src/commit/mod.rs) | The status tree, its keys and hints, the Git result and staged views, palette commands, the in-page editor and its staged header, and failed-review retention | Suspending the terminal for submission, which the adapter starts |
 | `commit/author/state.rs` | The authoring stages, taxonomy and type picker, changing type with ctrl+t, review, discard confirmation, and the cite list's keys | Card text layout and draft field parsing |
 | `commit/author/cite.rs` | The cite list opened by `@`, its query, its kind, its selection, and its drawing | Reading the worktree. The Commit page supplies the paths and commits |
-| `commit/author/cards/` | The fixed subject type and editable tail, property cards and their applicability, per-card text histories, validation notes, and draft construction | Taxonomy selection and Git submission |
-| `commit/author/cards/layout.rs` | Wrapped rows, vertical cursor movement, and message columns | Terminal drawing |
-| `commit/author/cards/render.rs` | Card marks, policy words, guidance, counters, validation notes, and scrolling | Draft validation rules |
+| `commit/author/composer/` | The fixed subject type and editable tail, property cards and their applicability, per-card text histories, validation notes, and draft construction | Taxonomy selection and Git submission |
+| `commit/author/composer/layout.rs` | Wrapped rows, vertical cursor movement, and message columns | Terminal drawing |
+| `commit/author/composer/render.rs` | Card marks, policy words, guidance, counters, validation notes, and scrolling | Draft validation rules |
 | [`config/`](../../../crates/gitserious-tui/src/config/mod.rs) | Library editing, the read-only Project view, its own palette, its modals, and which keys it gives the root (`RootKeys`) | Opening Home's editor |
 | [`help/`](../../../crates/gitserious-tui/src/help/mod.rs) | Help pages, the sidebar, scrolling, keys, and clicks | Which page opens first |
 | [`confirmation.rs`](../../../crates/gitserious-tui/src/confirmation.rs) | The confirmation dialog that Config and the root's quit prompt share | When to ask |
