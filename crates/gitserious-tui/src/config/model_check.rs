@@ -33,7 +33,7 @@ use super::naming::problem_sentence;
 use super::taxonomies::{Observation, ObservedMode as Mode};
 use super::tests::Workspace;
 use super::*;
-use crate::components::confirmation_dialog::{self, Answer, ConfirmDialog, REMOVE};
+use crate::components::confirmation_dialog::{self, Answer, ConfirmationDialog, REMOVE};
 
 const fn press(code: KeyCode, modifiers: KeyModifiers) -> Event {
     Event::Key(KeyEvent::new(code, modifiers))
@@ -665,7 +665,7 @@ fn at_most_one_taxonomy_root_is_expanded(
 }
 
 fn answer(choices: &[confirmation_dialog::Choice], input: &Event) -> Option<Answer> {
-    ConfirmDialog::default().handle_event(choices, input)
+    ConfirmationDialog::default().handle_event(choices, input)
 }
 
 /// Whether `input` is a key that edits a draft in place from `before`: a text key in EDIT, ←/→,

@@ -104,7 +104,7 @@ Name a module or type after the job it does on screen, not after how it happens 
 | Field | `Field`, `FieldState` | One editable value in a form or message, apart from how it is drawn | `MessageFieldId`, `BodyFieldState` |
 | Picker | `Picker` | A component that chooses one item and acts on the choice | `CitationPickerState` |
 | Panel, outline, inspector, list | `Panel`, `Outline`, `Inspector`, `List` | A distinct region of a view | `SelectionPanel`, `config/taxonomies/outline.rs`, `inspector.rs` |
-| Dialog | `Dialog` | A modal choice | `ConfirmDialog` |
+| Dialog | `Dialog` | A modal choice | `ConfirmationDialog` |
 | Layout, viewport, marker, feedback | `Layout`, `Viewport`, `Marker`, `Feedback` | State that exists only for drawing | |
 | Widget | `Widget` | A Ratatui rendering primitive, or a type that implements `Widget` or `StatefulWidget` | |
 
