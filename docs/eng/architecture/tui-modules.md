@@ -79,6 +79,34 @@ crates/gitserious-tui/src/
 | [`runtime.rs`](../../../crates/gitserious-tui/src/runtime.rs) | Terminal setup, restoration, and suspension | The event loop |
 | [`theme.rs`](../../../crates/gitserious-tui/src/theme.rs) | Colors, minimum size, footer layout, and the EDIT badge for every page | Theme preferences |
 
+## Naming
+
+Name a module or type after the job it does on screen, not after how it happens to look. Modules and files are snake case and types are Pascal case.
+
+| Role | Suffix | Means | Example |
+|---|---|---|---|
+| View | `View` | A page the tab strip or the root can navigate to | `CommitView`, `ConfigView` |
+| Session | `Session` | Workflow state that spans stages | `AuthoringSession` |
+| Editor or composer | `Editor`, `Composer` | An aggregate that edits one document | `InitEditor` |
+| Field | `Field`, `FieldState` | One editable value in a form or message, apart from how it is drawn | |
+| Picker | `Picker` | A component that chooses one item and acts on the choice | |
+| Panel, outline, inspector, list | `Panel`, `Outline`, `Inspector`, `List` | A distinct region of a view | `config/taxonomies/outline.rs`, `inspector.rs` |
+| Dialog | `Dialog` | A modal choice | `ConfirmDialog` |
+| Layout, viewport, marker, feedback | `Layout`, `Viewport`, `Marker`, `Feedback` | State that exists only for drawing | |
+| Widget | `Widget` | A Ratatui rendering primitive, or a type that implements `Widget` or `StatefulWidget` | |
+
+A component is a visual element or interaction a view composes. No type takes a `Component` suffix, and no `Component` or `View` trait exists, because views and components share no event or render contract. Use `Card` only for something that is drawn as a card and would stay one if its contents changed. Domain names such as taxonomy, property, type, and requirement stay as the application names them.
+
+### Place a component at its narrowest common owner
+
+A component lives in the feature that uses it. A component that two parts of one feature share lives in that feature's `components/` module. It moves to the crate-level `src/components/` only when all of these hold:
+
+- At least two features use it, or it is a deliberate shared primitive.
+- It reads no feature session or domain state.
+- A small, explicit render and input contract configures it.
+
+A component used inside one workflow stays there, however many smaller drawing helpers it has.
+
 ## Page requests
 
 Pages answer events with their own request types. There is no shared page trait, because their event shapes differ.
