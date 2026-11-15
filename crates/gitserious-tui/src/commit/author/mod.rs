@@ -1,4 +1,5 @@
 mod citation_picker;
+mod components;
 mod composer;
 mod render;
 mod state;
