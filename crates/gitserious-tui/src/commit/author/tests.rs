@@ -1164,6 +1164,27 @@ fn the_selected_path_uses_the_popup_row() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn the_query_row_prompts_until_something_is_typed() -> Result<(), Box<dyn Error>> {
+    let mut session = with_commits(&["src/net/retry.rs"], &[("abc1234", "back off")]);
+    press(&mut session, KeyCode::Char('@'));
+    let text = rendered(&mut session, 80, 24)?;
+    assert!(text.contains("Type to filter files"), "{text}");
+    press(&mut session, KeyCode::Right);
+    let text = rendered(&mut session, 80, 24)?;
+    assert!(text.contains("Type to filter commits"), "{text}");
+    typed(&mut session, "back");
+    let text = rendered(&mut session, 80, 24)?;
+    assert!(!text.contains("Type to filter"), "{text}");
+    let rows = screen(&mut session, 80, 24)?;
+    let sha = rows
+        .iter()
+        .position(|row| row.contains("abc1234"))
+        .ok_or("missing commit")?;
+    assert_eq!(rows[sha + 2].trim(), "back", "{rows:#?}");
+    Ok(())
+}
+
+#[test]
 fn the_list_opens_under_the_line_being_written() -> Result<(), Box<dyn Error>> {
     let mut session = citing(&["src/net/retry.rs"]);
     press(&mut session, KeyCode::Down);

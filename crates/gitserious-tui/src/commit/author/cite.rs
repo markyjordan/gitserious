@@ -7,7 +7,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::theme::{popup_selected_style, theme};
 
@@ -170,7 +170,7 @@ pub(crate) fn render(
         ..inset(panel)
     });
     frame.render_widget(Paragraph::new(kind_line(cite.kind)), kinds);
-    frame.render_widget(Paragraph::new(cite.query.as_str()), query);
+    frame.render_widget(Paragraph::new(query_line(cite, query.width)), query);
     if matches.is_empty() {
         frame.render_widget(
             Paragraph::new("no match").style(Style::new().fg(theme().dim)),
@@ -282,6 +282,30 @@ fn kind_line(kind: CiteKind) -> Line<'static> {
         Span::raw("  "),
         paint("Commits", kind == CiteKind::Commits),
     ])
+}
+
+/// What was typed, cut from the left to fit, or a dim prompt until something is.
+fn query_line(cite: &Cite, width: u16) -> Line<'static> {
+    if cite.query.is_empty() {
+        let kind = match cite.kind {
+            CiteKind::Files => "files",
+            CiteKind::Commits => "commits",
+        };
+        return Line::styled(
+            format!("Type to filter {kind}"),
+            Style::new().fg(theme().dim),
+        );
+    }
+    let mut hidden = cite.query.width().saturating_sub(usize::from(width));
+    let shown = cite.query.trim_start_matches(|character: char| {
+        let skip = hidden > 0;
+        hidden = hidden.saturating_sub(character.width().unwrap_or(0));
+        skip
+    });
+    Line::styled(
+        shown.to_owned(),
+        Style::new().fg(theme().text).add_modifier(Modifier::BOLD),
+    )
 }
 
 fn visible_offset(selected: usize, offset: usize, rows: usize) -> usize {
