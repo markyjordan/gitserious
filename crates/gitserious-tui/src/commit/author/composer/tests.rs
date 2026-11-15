@@ -18,14 +18,14 @@ fn the_type_is_fixed_and_the_subject_refuses_multiline_paste() {
     paste(&mut session, ": a subject");
     press(&mut session, KeyCode::Home);
     press(&mut session, KeyCode::Backspace);
-    assert_eq!(session.cards.definition().id().as_str(), "feat");
-    assert_eq!(session.cards.subject.lines(), &[": a subject"]);
+    assert_eq!(session.composer.definition().id().as_str(), "feat");
+    assert_eq!(session.composer.subject.lines(), &[": a subject"]);
     paste(&mut session, "first\nsecond");
-    assert_eq!(session.cards.subject.lines(), &[": a subject"]);
+    assert_eq!(session.composer.subject.lines(), &[": a subject"]);
     control(&mut session, 'j');
-    assert_eq!(session.cards.subject.lines(), &[": a subject"]);
+    assert_eq!(session.composer.subject.lines(), &[": a subject"]);
     paste(&mut session, "first\rsecond");
-    assert_eq!(session.cards.subject.lines(), &[": a subject"]);
+    assert_eq!(session.composer.subject.lines(), &[": a subject"]);
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn subjects_parse_scope_and_description_and_reject_malformed_tails() -> Result<(
 }
 
 #[test]
-fn every_card_keeps_its_own_undo_and_redo_history() {
+fn every_field_keeps_its_own_undo_and_redo_history() {
     let mut session = session();
     paste(&mut session, ": a subject");
     press(&mut session, KeyCode::Enter);
@@ -55,37 +55,48 @@ fn every_card_keeps_its_own_undo_and_redo_history() {
     press(&mut session, KeyCode::Down);
     paste(&mut session, "decision answer");
     control(&mut session, 'u');
-    assert!(session.cards.text(CardId::Property(1)).is_empty());
+    assert!(
+        session
+            .composer
+            .text(MessageFieldId::Property(1))
+            .is_empty()
+    );
     assert_eq!(
-        session.cards.text(CardId::Property(0)).lines(),
+        session.composer.text(MessageFieldId::Property(0)).lines(),
         &["intent answer"]
     );
-    assert_eq!(session.cards.subject.lines(), &[": a subject"]);
+    assert_eq!(session.composer.subject.lines(), &[": a subject"]);
     control(&mut session, 'r');
     assert_eq!(
-        session.cards.text(CardId::Property(1)).lines(),
+        session.composer.text(MessageFieldId::Property(1)).lines(),
         &["decision answer"]
     );
 }
 
 #[test]
-fn arrows_move_through_body_lines_then_across_card_edges() {
+fn arrows_move_through_body_lines_then_across_field_edges() {
     let mut session = session();
     press(&mut session, KeyCode::Down);
     paste(&mut session, "first\nsecond");
     press(&mut session, KeyCode::Up);
-    assert_eq!(session.cards.focus, CardId::Property(0));
-    assert_eq!(session.cards.text(session.cards.focus).cursor().0, 0);
+    assert_eq!(session.composer.focus, MessageFieldId::Property(0));
+    assert_eq!(session.composer.text(session.composer.focus).cursor().0, 0);
     press(&mut session, KeyCode::Up);
-    assert_eq!(session.cards.focus, CardId::Subject);
+    assert_eq!(session.composer.focus, MessageFieldId::Subject);
     press(&mut session, KeyCode::Down);
-    assert_eq!(session.cards.text(session.cards.focus).cursor(), (0, 0));
+    assert_eq!(
+        session.composer.text(session.composer.focus).cursor(),
+        (0, 0)
+    );
     press(&mut session, KeyCode::Down);
-    assert_eq!(session.cards.focus, CardId::Property(0));
+    assert_eq!(session.composer.focus, MessageFieldId::Property(0));
     press(&mut session, KeyCode::Down);
-    assert_eq!(session.cards.focus, CardId::Property(1));
+    assert_eq!(session.composer.focus, MessageFieldId::Property(1));
     press(&mut session, KeyCode::Up);
-    assert_eq!(session.cards.text(session.cards.focus).cursor(), (1, 6));
+    assert_eq!(
+        session.composer.text(session.composer.focus).cursor(),
+        (1, 6)
+    );
 }
 
 #[test]
@@ -97,8 +108,8 @@ fn arrows_follow_wrapped_rows_before_leaving_a_body() -> Result<(), Box<dyn Erro
     press(&mut session, KeyCode::Home);
     modified_press(&mut session, KeyCode::Home, KeyModifiers::CONTROL);
     press(&mut session, KeyCode::Down);
-    assert_eq!(session.cards.focus, CardId::Property(0));
-    assert!(session.cards.text(session.cards.focus).cursor().1 > 0);
+    assert_eq!(session.composer.focus, MessageFieldId::Property(0));
+    assert!(session.composer.text(session.composer.focus).cursor().1 > 0);
     Ok(())
 }
 
@@ -106,16 +117,19 @@ fn arrows_follow_wrapped_rows_before_leaving_a_body() -> Result<(), Box<dyn Erro
 fn enter_leaves_the_subject_and_inserts_newlines_in_bodies() {
     let mut session = session();
     press(&mut session, KeyCode::Enter);
-    assert_eq!(session.cards.focus, CardId::Property(0));
+    assert_eq!(session.composer.focus, MessageFieldId::Property(0));
     press(&mut session, KeyCode::Enter);
-    assert_eq!(session.cards.focus, CardId::Property(0));
-    assert_eq!(session.cards.text(session.cards.focus).lines(), &["", ""]);
+    assert_eq!(session.composer.focus, MessageFieldId::Property(0));
+    assert_eq!(
+        session.composer.text(session.composer.focus).lines(),
+        &["", ""]
+    );
     paste(&mut session, "a paragraph");
     press(&mut session, KeyCode::Enter);
     press(&mut session, KeyCode::Enter);
-    assert_eq!(session.cards.focus, CardId::Property(0));
+    assert_eq!(session.composer.focus, MessageFieldId::Property(0));
     assert_eq!(
-        session.cards.text(session.cards.focus).lines(),
+        session.composer.text(session.composer.focus).lines(),
         &["", "a paragraph", "", ""]
     );
 }
@@ -124,20 +138,34 @@ fn enter_leaves_the_subject_and_inserts_newlines_in_bodies() {
 fn conditional_answers_control_status_blockers_and_footer() {
     let mut session = session();
     write(&mut session, ": a subject", &["intent", "decision"]);
-    assert_eq!(session.cards.mark(CardId::Property(2)), Mark::Undecided);
-    assert_eq!(session.cards.to_go(), [CardId::Property(2)]);
+    assert_eq!(
+        session.composer.marker(MessageFieldId::Property(2)),
+        FieldMarker::Undecided
+    );
+    assert_eq!(session.composer.to_go(), [MessageFieldId::Property(2)]);
     press(&mut session, KeyCode::Down);
     assert!(crate::commit::author::render::hints(&session).contains(&("alt+a", "applies")));
     alt(&mut session, 'a');
-    assert_eq!(session.cards.to_go(), [CardId::Property(2)]);
+    assert_eq!(session.composer.to_go(), [MessageFieldId::Property(2)]);
     paste(&mut session, "a constraint");
-    assert!(session.cards.to_go().is_empty());
+    assert!(session.composer.to_go().is_empty());
     alt(&mut session, 'n');
-    assert!(session.cards.text(CardId::Property(2)).is_empty());
-    assert!(session.cards.to_go().is_empty());
-    assert_eq!(session.cards.properties[2].policy.word(), "doesn't apply");
+    assert!(
+        session
+            .composer
+            .text(MessageFieldId::Property(2))
+            .is_empty()
+    );
+    assert!(session.composer.to_go().is_empty());
+    assert_eq!(
+        session.composer.properties[2].requirement.word(),
+        "doesn't apply"
+    );
     press(&mut session, KeyCode::Down);
-    assert_eq!(session.cards.mark(CardId::Property(2)), Mark::Done);
+    assert_eq!(
+        session.composer.marker(MessageFieldId::Property(2)),
+        FieldMarker::Done
+    );
     assert!(
         !crate::commit::author::render::hints(&session)
             .iter()
@@ -148,46 +176,47 @@ fn conditional_answers_control_status_blockers_and_footer() {
 #[test]
 fn writing_a_conditional_answer_marks_it_as_applicable() {
     let mut session = session();
-    session.cards.focus = CardId::Property(2);
+    session.composer.focus = MessageFieldId::Property(2);
     paste(&mut session, "a constraint");
-    assert_eq!(session.cards.properties[2].policy.word(), "applies");
+    assert_eq!(session.composer.properties[2].requirement.word(), "applies");
     alt(&mut session, 'n');
     control(&mut session, 'u');
     assert_eq!(
-        session.cards.text(CardId::Property(2)).lines(),
+        session.composer.text(MessageFieldId::Property(2)).lines(),
         &["a constraint"]
     );
-    assert_eq!(session.cards.properties[2].policy.word(), "applies");
+    assert_eq!(session.composer.properties[2].requirement.word(), "applies");
 }
 
 #[test]
-fn review_errors_focus_the_first_blocked_card_and_clear_when_edited() {
+fn review_errors_focus_the_first_blocked_field_and_clear_when_edited() {
     let mut session = session();
     paste(&mut session, ": a subject");
     control(&mut session, 's');
     assert_eq!(session.stage, Stage::Compose);
-    assert_eq!(session.cards.focus, CardId::Property(0));
+    assert_eq!(session.composer.focus, MessageFieldId::Property(0));
     assert!(
         session
-            .cards
-            .notes
+            .composer
+            .feedback
             .iter()
-            .any(|note| note.card == CardId::Property(0))
+            .any(|feedback| feedback.field == MessageFieldId::Property(0))
     );
     paste(&mut session, "intent answer");
     assert!(
         session
-            .cards
-            .notes
+            .composer
+            .feedback
             .iter()
-            .all(|note| note.card != CardId::Property(0))
+            .all(|feedback| feedback.field != MessageFieldId::Property(0))
     );
     control(&mut session, 's');
-    assert_eq!(session.cards.focus, CardId::Property(1));
+    assert_eq!(session.composer.focus, MessageFieldId::Property(1));
 }
 
 #[test]
-fn cards_show_marks_policy_guidance_counters_and_no_metadata() -> Result<(), Box<dyn Error>> {
+fn fields_show_markers_requirements_guidance_counters_and_no_metadata() -> Result<(), Box<dyn Error>>
+{
     for (width, height) in [(80, 24), (100, 30)] {
         let mut session = session();
         write(&mut session, "(net): retry sooner", &["why it matters"]);
@@ -242,10 +271,10 @@ fn long_body_scrolls_with_the_cursor_and_ready_status_survives() -> Result<(), B
         let mut session = session();
         write_valid_feat(&mut session);
         assert!(rendered(&mut session, width, height)?.contains("ready for review"));
-        session.cards.focus = CardId::Property(0);
+        session.composer.focus = MessageFieldId::Property(0);
         paste(&mut session, &"\nbody line".repeat(50));
         let buffer = rendered_buffer(&mut session, width, height)?;
-        assert!(session.cards.scroll > 0);
+        assert!(session.composer.scroll > 0);
         assert!(!reversed_positions(&buffer, width, height).is_empty());
         modified_press(&mut session, KeyCode::Home, KeyModifiers::CONTROL);
         let buffer = rendered_buffer(&mut session, width, height)?;
@@ -255,7 +284,7 @@ fn long_body_scrolls_with_the_cursor_and_ready_status_survives() -> Result<(), B
 }
 
 #[test]
-fn every_policy_word_is_visible_and_only_required_and_undecided_cards_block_review()
+fn every_requirement_word_is_visible_and_only_required_and_undecided_fields_block_review()
 -> Result<(), Box<dyn Error>> {
     let definition = crate::commit::author::tests::presentation_definition()?;
     let mut session = AuthoringSession::new(&[definition], Some(0));
@@ -265,8 +294,8 @@ fn every_policy_word_is_visible_and_only_required_and_undecided_cards_block_revi
         assert!(text.contains(word));
     }
     assert_eq!(
-        session.cards.to_go(),
-        [CardId::Property(0), CardId::Property(3)]
+        session.composer.to_go(),
+        [MessageFieldId::Property(0), MessageFieldId::Property(3)]
     );
     Ok(())
 }

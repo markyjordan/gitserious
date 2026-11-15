@@ -5,8 +5,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
-use super::cards;
 use super::cite;
+use super::composer;
 use super::state::{AuthoringSession, CatalogTab, ConfirmationAction, Stage};
 use crate::confirmation::{Confirmation, DISCARD};
 use crate::theme::{JET_BLACK, centered_rect, popup_selected_style, section_heading_style, theme};
@@ -57,7 +57,7 @@ pub(crate) fn render(
 
     match session.visible_stage() {
         Stage::SelectType => render_picker(frame, area, session),
-        Stage::Compose => cards::render(frame, area, &mut session.cards),
+        Stage::Compose => composer::render(frame, area, &mut session.composer),
         Stage::Review => render_review(frame, area, session, target),
         Stage::Confirm => unreachable!("confirmation resolves to its underlying stage"),
     }
@@ -65,7 +65,7 @@ pub(crate) fn render(
         cite::render(
             frame,
             area,
-            session.cards.cursor_row,
+            session.composer.cursor_row,
             &mut session.cite,
             &session.paths,
             &session.commits,
@@ -76,7 +76,7 @@ pub(crate) fn render(
     }
 }
 
-/// The footer keys of the stage on screen. A conditional card adds the keys
+/// The footer keys of the stage on screen. A conditional field adds the keys
 /// that answer whether it applies.
 pub(crate) fn hints(session: &AuthoringSession) -> Vec<(&'static str, &'static str)> {
     if session.cite.is_some() && session.stage == Stage::Compose {
@@ -96,7 +96,7 @@ pub(crate) fn hints(session: &AuthoringSession) -> Vec<(&'static str, &'static s
         ],
         Stage::Compose => {
             let mut hints = vec![("ctrl+s", "review"), ("ctrl+t", "type"), ("↑/↓", "move")];
-            if session.cards.focused_conditional() {
+            if session.composer.focused_conditional() {
                 hints.extend([("alt+a", "applies"), ("alt+n", "doesn't apply")]);
             }
             hints.push(("esc", "back"));
@@ -107,7 +107,7 @@ pub(crate) fn hints(session: &AuthoringSession) -> Vec<(&'static str, &'static s
             ("esc", "keep editing"),
             ("↑/↓", "scroll"),
         ],
-        Stage::Confirm => unreachable!("confirmation shows over the cards"),
+        Stage::Confirm => unreachable!("confirmation shows over the composer"),
     }
 }
 
@@ -310,7 +310,7 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
     };
     let area = inset_horizontally(area, 1);
     let recommendations: Vec<_> = session
-        .cards
+        .composer
         .recommendations()
         .map(|message| Line::styled(message.to_owned(), Style::new().fg(theme().dim)))
         .collect();
@@ -323,7 +323,7 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
     let room = area.height.saturating_sub(2 + recommendation_rows);
     review.scrollable = rows > room;
     review.scroll = review.scroll.min(rows.saturating_sub(room));
-    let [text, _, commit, _, notes] = Layout::vertical([
+    let [text, _, commit, _, feedback] = Layout::vertical([
         Constraint::Length(rows.min(room)),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -343,7 +343,7 @@ fn render_review(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSessi
         Paragraph::new(format!("{label}{}{key}", " ".repeat(gap))).style(popup_selected_style()),
         commit,
     );
-    frame.render_widget(Paragraph::new(recommendations), notes);
+    frame.render_widget(Paragraph::new(recommendations), feedback);
 }
 
 fn render_confirmation(frame: &mut Frame<'_>, session: &mut AuthoringSession) {

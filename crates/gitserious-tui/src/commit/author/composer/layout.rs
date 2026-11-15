@@ -1,4 +1,4 @@
-//! Where a card's text breaks into rows, which drawing, ↑ and ↓, and the
+//! Where a field's text breaks into rows, which drawing, ↑ and ↓, and the
 //! column count all read.
 
 use unicode_width::UnicodeWidthChar;

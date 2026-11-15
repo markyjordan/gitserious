@@ -17,7 +17,7 @@ fn picker_navigation_wraps_selects_and_cancels() {
     }
     press(&mut session, KeyCode::Enter);
     assert_eq!(session.stage, Stage::Compose);
-    assert_eq!(session.cards.definition().id().as_str(), "feat");
+    assert_eq!(session.composer.definition().id().as_str(), "feat");
 
     let mut cancelled = AuthoringSession::new(definitions, None);
     assert_eq!(
@@ -72,8 +72,8 @@ fn typing_on_the_subject_line_lists_the_types_whose_key_starts_with_it()
     );
     press(&mut session, KeyCode::Enter);
     assert_eq!(session.stage, Stage::Compose);
-    assert_eq!(session.cards.definition().id().as_str(), "fix");
-    assert!(!session.cards.dirty(), "the filter is not a description");
+    assert_eq!(session.composer.definition().id().as_str(), "fix");
+    assert!(!session.composer.dirty(), "the filter is not a description");
     Ok(())
 }
 
@@ -165,7 +165,7 @@ fn left_and_right_switch_the_taxonomy_and_keep_the_filter() -> Result<(), Box<dy
         session.taxonomy().ok_or("missing taxonomy")?.id().as_str(),
         "conventional"
     );
-    assert_eq!(session.cards.definition().id().as_str(), "fix");
+    assert_eq!(session.composer.definition().id().as_str(), "fix");
     Ok(())
 }
 
@@ -277,7 +277,7 @@ fn clicking_a_taxonomy_or_a_type_row_selects_it() -> Result<(), Box<dyn Error>> 
     assert_eq!(session.stage, Stage::SelectType);
     assert_eq!(session.definition().id().as_str(), "eval");
     press(&mut session, KeyCode::Enter);
-    assert_eq!(session.cards.definition().id().as_str(), "eval");
+    assert_eq!(session.composer.definition().id().as_str(), "eval");
     assert_eq!(session.stage, Stage::Compose);
     Ok(())
 }

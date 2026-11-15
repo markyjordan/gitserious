@@ -18,7 +18,7 @@ use ratatui::{Frame, Terminal};
 
 use crate::theme::{ACCENT, JET_BLACK, theme};
 
-use super::cards::CardId;
+use super::composer::MessageFieldId;
 use super::render::{hints, render};
 use super::state::{AuthoringOutcome, AuthoringSession, ConfirmationAction, Stage};
 
@@ -78,7 +78,7 @@ pub(super) fn typed(session: &mut AuthoringSession, text: &str) {
 }
 
 /// Writes what follows the type key on the subject line, then each body in
-/// turn, moving down to the next card the way a user does.
+/// turn, moving down to the next field the way a user does.
 pub(super) fn write(session: &mut AuthoringSession, subject: &str, bodies: &[&str]) {
     paste(session, subject);
     for body in bodies {
@@ -295,7 +295,7 @@ pub(super) fn property(
     )?)
 }
 
-/// A type with one property of each policy, in policy order.
+/// A type with one property of each requirement, in requirement order.
 pub(super) fn presentation_definition() -> Result<CommitTypeDefinition, Box<dyn Error>> {
     Ok(CommitTypeDefinition::new(
         Some(SchemaVersion::V1),
@@ -333,17 +333,17 @@ fn taxonomy_picker_switches_schema_and_confirms_discard() -> Result<(), Box<dyn 
     assert_eq!(session.definitions, context.taxonomies()[1].definitions());
     press(&mut session, KeyCode::Enter);
     press(&mut session, KeyCode::Char('x'));
-    let edited = session.cards.subject.lines().to_vec();
+    let edited = session.composer.subject.lines().to_vec();
     press(&mut session, KeyCode::Esc);
     assert_eq!(session.stage, Stage::Confirm);
     press(&mut session, KeyCode::Char('n'));
-    assert_eq!(session.cards.subject.lines(), edited);
+    assert_eq!(session.composer.subject.lines(), edited);
     press(&mut session, KeyCode::Esc);
     press(&mut session, KeyCode::Char('y'));
     assert_eq!(session.stage, Stage::SelectType);
     press(&mut session, KeyCode::Right);
     assert_eq!(session.taxonomy().ok_or("missing taxonomy")?.id(), &ids[2]);
-    assert!(!session.cards.dirty());
+    assert!(!session.composer.dirty());
     press(&mut session, KeyCode::Right);
     assert_eq!(session.taxonomy().ok_or("missing taxonomy")?.id(), &ids[0]);
     Ok(())
@@ -380,7 +380,7 @@ fn context_review_hides_provenance_the_approved_bytes_keep() -> Result<(), Box<d
     assert!(!frame.contains("Gitserious-"), "{frame}");
     press(&mut session, KeyCode::Esc);
     assert!(session.approved_message.is_none());
-    session.cards.focus = super::cards::CardId::Subject;
+    session.composer.focus = super::composer::MessageFieldId::Subject;
     for _ in "compose durable message".chars() {
         press(&mut session, KeyCode::Backspace);
     }
@@ -409,9 +409,12 @@ fn review_is_exact_backtracking_is_lossless_and_enter_returns_the_typed_draft()
 
     press(&mut session, KeyCode::Esc);
     assert_eq!(session.stage, Stage::Compose);
-    assert_eq!(session.cards.subject.lines(), [": compose durable message"]);
     assert_eq!(
-        session.cards.properties[1].body.lines(),
+        session.composer.subject.lines(),
+        [": compose durable message"]
+    );
+    assert_eq!(
+        session.composer.properties[1].body.lines(),
         ["first line", "second line"]
     );
     control(&mut session, 's');
@@ -466,9 +469,12 @@ fn breaking_change_is_optional_multiline_and_normalizes_scope_only_in_output()
     );
 
     press(&mut session, KeyCode::Esc);
-    assert_eq!(session.cards.subject.lines(), ["(tui editor): ship editor"]);
     assert_eq!(
-        session.cards.breaking_change.body.lines(),
+        session.composer.subject.lines(),
+        ["(tui editor): ship editor"]
+    );
+    assert_eq!(
+        session.composer.breaking_change.body.lines(),
         ["remove old fields", "use fixed form"]
     );
     Ok(())
@@ -562,9 +568,9 @@ fn review_trims_trailing_whitespace_from_every_encoded_field() -> Result<(), Box
         "feat(api): ship it\n\nintent:\n  leading reason\n\ndecision:\nfirst\nsecond\n"
     );
     press(&mut session, KeyCode::Esc);
-    assert_eq!(session.cards.subject.lines(), ["(api \t): ship it  "]);
+    assert_eq!(session.composer.subject.lines(), ["(api \t): ship it  "]);
     assert_eq!(
-        session.cards.properties[0].body.lines(),
+        session.composer.properties[0].body.lines(),
         ["", "  leading reason \t", ""]
     );
     Ok(())
@@ -589,16 +595,16 @@ fn compose_review_and_final_encoding_share_the_80_column_boundary() -> Result<()
     let heading = compose
         .iter()
         .position(|row| row.ends_with("▎● decision:                                                                                                   required"))
-        .ok_or("missing focused decision card")?;
+        .ok_or("missing focused decision field")?;
     let intent_heading = compose
         .iter()
         .position(|row| row.starts_with(" ✓ intent:"))
-        .ok_or("missing intent card")?;
+        .ok_or("missing intent field")?;
     assert!(intent_heading < heading);
     assert_eq!(
         compose[intent_heading + 1],
         format!("   {}", "x".repeat(width - 1)),
-        "the card wraps where the message does"
+        "the field wraps where the message does"
     );
     assert_eq!(compose[intent_heading + 2], "   x");
 
@@ -632,7 +638,7 @@ fn untouched_and_dirty_cancellation_follow_distinct_confirmation_paths() {
     let definitions = built_in_commit_types();
     let mut unpinned = AuthoringSession::new(definitions, None);
     press(&mut unpinned, KeyCode::Enter);
-    assert!(!unpinned.cards.dirty());
+    assert!(!unpinned.composer.dirty());
     press(&mut unpinned, KeyCode::Esc);
     assert_eq!(unpinned.stage, Stage::SelectType);
 
@@ -643,18 +649,18 @@ fn untouched_and_dirty_cancellation_follow_distinct_confirmation_paths() {
     assert_eq!(unpinned.confirmation, ConfirmationAction::ChangeType);
     press(&mut unpinned, KeyCode::Enter);
     assert_eq!(unpinned.stage, Stage::Compose);
-    assert_eq!(unpinned.cards.subject.lines(), [": dirty"]);
+    assert_eq!(unpinned.composer.subject.lines(), [": dirty"]);
     press(&mut unpinned, KeyCode::Esc);
     press(&mut unpinned, KeyCode::Char('y'));
     assert_eq!(unpinned.stage, Stage::SelectType);
-    assert!(!unpinned.cards.dirty());
+    assert!(!unpinned.composer.dirty());
 
     let mut decided = AuthoringSession::new(definitions, Some(0));
     for _ in 0..3 {
         press(&mut decided, KeyCode::Down);
     }
     alt(&mut decided, 'n');
-    assert!(decided.cards.dirty(), "a decision is work to lose");
+    assert!(decided.composer.dirty(), "a decision is work to lose");
 
     let mut pinned = AuthoringSession::new(definitions, Some(0));
     assert_eq!(
@@ -680,9 +686,12 @@ fn review_ignores_q_and_esc_keeps_editing_the_same_text() -> Result<(), Box<dyn 
     assert_eq!(review_text(&session)?, message);
     press(&mut session, KeyCode::Esc);
     assert_eq!(session.stage, Stage::Compose);
-    assert_eq!(session.cards.subject.lines(), [": compose durable message"]);
     assert_eq!(
-        session.cards.properties[0].body.lines(),
+        session.composer.subject.lines(),
+        [": compose durable message"]
+    );
+    assert_eq!(
+        session.composer.properties[0].body.lines(),
         ["explain intent 🦀"]
     );
     Ok(())
@@ -791,7 +800,10 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
     assert!(text.contains("Discard this draft and cancel"));
     assert!(text.contains("y discard"));
     assert!(text.contains("enter/esc/n keep editing"));
-    assert!(text.contains("intent:"), "the cards stay under the dialog");
+    assert!(
+        text.contains("intent:"),
+        "the composer stays under the dialog"
+    );
     let buffer = rendered_buffer(&mut review, 100, 24)?;
     let buttons = review
         .discard_dialog
@@ -859,7 +871,7 @@ fn confirmation_uses_double_frame_clickable_buttons_and_preserves_keyboard()
     let _ = rendered_buffer(&mut fits, 60, 18)?;
     assert!(
         !fits.too_small,
-        "the cards scroll, so they fit the picker's minimum"
+        "the composer scrolls, so it fits the picker's minimum"
     );
 
     let mut small_confirmation = AuthoringSession::new(built_in_commit_types(), Some(0));
@@ -888,19 +900,22 @@ fn non_press_resize_and_paste_events_obey_stage_boundaries() -> Result<(), Box<d
         KeyEventKind::Release,
     ));
     assert!(session.handle_event(release).is_none());
-    assert!(!session.cards.dirty());
+    assert!(!session.composer.dirty());
     assert!(session.handle_event(Event::Resize(120, 40)).is_none());
 
     let mut picker = AuthoringSession::new(built_in_commit_types(), None);
     paste(&mut picker, "ignored");
-    assert!(!picker.cards.dirty());
+    assert!(!picker.composer.dirty());
 
     let mut review = valid_feat_session();
     let message = review_text(&review)?;
     paste(&mut review, "ignored");
     assert_eq!(review_text(&review)?, message);
     press(&mut review, KeyCode::Esc);
-    assert_eq!(review.cards.subject.lines(), [": compose durable message"]);
+    assert_eq!(
+        review.composer.subject.lines(),
+        [": compose durable message"]
+    );
     Ok(())
 }
 
@@ -920,10 +935,10 @@ fn ctrl_t_keeps_answers_the_new_type_asks_for_and_esc_restores_the_old_one()
     press(&mut session, KeyCode::Down);
     press(&mut session, KeyCode::Esc);
     assert_eq!(session.stage, Stage::Compose);
-    assert_eq!(session.cards.definition().id().as_str(), "feat");
-    assert_eq!(session.cards.subject.lines(), ["(net): retry sooner"]);
+    assert_eq!(session.composer.definition().id().as_str(), "feat");
+    assert_eq!(session.composer.subject.lines(), ["(net): retry sooner"]);
     assert_eq!(
-        session.cards.text(CardId::Property(0)).lines(),
+        session.composer.text(MessageFieldId::Property(0)).lines(),
         ["why it exists"]
     );
 
@@ -931,24 +946,27 @@ fn ctrl_t_keeps_answers_the_new_type_asks_for_and_esc_restores_the_old_one()
     typed(&mut session, "fi");
     press(&mut session, KeyCode::Enter);
     assert_eq!(session.stage, Stage::Compose);
-    assert_eq!(session.cards.definition().id().as_str(), "fix");
-    assert_eq!(session.cards.subject.lines(), ["(net): retry sooner"]);
+    assert_eq!(session.composer.definition().id().as_str(), "fix");
+    assert_eq!(session.composer.subject.lines(), ["(net): retry sooner"]);
     assert_eq!(
         session
-            .cards
+            .composer
             .properties
             .iter()
-            .map(|card| card.body.lines().join("\n"))
+            .map(|field| field.body.lines().join("\n"))
             .collect::<Vec<_>>(),
         vec!["", "this repair", "a bound"]
     );
     assert_eq!(
-        session.cards.properties[2].policy.word(),
+        session.composer.properties[2].requirement.word(),
         "applies",
         "carried constraint text answers that the property applies"
     );
     assert_eq!(
-        session.cards.text(CardId::BreakingChange).lines(),
+        session
+            .composer
+            .text(MessageFieldId::BreakingChange)
+            .lines(),
         ["callers must migrate"]
     );
     let text = rendered(&mut session, 100, 30)?;
@@ -960,17 +978,17 @@ fn ctrl_t_keeps_answers_the_new_type_asks_for_and_esc_restores_the_old_one()
     assert_eq!(session.stage, Stage::Compose);
     assert!(
         session
-            .cards
-            .notes
+            .composer
+            .feedback
             .iter()
-            .any(|note| note.message.contains("cause"))
+            .any(|feedback| feedback.message.contains("cause"))
     );
     assert!(
         session
-            .cards
-            .notes
+            .composer
+            .feedback
             .iter()
-            .all(|note| !note.message.contains("intent"))
+            .all(|feedback| !feedback.message.contains("intent"))
     );
     Ok(())
 }
@@ -995,9 +1013,9 @@ fn ctrl_t_restores_the_taxonomy_when_the_picker_is_cancelled() -> Result<(), Str
             .as_str(),
         taxonomy
     );
-    assert_eq!(session.cards.definition().id().as_str(), "feat");
+    assert_eq!(session.composer.definition().id().as_str(), "feat");
     assert_eq!(
-        session.cards.text(CardId::Property(0)).lines(),
+        session.composer.text(MessageFieldId::Property(0)).lines(),
         ["why it exists"]
     );
     press(&mut session, KeyCode::Esc);
@@ -1010,9 +1028,9 @@ fn ctrl_t_restores_the_taxonomy_when_the_picker_is_cancelled() -> Result<(), Str
             .as_str(),
         taxonomy
     );
-    assert_eq!(session.cards.definition().id().as_str(), "feat");
+    assert_eq!(session.composer.definition().id().as_str(), "feat");
     assert_eq!(
-        session.cards.text(CardId::Property(0)).lines(),
+        session.composer.text(MessageFieldId::Property(0)).lines(),
         ["why it exists"]
     );
     Ok(())
@@ -1025,7 +1043,11 @@ fn citing(paths: &[&str]) -> AuthoringSession {
 }
 
 fn focused_text(session: &AuthoringSession) -> String {
-    session.cards.text(session.cards.focus).lines().join("\n")
+    session
+        .composer
+        .text(session.composer.focus)
+        .lines()
+        .join("\n")
 }
 
 #[test]
@@ -1128,7 +1150,7 @@ fn cite_lands_at_the_cursor() {
 }
 
 #[test]
-fn the_list_takes_the_keys_that_would_leave_the_cards() {
+fn the_list_takes_the_keys_that_would_leave_the_composer() {
     let mut session = citing(&["src/a.rs"]);
     press(&mut session, KeyCode::Down);
     press(&mut session, KeyCode::Down);
@@ -1142,9 +1164,9 @@ fn the_list_takes_the_keys_that_would_leave_the_cards() {
     assert!(session.review.is_none());
     assert_eq!(
         session
-            .cards
-            .card(session.cards.focus)
-            .map(|card| card.policy.word()),
+            .composer
+            .field(session.composer.focus)
+            .map(|field| field.requirement.word()),
         Some("conditional")
     );
 }
