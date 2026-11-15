@@ -1314,3 +1314,161 @@ fn the_commit_list_shows_the_sha_and_subject() -> Result<(), Box<dyn Error>> {
     assert!(!screen.contains("@abc1234"), "{screen}");
     Ok(())
 }
+
+/// The columns of `row` drawn on a panel, banded or highlighted.
+fn panel_columns(buffer: &Buffer, width: u16, row: u16) -> Option<(u16, u16)> {
+    let on_panel = |column: &u16| {
+        let bg = buffer[(*column, row)].bg;
+        bg == theme().band || bg == theme().cursor
+    };
+    let first = (0..width).find(on_panel)?;
+    let last = (0..width).rev().find(on_panel)?;
+    Some((first, last))
+}
+
+/// The selected row of a picker panel.
+#[derive(Debug, PartialEq)]
+struct SelectedRow {
+    /// The first and last column the panel covers.
+    columns: (u16, u16),
+    /// The column the selected text starts at.
+    text: u16,
+    fg: Color,
+    bg: Color,
+    bold: bool,
+}
+
+fn selected_row(
+    buffer: &Buffer,
+    width: u16,
+    height: u16,
+    text: &str,
+) -> Result<SelectedRow, Box<dyn Error>> {
+    let (column, row) = find_ascii(buffer, width, height, text).ok_or("missing selected text")?;
+    let columns = panel_columns(buffer, width, row).ok_or("the selected row has no panel")?;
+    for x in 0..width {
+        let highlighted = buffer[(x, row)].bg == theme().cursor;
+        assert_eq!(
+            highlighted,
+            (columns.0..=columns.1).contains(&x),
+            "the highlight spans the panel at ({x}, {row})"
+        );
+    }
+    let cell = &buffer[(column, row)];
+    Ok(SelectedRow {
+        columns,
+        text: column,
+        fg: cell.fg,
+        bg: cell.bg,
+        bold: cell.modifier.contains(Modifier::BOLD),
+    })
+}
+
+#[test]
+fn the_citation_panel_is_banded_inset_and_highlights_its_whole_row() -> Result<(), Box<dyn Error>> {
+    for (width, height) in [(80, 24), (100, 30)] {
+        let mut session = citing(&["src/net/retry.rs", "README.md"]);
+        press(&mut session, KeyCode::Char('@'));
+        let buffer = rendered_buffer(&mut session, width, height)?;
+        let row = selected_row(&buffer, width, height, "src/net/retry.rs")?;
+        let columns = row.columns;
+        assert_eq!(columns, (1, width - 2), "at {width}x{height}");
+        assert_eq!(
+            row.text,
+            columns.0 + 2,
+            "two columns of inset at {width}x{height}"
+        );
+        assert_eq!(
+            (row.fg, row.bg, row.bold),
+            (theme().ground, theme().cursor, true)
+        );
+
+        let (_, readme) =
+            find_ascii(&buffer, width, height, "README.md").ok_or("missing readme")?;
+        assert_eq!(panel_columns(&buffer, width, readme), Some(columns));
+        for x in columns.0..=columns.1 {
+            assert_eq!(buffer[(x, readme)].bg, theme().band, "({x}, {readme})");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn the_citation_sources_underline_the_active_one() -> Result<(), Box<dyn Error>> {
+    let mut session = with_commits(&["README.md"], &[("abc1234", "back off")]);
+    press(&mut session, KeyCode::Char('@'));
+    let styles = |session: &mut AuthoringSession| -> Result<_, Box<dyn Error>> {
+        let buffer = rendered_buffer(session, 80, 24)?;
+        let files = find_ascii(&buffer, 80, 24, "Files").ok_or("missing files")?;
+        let commits = find_ascii(&buffer, 80, 24, "Commits").ok_or("missing commits")?;
+        assert_eq!(commits.0, files.0 + 7, "two columns between the sources");
+        Ok([files, commits].map(|position| {
+            let cell = &buffer[position];
+            (cell.fg, cell.modifier)
+        }))
+    };
+    let active = (theme().text, Modifier::BOLD | Modifier::UNDERLINED);
+    let inactive = (theme().dim, Modifier::empty());
+    assert_eq!(styles(&mut session)?, [active, inactive]);
+    press(&mut session, KeyCode::Right);
+    assert_eq!(styles(&mut session)?, [inactive, active]);
+    Ok(())
+}
+
+#[test]
+fn the_selected_path_stays_visible_when_the_list_scrolls() -> Result<(), Box<dyn Error>> {
+    let paths: Vec<String> = (0..12)
+        .map(|index| format!("src/file{index:02}.rs"))
+        .collect();
+    let mut session = citing(&paths.iter().map(String::as_str).collect::<Vec<_>>());
+    press(&mut session, KeyCode::Char('@'));
+    let shown = |session: &mut AuthoringSession| -> Result<Vec<String>, Box<dyn Error>> {
+        let rows = screen(session, 80, 24)?;
+        Ok(rows
+            .iter()
+            .filter_map(|row| row.split_whitespace().find(|word| word.starts_with("src/")))
+            .map(str::to_owned)
+            .collect())
+    };
+    assert_eq!(shown(&mut session)?, paths[..8]);
+    press(&mut session, KeyCode::Up);
+    assert_eq!(
+        shown(&mut session)?,
+        paths[4..],
+        "up from the top wraps to the last"
+    );
+    let buffer = rendered_buffer(&mut session, 80, 24)?;
+    let (column, row) = find_ascii(&buffer, 80, 24, "src/file11.rs").ok_or("missing last")?;
+    assert_eq!(buffer[(column, row)].bg, theme().cursor);
+    press(&mut session, KeyCode::Up);
+    assert_eq!(
+        shown(&mut session)?,
+        paths[4..],
+        "moving inside the view does not scroll"
+    );
+    press(&mut session, KeyCode::Down);
+    press(&mut session, KeyCode::Down);
+    assert_eq!(
+        shown(&mut session)?,
+        paths[..8],
+        "down from the last wraps to the top"
+    );
+    Ok(())
+}
+
+#[test]
+fn both_pickers_draw_the_same_band_inset_and_highlight() -> Result<(), Box<dyn Error>> {
+    for (width, height) in [(80, 24), (100, 30)] {
+        let mut types = AuthoringSession::new(built_in_commit_types(), None);
+        let types_buffer = rendered_buffer(&mut types, width, height)?;
+        let type_row = selected_row(&types_buffer, width, height, "feat")?;
+
+        let mut citation = citing(&["src/net/retry.rs"]);
+        press(&mut citation, KeyCode::Char('@'));
+        let citation_buffer = rendered_buffer(&mut citation, width, height)?;
+        let citation_row = selected_row(&citation_buffer, width, height, "src/net/retry.rs")?;
+
+        assert_eq!(type_row, citation_row, "at {width}x{height}");
+    }
+    Ok(())
+}

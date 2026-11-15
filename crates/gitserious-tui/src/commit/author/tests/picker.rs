@@ -368,3 +368,20 @@ fn type_picker_renders_the_complete_effective_conventional_catalog() -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn a_taller_terminal_scrolls_the_type_list_back_to_fill_it() -> Result<(), Box<dyn Error>> {
+    let mut session = AuthoringSession::new(built_in_commit_types(), None);
+    press(&mut session, KeyCode::Up);
+    let short = rendered_buffer(&mut session, 100, 18)?;
+    assert_eq!(
+        picker_rows(&short, 100, 6..7)[0].split_whitespace().next(),
+        Some("perf")
+    );
+    let tall = rendered_buffer(&mut session, 100, 30)?;
+    let rows = picker_rows(&tall, 100, 6..17);
+    assert_eq!(rows[0].split_whitespace().next(), Some("feat"));
+    assert_eq!(rows[10].split_whitespace().next(), Some("revert"));
+    assert_eq!(session.type_offset, 0);
+    Ok(())
+}
