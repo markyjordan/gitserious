@@ -7,7 +7,7 @@ use ratatui::widgets::Paragraph;
 use tui_textarea::TextArea;
 use unicode_width::UnicodeWidthStr;
 
-use super::layout::{self, char_width};
+use super::layout::{self, ComposerLayout, char_width};
 use super::{FieldMarker, MessageComposer, MessageFieldId};
 use crate::theme::theme;
 
@@ -45,24 +45,33 @@ pub(crate) fn render(frame: &mut Frame<'_>, area: Rect, composer: &mut MessageCo
     .areas(area);
     let width = usize::from(list.width.saturating_sub(GUTTER + MARGIN));
     // One column stays free past the wrap, so a cursor after a full row shows.
-    composer.wrap = width
+    let wrap_width = width
         .saturating_sub(1)
         .clamp(1, usize::from(COMMIT_MESSAGE_WIDTH));
-    let sheet = sheet(composer, width);
-    composer.scroll = scroll(composer.scroll, &sheet, usize::from(list.height));
-    composer.cursor_row = sheet
+    let sheet = sheet(composer, width, wrap_width);
+    let scroll_offset = scroll(
+        composer.layout.scroll_offset,
+        &sheet,
+        usize::from(list.height),
+    );
+    let cursor_row = sheet
         .cursor
-        .checked_sub(composer.scroll)
+        .checked_sub(scroll_offset)
         .and_then(|row| u16::try_from(row).ok())
         .filter(|row| *row < list.height)
         .map(|row| list.y + row);
-    for (y, row) in (list.y..list.bottom()).zip(sheet.rows.iter().skip(composer.scroll)) {
+    composer.layout = ComposerLayout {
+        wrap_width,
+        scroll_offset,
+        cursor_row,
+    };
+    for (y, row) in (list.y..list.bottom()).zip(sheet.rows.iter().skip(scroll_offset)) {
         draw_row(frame, Rect::new(list.x, y, list.width, 1), row);
     }
     render_status(frame, status, composer);
 }
 
-fn sheet(composer: &MessageComposer, width: usize) -> Sheet {
+fn sheet(composer: &MessageComposer, width: usize, wrap: usize) -> Sheet {
     let mut sheet = Sheet::default();
     for id in composer.ids() {
         if !sheet.rows.is_empty() {
@@ -92,12 +101,12 @@ fn sheet(composer: &MessageComposer, width: usize) -> Sheet {
                     focused,
                 };
                 let body = if !focused {
-                    text_lines(&field.body, composer.wrap, None)
+                    text_lines(&field.body, wrap, None)
                 } else if field.body.is_empty() {
                     sheet.cursor += 1;
-                    guidance_lines(composer.guidance(id), composer.wrap)
+                    guidance_lines(composer.guidance(id), wrap)
                 } else {
-                    let (lines, cursor) = cursor_lines(&field.body, composer.wrap);
+                    let (lines, cursor) = cursor_lines(&field.body, wrap);
                     sheet.cursor += 1 + cursor;
                     lines
                 };
@@ -121,15 +130,13 @@ fn sheet(composer: &MessageComposer, width: usize) -> Sheet {
                 ValidationSeverity::Warning => dim(),
             };
             let lines = vec![feedback.message.clone()];
-            sheet.rows.extend(
-                layout::rows(&lines, composer.wrap)
-                    .into_iter()
-                    .map(|row| Row {
-                        text: Line::styled(slice(&lines[0], row.start, row.end), style),
-                        focused,
-                        ..Row::default()
-                    }),
-            );
+            sheet
+                .rows
+                .extend(layout::rows(&lines, wrap).into_iter().map(|row| Row {
+                    text: Line::styled(slice(&lines[0], row.start, row.end), style),
+                    focused,
+                    ..Row::default()
+                }));
         }
     }
     sheet

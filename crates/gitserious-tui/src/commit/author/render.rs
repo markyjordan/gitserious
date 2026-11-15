@@ -58,7 +58,7 @@ pub(crate) fn render(
         citation_picker::render(
             frame,
             area,
-            session.composer.cursor_row,
+            session.composer.layout().cursor_row,
             &mut session.citation_picker,
             &session.paths,
             &session.commits,
