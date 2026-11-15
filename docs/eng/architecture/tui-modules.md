@@ -42,6 +42,7 @@ crates/gitserious-tui/src/
 │   └── author/
 │       ├── state.rs
 │       ├── render.rs
+│       ├── review.rs
 │       ├── type_picker.rs
 │       ├── citation_picker.rs
 │       ├── components/
@@ -75,6 +76,7 @@ crates/gitserious-tui/src/
 | [`home/`](../../../crates/gitserious-tui/src/home/mod.rs) | The project overview, the initialization editor, which keys the editor captures, Enter's step, and Home's palette command | Reloading Config |
 | [`commit/`](../../../crates/gitserious-tui/src/commit/mod.rs) | The status tree, its keys and hints, the Git result and staged views, palette commands, the in-page editor and its staged header, and failed-review retention | Suspending the terminal for submission, which the adapter starts |
 | `commit/author/state.rs` | The authoring stages, the type picker's selection, filter, and clicks, changing type with ctrl+t, review, discard confirmation, and giving an open citation picker the keys first | Field text layout and draft field parsing |
+| `commit/author/review.rs` | Drawing the reviewed message, the highlighted row Enter commits to, and the recommendations it leaves out, scrolled to fit | Review keys and recovery after a failed submission, which the session owns |
 | `commit/author/type_picker.rs` | Drawing the type picker: the subject filter, the taxonomy tabs and the rectangles clicks hit, the type rows, and the selected type's description | Which type is selected, which the session decides |
 | `commit/author/components/selection_panel.rs` | `SelectionPanel`: the band, the two-column inset, the selected row highlighted from edge to edge, the tab style, and the visible-offset rule that both pickers draw with | Where a panel goes, its height, what its rows say, and what choosing one does |
 | `commit/author/citation_picker.rs` | `CitationPickerState`: the list opened by `@`, its query, its Files or Commits source, its selection, the reference Enter inserts, and its drawing | Reading the worktree. The Commit page supplies the paths and commits |

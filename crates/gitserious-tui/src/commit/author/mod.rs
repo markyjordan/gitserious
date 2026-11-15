@@ -2,6 +2,7 @@ mod citation_picker;
 mod components;
 mod composer;
 mod render;
+mod review;
 mod state;
 #[cfg(test)]
 mod tests;
