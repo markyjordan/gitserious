@@ -9,7 +9,7 @@ use super::composer;
 use super::review;
 use super::state::{AuthoringSession, ConfirmationAction, Stage};
 use super::type_picker;
-use crate::confirmation::{Confirmation, DISCARD};
+use crate::components::confirmation_dialog::{Confirmation, DISCARD};
 use crate::theme::{JET_BLACK, centered_rect, section_heading_style};
 
 const MINIMUM_WIDTH: u16 = 60;

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::confirmation::{self, Answer, ConfirmDialog, Confirmation, REMOVE};
+use crate::components::confirmation_dialog::{self, Answer, ConfirmDialog, Confirmation, REMOVE};
 use gitserious_app::{
     ConfigurationWorkspace, DraftEdit, EditRefusal, LibraryDraft, NodeId, NodeRef, ProjectSnapshot,
     RepositoryRoot, TaxonomyOrigin,
@@ -344,7 +344,7 @@ impl State {
 
     fn handle_confirmation_event(
         &mut self,
-        choices: &[confirmation::Choice],
+        choices: &[confirmation_dialog::Choice],
         event: &Event,
     ) -> bool {
         let Some(answer) = self.dialog.handle_event(choices, event) else {
@@ -915,7 +915,7 @@ impl State {
                 self.render_project(frame, body);
             }
             self.dialog.render(frame, &question);
-            confirmation::hints(question.choices)
+            confirmation_dialog::hints(question.choices)
         } else {
             match self.screen.clone() {
                 Screen::Home if self.editor().is_some() => {

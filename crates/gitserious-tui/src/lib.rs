@@ -13,8 +13,8 @@
 
 mod adapter;
 mod commit;
+mod components;
 mod config;
-mod confirmation;
 mod help;
 mod home;
 mod root;
