@@ -75,11 +75,11 @@ pub(crate) struct DialogButtons {
 }
 
 #[derive(Default, Debug)]
-pub(crate) struct ConfirmDialog {
+pub(crate) struct ConfirmationDialog {
     pub(crate) buttons: Option<DialogButtons>,
 }
 
-impl ConfirmDialog {
+impl ConfirmationDialog {
     pub(crate) fn invalidate(&mut self) {
         self.buttons = None;
     }
@@ -240,7 +240,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let discard = question("Discard Property", "Discard property changes?", DISCARD);
         for (width, height) in [(60, 18), (87, 40), (125, 51), (120, 30)] {
-            let mut dialog = ConfirmDialog::default();
+            let mut dialog = ConfirmationDialog::default();
             let mut terminal = Terminal::new(TestBackend::new(width, height))?;
             terminal.draw(|frame| dialog.render(frame, &discard))?;
             let buttons = dialog.buttons.ok_or("missing buttons")?;
@@ -287,7 +287,7 @@ mod tests {
     fn resizing_or_hiding_buttons_invalidates_mouse_targets()
     -> Result<(), Box<dyn std::error::Error>> {
         let discard = question("Discard Type", "Discard type changes?", DISCARD);
-        let mut dialog = ConfirmDialog::default();
+        let mut dialog = ConfirmationDialog::default();
         let mut terminal = Terminal::new(TestBackend::new(60, 18))?;
         terminal.draw(|frame| dialog.render(frame, &discard))?;
         let old = dialog.buttons.ok_or("missing buttons")?;

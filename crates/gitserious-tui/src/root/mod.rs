@@ -10,8 +10,8 @@ use gitserious_app::{CommitWorkspace, ConfigurationWorkspace, ProjectWorkspace};
 use ratatui::DefaultTerminal;
 
 use crate::commit::{CommitRequest, CommitView};
+use crate::components::confirmation_dialog::ConfirmationDialog;
 use crate::config::ConfigView;
-use crate::confirmation::ConfirmDialog;
 use crate::help::{HelpPage, HelpView};
 use crate::home::{HomePage, HomeRequest};
 use navigation::{Section, Tabs};
@@ -60,7 +60,7 @@ pub(crate) struct Root {
     commit: CommitView,
     home: HomePage,
     overlay: Option<Overlay>,
-    quit_dialog: ConfirmDialog,
+    quit_dialog: ConfirmationDialog,
     help: HelpView,
     tabs: Tabs,
     too_small: bool,
@@ -91,7 +91,7 @@ impl Root {
             commit: CommitView::default(),
             home: HomePage::new(capabilities.project),
             overlay: None,
-            quit_dialog: ConfirmDialog::default(),
+            quit_dialog: ConfirmationDialog::default(),
             help,
             tabs: Tabs::default(),
             too_small: false,

@@ -1,6 +1,6 @@
 use super::citation_picker::{CitationPickerAction, CitationPickerState};
 use super::composer::MessageComposer;
-use crate::confirmation::{Answer, ConfirmDialog, DISCARD};
+use crate::components::confirmation_dialog::{Answer, ConfirmationDialog, DISCARD};
 use gitserious_app::{AuthoredCommit, CitedCommit, CommitAuthoringContext, CommitTaxonomy};
 use gitserious_core::{CommitDraft, CommitMessage, CommitTypeDefinition, ConditionalApplicability};
 use ratatui::crossterm::event::{
@@ -69,7 +69,7 @@ pub(crate) struct AuthoringSession {
     pub(crate) composer: MessageComposer,
     pub(crate) review: Option<ReviewState>,
     pub(crate) confirmation: ConfirmationAction,
-    pub(crate) discard_dialog: ConfirmDialog,
+    pub(crate) discard_dialog: ConfirmationDialog,
     pub(crate) catalog_tabs: Vec<CatalogTab>,
     /// What the user typed on the subject line while choosing a type.
     pub(crate) filter: String,
@@ -107,7 +107,7 @@ impl AuthoringSession {
             composer: MessageComposer::new(definitions[selected_type].clone()),
             review: None,
             confirmation: ConfirmationAction::Cancel,
-            discard_dialog: ConfirmDialog::default(),
+            discard_dialog: ConfirmationDialog::default(),
             catalog_tabs: Vec::new(),
             filter: String::new(),
             type_offset: 0,

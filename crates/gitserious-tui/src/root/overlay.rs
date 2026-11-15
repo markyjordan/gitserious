@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, Clear};
 
 use super::commands::{Palette, Step};
 use super::{Action, Capabilities, Root};
-use crate::confirmation::{self, Answer, Confirmation, DISCARD_AND_QUIT};
+use crate::components::confirmation_dialog::{self, Answer, Confirmation, DISCARD_AND_QUIT};
 use crate::theme::{
     FOOTER_HEIGHT, JET_BLACK, centered_rect, frame_style, render_footer, render_footer_block,
 };
@@ -62,7 +62,12 @@ impl Root {
                 FOOTER_HEIGHT,
             );
             let footer = render_footer_block(frame, footer);
-            render_footer(frame, footer, &confirmation::hints(DISCARD_AND_QUIT), &[]);
+            render_footer(
+                frame,
+                footer,
+                &confirmation_dialog::hints(DISCARD_AND_QUIT),
+                &[],
+            );
             return;
         }
         let commands = self.commands();

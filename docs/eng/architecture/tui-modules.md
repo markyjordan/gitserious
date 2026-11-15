@@ -53,9 +53,10 @@ crates/gitserious-tui/src/
 │           ├── input.rs
 │           ├── layout.rs
 │           └── render.rs
+├── components/
+│   └── confirmation_dialog.rs
 ├── config/
 ├── help/
-├── confirmation.rs
 ├── runtime.rs
 └── theme.rs
 ```
@@ -87,7 +88,7 @@ crates/gitserious-tui/src/
 | `commit/author/composer/render.rs` | Field markers, requirement words, guidance, counters, validation feedback, and scrolling | Draft validation rules |
 | [`config/`](../../../crates/gitserious-tui/src/config/mod.rs) | Library editing, the read-only Project view, its own palette, its modals, and which keys it gives the root (`RootKeys`) | Opening Home's editor |
 | [`help/`](../../../crates/gitserious-tui/src/help/mod.rs) | Help pages, the sidebar, scrolling, keys, and clicks | Which page opens first |
-| [`confirmation.rs`](../../../crates/gitserious-tui/src/confirmation.rs) | The confirmation dialog that Config and the root's quit prompt share | When to ask |
+| [`components/confirmation_dialog.rs`](../../../crates/gitserious-tui/src/components/confirmation_dialog.rs) | The confirmation dialog that authoring's discard prompt, Config's discard and remove prompts, and the root's quit prompt share | When to ask |
 | [`runtime.rs`](../../../crates/gitserious-tui/src/runtime.rs) | Terminal setup, restoration, and suspension | The event loop |
 | [`theme.rs`](../../../crates/gitserious-tui/src/theme.rs) | Colors, minimum size, footer layout, and the EDIT badge for every page | Theme preferences |
 
@@ -103,7 +104,7 @@ Name a module or type after the job it does on screen, not after how it happens 
 | Field | `Field`, `FieldState` | One editable value in a form or message, apart from how it is drawn | `MessageFieldId`, `BodyFieldState` |
 | Picker | `Picker` | A component that chooses one item and acts on the choice | `CitationPickerState` |
 | Panel, outline, inspector, list | `Panel`, `Outline`, `Inspector`, `List` | A distinct region of a view | `SelectionPanel`, `config/taxonomies/outline.rs`, `inspector.rs` |
-| Dialog | `Dialog` | A modal choice | `ConfirmDialog` |
+| Dialog | `Dialog` | A modal choice | `ConfirmationDialog` |
 | Layout, viewport, marker, feedback | `Layout`, `Viewport`, `Marker`, `Feedback` | State that exists only for drawing | |
 | Widget | `Widget` | A Ratatui rendering primitive, or a type that implements `Widget` or `StatefulWidget` | |
 
