@@ -752,4 +752,184 @@ mod tests {
         );
         Ok(())
     }
+
+    fn tree_view(
+        entries: &[(&str, char, char, bool)],
+    ) -> Result<CommitView, Box<dyn std::error::Error>> {
+        let mut view = CommitView {
+            snapshot: Some(RepositoryStatus {
+                root: RepositoryRoot::new(std::env::temp_dir())?,
+                branch: BranchState::Named("main".into()),
+                entries: entries
+                    .iter()
+                    .map(|(path, index, worktree, untracked)| StatusEntry {
+                        path: (*path).into(),
+                        original_path: None,
+                        index: *index,
+                        worktree: *worktree,
+                        untracked: *untracked,
+                        conflicted: false,
+                        submodule: "N...".into(),
+                    })
+                    .collect(),
+            }),
+            ..CommitView::default()
+        };
+        view.rebuild();
+        Ok(view)
+    }
+
+    fn drawn(
+        view: &mut CommitView,
+        width: u16,
+        height: u16,
+    ) -> Result<ratatui::buffer::Buffer, Box<dyn std::error::Error>> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+        terminal.draw(|frame| view.render(frame, frame.area()))?;
+        Ok(terminal.backend().buffer().clone())
+    }
+
+    fn row_text(buffer: &ratatui::buffer::Buffer, y: u16) -> String {
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect::<String>()
+            .trim_matches(|character: char| character == ' ' || character == '│')
+            .to_owned()
+    }
+
+    /// The rows drawn with the tree's highlight, read inside its border.
+    fn highlighted(buffer: &ratatui::buffer::Buffer) -> Vec<String> {
+        let style = navigation_key_style();
+        (0..buffer.area.height)
+            .filter(|y| {
+                let cell = &buffer[(1, *y)];
+                Some(cell.fg) == style.fg && cell.modifier.contains(Modifier::BOLD)
+            })
+            .map(|y| row_text(buffer, y))
+            .collect()
+    }
+
+    fn row_at(buffer: &ratatui::buffer::Buffer, text: &str) -> Option<u16> {
+        (0..buffer.area.height).find(|y| row_text(buffer, *y) == text)
+    }
+
+    fn press(view: &mut CommitView, code: KeyCode) {
+        assert_eq!(view.key(code), None, "{code:?} stays in the tree");
+    }
+
+    fn click(view: &mut CommitView, column: u16, row: u16) {
+        let event = Event::Mouse(ratatui::crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(view.event(event), None);
+    }
+
+    #[test]
+    fn tree_keys_stay_inside_the_rows_and_open_and_close_directories()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut view = tree_view(&[
+            ("src/a.rs", 'M', '.', false),
+            ("src/b.rs", 'M', '.', false),
+            ("README.md", '.', 'M', false),
+            ("notes.txt", '?', '?', true),
+        ])?;
+        assert_eq!(highlighted(&drawn(&mut view, 80, 24)?), ["Staged (2)"]);
+        press(&mut view, KeyCode::Up);
+        assert_eq!(highlighted(&drawn(&mut view, 80, 24)?), ["Staged (2)"]);
+        press(&mut view, KeyCode::Down);
+        assert_eq!(highlighted(&drawn(&mut view, 80, 24)?), ["▾ src/"]);
+        press(&mut view, KeyCode::Left);
+        let closed = drawn(&mut view, 80, 24)?;
+        assert_eq!(highlighted(&closed), ["▸ src/"]);
+        assert_eq!(
+            row_at(&closed, "M a.rs"),
+            None,
+            "a closed directory hides its files"
+        );
+        press(&mut view, KeyCode::Right);
+        press(&mut view, KeyCode::Down);
+        let open = drawn(&mut view, 80, 24)?;
+        assert_eq!(highlighted(&open), ["M a.rs"]);
+        assert_eq!(
+            row_text(&open, 21),
+            Path::new("src").join("a.rs").to_string_lossy(),
+            "the status line shows the selected path in the platform's form"
+        );
+        press(&mut view, KeyCode::Left);
+        press(&mut view, KeyCode::Right);
+        let file = drawn(&mut view, 80, 24)?;
+        assert_eq!(
+            highlighted(&file),
+            ["M a.rs"],
+            "left and right leave a file alone"
+        );
+        assert!(row_at(&file, "M b.rs").is_some());
+        for _ in 0..20 {
+            press(&mut view, KeyCode::Down);
+        }
+        let last = drawn(&mut view, 80, 24)?;
+        assert_eq!(
+            highlighted(&last),
+            ["? notes.txt"],
+            "down stops at the last row"
+        );
+        assert_eq!(row_text(&last, 21), "notes.txt");
+        Ok(())
+    }
+
+    #[test]
+    fn a_click_selects_the_row_drawn_there_after_scrolling_and_resizing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let paths: Vec<String> = (0..30)
+            .map(|index| format!("src/file{index:02}.rs"))
+            .collect();
+        let entries: Vec<_> = paths
+            .iter()
+            .map(|path| (path.as_str(), 'M', '.', false))
+            .collect();
+        let mut view = tree_view(&entries)?;
+        let buffer = drawn(&mut view, 80, 24)?;
+        let row = row_at(&buffer, "M file02.rs").ok_or("missing file02")?;
+        click(&mut view, 10, row);
+        assert_eq!(highlighted(&drawn(&mut view, 80, 24)?), ["M file02.rs"]);
+
+        for _ in 0..25 {
+            press(&mut view, KeyCode::Down);
+        }
+        let scrolled = drawn(&mut view, 80, 24)?;
+        assert_eq!(
+            row_at(&scrolled, "Staged (30)"),
+            None,
+            "the list has scrolled"
+        );
+        let row = row_at(&scrolled, "M file20.rs").ok_or("missing file20")?;
+        click(&mut view, 10, row);
+        assert_eq!(highlighted(&drawn(&mut view, 80, 24)?), ["M file20.rs"]);
+        click(&mut view, 10, 0);
+        assert_eq!(
+            highlighted(&drawn(&mut view, 80, 24)?),
+            ["M file20.rs"],
+            "a click outside the list does nothing"
+        );
+
+        drawn(&mut view, 80, 24)?;
+        let tall = drawn(&mut view, 100, 40)?;
+        assert_eq!(
+            row_text(&tall, 4),
+            "M file13.rs",
+            "a taller list keeps its scroll and leaves blank rows below"
+        );
+        let row = row_at(&tall, "Untracked (0)").ok_or("missing untracked heading")?;
+        assert!(row > 19, "the row lies below the shorter list's last row");
+        click(&mut view, 10, row);
+        assert_eq!(
+            highlighted(&drawn(&mut view, 100, 40)?),
+            ["Untracked (0)"],
+            "a click after a resize uses the rows just drawn"
+        );
+        Ok(())
+    }
 }
