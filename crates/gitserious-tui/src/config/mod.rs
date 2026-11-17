@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::components::confirmation_dialog::{
+use crate::shared::components::confirmation_dialog::{
     self, Answer, Confirmation, ConfirmationDialog, REMOVE,
 };
 use gitserious_app::{

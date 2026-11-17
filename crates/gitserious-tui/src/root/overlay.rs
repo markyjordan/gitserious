@@ -6,7 +6,9 @@ use ratatui::widgets::{Block, Clear};
 
 use super::commands::{Palette, Step};
 use super::{Action, Capabilities, Root};
-use crate::components::confirmation_dialog::{self, Answer, Confirmation, DISCARD_AND_QUIT};
+use crate::shared::components::confirmation_dialog::{
+    self, Answer, Confirmation, DISCARD_AND_QUIT,
+};
 use crate::theme::{
     FOOTER_HEIGHT, JET_BLACK, centered_rect, frame_style, render_footer, render_footer_block,
 };

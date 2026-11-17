@@ -13,12 +13,12 @@
 
 mod adapter;
 mod commit;
-mod components;
 mod config;
 mod help;
 mod home;
 mod root;
 mod runtime;
+mod shared;
 mod theme;
 
 pub use adapter::RatatuiInteractiveUi;

@@ -10,10 +10,10 @@ use gitserious_app::{CommitWorkspace, ConfigurationWorkspace, ProjectWorkspace};
 use ratatui::DefaultTerminal;
 
 use crate::commit::{CommitRequest, CommitView};
-use crate::components::confirmation_dialog::ConfirmationDialog;
 use crate::config::ConfigView;
 use crate::help::{HelpPage, HelpView};
 use crate::home::{HomeRequest, HomeView};
+use crate::shared::components::confirmation_dialog::ConfirmationDialog;
 use navigation::{Section, Tabs};
 use overlay::Overlay;
 

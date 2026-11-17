@@ -33,7 +33,7 @@ use super::naming::problem_sentence;
 use super::taxonomies::{Observation, ObservedMode as Mode};
 use super::tests::Workspace;
 use super::*;
-use crate::components::confirmation_dialog::{self, Answer, ConfirmationDialog, REMOVE};
+use crate::shared::components::confirmation_dialog::{self, Answer, ConfirmationDialog, REMOVE};
 
 const fn press(code: KeyCode, modifiers: KeyModifiers) -> Event {
     Event::Key(KeyEvent::new(code, modifiers))
