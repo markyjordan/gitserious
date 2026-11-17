@@ -39,6 +39,9 @@ crates/gitserious-tui/src/
 │   └── tests/
 ├── home/
 ├── commit/
+│   ├── status_tree/
+│   │   ├── mod.rs
+│   │   └── render.rs
 │   └── author/
 │       ├── state.rs
 │       ├── render.rs
@@ -76,7 +79,8 @@ crates/gitserious-tui/src/
 | [`root/overlay.rs`](../../../crates/gitserious-tui/src/root/overlay.rs) | The palette overlay, the quit confirmation, and the popup frame | Page modals |
 | [`root/render.rs`](../../../crates/gitserious-tui/src/root/render.rs) | The frame: background, too-small message, header band and version, page body and footer (with the EDIT badge while Commit's editor is open), and overlays on top | Any page's drawing |
 | [`home/`](../../../crates/gitserious-tui/src/home/mod.rs) | The project overview, the initialization editor, which keys the editor captures, Enter's step, and Home's palette command | Reloading Config |
-| [`commit/`](../../../crates/gitserious-tui/src/commit/mod.rs) | The status tree, its keys and hints, the Git result and staged views, palette commands, the in-page editor and its staged header, and failed-review retention | Suspending the terminal for submission, which the adapter starts |
+| [`commit/`](../../../crates/gitserious-tui/src/commit/mod.rs) | `CommitView`: the repository summary and status line, the page's keys and hints, the Git result and staged views, palette commands, the in-page editor and its staged header, and failed-review retention | Suspending the terminal for submission, which the adapter starts. The tree's rows |
+| `commit/status_tree/` | `StatusTree`: staged, unstaged, and untracked rows grouped by directory, which directories are closed, the selection, Up, Down, Left, and Right, clicks against the last drawn list, and the list's drawing | The snapshot, which the page passes in |
 | `commit/author/state.rs` | The authoring stages, the type picker's selection, filter, and clicks, changing type with ctrl+t, review, discard confirmation, and giving an open citation picker the keys first | Field text layout and draft field parsing |
 | `commit/author/review.rs` | Drawing the reviewed message, the highlighted row Enter commits to, and the recommendations it leaves out, scrolled to fit | Review keys and recovery after a failed submission, which the session owns |
 | `commit/author/type_picker.rs` | Drawing the type picker: the subject filter, the taxonomy tabs and the rectangles clicks hit, the type rows, and the selected type's description | Which type is selected, which the session decides |

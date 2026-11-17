@@ -1,41 +1,25 @@
 mod author;
+mod status_tree;
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsString;
 use std::io;
-use std::path::{Path, PathBuf};
 
 use gitserious_app::{
-    AuthoredCommit, BranchState, CommitOutput, CommitWorkspace, RepositoryStatus, StatusEntry,
+    AuthoredCommit, BranchState, CommitOutput, CommitWorkspace, RepositoryStatus,
 };
 use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::theme::{
-    block_title, command_hints, frame_style, navigation_key_style, section_heading_style, theme,
-};
+use crate::theme::{command_hints, frame_style, theme};
 
 #[cfg(test)]
 pub(crate) use author::built_in_context;
 use author::{AuthoringOutcome, AuthoringSession};
-
-#[derive(Clone)]
-struct TreeRow {
-    label: String,
-    directory: Option<(usize, PathBuf)>,
-    detail: String,
-}
-
-#[derive(Default)]
-struct Node<'a> {
-    children: BTreeMap<OsString, Node<'a>>,
-    entry: Option<&'a StatusEntry>,
-}
+use status_tree::{StatusTree, in_group};
 
 /// What Commit asks the root to do.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -70,11 +54,7 @@ pub(crate) struct CommitView {
     approved: Option<AuthoredCommit>,
     /// The session of a reviewed commit Git rejected, kept so its review can resume.
     pending: Option<AuthoringSession>,
-    collapsed: BTreeSet<(usize, PathBuf)>,
-    rows: Vec<TreeRow>,
-    selected: usize,
-    list: ListState,
-    list_area: Rect,
+    tree: StatusTree,
     /// The open popup and its scroll offset.
     popup: Option<(Popup, u16)>,
 }
@@ -95,8 +75,9 @@ impl CommitView {
                 });
             }
             KeyCode::Char('c') => return Some(CommitRequest::Author),
-            KeyCode::Up | KeyCode::Down => self.move_selection(code == KeyCode::Down),
-            KeyCode::Left | KeyCode::Right => self.directory(code == KeyCode::Right),
+            KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right => {
+                self.tree.key(code, self.snapshot.as_ref())
+            }
             _ => {}
         }
         None
@@ -113,7 +94,7 @@ impl CommitView {
             if let Event::Mouse(mouse) = event
                 && mouse.kind == MouseEventKind::Down(MouseButton::Left)
             {
-                self.click(mouse.column, mouse.row);
+                self.tree.click(mouse.column, mouse.row);
             }
             return None;
         };
@@ -251,17 +232,8 @@ impl CommitView {
             Popup::Staged => Paragraph::new(
                 self.snapshot
                     .as_ref()
-                    .map(|snapshot| group_rows(snapshot, 0, &BTreeSet::new()))
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|row| {
-                        if row.directory.is_none() && row.detail.is_empty() {
-                            Line::styled(row.label, section_heading_style())
-                        } else {
-                            Line::from(row.label)
-                        }
-                    })
-                    .collect::<Vec<_>>(),
+                    .map(status_tree::staged_lines)
+                    .unwrap_or_default(),
             ),
         }
         .wrap(Wrap { trim: false });
@@ -291,7 +263,7 @@ impl CommitView {
                 self.blocker = Some(error);
             }
         }
-        self.rebuild();
+        self.tree.rebuild(self.snapshot.as_ref());
     }
 
     pub(crate) fn has_pending_review(&self) -> bool {
@@ -352,54 +324,6 @@ impl CommitView {
         self.refresh(commit);
     }
 
-    fn rebuild(&mut self) {
-        self.rows.clear();
-        if let Some(snapshot) = &self.snapshot {
-            for group in 0..3 {
-                self.rows
-                    .extend(group_rows(snapshot, group, &self.collapsed));
-            }
-        }
-        self.selected = self.selected.min(self.rows.len().saturating_sub(1));
-        self.list
-            .select((!self.rows.is_empty()).then_some(self.selected));
-    }
-
-    fn move_selection(&mut self, down: bool) {
-        self.selected = if down {
-            (self.selected + 1).min(self.rows.len().saturating_sub(1))
-        } else {
-            self.selected.saturating_sub(1)
-        };
-        self.list
-            .select((!self.rows.is_empty()).then_some(self.selected));
-    }
-
-    fn directory(&mut self, expand: bool) {
-        if let Some(key) = self
-            .rows
-            .get(self.selected)
-            .and_then(|row| row.directory.clone())
-        {
-            if expand {
-                self.collapsed.remove(&key);
-            } else {
-                self.collapsed.insert(key);
-            }
-            self.rebuild();
-        }
-    }
-
-    fn click(&mut self, x: u16, y: u16) {
-        if self.list_area.contains((x, y).into()) {
-            let index = self.list.offset() + usize::from(y.saturating_sub(self.list_area.y));
-            if index < self.rows.len() {
-                self.selected = index;
-                self.list.select(Some(index));
-            }
-        }
-    }
-
     pub(crate) fn render(&mut self, frame: &mut Frame<'_>, area: Rect) {
         if let Some(session) = &mut self.authoring {
             let [header, rule, editor] = Layout::vertical([
@@ -439,29 +363,7 @@ impl CommitView {
             format!("Repository: {}\nBranch: {branch}\nGit commits the staged index. Stage changes with Git.", visible(&snapshot.root.as_path().to_string_lossy()))
         });
         frame.render_widget(Paragraph::new(summary_text), summary);
-        let block = Block::bordered()
-            .border_style(frame_style())
-            .title(block_title("Changes"));
-        self.list_area = block.inner(tree);
-        let items: Vec<_> = self
-            .rows
-            .iter()
-            .map(|row| {
-                let item = ListItem::new(row.label.clone());
-                if row.directory.is_none() && row.detail.is_empty() {
-                    item.style(section_heading_style())
-                } else {
-                    item
-                }
-            })
-            .collect();
-        frame.render_stateful_widget(
-            List::new(items)
-                .block(block)
-                .highlight_style(navigation_key_style()),
-            tree,
-            &mut self.list,
-        );
+        self.tree.render(frame, tree);
         let action = if self.has_pending_review() {
             "[c] start new commit  [enter] resume review"
         } else if self.blocker.is_some() {
@@ -470,11 +372,9 @@ impl CommitView {
             "[enter] start commit"
         };
         let detail = if self.notice.is_empty() {
-            self.blocker.clone().unwrap_or_else(|| {
-                self.rows
-                    .get(self.selected)
-                    .map_or_else(String::new, |row| row.detail.clone())
-            })
+            self.blocker
+                .clone()
+                .unwrap_or_else(|| self.tree.detail().map_or_else(String::new, str::to_owned))
         } else {
             self.notice.clone()
         };
@@ -504,46 +404,6 @@ fn visible(text: &str) -> String {
             }
         })
         .collect()
-}
-
-/// One group of the tree: 0 staged, 1 unstaged, 2 untracked, under its heading.
-fn group_rows(
-    snapshot: &RepositoryStatus,
-    group: usize,
-    collapsed: &BTreeSet<(usize, PathBuf)>,
-) -> Vec<TreeRow> {
-    let entries: Vec<_> = snapshot
-        .entries
-        .iter()
-        .filter(|entry| in_group(entry, group))
-        .collect();
-    let name = ["Staged", "Unstaged", "Untracked"][group];
-    let mut rows = vec![TreeRow {
-        label: format!("{name} ({})", entries.len()),
-        directory: None,
-        detail: String::new(),
-    }];
-    let mut root = Node::default();
-    for entry in entries {
-        let mut node = &mut root;
-        for component in entry.path.components() {
-            node = node
-                .children
-                .entry(component.as_os_str().to_os_string())
-                .or_default();
-        }
-        node.entry = Some(entry);
-    }
-    append_rows(&root, Path::new(""), group, 1, collapsed, &mut rows);
-    rows
-}
-
-fn in_group(entry: &StatusEntry, group: usize) -> bool {
-    match group {
-        0 => !entry.untracked && entry.index != '.',
-        1 => !entry.untracked && entry.worktree != '.',
-        _ => entry.untracked,
-    }
 }
 
 /// Where Git puts the commit, as the review's commit row reads.
@@ -616,65 +476,13 @@ fn truncate(text: &str, width: usize) -> String {
     kept
 }
 
-fn append_rows(
-    node: &Node<'_>,
-    parent: &Path,
-    group: usize,
-    depth: usize,
-    collapsed: &BTreeSet<(usize, PathBuf)>,
-    rows: &mut Vec<TreeRow>,
-) {
-    for (name, child) in &node.children {
-        let path = parent.join(name);
-        let indent = "  ".repeat(depth);
-        let name = visible(&name.to_string_lossy());
-        if let Some(entry) = child.entry {
-            let marker = if entry.conflicted {
-                '!'
-            } else if entry.untracked {
-                '?'
-            } else if group == 0 {
-                entry.index
-            } else {
-                entry.worktree
-            };
-            let renamed = entry
-                .original_path
-                .as_ref()
-                .map_or_else(String::new, |original| {
-                    format!(" ← {}", visible(&original.to_string_lossy()))
-                });
-            let submodule = if entry.submodule == "N..." {
-                String::new()
-            } else {
-                format!("  submodule {}", entry.submodule)
-            };
-            rows.push(TreeRow {
-                label: format!("{indent}{marker} {name}{renamed}{submodule}"),
-                directory: None,
-                detail: visible(&path.to_string_lossy()),
-            });
-        }
-        if !child.children.is_empty() {
-            let key = (group, path.clone());
-            let closed = collapsed.contains(&key);
-            rows.push(TreeRow {
-                label: format!("{indent}{} {name}/", if closed { '▸' } else { '▾' }),
-                directory: Some(key),
-                detail: visible(&path.to_string_lossy()),
-            });
-            if !closed {
-                append_rows(child, &path, group, depth + 1, collapsed, rows);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gitserious_app::RepositoryRoot;
+    use crate::theme::navigation_key_style;
+    use gitserious_app::{RepositoryRoot, StatusEntry};
     use ratatui::{Terminal, backend::TestBackend};
+    use std::path::Path;
 
     #[test]
     fn a_long_staged_list_is_cut_to_keep_the_staged_view_key_visible()
@@ -706,53 +514,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn partial_staging_appears_in_both_groups_and_directories_collapse()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let mut view = CommitView {
-            snapshot: Some(RepositoryStatus {
-                root: RepositoryRoot::new(std::env::temp_dir())?,
-                branch: BranchState::Named("main".into()),
-                entries: vec![StatusEntry {
-                    path: "src/nested/file.rs".into(),
-                    original_path: None,
-                    index: 'M',
-                    worktree: 'M',
-                    untracked: false,
-                    conflicted: false,
-                    submodule: "N...".into(),
-                }],
-            }),
-            ..CommitView::default()
-        };
-        view.rebuild();
-        assert_eq!(
-            view.rows
-                .iter()
-                .filter(|row| row.label.contains("file.rs"))
-                .count(),
-            2
-        );
-        view.selected = 1;
-        view.directory(false);
-        assert_eq!(
-            view.rows
-                .iter()
-                .filter(|row| row.label.contains("file.rs"))
-                .count(),
-            1
-        );
-        view.directory(true);
-        assert_eq!(
-            view.rows
-                .iter()
-                .filter(|row| row.label.contains("file.rs"))
-                .count(),
-            2
-        );
-        Ok(())
-    }
-
     fn tree_view(
         entries: &[(&str, char, char, bool)],
     ) -> Result<CommitView, Box<dyn std::error::Error>> {
@@ -775,7 +536,7 @@ mod tests {
             }),
             ..CommitView::default()
         };
-        view.rebuild();
+        view.tree.rebuild(view.snapshot.as_ref());
         Ok(view)
     }
 
