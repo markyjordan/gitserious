@@ -1,6 +1,6 @@
 use super::citation_picker::{CitationPickerAction, CitationPickerState};
 use super::composer::MessageComposer;
-use crate::components::confirmation_dialog::{Answer, ConfirmationDialog, DISCARD};
+use crate::shared::components::confirmation_dialog::{Answer, ConfirmationDialog, DISCARD};
 use gitserious_app::{AuthoredCommit, CitedCommit, CommitAuthoringContext, CommitTaxonomy};
 use gitserious_core::{CommitDraft, CommitMessage, CommitTypeDefinition, ConditionalApplicability};
 use ratatui::crossterm::event::{

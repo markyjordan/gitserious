@@ -53,10 +53,11 @@ crates/gitserious-tui/src/
 │           ├── input.rs
 │           ├── layout.rs
 │           └── render.rs
-├── components/
-│   └── confirmation_dialog.rs
 ├── config/
 ├── help/
+├── shared/
+│   └── components/
+│       └── confirmation_dialog.rs
 ├── runtime.rs
 └── theme.rs
 ```
@@ -88,7 +89,7 @@ crates/gitserious-tui/src/
 | `commit/author/composer/render.rs` | Field markers, requirement words, guidance, counters, validation feedback, and scrolling | Draft validation rules |
 | [`config/`](../../../crates/gitserious-tui/src/config/mod.rs) | Library editing, the read-only Project view, its own palette, its modals, and which keys it gives the root (`RootKeys`) | Opening Home's editor |
 | [`help/`](../../../crates/gitserious-tui/src/help/mod.rs) | Help pages, the sidebar, scrolling, keys, and clicks | Which page opens first |
-| [`components/confirmation_dialog.rs`](../../../crates/gitserious-tui/src/components/confirmation_dialog.rs) | The confirmation dialog that authoring's discard prompt, Config's discard and remove prompts, and the root's quit prompt share | When to ask |
+| [`shared/components/confirmation_dialog.rs`](../../../crates/gitserious-tui/src/shared/components/confirmation_dialog.rs) | The confirmation dialog that authoring's discard prompt, Config's discard and remove prompts, and the root's quit prompt share | When to ask |
 | [`runtime.rs`](../../../crates/gitserious-tui/src/runtime.rs) | Terminal setup, restoration, and suspension | The event loop |
 | [`theme.rs`](../../../crates/gitserious-tui/src/theme.rs) | Colors, minimum size, footer layout, and the EDIT badge for every page | Theme preferences |
 
@@ -112,13 +113,13 @@ A component is a visual element or interaction a view composes. No type takes a 
 
 ### Place a component at its narrowest common owner
 
-A component lives in the feature that uses it. A component that two parts of one feature share lives in that feature's `components/` module. It moves to the crate-level `src/components/` only when all of these hold:
+A component lives in the feature that uses it. A component that two parts of one feature share lives in that feature's `components/` module. It moves to the crate-level `src/shared/components/` only when all of these hold:
 
 - At least two features use it, or it is a deliberate shared primitive.
 - It reads no feature session or domain state.
 - A small, explicit render and input contract configures it.
 
-A component used inside one workflow stays there, however many smaller drawing helpers it has.
+A component used inside one workflow stays there, however many smaller drawing helpers it has. `src/shared/` holds only code more than one feature uses, and nothing in it imports a feature module. It has no folder until it has code to put there.
 
 ## Page requests
 
