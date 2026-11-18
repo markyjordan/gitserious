@@ -32,8 +32,12 @@ width, up to 100 columns.
 `-h`, `--help`, `-V`, and `--version` belong to `gitserious` itself and are
 listed under `Options:` in its help. `gitserious -V` and `gitserious --version`
 print `gitserious <version>` to stdout. Commands take none of these flags, so
-`gitserious config -h` and `gitserious -V config` are usage errors. Only the
-root usage shows `[OPTIONS]`.
+`gitserious config -h` and `gitserious -V config` are usage errors. The error
+ends with the way out. For a help flag that is
+``Use `gitserious help <command>` for command-specific documentation.``, with
+the command named. For a version flag it is
+``Use `gitserious --version` without a command to print the version.`` Only
+the root usage shows `[OPTIONS]`.
 
 The shell Help pages show what `gitserious -h` and `gitserious help <command>`
 print at the pane's width, with headings and names in bold.
