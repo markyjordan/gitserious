@@ -28,19 +28,13 @@ const HELP_WIDTH: usize = 100;
 struct Cli {
     #[arg(
         short = 'h',
-        global = true,
-        action = ArgAction::HelpShort,
-        help = "Display the concise help for this command",
-        help_heading = "Global options"
-    )]
-    concise: Option<bool>,
-    #[arg(
         long = "help",
         global = true,
-        help = "Display the full documentation for this command",
+        action = ArgAction::HelpShort,
+        help = "Print the concise help for this command",
         help_heading = "Global options"
     )]
-    full: bool,
+    help: Option<bool>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -54,7 +48,7 @@ where
     let matches = match root().try_get_matches_from(arguments) {
         Ok(matches) => matches,
         Err(error) if error.kind() == ErrorKind::DisplayHelp => {
-            return help(HelpRequest::Concise(printed(&error.render())), terminal);
+            return Invocation::Answer(Answer::Print(printed(&error.render())));
         }
         Err(error) => return rejected(&error),
     };
@@ -62,12 +56,8 @@ where
         Ok(cli) => cli,
         Err(error) => return rejected(&error),
     };
-    if cli.full {
-        let command = matches.subcommand_name().map(str::to_owned);
-        return help(HelpRequest::Full(command), terminal);
-    }
     match cli.command {
-        Some(Command::Help { command }) => help(HelpRequest::Topic(command), terminal),
+        Some(Command::Help { command }) => help(command, terminal),
         None if !terminal => Invocation::Answer(Answer::Print(printed(&concise_help(root())))),
         None => Invocation::Open(Destination::Home),
         Some(Command::Init) => Invocation::Init,
@@ -133,7 +123,7 @@ fn add_options_tag(command: &mut clap::Command) {
     }
 }
 
-/// The concise help `-h` prints, rendered by `root`.
+/// The concise help `-h` and `--help` print, rendered by `root`.
 fn concise_help(mut root: clap::Command) -> StyledStr {
     root.render_help()
 }
@@ -147,28 +137,16 @@ fn detailed_help(mut root: clap::Command, command: Option<&str>) -> StyledStr {
     }
 }
 
-/// The help an invocation asks for; a `None` command is the root.
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum HelpRequest {
-    /// `-h`, with the concise help clap rendered for the command it followed.
-    Concise(String),
-    /// `--help` after the root or a command.
-    Full(Option<String>),
-    /// `help [<command>]`, its command one that exists.
-    Topic(Option<String>),
-}
-
-/// Answers `request` for a session whose stdin and stdout are both `terminal`s or not.
-fn help(request: HelpRequest, terminal: bool) -> Invocation {
-    match request {
-        HelpRequest::Concise(text) => Invocation::Answer(Answer::Print(text)),
-        HelpRequest::Topic(command) if terminal => Invocation::Open(Destination::Help { command }),
-        HelpRequest::Full(None) => {
-            Invocation::Answer(Answer::Print(printed(&concise_help(root()))))
-        }
-        HelpRequest::Full(command) | HelpRequest::Topic(command) => Invocation::Answer(
-            Answer::Print(printed(&detailed_help(root(), command.as_deref()))),
-        ),
+/// Answers `help [<command>]`, its command one that exists, for a session whose stdin and stdout
+/// are both `terminal`s or not.
+fn help(command: Option<String>, terminal: bool) -> Invocation {
+    if terminal {
+        Invocation::Open(Destination::Help { command })
+    } else {
+        Invocation::Answer(Answer::Print(printed(&detailed_help(
+            root(),
+            command.as_deref(),
+        ))))
     }
 }
 
@@ -282,21 +260,6 @@ mod tests {
     }
 
     #[test]
-    fn the_long_help_flag_prints_whatever_the_terminal() {
-        let concise = print(printed(&concise_help(root())));
-
-        assert_eq!(invocations(&["--help"]), [concise.clone(), concise]);
-        for command in ["init", "config", "commit", "help"] {
-            let long = printed_long(Some(command));
-            assert_eq!(
-                invocations(&[command, "--help"]),
-                [long.clone(), long],
-                "{command}"
-            );
-        }
-    }
-
-    #[test]
     fn the_help_command_opens_help_on_a_terminal_and_prints_when_redirected() {
         let table = [
             (&["help"][..], [help_on(None), printed_long(None)]),
@@ -321,12 +284,22 @@ mod tests {
     }
 
     #[test]
-    fn the_short_help_flag_prints_whatever_the_terminal() {
-        for arguments in [&["-h"][..], &["config", "-h"], &["commit", "-h"]] {
-            let [terminal, redirected] = invocations(arguments);
-            assert_eq!(terminal, redirected, "{arguments:?}");
+    fn both_help_flags_print_the_concise_help_whatever_the_terminal() {
+        for command in [
+            None,
+            Some("init"),
+            Some("config"),
+            Some("commit"),
+            Some("help"),
+        ] {
+            let short = invocations(&[command.as_slice(), &["-h"]].concat());
+            let long = invocations(&[command.as_slice(), &["--help"]].concat());
+            assert_eq!(short, long, "{command:?}");
+            let [terminal, redirected] = short;
+            assert_eq!(terminal, redirected, "{command:?}");
+            assert_ne!(redirected, printed_long(command), "{command:?}");
             let Invocation::Answer(Answer::Print(printed)) = redirected else {
-                unreachable!("{arguments:?} is concise help");
+                unreachable!("{command:?} -h is concise help");
             };
             assert!(printed.contains("Usage: gitserious"), "{printed}");
         }

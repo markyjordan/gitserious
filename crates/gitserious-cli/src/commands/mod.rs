@@ -29,7 +29,12 @@ pub(crate) enum Command {
     ///
     /// Only staged changes are committed. Stage them with `git add` first.
     Commit,
-    /// Display documentation for a command
+    /// Open a command's documentation in Help.
+    ///
+    /// In a terminal, help opens the Help page for the command, or the
+    /// Overview without one. Redirected, it prints the command's full
+    /// documentation. `-h` and `--help` print the concise help to stdout
+    /// instead.
     Help {
         /// The command to document
         command: Option<String>,
