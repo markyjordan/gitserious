@@ -23,11 +23,17 @@ Bare `gitserious` opens the unified Home TUI in a terminal and prints the
 concise help when redirected. Bare `config` enters the shell at Config, and
 `commit` enters the shell at Commit.
 
-Help has two tiers. `-h` and `--help` print the concise help to stdout, after
-the root or any command. `gitserious help [<command>]` is the detailed help. In
-a terminal, it opens the shell at Help, on the command's page or the Overview.
+Help has two tiers. `gitserious -h` and `gitserious --help` print the concise
+help to stdout. `gitserious help [<command>]` is the detailed help. In a
+terminal, it opens the shell at Help, on the command's page or the Overview.
 Redirected, it prints the detailed help. Printed help wraps to the terminal
-width, up to 100 columns. Every usage line shows `[OPTIONS]`, and `-h` and
-`--help` are listed under `Global options:` because every command takes them.
+width, up to 100 columns.
+
+`-h`, `--help`, `-V`, and `--version` belong to `gitserious` itself and are
+listed under `Options:` in its help. `gitserious -V` and `gitserious --version`
+print `gitserious <version>` to stdout. Commands take none of these flags, so
+`gitserious config -h` and `gitserious -V config` are usage errors. Only the
+root usage shows `[OPTIONS]`.
+
 The shell Help pages show what `gitserious -h` and `gitserious help <command>`
 print at the pane's width, with headings and names in bold.
