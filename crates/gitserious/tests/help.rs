@@ -121,25 +121,37 @@ fn both_help_flags_print_the_concise_help_listing_the_root_options() -> Result<(
 }
 
 #[test]
-fn help_and_version_flags_are_usage_errors_before_or_after_a_command() -> Result<(), Box<dyn Error>>
+fn root_flags_with_a_command_are_usage_errors_that_name_the_way_out() -> Result<(), Box<dyn Error>>
 {
-    for command in [
-        &["init"][..],
-        &["config"],
-        &["commit"],
-        &["help"],
-        &["help", "commit"],
+    for (command, documented) in [
+        (&["init"][..], "init"),
+        (&["config"], "config"),
+        (&["commit"], "commit"),
+        (&["help"], "help"),
+        (&["help", "commit"], "commit"),
     ] {
-        for flag in ["-h", "--help", "-V", "--version"] {
+        let help =
+            format!("Use `gitserious help {documented}` for command-specific documentation.");
+        for (flag, tip) in [
+            ("-h", help.as_str()),
+            ("--help", &help),
+            (
+                "-V",
+                "Use `gitserious --version` without a command to print the version.",
+            ),
+            (
+                "--version",
+                "Use `gitserious --version` without a command to print the version.",
+            ),
+        ] {
             for arguments in [[&[flag], command].concat(), [command, &[flag]].concat()] {
                 let output = run(COLUMNS, &arguments)?;
+                let stderr = String::from_utf8(output.stderr)?;
 
                 assert_eq!(output.status.code(), Some(2), "{arguments:?}");
                 assert!(output.stdout.is_empty(), "{arguments:?}");
-                assert!(
-                    String::from_utf8(output.stderr)?.starts_with("error: "),
-                    "{arguments:?}"
-                );
+                assert!(stderr.starts_with("error: "), "{stderr}");
+                assert!(stderr.ends_with(&format!("\n\n{tip}\n")), "{stderr}");
             }
         }
     }

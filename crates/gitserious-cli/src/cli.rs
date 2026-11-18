@@ -3,6 +3,7 @@ use std::process::ExitCode;
 
 use clap::builder::StyledStr;
 use clap::builder::styling::{Style, Styles};
+use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap::{CommandFactory, FromArgMatches, Parser};
 
 use crate::commands::Command;
@@ -46,12 +47,13 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
+    let arguments: Vec<OsString> = arguments.into_iter().map(Into::into).collect();
     let cli = match root()
-        .try_get_matches_from(arguments)
+        .try_get_matches_from(&arguments)
         .and_then(|matches| Cli::from_arg_matches(&matches))
     {
         Ok(cli) => cli,
-        Err(error) => return rejected(&error),
+        Err(error) => return rejected(error, &arguments),
     };
     if cli.print_help {
         return Invocation::Answer(Answer::Print(printed(&concise_help(root()))));
@@ -69,11 +71,56 @@ where
     }
 }
 
-fn rejected(error: &clap::Error) -> Invocation {
+/// Clap's usage error, closed by the way out when a command was given a flag only gitserious takes.
+fn rejected(mut error: clap::Error, arguments: &[OsString]) -> Invocation {
+    let message = match root_flag_tip(&error, arguments) {
+        Some(tip) => {
+            // Clap would suggest passing the flag to `help` as a value after `--`.
+            error.remove(ContextKind::Suggested);
+            format!("{}\n\n{tip}\n", error.to_string().trim_end())
+        }
+        None => error.to_string(),
+    };
     Invocation::Answer(Answer::Reject {
-        message: error.to_string(),
+        message,
         code: exit_code(error.exit_code()),
     })
+}
+
+/// Clap names the root flag a command was given: the flag before the command conflicts with it,
+/// and a command does not know the flag after it.
+fn root_flag_tip(error: &clap::Error, arguments: &[OsString]) -> Option<String> {
+    let flag = match error.kind() {
+        ErrorKind::ArgumentConflict if error.get(ContextKind::InvalidSubcommand).is_some() => {
+            error.get(ContextKind::PriorArg)
+        }
+        ErrorKind::UnknownArgument => error.get(ContextKind::InvalidArg),
+        _ => None,
+    };
+    let Some(ContextValue::String(flag)) = flag else {
+        return None;
+    };
+    match flag.as_str() {
+        "-h" | "--help" => Some(format!(
+            "Use `gitserious help {}` for command-specific documentation.",
+            documented_command(arguments).unwrap_or("<COMMAND>")
+        )),
+        "-V" | "--version" => {
+            Some("Use `gitserious --version` without a command to print the version.".to_owned())
+        }
+        _ => None,
+    }
+}
+
+/// The last argument that names a command, which `help commit -h` asks to document.
+fn documented_command(arguments: &[OsString]) -> Option<&str> {
+    let root = root();
+    arguments
+        .iter()
+        .skip(1)
+        .rev()
+        .filter_map(|argument| argument.to_str())
+        .find(|argument| root.find_subcommand(argument).is_some())
 }
 
 /// The command line as the CLI parses and prints it, where `help` takes only a command's name.
@@ -293,21 +340,38 @@ mod tests {
     }
 
     #[test]
-    fn help_and_version_flags_are_usage_errors_before_or_after_a_command() {
-        for command in [
-            &["init"][..],
-            &["config"],
-            &["commit"],
-            &["help"],
-            &["help", "commit"],
+    fn root_flags_with_a_command_are_usage_errors_that_name_the_way_out() {
+        let version = "Use `gitserious --version` without a command to print the version.";
+        for (command, documented) in [
+            (&["init"][..], "init"),
+            (&["config"], "config"),
+            (&["commit"], "commit"),
+            (&["help"], "help"),
+            (&["help", "commit"], "commit"),
+            (&["nope"], "<COMMAND>"),
         ] {
-            for flag in ["-h", "--help", "-V", "--version"] {
-                for arguments in [[&[flag], command].concat(), [command, &[flag]].concat()] {
+            let help =
+                format!("Use `gitserious help {documented}` for command-specific documentation.");
+            for (flag, tip) in [
+                ("-h", help.as_str()),
+                ("--help", &help),
+                ("-V", version),
+                ("--version", version),
+            ] {
+                let mut placements = vec![[&[flag], command].concat()];
+                if documented != "<COMMAND>" {
+                    placements.push([command, &[flag]].concat());
+                }
+                for arguments in placements {
                     for invocation in invocations(&arguments) {
-                        let Invocation::Answer(Answer::Reject { code, .. }) = invocation else {
+                        let Invocation::Answer(Answer::Reject { message, code }) = invocation
+                        else {
                             unreachable!("{arguments:?} is a usage error");
                         };
                         assert_eq!(code, ExitCode::from(2), "{arguments:?}");
+                        assert!(message.starts_with("error: "), "{message}");
+                        assert!(message.ends_with(&format!("\n\n{tip}\n")), "{message}");
+                        assert!(!message.contains("tip:"), "{message}");
                     }
                 }
             }
@@ -332,6 +396,7 @@ mod tests {
                 };
                 assert_eq!(code, ExitCode::from(2), "{arguments:?}");
                 assert!(message.starts_with("error: "), "{message}");
+                assert!(!message.contains("\nUse `gitserious"), "{message}");
             }
         }
     }
