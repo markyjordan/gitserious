@@ -33,8 +33,8 @@ pub(crate) enum Command {
     ///
     /// In a terminal, help opens the Help page for the command, or the
     /// Overview without one. Redirected, it prints the command's full
-    /// documentation. `-h` and `--help` print the concise help to stdout
-    /// instead.
+    /// documentation. Commands take no `-h` or `--help`, so this is the
+    /// only way to read one's documentation.
     Help {
         /// The command to document
         command: Option<String>,

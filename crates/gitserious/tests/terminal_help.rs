@@ -132,12 +132,7 @@ fn terminal_help_flags_print_without_paging_or_starting_the_tui() -> Result<(), 
     let temp = tempfile::tempdir()?;
     let home = Home::new()?;
     let capture = temp.path().join("pager-output");
-    for arguments in [
-        ["-h"].as_slice(),
-        ["commit", "-h"].as_slice(),
-        ["--help"].as_slice(),
-        ["commit", "--help"].as_slice(),
-    ] {
+    for arguments in [["-h"].as_slice(), ["--help"].as_slice()] {
         let mut command = home.command(temp.path());
         command
             .args(arguments)
@@ -224,11 +219,7 @@ fn executable_commands_select_the_initial_page_without_authoring_or_git_writes()
         (Vec::<&str>::new(), "Home", "Go to Commit"),
         (vec!["commit"], "Commit", "[enter] start commit"),
         (vec!["config"], "Config", "1  Project"),
-        (
-            vec!["help"],
-            "Help",
-            "Usage: gitserious [OPTIONS] [COMMAND]",
-        ),
+        (vec!["help"], "Help", "Usage: gitserious [OPTIONS]"),
         (vec!["help", "commit"], "Help", "gitserious help: commit"),
     ] {
         let mut command = home.command(repository.path());

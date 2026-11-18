@@ -3,8 +3,7 @@ use std::process::ExitCode;
 
 use clap::builder::StyledStr;
 use clap::builder::styling::{Style, Styles};
-use clap::error::ErrorKind;
-use clap::{ArgAction, CommandFactory, FromArgMatches, Parser};
+use clap::{CommandFactory, FromArgMatches, Parser};
 
 use crate::commands::Command;
 use crate::invocation::{Answer, Destination, Invocation};
@@ -20,6 +19,8 @@ const HELP_WIDTH: usize = 100;
     disable_colored_help = true,
     max_term_width = HELP_WIDTH,
     disable_help_flag = true,
+    disable_version_flag = true,
+    args_conflicts_with_subcommands = true,
     disable_help_subcommand = true,
     after_help = "Use `gitserious help` for more details.",
     after_long_help = "Use `gitserious help <command>` for more information on a specific command.",
@@ -29,12 +30,12 @@ struct Cli {
     #[arg(
         short = 'h',
         long = "help",
-        global = true,
-        action = ArgAction::HelpShort,
-        help = "Print the concise help for this command",
-        help_heading = "Global options"
+        conflicts_with = "print_version",
+        help = "Print the concise help"
     )]
-    help: Option<bool>,
+    print_help: bool,
+    #[arg(short = 'V', long = "version", help = "Print the version")]
+    print_version: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -45,17 +46,19 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let matches = match root().try_get_matches_from(arguments) {
-        Ok(matches) => matches,
-        Err(error) if error.kind() == ErrorKind::DisplayHelp => {
-            return Invocation::Answer(Answer::Print(printed(&error.render())));
-        }
-        Err(error) => return rejected(&error),
-    };
-    let cli = match Cli::from_arg_matches(&matches) {
+    let cli = match root()
+        .try_get_matches_from(arguments)
+        .and_then(|matches| Cli::from_arg_matches(&matches))
+    {
         Ok(cli) => cli,
         Err(error) => return rejected(&error),
     };
+    if cli.print_help {
+        return Invocation::Answer(Answer::Print(printed(&concise_help(root()))));
+    }
+    if cli.print_version {
+        return Invocation::Answer(Answer::Print(root().render_version()));
+    }
     match cli.command {
         Some(Command::Help { command }) => help(command, terminal),
         None if !terminal => Invocation::Answer(Answer::Print(printed(&concise_help(root())))),
@@ -66,15 +69,10 @@ where
     }
 }
 
-/// Clap reports the version as an error that belongs on stdout.
 fn rejected(error: &clap::Error) -> Invocation {
-    Invocation::Answer(if error.use_stderr() {
-        Answer::Reject {
-            message: error.to_string(),
-            code: exit_code(error.exit_code()),
-        }
-    } else {
-        Answer::Print(error.to_string())
+    Invocation::Answer(Answer::Reject {
+        message: error.to_string(),
+        code: exit_code(error.exit_code()),
     })
 }
 
@@ -92,34 +90,26 @@ fn root() -> clap::Command {
     }))
 }
 
-/// `root` with `[OPTIONS]` in every command's usage, built for rendering.
+/// Clap leaves `[OPTIONS]` out of a usage whose only options are help and version, so this
+/// overrides the root's usage with clap's own, the tag inserted after the command's name.
 fn with_options_usage(mut root: clap::Command) -> clap::Command {
     root.build();
-    add_options_tag(&mut root);
-    root
-}
-
-/// Clap leaves `[OPTIONS]` out of a usage whose only options are help and version, so this
-/// overrides such a usage with clap's own, the tag inserted after the command's name.
-fn add_options_tag(command: &mut clap::Command) {
-    for subcommand in command.get_subcommands_mut() {
-        add_options_tag(subcommand);
-    }
-    let usage = command.render_usage().ansi().to_string();
-    let styles = command.get_styles();
+    let usage = root.render_usage().ansi().to_string();
+    let styles = root.get_styles();
     let (title, literal, placeholder) = (
         styles.get_usage(),
         styles.get_literal(),
         styles.get_placeholder(),
     );
-    let name = command.get_bin_name().unwrap_or_default();
+    let name = root.get_bin_name().unwrap_or_default();
     let prefix = format!("{title}Usage:{title:#} {literal}{name}{literal:#}");
     let tag = format!("{placeholder}[OPTIONS]{placeholder:#}");
-    if let Some(rest) = usage.strip_prefix(&prefix)
-        && !rest.starts_with(&format!(" {tag}"))
-    {
-        let usage = format!("{literal}{name}{literal:#} {tag}{rest}");
-        *command = std::mem::take(command).override_usage(StyledStr::from(usage));
+    match usage.strip_prefix(&prefix) {
+        Some(rest) => {
+            let usage = format!("{literal}{name}{literal:#} {tag}{rest}");
+            root.override_usage(StyledStr::from(usage))
+        }
+        None => root,
     }
 }
 
@@ -284,41 +274,43 @@ mod tests {
     }
 
     #[test]
-    fn both_help_flags_print_the_concise_help_whatever_the_terminal() {
-        for command in [
-            None,
-            Some("init"),
-            Some("config"),
-            Some("commit"),
-            Some("help"),
+    fn the_root_help_and_version_flags_print_on_stdout_whatever_the_terminal() {
+        let concise = print(printed(&concise_help(root())));
+        let version = print(format!("gitserious {}\n", env!("CARGO_PKG_VERSION")));
+
+        for (flag, expected) in [
+            ("-h", &concise),
+            ("--help", &concise),
+            ("-V", &version),
+            ("--version", &version),
         ] {
-            let short = invocations(&[command.as_slice(), &["-h"]].concat());
-            let long = invocations(&[command.as_slice(), &["--help"]].concat());
-            assert_eq!(short, long, "{command:?}");
-            let [terminal, redirected] = short;
-            assert_eq!(terminal, redirected, "{command:?}");
-            assert_ne!(redirected, printed_long(command), "{command:?}");
-            let Invocation::Answer(Answer::Print(printed)) = redirected else {
-                unreachable!("{command:?} -h is concise help");
-            };
-            assert!(printed.contains("Usage: gitserious"), "{printed}");
+            assert_eq!(
+                invocations(&[flag]),
+                [expected.clone(), expected.clone()],
+                "{flag}"
+            );
         }
-        assert_eq!(
-            invocations(&["-h"])[1],
-            print(printed(&concise_help(root())))
-        );
     }
 
     #[test]
-    fn the_version_prints_on_stdout_whatever_the_terminal() {
-        let version = print(format!("gitserious {}\n", env!("CARGO_PKG_VERSION")));
-
-        for flag in ["-V", "--version"] {
-            assert_eq!(
-                invocations(&[flag]),
-                [version.clone(), version.clone()],
-                "{flag}"
-            );
+    fn help_and_version_flags_are_usage_errors_before_or_after_a_command() {
+        for command in [
+            &["init"][..],
+            &["config"],
+            &["commit"],
+            &["help"],
+            &["help", "commit"],
+        ] {
+            for flag in ["-h", "--help", "-V", "--version"] {
+                for arguments in [[&[flag], command].concat(), [command, &[flag]].concat()] {
+                    for invocation in invocations(&arguments) {
+                        let Invocation::Answer(Answer::Reject { code, .. }) = invocation else {
+                            unreachable!("{arguments:?} is a usage error");
+                        };
+                        assert_eq!(code, ExitCode::from(2), "{arguments:?}");
+                    }
+                }
+            }
         }
     }
 
@@ -332,6 +324,7 @@ mod tests {
             &["commit", "--template", "default"],
             &["config", "fork"],
             &["help", "unknown"],
+            &["-h", "-V"],
         ] {
             for invocation in invocations(arguments) {
                 let Invocation::Answer(Answer::Reject { message, code }) = invocation else {
@@ -350,7 +343,7 @@ mod tests {
                 .arg(
                     clap::Arg::new("flag")
                         .long("flag")
-                        .action(ArgAction::SetTrue),
+                        .action(clap::ArgAction::SetTrue),
                 )
                 .subcommand(clap::Command::new("sub").arg(clap::Arg::new("path"))),
         );
@@ -364,7 +357,7 @@ mod tests {
             .map(clap::Command::render_usage);
         assert_eq!(
             sub.map(|usage| usage.to_string()).as_deref(),
-            Some("Usage: tool sub [OPTIONS] [path]")
+            Some("Usage: tool sub [path]")
         );
     }
 }

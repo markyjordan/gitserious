@@ -27,9 +27,7 @@ fn help_never_pages_when_stdout_is_not_a_terminal() -> Result<(), Box<dyn Error>
     let directory = tempfile::TempDir::new()?;
     for arguments in [
         &["-h"][..],
-        &["commit", "-h"][..],
         &["--help"][..],
-        &["commit", "--help"][..],
         &["help"][..],
         &["help", "commit"][..],
     ] {
@@ -48,11 +46,7 @@ fn help_never_pages_when_stdout_is_not_a_terminal() -> Result<(), Box<dyn Error>
 fn explicit_help_version_and_non_terminal_config_keep_their_contracts() -> Result<(), Box<dyn Error>>
 {
     let directory = tempfile::TempDir::new()?;
-    for arguments in [
-        &["--help"][..],
-        &["--version"][..],
-        &["commit", "--help"][..],
-    ] {
+    for arguments in [&["--help"][..], &["--version"][..]] {
         let output = Command::new(env!("CARGO_BIN_EXE_gitserious"))
             .args(arguments)
             .current_dir(directory.path())
@@ -80,11 +74,8 @@ fn help_names_gitserious_whatever_the_executable_is_called() -> Result<(), Box<d
         .join(format!("renamed{}", std::env::consts::EXE_SUFFIX));
     std::fs::copy(env!("CARGO_BIN_EXE_gitserious"), &renamed)?;
     for (arguments, usage) in [
-        (&["--help"][..], "Usage: gitserious [OPTIONS] [COMMAND]"),
-        (
-            &["help", "commit"][..],
-            "Usage: gitserious commit [OPTIONS]",
-        ),
+        (&["--help"][..], "Usage: gitserious [OPTIONS]\n"),
+        (&["help", "commit"][..], "Usage: gitserious commit\n"),
     ] {
         let output = Command::new(&renamed)
             .args(arguments)
