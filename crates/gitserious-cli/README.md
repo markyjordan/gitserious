@@ -42,5 +42,8 @@ The root takes a command or one of its options, never both, so its usage
 reads `gitserious [COMMAND]` above `gitserious [OPTIONS]`. A command's usage
 shows no `[OPTIONS]`.
 
-The shell Help pages show what `gitserious -h` and `gitserious help <command>`
-print at the pane's width, with headings and names in bold.
+The shell Help pages show what `gitserious help` and
+`gitserious help <command>` print at the pane's width, with headings and names
+in bold. Only the concise help ends with
+``Use `gitserious help` for more details.``, because the Overview is that
+page.

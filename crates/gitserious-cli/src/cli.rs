@@ -56,14 +56,16 @@ where
         Err(error) => return rejected(error, &arguments),
     };
     if cli.print_help {
-        return Invocation::Answer(Answer::Print(printed(&concise_help(root()))));
+        return Invocation::Answer(Answer::Print(printed(&HelpText::Concise.render(root()))));
     }
     if cli.print_version {
         return Invocation::Answer(Answer::Print(root().render_version()));
     }
     match cli.command {
         Some(Command::Help { command }) => help(command, terminal),
-        None if !terminal => Invocation::Answer(Answer::Print(printed(&concise_help(root())))),
+        None if !terminal => {
+            Invocation::Answer(Answer::Print(printed(&HelpText::Concise.render(root()))))
+        }
         None => Invocation::Open(Destination::Home),
         Some(Command::Init) => Invocation::Init,
         Some(Command::Config) => Invocation::Open(Destination::Config),
@@ -150,17 +152,36 @@ fn with_root_usage(root: clap::Command) -> clap::Command {
     root.override_usage(StyledStr::from(usage))
 }
 
-/// The concise help `-h` and `--help` print, rendered by `root`.
-fn concise_help(mut root: clap::Command) -> StyledStr {
-    root.render_help()
+/// A help text the CLI prints and Help shows.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HelpText<'a> {
+    /// What `-h` and `--help` print: the root's summary, which points to `gitserious help`.
+    Concise,
+    /// What `help` prints and the Help Overview shows: the root's full documentation.
+    Overview,
+    /// What `help <command>` prints and the command's Help page shows.
+    Command(&'a str),
 }
 
-/// The long help `gitserious help [<command>]` prints, rendered by `root`.
-fn detailed_help(mut root: clap::Command, command: Option<&str>) -> StyledStr {
-    root.build();
-    match command.and_then(|name| root.find_subcommand_mut(name)) {
-        Some(subcommand) => subcommand.render_long_help(),
-        None => root.render_long_help(),
+impl<'a> HelpText<'a> {
+    /// What `help [<command>]` documents.
+    fn documenting(command: Option<&'a str>) -> Self {
+        command.map_or(Self::Overview, Self::Command)
+    }
+
+    /// The text as `root` renders it.
+    fn render(self, mut root: clap::Command) -> StyledStr {
+        match self {
+            Self::Concise => root.render_help(),
+            Self::Overview => root.render_long_help(),
+            Self::Command(name) => {
+                root.build();
+                match root.find_subcommand_mut(name) {
+                    Some(command) => command.render_long_help(),
+                    None => root.render_long_help(),
+                }
+            }
+        }
     }
 }
 
@@ -170,10 +191,9 @@ fn help(command: Option<String>, terminal: bool) -> Invocation {
     if terminal {
         Invocation::Open(Destination::Help { command })
     } else {
-        Invocation::Answer(Answer::Print(printed(&detailed_help(
-            root(),
-            command.as_deref(),
-        ))))
+        Invocation::Answer(Answer::Print(printed(
+            &HelpText::documenting(command.as_deref()).render(root()),
+        )))
     }
 }
 
@@ -217,15 +237,14 @@ pub const fn help_topics() -> [HelpTopic; 4] {
     ]
 }
 
-/// What `-h` prints for no `command`, or what `help <command>` prints, wrapped to `width`
-/// columns with headings and names in SGR bold.
+/// What `help [<command>]` prints, wrapped to `width` columns with headings and names in SGR
+/// bold.
 #[must_use]
 pub fn styled_help(command: Option<&str>, width: u16) -> String {
-    let help = match command {
-        None => concise_help(styled_root(width)),
-        Some(command) => detailed_help(styled_root(width), Some(command)),
-    };
-    help.ansi().to_string()
+    HelpText::documenting(command)
+        .render(styled_root(width))
+        .ansi()
+        .to_string()
 }
 
 /// The root command as a terminal `width` columns wide renders it, names in bold.
@@ -262,12 +281,12 @@ mod tests {
     }
 
     fn printed_long(command: Option<&str>) -> Invocation {
-        print(printed(&detailed_help(root(), command)))
+        print(printed(&HelpText::documenting(command).render(root())))
     }
 
     #[test]
     fn commands_select_a_destination_and_commit_does_not_author() {
-        let concise = print(printed(&concise_help(root())));
+        let concise = print(printed(&HelpText::Concise.render(root())));
         let table = [
             (&[][..], [open(Destination::Home), concise]),
             (&["init"], [Invocation::Init, Invocation::Init]),
@@ -312,7 +331,7 @@ mod tests {
 
     #[test]
     fn the_root_help_and_version_flags_print_on_stdout_whatever_the_terminal() {
-        let concise = print(printed(&concise_help(root())));
+        let concise = print(printed(&HelpText::Concise.render(root())));
         let version = print(format!("gitserious {}\n", env!("CARGO_PKG_VERSION")));
 
         for (flag, expected) in [

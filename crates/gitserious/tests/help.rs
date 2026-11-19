@@ -233,6 +233,21 @@ fn root_concise_help_points_to_the_help_command() -> Result<(), Box<dyn Error>> 
 }
 
 #[test]
+fn only_the_concise_help_points_to_the_help_command() -> Result<(), Box<dyn Error>> {
+    let pointer = "Use `gitserious help` for more details.";
+    let overview = interactive_help()
+        .into_iter()
+        .find(|page| page.command.is_none())
+        .ok_or("no Overview page")?;
+
+    assert!(concise()?.contains(pointer));
+    for help in [detailed(None)?, page_text(&overview, 80)] {
+        assert!(!help.contains(pointer), "{help}");
+    }
+    Ok(())
+}
+
+#[test]
 fn root_detailed_help_lists_the_help_command_and_points_to_command_help()
 -> Result<(), Box<dyn Error>> {
     let help = detailed(None)?;
@@ -388,10 +403,7 @@ fn each_help_page_shows_what_its_help_command_prints_at_the_same_width()
         ]
     );
     for page in &pages {
-        let arguments = match page.command.as_deref() {
-            None => vec!["-h"],
-            Some(command) => vec!["help", command],
-        };
+        let arguments = [&["help"][..], page.command.as_deref().as_slice()].concat();
         for width in [50, 80, 120] {
             assert_eq!(
                 page_text(page, width),
