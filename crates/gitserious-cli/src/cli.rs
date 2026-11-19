@@ -130,34 +130,24 @@ fn root() -> clap::Command {
         .get_subcommands()
         .map(|command| command.get_name().to_owned())
         .collect();
-    with_options_usage(root.mut_subcommand("help", |help| {
+    with_root_usage(root.mut_subcommand("help", |help| {
         help.mut_arg("command", |command| {
             command.value_parser(names).hide_possible_values(true)
         })
     }))
 }
 
-/// Clap leaves `[OPTIONS]` out of a usage whose only options are help and version, so this
-/// overrides the root's usage with clap's own, the tag inserted after the command's name.
-fn with_options_usage(mut root: clap::Command) -> clap::Command {
-    root.build();
-    let usage = root.render_usage().ansi().to_string();
+/// The root takes a command or one of its options, never both. Clap would list the options form
+/// first and leave out `[OPTIONS]`, because the root's only options are help and version.
+fn with_root_usage(root: clap::Command) -> clap::Command {
     let styles = root.get_styles();
-    let (title, literal, placeholder) = (
-        styles.get_usage(),
-        styles.get_literal(),
-        styles.get_placeholder(),
+    let (literal, placeholder) = (styles.get_literal(), styles.get_placeholder());
+    let name = root.get_name();
+    let usage = format!(
+        "{literal}{name}{literal:#} {placeholder}[COMMAND]{placeholder:#}\n       \
+         {literal}{name}{literal:#} {placeholder}[OPTIONS]{placeholder:#}"
     );
-    let name = root.get_bin_name().unwrap_or_default();
-    let prefix = format!("{title}Usage:{title:#} {literal}{name}{literal:#}");
-    let tag = format!("{placeholder}[OPTIONS]{placeholder:#}");
-    match usage.strip_prefix(&prefix) {
-        Some(rest) => {
-            let usage = format!("{literal}{name}{literal:#} {tag}{rest}");
-            root.override_usage(StyledStr::from(usage))
-        }
-        None => root,
-    }
+    root.override_usage(StyledStr::from(usage))
 }
 
 /// The concise help `-h` and `--help` print, rendered by `root`.
@@ -242,7 +232,7 @@ pub fn styled_help(command: Option<&str>, width: u16) -> String {
 fn styled_root(width: u16) -> clap::Command {
     const BOLD: Style = Style::new().bold();
     // An explicit width bypasses `max_term_width`, so apply the CLI's cap here.
-    with_options_usage(
+    with_root_usage(
         Cli::command()
             .term_width(usize::from(width).min(HELP_WIDTH))
             .styles(Styles::plain().header(BOLD).usage(BOLD).literal(BOLD)),
@@ -402,27 +392,20 @@ mod tests {
     }
 
     #[test]
-    fn usage_shows_options_once_with_or_without_a_real_option() {
-        let mut root = with_options_usage(
-            clap::Command::new("tool")
-                .arg(
-                    clap::Arg::new("flag")
-                        .long("flag")
-                        .action(clap::ArgAction::SetTrue),
-                )
-                .subcommand(clap::Command::new("sub").arg(clap::Arg::new("path"))),
-        );
+    fn the_root_usage_lists_the_command_form_then_the_options_form() {
+        let mut root = root();
 
         assert_eq!(
             root.render_usage().to_string(),
-            "Usage: tool [OPTIONS] [COMMAND]"
+            "Usage: gitserious [COMMAND]\n       gitserious [OPTIONS]"
         );
-        let sub = root
-            .find_subcommand_mut("sub")
+        root.build();
+        let commit = root
+            .find_subcommand_mut("commit")
             .map(clap::Command::render_usage);
         assert_eq!(
-            sub.map(|usage| usage.to_string()).as_deref(),
-            Some("Usage: tool sub [path]")
+            commit.map(|usage| usage.to_string()).as_deref(),
+            Some("Usage: gitserious commit")
         );
     }
 }

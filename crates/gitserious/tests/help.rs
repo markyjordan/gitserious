@@ -175,7 +175,7 @@ fn the_help_command_takes_no_pager_option() -> Result<(), Box<dyn Error>> {
 fn every_usage_shows_what_its_command_takes() -> Result<(), Box<dyn Error>> {
     for (command, help) in every_help()? {
         let expected = match command {
-            None => "Usage: gitserious [OPTIONS]\n       gitserious <COMMAND>".to_owned(),
+            None => "Usage: gitserious [COMMAND]\n       gitserious [OPTIONS]".to_owned(),
             Some("help") => "Usage: gitserious help [COMMAND]".to_owned(),
             Some(command) => format!("Usage: gitserious {command}"),
         };
