@@ -74,7 +74,10 @@ fn help_names_gitserious_whatever_the_executable_is_called() -> Result<(), Box<d
         .join(format!("renamed{}", std::env::consts::EXE_SUFFIX));
     std::fs::copy(env!("CARGO_BIN_EXE_gitserious"), &renamed)?;
     for (arguments, usage) in [
-        (&["--help"][..], "Usage: gitserious [OPTIONS]\n"),
+        (
+            &["--help"][..],
+            "Usage: gitserious [COMMAND]\n       gitserious [OPTIONS]\n",
+        ),
         (&["help", "commit"][..], "Usage: gitserious commit\n"),
     ] {
         let output = Command::new(&renamed)

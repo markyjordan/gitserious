@@ -36,8 +36,11 @@ print `gitserious <version>` to stdout. Commands take none of these flags, so
 ends with the way out. For a help flag that is
 ``Use `gitserious help <command>` for command-specific documentation.``, with
 the command named. For a version flag it is
-``Use `gitserious --version` without a command to print the version.`` Only
-the root usage shows `[OPTIONS]`.
+``Use `gitserious --version` without a command to print the version.``
+
+The root takes a command or one of its options, never both, so its usage
+reads `gitserious [COMMAND]` above `gitserious [OPTIONS]`. A command's usage
+shows no `[OPTIONS]`.
 
 The shell Help pages show what `gitserious -h` and `gitserious help <command>`
 print at the pane's width, with headings and names in bold.
