@@ -220,11 +220,13 @@ Down move, and Enter opens the composer for the highlighted type. Switching
 taxonomy never mutates project policy.
 
 The composer shows a subject card, one card for each property, and an optional
-breaking-change card. The selected type is fixed on the subject line; write
-`(scope): description` or `: description` after it. The subject shows its length
-against 72 columns. Each property shows its policy on the right and its description
-as guidance while focused and empty. The marks mean complete (✓), focused (●),
-conditional and undecided (◐), or empty (○).
+breaking-change card. The selected type is fixed on the subject line. Type a
+scope and the composer adds its parentheses. Press Space to move to the
+description, or start with Space to skip the scope. You can also type or paste
+`(scope): description` or `: description` after the type. The subject shows its
+length against 72 columns. Each property shows its policy on the right and its
+description as guidance while focused and empty. The marks mean complete (✓),
+focused (●), conditional and undecided (◐), or empty (○).
 
 Up and Down move through wrapped body rows and cross card boundaries at their
 edges. Enter leaves the subject and inserts a newline in a body. Ctrl+U and

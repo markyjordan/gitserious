@@ -17,6 +17,13 @@ impl MessageComposer {
             }
             KeyCode::Enter => self.enter(),
             KeyCode::Char('m') if control => self.enter(),
+            KeyCode::Char(character)
+                if self.focus == MessageFieldId::Subject
+                    && (key.modifiers - KeyModifiers::SHIFT).is_empty()
+                    && !character.is_control() =>
+            {
+                self.edit(|text| type_subject(text, character));
+            }
             _ => self.edit(|text| text.input(Input::from(key))),
         }
     }
@@ -113,6 +120,41 @@ impl MessageComposer {
             text.move_cursor(CursorMove::End);
         }
     }
+}
+
+fn type_subject(text: &mut TextArea<'_>, character: char) -> bool {
+    const DESCRIPTION_START: &str = ": ";
+
+    match character {
+        ' ' if text.is_empty() => return text.insert_str(DESCRIPTION_START),
+        ' ' if text.selection_range().is_none() => {
+            let (_, column) = text.cursor();
+            let tail = &text.lines()[0];
+            if let Some((scope, rest)) =
+                tail.strip_prefix('(').and_then(|tail| tail.split_once(')'))
+                && rest == DESCRIPTION_START
+                && column == scope.chars().count() + 1
+            {
+                let changed = if scope.is_empty() {
+                    text.move_cursor(CursorMove::Head);
+                    text.delete_str(2)
+                } else {
+                    false
+                };
+                text.move_cursor(CursorMove::End);
+                return changed;
+            }
+        }
+        '(' | ')' | ':' => {}
+        _ if text.is_empty() && !character.is_whitespace() => {
+            let changed = text.insert_str(format!("({character}){DESCRIPTION_START}"));
+            text.move_cursor(CursorMove::Jump(0, 2));
+            return changed;
+        }
+        _ => {}
+    }
+    text.insert_char(character);
+    true
 }
 
 fn terminal(index: usize) -> u16 {

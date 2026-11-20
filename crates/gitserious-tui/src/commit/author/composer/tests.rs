@@ -2,7 +2,7 @@ use super::*;
 use crate::commit::author::state::{AuthoringSession, Stage};
 use crate::commit::author::tests::{
     alt, control, find_ascii, modified_press, paste, press, rendered, rendered_buffer,
-    reversed_positions, write, write_valid_feat,
+    reversed_positions, typed, write, write_valid_feat,
 };
 use gitserious_core::built_in_commit_types;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
@@ -10,6 +10,80 @@ use std::error::Error;
 
 fn session() -> AuthoringSession {
     AuthoringSession::new(built_in_commit_types(), Some(0))
+}
+
+#[test]
+fn typing_a_scope_wraps_it_and_space_moves_to_the_description() -> Result<(), Box<dyn Error>> {
+    let mut session = AuthoringSession::new(built_in_commit_types(), None);
+    typed(&mut session, "fe");
+    press(&mut session, KeyCode::Enter);
+    modified_press(&mut session, KeyCode::Char('N'), KeyModifiers::SHIFT);
+    typed(&mut session, "ét");
+
+    assert!(rendered(&mut session, 80, 24)?.contains("feat(Nét): "));
+    let buffer = rendered_buffer(&mut session, 80, 24)?;
+    let (x, y) = find_ascii(&buffer, 80, 24, "feat(").ok_or("missing subject")?;
+    assert_eq!(reversed_positions(&buffer, 80, 24), [(x + 8, y)]);
+    assert_eq!(buffer[(x + 8, y)].symbol(), ")");
+
+    typed(&mut session, " handle empty rows");
+    write(
+        &mut session,
+        "",
+        &["Explain the intent", "Record the decision"],
+    );
+    press(&mut session, KeyCode::Down);
+    alt(&mut session, 'n');
+    control(&mut session, 's');
+
+    assert_eq!(session.stage, Stage::Review);
+    assert!(rendered(&mut session, 80, 24)?.contains("feat(Nét): handle empty rows"));
+    Ok(())
+}
+
+#[test]
+fn typing_a_subject_allows_no_scope_or_explicit_punctuation() {
+    for (keys, tail) in [
+        (" describe the change", ": describe the change"),
+        (": describe the change", ": describe the change"),
+        (
+            "(net stack): describe the change",
+            "(net stack): describe the change",
+        ),
+    ] {
+        let mut session = session();
+        typed(&mut session, keys);
+        assert_eq!(session.composer.subject.lines(), &[tail]);
+        assert!(session.composer.subject_parts().is_ok());
+    }
+}
+
+#[test]
+fn space_can_extend_the_scope_of_a_complete_pasted_subject() {
+    let mut session = session();
+    paste(&mut session, "(net): handle empty rows");
+    press(&mut session, KeyCode::Home);
+    for _ in 0..4 {
+        press(&mut session, KeyCode::Right);
+    }
+    typed(&mut session, " stack");
+    assert_eq!(
+        session.composer.subject.lines(),
+        &["(net stack): handle empty rows"]
+    );
+}
+
+#[test]
+fn the_wrapped_first_letter_undoes_as_one_edit_and_a_cleared_scope_can_be_skipped() {
+    let mut session = session();
+    typed(&mut session, "n");
+    control(&mut session, 'u');
+    assert!(session.composer.subject.is_empty());
+
+    typed(&mut session, "x");
+    press(&mut session, KeyCode::Backspace);
+    typed(&mut session, " describe the change");
+    assert_eq!(session.composer.subject.lines(), &[": describe the change"]);
 }
 
 #[test]
