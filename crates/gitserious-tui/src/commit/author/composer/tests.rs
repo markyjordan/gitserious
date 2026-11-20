@@ -15,7 +15,6 @@ fn session() -> AuthoringSession {
 #[test]
 fn typing_a_scope_wraps_it_and_space_moves_to_the_description() -> Result<(), Box<dyn Error>> {
     let mut session = AuthoringSession::new(built_in_commit_types(), None);
-    typed(&mut session, "fe");
     press(&mut session, KeyCode::Enter);
     modified_press(&mut session, KeyCode::Char('N'), KeyModifiers::SHIFT);
     typed(&mut session, "ét");

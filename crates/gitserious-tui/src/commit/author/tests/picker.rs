@@ -27,132 +27,50 @@ fn picker_navigation_wraps_selects_and_cancels() {
 }
 
 #[test]
-fn typing_on_the_subject_line_lists_the_types_whose_key_starts_with_it()
--> Result<(), Box<dyn Error>> {
+fn the_picker_ignores_text_until_enter_opens_the_subject() -> Result<(), Box<dyn Error>> {
     let mut session = AuthoringSession::new(built_in_commit_types(), None);
-    typed(&mut session, "r");
-    let buffer = rendered_buffer(&mut session, 100, 30)?;
-    assert_eq!(row_text(&buffer, 100, 1).trim_end(), "▎  r");
-    assert_eq!(
-        picker_rows(&buffer, 100, 6..10),
-        [
-            "refactor    motivation · decision · invariant",
-            "revert      reason · impact · follow-up",
-            "",
-            "refactor    A structural transformation that preserves intended behavior.",
-        ],
-        "perf and chore contain r but do not start with it"
-    );
     press(&mut session, KeyCode::Down);
-    assert_eq!(session.definition().id().as_str(), "revert");
-    press(&mut session, KeyCode::Down);
-    assert_eq!(session.definition().id().as_str(), "refactor");
-    press(&mut session, KeyCode::Up);
-    assert_eq!(session.definition().id().as_str(), "revert");
-
+    let picker = rendered_buffer(&mut session, 100, 30)?;
+    typed(&mut session, "feat");
+    paste(&mut session, "chore");
     press(&mut session, KeyCode::Backspace);
-    let buffer = rendered_buffer(&mut session, 100, 30)?;
-    assert_eq!(row_text(&buffer, 100, 1).trim_end(), "▎");
-    assert_eq!(picker_rows(&buffer, 100, 6..17).len(), 11);
-    assert_eq!(session.definition().id().as_str(), "feat");
+    assert_eq!(session.stage, Stage::SelectType);
+    assert_eq!(rendered_buffer(&mut session, 100, 30)?, picker);
 
-    typed(&mut session, "fi");
-    let buffer = rendered_buffer(&mut session, 100, 30)?;
-    assert_eq!(row_text(&buffer, 100, 1).trim_end(), "▎  fi");
-    assert_eq!(
-        picker_rows(&buffer, 100, 6..9),
-        [
-            "fix         cause · decision · constraints",
-            "",
-            "fix         A causal correction of an observed failure or incorrect behavior.",
-        ]
-    );
     press(&mut session, KeyCode::Enter);
     assert_eq!(session.stage, Stage::Compose);
-    assert_eq!(session.composer.definition().id().as_str(), "fix");
-    assert!(!session.composer.dirty(), "the filter is not a description");
+    assert_eq!(session.composer.focus, MessageFieldId::Subject);
+    assert!(rendered(&mut session, 100, 30)?.contains("fix(scope): description"));
+    assert!(!session.composer.dirty());
     Ok(())
 }
 
 #[test]
-fn a_filter_nothing_matches_says_so_and_enter_waits() -> Result<(), Box<dyn Error>> {
-    let mut session = AuthoringSession::new(built_in_commit_types(), None);
-    typed(&mut session, "qx");
-    assert_eq!(
-        session.stage,
-        Stage::SelectType,
-        "q types on the subject line"
-    );
-    let buffer = rendered_buffer(&mut session, 100, 30)?;
-    assert_eq!(row_text(&buffer, 100, 1).trim_end(), "▎  qx");
-    assert_eq!(
-        picker_rows(&buffer, 100, 6..7),
-        ["No type starts with \"qx\""]
-    );
-    let text = rendered(&mut session, 100, 30)?;
-    assert!(!text.contains("feat"), "no type row or description");
-    press(&mut session, KeyCode::Enter);
-    assert_eq!(session.stage, Stage::SelectType);
-
-    press(&mut session, KeyCode::Backspace);
-    press(&mut session, KeyCode::Backspace);
-    let buffer = rendered_buffer(&mut session, 100, 30)?;
-    assert!(picker_rows(&buffer, 100, 6..7)[0].starts_with("feat"));
-
-    typed(&mut session, "zz");
-    press(&mut session, KeyCode::Esc);
-    assert_eq!(
-        session.stage,
-        Stage::SelectType,
-        "esc clears the filter first"
-    );
-    let buffer = rendered_buffer(&mut session, 100, 30)?;
-    assert_eq!(row_text(&buffer, 100, 1).trim_end(), "▎");
-    assert!(picker_rows(&buffer, 100, 6..7)[0].starts_with("feat"));
-    assert_eq!(
-        session.handle_event(key(KeyCode::Esc)),
-        Some(AuthoringOutcome::Cancelled)
-    );
-    Ok(())
-}
-
-#[test]
-fn left_and_right_switch_the_taxonomy_and_keep_the_filter() -> Result<(), Box<dyn Error>> {
+fn left_and_right_switch_the_taxonomy_list() -> Result<(), Box<dyn Error>> {
     let mut session = AuthoringSession::with_context(super::super::built_in_context()?);
     let buffer = rendered_buffer(&mut session, 100, 30)?;
-    let taxonomies = row_text(&buffer, 100, 4);
+    let taxonomies = row_text(&buffer, 100, 2);
     assert!(
         taxonomies.starts_with("   conventional  research  infra-ops  "),
         "{taxonomies}"
     );
     assert!(taxonomies.ends_with("  conventional-v1   "), "{taxonomies}");
 
-    typed(&mut session, "fi");
     press(&mut session, KeyCode::Right);
     let buffer = rendered_buffer(&mut session, 100, 30)?;
-    assert!(row_text(&buffer, 100, 4).ends_with("  research-v1   "));
-    assert_eq!(row_text(&buffer, 100, 1).trim_end(), "▎  fi");
-    assert_eq!(picker_rows(&buffer, 100, 7..8), [""], "one match");
-    assert!(picker_rows(&buffer, 100, 6..7)[0].starts_with("fix "));
-    assert_eq!(session.definition().id().as_str(), "fix");
+    assert!(row_text(&buffer, 100, 2).ends_with("  research-v1   "));
+    assert!(picker_rows(&buffer, 100, 4..5)[0].starts_with("hypothesis "));
+    assert_eq!(session.definition().id().as_str(), "hypothesis");
 
     press(&mut session, KeyCode::Right);
     let buffer = rendered_buffer(&mut session, 100, 30)?;
-    assert!(row_text(&buffer, 100, 4).ends_with("  infra-ops-v1   "));
-    assert_eq!(
-        picker_rows(&buffer, 100, 6..7),
-        ["No type starts with \"fi\""]
-    );
-    press(&mut session, KeyCode::Enter);
-    assert_eq!(session.stage, Stage::SelectType);
+    assert!(row_text(&buffer, 100, 2).ends_with("  infra-ops-v1   "));
+    assert!(picker_rows(&buffer, 100, 4..5)[0].starts_with("provision "));
+    assert_eq!(session.definition().id().as_str(), "provision");
 
     press(&mut session, KeyCode::Left);
     press(&mut session, KeyCode::Left);
-    let buffer = rendered_buffer(&mut session, 100, 30)?;
-    assert_eq!(
-        picker_rows(&buffer, 100, 6..7),
-        ["fix         cause · decision · constraints"]
-    );
+    press(&mut session, KeyCode::Down);
     press(&mut session, KeyCode::Enter);
     assert_eq!(session.stage, Stage::Compose);
     assert_eq!(
@@ -166,23 +84,20 @@ fn left_and_right_switch_the_taxonomy_and_keep_the_filter() -> Result<(), Box<dy
 #[test]
 fn the_picker_never_draws_the_typing_note_or_a_tab_hint() -> Result<(), Box<dyn Error>> {
     for (width, height) in [(80, 24), (100, 30), (60, 18)] {
-        for filter in ["", "fi", "zz"] {
-            let mut session = AuthoringSession::with_context(super::super::built_in_context()?);
-            typed(&mut session, filter);
-            let text = rendered(&mut session, width, height)?;
-            for removed in ["Typing filters", "Changing the type later", "tab taxonomy"] {
-                assert!(!text.contains(removed), "{removed} at {width}x{height}");
-            }
-            assert_eq!(
-                hints(&session),
-                [
-                    ("enter", "choose"),
-                    ("↑/↓", "move"),
-                    ("←/→", "taxonomy"),
-                    ("esc", "back"),
-                ]
-            );
+        let mut session = AuthoringSession::with_context(super::super::built_in_context()?);
+        let text = rendered(&mut session, width, height)?;
+        for removed in ["Typing filters", "Changing the type later", "tab taxonomy"] {
+            assert!(!text.contains(removed), "{removed} at {width}x{height}");
         }
+        assert_eq!(
+            hints(&session),
+            [
+                ("enter", "choose"),
+                ("↑/↓", "move"),
+                ("←/→", "taxonomy"),
+                ("esc", "back"),
+            ]
+        );
     }
     Ok(())
 }
@@ -194,13 +109,13 @@ fn the_selection_stays_visible_when_the_list_is_taller_than_the_panel() -> Resul
     let shown = |session: &mut AuthoringSession| -> Result<Vec<String>, Box<dyn Error>> {
         let buffer = rendered_buffer(session, 100, 18)?;
         let selected = session.definition().id().to_string();
-        let rows = picker_rows(&buffer, 100, 6..14);
+        let rows = picker_rows(&buffer, 100, 4..14);
         let row = rows
             .iter()
             .position(|row| row.split_whitespace().next() == Some(selected.as_str()))
             .ok_or("the selection scrolled out of view")?;
         assert_eq!(
-            buffer[(3, 6 + u16::try_from(row)?)].bg,
+            buffer[(3, 4 + u16::try_from(row)?)].bg,
             theme().cursor,
             "{selected} is highlighted"
         );
@@ -210,27 +125,20 @@ fn the_selection_stays_visible_when_the_list_is_taller_than_the_panel() -> Resul
             .collect())
     };
     let top = [
-        "feat", "fix", "refactor", "perf", "test", "docs", "chore", "build",
+        "feat", "fix", "refactor", "perf", "test", "docs", "chore", "build", "ci", "style",
     ];
     assert_eq!(shown(&mut session)?, top);
     press(&mut session, KeyCode::Up);
     assert_eq!(
         shown(&mut session)?,
         [
-            "perf", "test", "docs", "chore", "build", "ci", "style", "revert"
+            "fix", "refactor", "perf", "test", "docs", "chore", "build", "ci", "style", "revert"
         ]
     );
     press(&mut session, KeyCode::Down);
     assert_eq!(shown(&mut session)?, top);
-    for _ in 0..8 {
-        press(&mut session, KeyCode::Down);
-    }
-    assert_eq!(
-        shown(&mut session)?,
-        [
-            "fix", "refactor", "perf", "test", "docs", "chore", "build", "ci"
-        ]
-    );
+    press(&mut session, KeyCode::Up);
+    assert_eq!(shown(&mut session)?[0], "fix");
     press(&mut session, KeyCode::Up);
     assert_eq!(
         shown(&mut session)?[0],
@@ -281,15 +189,13 @@ fn type_rows_align_keys_and_properties_and_highlight_the_selection() -> Result<(
     let mut session = AuthoringSession::new(built_in_commit_types(), None);
     press(&mut session, KeyCode::Down);
     let buffer = rendered_buffer(&mut session, 100, 30)?;
-    assert_eq!(buffer[(0, 1)].symbol(), "▎");
-    assert_eq!(buffer[(0, 1)].fg, theme().pending);
-    assert!(buffer[(3, 1)].modifier.contains(Modifier::REVERSED));
-    assert_eq!(row_text(&buffer, 100, 1).trim_end(), "▎");
+    assert!(reversed_positions(&buffer, 100, 30).is_empty());
+    assert_eq!(row_text(&buffer, 100, 1).trim_end(), "");
 
-    for (x, y) in [(1, 3), (98, 3), (1, 19), (98, 19)] {
+    for (x, y) in [(1, 1), (98, 1), (1, 17), (98, 17)] {
         assert_eq!(buffer[(x, y)].bg, theme().band, "panel at ({x}, {y})");
     }
-    for (x, y) in [(0, 3), (99, 3), (1, 2), (1, 20)] {
+    for (x, y) in [(0, 1), (99, 1), (1, 0), (1, 18)] {
         assert_ne!(
             buffer[(x, y)].bg,
             theme().band,
@@ -298,26 +204,26 @@ fn type_rows_align_keys_and_properties_and_highlight_the_selection() -> Result<(
     }
     assert_no_box_drawing(&buffer, 100, 30);
 
-    assert_eq!(find_ascii(&buffer, 100, 30, "feat"), Some((3, 6)));
+    assert_eq!(find_ascii(&buffer, 100, 30, "feat"), Some((3, 4)));
     assert_eq!(
         find_ascii(&buffer, 100, 30, "intent · decision"),
-        Some((15, 6))
+        Some((15, 4))
     );
     assert_eq!(
-        (buffer[(3, 6)].fg, buffer[(3, 6)].bg),
+        (buffer[(3, 4)].fg, buffer[(3, 4)].bg),
         (theme().text, theme().band)
     );
     assert_eq!(
-        (buffer[(15, 6)].fg, buffer[(15, 6)].bg),
+        (buffer[(15, 4)].fg, buffer[(15, 4)].bg),
         (theme().dim, theme().band)
     );
 
     assert_eq!(
-        row_text(&buffer, 100, 7).trim_end(),
+        row_text(&buffer, 100, 5).trim_end(),
         "   fix         cause · decision · constraints"
     );
     for column in 0..100 {
-        let cell = &buffer[(column, 7)];
+        let cell = &buffer[(column, 5)];
         if (1..99).contains(&column) {
             assert_eq!((cell.fg, cell.bg), (theme().ground, theme().cursor));
         } else {
@@ -325,9 +231,9 @@ fn type_rows_align_keys_and_properties_and_highlight_the_selection() -> Result<(
         }
     }
     let detail = find_ascii(&buffer, 100, 30, "A causal correction").ok_or("missing detail")?;
-    assert_eq!(detail, (15, 18));
-    assert_eq!(buffer[(3, 18)].symbol(), "f");
-    assert!(buffer[(3, 18)].modifier.contains(Modifier::BOLD));
+    assert_eq!(detail, (15, 16));
+    assert_eq!(buffer[(3, 16)].symbol(), "f");
+    assert!(buffer[(3, 16)].modifier.contains(Modifier::BOLD));
     Ok(())
 }
 
@@ -355,7 +261,7 @@ fn type_picker_renders_the_complete_effective_conventional_catalog() -> Result<(
             .collect::<Vec<_>>()
             .join(" · ");
         assert_eq!(
-            row_text(&buffer, 120, 6 + u16::try_from(index)?).trim_end(),
+            row_text(&buffer, 120, 4 + u16::try_from(index)?).trim_end(),
             format!("   {:<12}{properties}", definition.id().as_str())
         );
     }
@@ -368,11 +274,11 @@ fn a_taller_terminal_scrolls_the_type_list_back_to_fill_it() -> Result<(), Box<d
     press(&mut session, KeyCode::Up);
     let short = rendered_buffer(&mut session, 100, 18)?;
     assert_eq!(
-        picker_rows(&short, 100, 6..7)[0].split_whitespace().next(),
-        Some("perf")
+        picker_rows(&short, 100, 4..5)[0].split_whitespace().next(),
+        Some("fix")
     );
     let tall = rendered_buffer(&mut session, 100, 30)?;
-    let rows = picker_rows(&tall, 100, 6..17);
+    let rows = picker_rows(&tall, 100, 4..15);
     assert_eq!(rows[0].split_whitespace().next(), Some("feat"));
     assert_eq!(rows[10].split_whitespace().next(), Some("revert"));
     assert_eq!(session.type_offset, 0);

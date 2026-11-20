@@ -71,9 +71,7 @@ pub(crate) struct AuthoringSession {
     pub(crate) confirmation: ConfirmationAction,
     pub(crate) discard_dialog: ConfirmationDialog,
     pub(crate) catalog_tabs: Vec<CatalogTab>,
-    /// What the user typed on the subject line while choosing a type.
-    pub(crate) filter: String,
-    /// The first matching type the list shows when it is taller than the picker.
+    /// The first type the list shows when it is taller than the picker.
     pub(crate) type_offset: usize,
     /// The definition index of each drawn type row, and where it was drawn.
     pub(crate) type_rows: Vec<(usize, Rect)>,
@@ -109,7 +107,6 @@ impl AuthoringSession {
             confirmation: ConfirmationAction::Cancel,
             discard_dialog: ConfirmationDialog::default(),
             catalog_tabs: Vec::new(),
-            filter: String::new(),
             type_offset: 0,
             type_rows: Vec::new(),
             too_small: false,
@@ -210,7 +207,7 @@ impl AuthoringSession {
                 return;
             };
             self.definitions = taxonomy.definitions().to_vec();
-            self.selected_type = self.matching_types().first().copied().unwrap_or(0);
+            self.selected_type = 0;
             if self.type_change.is_none() {
                 self.composer = MessageComposer::new(self.definition().clone());
                 self.review = None;
@@ -218,26 +215,6 @@ impl AuthoringSession {
             }
         }
         self.type_catalog = kind;
-    }
-
-    /// The indexes of the types whose key starts with the filter, in catalog order.
-    ///
-    /// A prefix match, because the filter is the start of the subject line, which
-    /// begins with the type key.
-    pub(crate) fn matching_types(&self) -> Vec<usize> {
-        let filter = self.filter.to_lowercase();
-        self.definitions
-            .iter()
-            .enumerate()
-            .filter(|(_, definition)| definition.id().as_str().starts_with(&filter))
-            .map(|(index, _)| index)
-            .collect()
-    }
-
-    fn select_first_match(&mut self) {
-        if let Some(first) = self.matching_types().first() {
-            self.selected_type = *first;
-        }
     }
 
     /// The stage on screen: a discard confirmation shows over the composer.
@@ -352,24 +329,18 @@ impl AuthoringSession {
     }
 
     fn handle_picker_key(&mut self, key: KeyEvent) -> Option<AuthoringOutcome> {
-        let matches = self.matching_types();
         match key.code {
             KeyCode::Up | KeyCode::Down => {
-                if let Some(position) = matches
-                    .iter()
-                    .position(|index| *index == self.selected_type)
-                {
-                    let step = if key.code == KeyCode::Up {
-                        matches.len() - 1
-                    } else {
-                        1
-                    };
-                    self.selected_type = matches[(position + step) % matches.len()];
-                }
+                let count = self.definitions.len();
+                let step = if key.code == KeyCode::Up {
+                    count - 1
+                } else {
+                    1
+                };
+                self.selected_type = (self.selected_type + step) % count;
             }
             KeyCode::Left | KeyCode::Right => self.cycle_type_catalog(key.code == KeyCode::Left),
-            KeyCode::Enter if !matches.is_empty() => {
-                self.filter.clear();
+            KeyCode::Enter => {
                 if self.type_change.take().is_some() {
                     self.composer.retarget(self.definition().clone());
                 } else {
@@ -378,25 +349,8 @@ impl AuthoringSession {
                 self.review = None;
                 self.stage = Stage::Compose;
             }
-            KeyCode::Esc if !self.filter.is_empty() => {
-                self.filter.clear();
-                self.select_first_match();
-            }
             KeyCode::Esc if self.type_change.is_some() => self.cancel_type_change(),
             KeyCode::Esc => return Some(AuthoringOutcome::Cancelled),
-            KeyCode::Backspace => {
-                if self.filter.pop().is_some() {
-                    self.select_first_match();
-                }
-            }
-            KeyCode::Char(character)
-                if !key
-                    .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
-                self.filter.push(character);
-                self.select_first_match();
-            }
             _ => {}
         }
         None
@@ -418,7 +372,6 @@ impl AuthoringSession {
                 selected: self.selected_type,
                 definitions: self.definitions.clone(),
             });
-            self.filter.clear();
             self.stage = Stage::SelectType;
             return None;
         }
@@ -521,7 +474,6 @@ impl AuthoringSession {
         self.definitions = saved.definitions;
         self.selected_type = saved.selected;
         self.type_catalog = saved.catalog;
-        self.filter.clear();
         self.stage = Stage::Compose;
     }
 

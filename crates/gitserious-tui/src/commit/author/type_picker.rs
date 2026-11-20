@@ -2,7 +2,7 @@ use gitserious_core::CommitTypeDefinition;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
 use super::components::selection_panel::{INSET, SelectionPanel, tab_style, visible_offset};
@@ -16,17 +16,9 @@ const PICKER_FIXED_ROWS: u16 = 5;
 const PICKER_KEY_GAP: u16 = 4;
 const TAB_GAP: u16 = 2;
 
-/// The subject line, then a panel listing the types whose key starts with what
-/// was typed on it, with the highlighted type's description underneath.
+/// The taxonomy tabs, type list, and highlighted type's description.
 pub(super) fn render(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringSession) {
-    let [subject, _, below] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(0),
-    ])
-    .areas(area);
-    render_subject_filter(frame, subject, &session.filter);
-    let panel = inset_horizontally(below, 1);
+    let panel = inset_horizontally(area, 1);
     let content_width = panel.width.saturating_sub(INSET * 2);
     let key_width = picker_key_width(&session.definitions, content_width);
     let detail_width = content_width.saturating_sub(key_width);
@@ -37,11 +29,11 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringS
         .map(|definition| wrapped_line_count(definition.description(), detail_width))
         .max()
         .unwrap_or(1);
-    let matches = session.matching_types();
+    let type_count = session.definitions.len();
     let room = panel
         .height
         .saturating_sub(PICKER_FIXED_ROWS.saturating_add(detail_height));
-    let list_height = u16::try_from(matches.len())
+    let list_height = u16::try_from(type_count)
         .unwrap_or(u16::MAX)
         .min(room)
         .max(1);
@@ -63,27 +55,15 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringS
     ])
     .areas(surface.content());
     render_catalog_tabs(frame, taxonomies, session);
-    if matches.is_empty() {
-        frame.render_widget(
-            Paragraph::new(format!("No type starts with \"{}\"", session.filter))
-                .style(Style::new().fg(theme().dim)),
-            list,
-        );
-        return;
-    }
-    let position = matches
-        .iter()
-        .position(|index| *index == session.selected_type)
-        .unwrap_or(0);
     let rows = usize::from(list.height);
     // A taller list scrolls back up first, so it never shows blank rows below the last type.
     let offset = visible_offset(
-        position,
-        session.type_offset.min(matches.len().saturating_sub(rows)),
+        session.selected_type,
+        session.type_offset.min(type_count.saturating_sub(rows)),
         rows,
     );
     session.type_offset = offset;
-    for (y, index) in (list.y..list.bottom()).zip(matches.into_iter().skip(offset)) {
+    for (y, index) in (list.y..list.bottom()).zip(offset..type_count) {
         let definition = &session.definitions[index];
         let row = surface.row(y);
         let (key_style, property_style) = if index == session.selected_type {
@@ -119,37 +99,6 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringS
         Paragraph::new(definition.description()).wrap(Wrap { trim: true }),
         description,
     );
-}
-
-/// An accent bar, the typed filter, and its cursor.
-fn render_subject_filter(frame: &mut Frame<'_>, area: Rect, filter: &str) {
-    frame.render_widget(
-        Paragraph::new("▎").style(Style::new().fg(theme().pending)),
-        area,
-    );
-    let text = Rect {
-        x: area.x.saturating_add(INSET + 1),
-        width: area.width.saturating_sub(INSET + 1),
-        ..area
-    };
-    let room = usize::from(text.width.saturating_sub(1));
-    let typed: String = filter
-        .chars()
-        .skip(filter.chars().count().saturating_sub(room))
-        .collect();
-    let spans = [
-        Span::styled(
-            typed,
-            Style::new().fg(theme().text).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            " ",
-            Style::new()
-                .fg(theme().text)
-                .add_modifier(Modifier::REVERSED),
-        ),
-    ];
-    frame.render_widget(Paragraph::new(Line::from_iter(spans)), text);
 }
 
 /// Taxonomy ids on the left, the active one underlined, and its versioned id on the right.

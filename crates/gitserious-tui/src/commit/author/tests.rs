@@ -714,10 +714,10 @@ fn picker_and_review_draw_without_frames_inside_the_page() -> Result<(), Box<dyn
     assert_no_box_drawing(&picker_buffer, 100, 24);
     assert_eq!(
         find_ascii(&picker_buffer, 100, 24, "conventional"),
-        Some((3, 4)),
+        Some((3, 2)),
     );
     let selected = find_ascii(&picker_buffer, 100, 24, "feat").ok_or("missing selection")?;
-    assert_eq!(selected, (3, 6));
+    assert_eq!(selected, (3, 4));
     assert_eq!(picker_buffer[selected].bg, theme().cursor);
 
     let mut review = valid_feat_session();
@@ -943,7 +943,7 @@ fn ctrl_t_keeps_answers_the_new_type_asks_for_and_esc_restores_the_old_one()
     );
 
     control(&mut session, 't');
-    typed(&mut session, "fi");
+    press(&mut session, KeyCode::Down);
     press(&mut session, KeyCode::Enter);
     assert_eq!(session.stage, Stage::Compose);
     assert_eq!(session.composer.definition().id().as_str(), "fix");
@@ -1240,7 +1240,7 @@ fn at_before_a_type_is_chosen_stays_in_the_picker() {
     press(&mut session, KeyCode::Char('@'));
     assert_eq!(session.stage, Stage::SelectType);
     assert!(session.citation_picker.is_none());
-    assert_eq!(session.filter, "@");
+    assert!(!session.composer.dirty());
 }
 
 #[test]

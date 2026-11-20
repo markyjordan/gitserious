@@ -280,7 +280,10 @@ fn the_type_picker_fits_the_page_at_80x24_and_100x30() -> Result<(), Box<dyn std
         terminal.draw(|frame| root.render(frame, &[]))?;
         let text = rendered(&terminal);
         let rows: Vec<_> = text.lines().collect();
-        assert_eq!(rows[3].trim_end(), "▎", "{text}");
+        assert!(rows[3].trim_end().is_empty(), "{text}");
+        assert!(rows[4].trim_start().starts_with("conventional"), "{text}");
+        assert_eq!(terminal.backend().buffer()[(1, 3)].bg, theme().band);
+        assert!(!text.contains("(scope): description"), "{text}");
         for (offset, kind) in [
             "feat", "fix", "refactor", "perf", "test", "docs", "chore", "build", "ci", "style",
             "revert",
@@ -289,7 +292,7 @@ fn the_type_picker_fits_the_page_at_80x24_and_100x30() -> Result<(), Box<dyn std
         .enumerate()
         {
             assert!(
-                rows[8 + offset].trim_start().starts_with(kind),
+                rows[6 + offset].trim_start().starts_with(kind),
                 "{kind} at {width}x{height}\n{text}"
             );
         }
