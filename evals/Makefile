@@ -13,7 +13,7 @@ test:
 	uv run --locked pytest -q
 
 smoke:
-	uv run --locked --offline pytest -q tests/test_smoke.py
+	uv run --locked --offline pytest -q tests/test_smoke.py tests/test_logs.py
 
 view:
 	uv run --locked inspect view --log-dir artifacts/logs
