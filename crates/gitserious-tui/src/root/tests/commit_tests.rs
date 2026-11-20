@@ -280,10 +280,7 @@ fn the_type_picker_fits_the_page_at_80x24_and_100x30() -> Result<(), Box<dyn std
         terminal.draw(|frame| root.render(frame, &[]))?;
         let text = rendered(&terminal);
         let rows: Vec<_> = text.lines().collect();
-        assert!(
-            rows[3].starts_with("▎   type(scope): description"),
-            "{text}"
-        );
+        assert_eq!(rows[3].trim_end(), "▎", "{text}");
         for (offset, kind) in [
             "feat", "fix", "refactor", "perf", "test", "docs", "chore", "build", "ci", "style",
             "revert",
