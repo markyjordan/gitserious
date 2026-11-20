@@ -73,16 +73,75 @@ fn space_can_extend_the_scope_of_a_complete_pasted_subject() {
 }
 
 #[test]
-fn the_wrapped_first_letter_undoes_as_one_edit_and_a_cleared_scope_can_be_skipped() {
+fn the_wrapped_first_letter_undoes_as_one_edit() {
     let mut session = session();
     typed(&mut session, "n");
     control(&mut session, 'u');
     assert!(session.composer.subject.is_empty());
+}
+
+#[test]
+fn deleting_the_last_scope_character_restores_the_focused_prompt() -> Result<(), Box<dyn Error>> {
+    let mut session = session();
+    typed(&mut session, "né");
+    press(&mut session, KeyCode::Backspace);
+    assert_eq!(session.composer.subject.lines(), &["(n): "]);
+    press(&mut session, KeyCode::Backspace);
+    assert!(session.composer.subject.is_empty());
+    assert_eq!(session.composer.focus, MessageFieldId::Subject);
+    assert!(rendered(&mut session, 80, 24)?.contains("feat(scope): description"));
+    control(&mut session, 'u');
+    assert_eq!(session.composer.subject.lines(), &["(n): "]);
+    control(&mut session, 'r');
+    assert!(session.composer.subject.is_empty());
 
     typed(&mut session, "x");
-    press(&mut session, KeyCode::Backspace);
+    assert_eq!(session.composer.subject.lines(), &["(x): "]);
+    press(&mut session, KeyCode::Left);
+    press(&mut session, KeyCode::Delete);
+    assert!(session.composer.subject.is_empty());
     typed(&mut session, " describe the change");
     assert_eq!(session.composer.subject.lines(), &[": describe the change"]);
+    Ok(())
+}
+
+#[test]
+fn deleting_a_scope_selected_from_the_start_clears_the_remaining_punctuation() {
+    let mut session = session();
+    typed(&mut session, "net");
+    modified_press(&mut session, KeyCode::Home, KeyModifiers::SHIFT);
+    press(&mut session, KeyCode::Backspace);
+    assert!(session.composer.subject.is_empty());
+}
+
+#[test]
+fn cutting_the_scope_preserves_the_description_and_is_one_undoable_edit() {
+    let mut session = session();
+    paste(&mut session, "(nét): handle empty rows");
+    press(&mut session, KeyCode::Home);
+    press(&mut session, KeyCode::Right);
+    for _ in 0..3 {
+        modified_press(&mut session, KeyCode::Right, KeyModifiers::SHIFT);
+    }
+    control(&mut session, 'x');
+    assert_eq!(session.composer.subject.lines(), &[": handle empty rows"]);
+    assert_eq!(session.composer.subject.yank_text(), "nét");
+
+    control(&mut session, 'u');
+    assert_eq!(
+        session.composer.subject.lines(),
+        &["(nét): handle empty rows"]
+    );
+    control(&mut session, 'r');
+    assert_eq!(session.composer.subject.lines(), &[": handle empty rows"]);
+}
+
+#[test]
+fn deleting_inside_unfinished_punctuation_keeps_the_literal_edit() {
+    let mut session = session();
+    typed(&mut session, "(n");
+    press(&mut session, KeyCode::Backspace);
+    assert_eq!(session.composer.subject.lines(), &["("]);
 }
 
 #[test]
