@@ -1,0 +1,31 @@
+[project]
+name = "gitserious-evals"
+version = "0.1.0"
+description = "Research workspace for gitserious evaluations"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = ["inspect-ai"]
+
+[dependency-groups]
+dev = ["hatchling", "pytest", "ruff"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+build-constraint-dependencies = [
+    "hatchling==1.33.0",
+    "packaging==26.3",
+    "pathspec==1.1.1",
+    "pluggy==1.7.0",
+    "tomlkit==0.15.2",
+    "trove-classifiers==2026.9.21.13",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

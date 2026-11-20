@@ -182,3 +182,26 @@ trace.out                       # execution trace
 tmp/
 logs/
 
+
+# Evaluation workspace
+/evals/.env
+/evals/.env.*
+!/evals/.env.example
+/evals/.venv/
+/evals/**/__pycache__/
+/evals/**/*.py[cod]
+/evals/**/*.egg-info/
+/evals/**/.pytest_cache/
+/evals/**/.ruff_cache/
+/evals/data/external/downloads/
+/evals/data/interim/*
+!/evals/data/interim/README.md
+/evals/data/processed/*
+!/evals/data/processed/README.md
+/evals/artifacts/*
+!/evals/artifacts/logs/
+!/evals/artifacts/scratch/
+/evals/artifacts/logs/*
+!/evals/artifacts/logs/.gitkeep
+/evals/artifacts/scratch/*
+!/evals/artifacts/scratch/.gitkeep
