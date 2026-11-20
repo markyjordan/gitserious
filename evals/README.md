@@ -33,8 +33,8 @@ the editable install.
 ## Run the synthetic smoke task
 
 From `evals/`, run `make smoke` to check known correct and incorrect
-answers with an offline Inspect mock. `make test` also checks the data and
-reads both outcomes back from native `.eval` logs in temporary directories.
+answers with an offline Inspect mock and read both scores back from native
+`.eval` logs. The full `make test` suite also checks fixture validation.
 
 To keep an inspectable smoke log, run this from `evals/`:
 
@@ -63,3 +63,13 @@ Inspect can run the task and preserve a score.
 Copy `.env.example` to `.env` to use `artifacts/logs/` by default in future
 Inspect runs. Keep native logs and disposable outputs under `artifacts/`.
 Use `reports/` for reviewed results and graphics.
+
+## Add a suite
+
+Follow [the suite guide](docs/adding-an-evaluation.md) to add task code, fixtures,
+and offline tests. See [the data lifecycle](docs/data-lifecycle.md) for retention
+rules and [the architecture](docs/architecture.md) for what to retain with a run.
+
+The `evals-quality` CI job installs the locked Python 3.12 environment, runs Ruff,
+and runs the same test suite without network access. Its result is required by
+`ci-pass`.

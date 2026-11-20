@@ -75,6 +75,9 @@ jobs:
       - ref-policy
     uses: ./.github/workflows/test.yml
 
+  evals-quality:
+    uses: ./.github/workflows/evals-quality.yml
+
   automation-quality:
     uses: ./.github/workflows/automation-quality.yml
 
@@ -149,6 +152,7 @@ jobs:
       - check-fmt
       - check-lint
       - test
+      - evals-quality
       - package-inspect
       - native-binaries
     runs-on: ubuntu-24.04

@@ -1,0 +1,51 @@
+name: Evals Quality
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read # why: Check out the workspace and its dependency lockfile.
+
+defaults:
+  run:
+    shell: bash
+    working-directory: evals
+
+jobs:
+  offline:
+    name: offline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # astral-sh/setup-uv@v10.4.0
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d
+        with:
+          version: "0.13.5"
+          enable-cache: false
+
+      - name: Install locked dependencies
+        run: |
+          set -euo pipefail
+          uv sync --python 3.12 --locked
+
+      - name: Check Python and source quality
+        run: |
+          set -euo pipefail
+          uv run --locked --offline python -c 'import sys; assert sys.version_info[:2] == (3, 12)'
+          uv run --locked --offline ruff check .
+          uv run --locked --offline ruff format --check .
+
+      - name: Run offline tests
+        run: |
+          set -euo pipefail
+          sudo --non-interactive /usr/bin/unshare --net \
+            --setgid "$(id -g)" --setuid "$(id -u)" \
+            /usr/bin/env -i HOME="$HOME" PATH="$PATH" INSPECT_EVAL_CTL_SERVER=false \
+            .venv/bin/python -m pytest -q
