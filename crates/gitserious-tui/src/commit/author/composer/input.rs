@@ -3,7 +3,7 @@
 
 use gitserious_core::ConditionalApplicability;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tui_textarea::{CursorMove, Input, TextArea};
+use tui_textarea::{CursorMove, Input, Key, TextArea};
 
 use super::{FieldRequirementState, MessageComposer, MessageFieldId, layout, value};
 
@@ -23,6 +23,9 @@ impl MessageComposer {
                     && !character.is_control() =>
             {
                 self.edit(|text| type_subject(text, character));
+            }
+            _ if self.focus == MessageFieldId::Subject => {
+                self.edit(|text| edit_subject(text, Input::from(key)));
             }
             _ => self.edit(|text| text.input(Input::from(key))),
         }
@@ -120,6 +123,44 @@ impl MessageComposer {
             text.move_cursor(CursorMove::End);
         }
     }
+}
+
+fn edit_subject(text: &mut TextArea<'_>, input: Input) -> bool {
+    let deletes = matches!(
+        (input.key, input.ctrl, input.alt),
+        (Key::Backspace | Key::Delete, false, _)
+            | (Key::Char('h' | 'd'), false, true)
+            | (Key::Char('h' | 'd' | 'j' | 'k' | 'w' | 'x'), true, false)
+            | (Key::Cut, _, _)
+    );
+    let tail = &text.lines()[0];
+    let Some((scope, rest)) = tail
+        .strip_prefix('(')
+        .and_then(|tail| tail.split_once(')'))
+        .filter(|(scope, rest)| !scope.is_empty() && rest.starts_with(':'))
+        .filter(|(scope, _)| deletes && text.cursor().1 <= scope.chars().count() + 2)
+    else {
+        return text.input(input);
+    };
+
+    let mut edited = text.clone();
+    let changed = edited.input(input);
+    let punctuation = edited.lines()[0].strip_suffix(rest);
+    if !changed || !matches!(punctuation, Some("()" | "(" | ")" | "")) {
+        *text = edited;
+        return changed;
+    }
+
+    let removed = if rest[1..].trim().is_empty() {
+        tail.chars().count()
+    } else {
+        scope.chars().count() + 2
+    };
+    text.cancel_selection();
+    text.move_cursor(CursorMove::Head);
+    let changed = text.delete_str(removed);
+    text.set_yank_text(edited.yank_text());
+    changed
 }
 
 fn type_subject(text: &mut TextArea<'_>, character: char) -> bool {
