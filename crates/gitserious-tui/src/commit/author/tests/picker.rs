@@ -52,10 +52,7 @@ fn typing_on_the_subject_line_lists_the_types_whose_key_starts_with_it()
 
     press(&mut session, KeyCode::Backspace);
     let buffer = rendered_buffer(&mut session, 100, 30)?;
-    assert_eq!(
-        row_text(&buffer, 100, 1).trim_end(),
-        "▎   type(scope): description"
-    );
+    assert_eq!(row_text(&buffer, 100, 1).trim_end(), "▎");
     assert_eq!(picker_rows(&buffer, 100, 6..17).len(), 11);
     assert_eq!(session.definition().id().as_str(), "feat");
 
@@ -110,10 +107,7 @@ fn a_filter_nothing_matches_says_so_and_enter_waits() -> Result<(), Box<dyn Erro
         "esc clears the filter first"
     );
     let buffer = rendered_buffer(&mut session, 100, 30)?;
-    assert_eq!(
-        row_text(&buffer, 100, 1).trim_end(),
-        "▎   type(scope): description"
-    );
+    assert_eq!(row_text(&buffer, 100, 1).trim_end(), "▎");
     assert!(picker_rows(&buffer, 100, 6..7)[0].starts_with("feat"));
     assert_eq!(
         session.handle_event(key(KeyCode::Esc)),
@@ -290,8 +284,7 @@ fn type_rows_align_keys_and_properties_and_highlight_the_selection() -> Result<(
     assert_eq!(buffer[(0, 1)].symbol(), "▎");
     assert_eq!(buffer[(0, 1)].fg, theme().pending);
     assert!(buffer[(3, 1)].modifier.contains(Modifier::REVERSED));
-    assert_eq!(find_ascii(&buffer, 100, 30, "type(scope)"), Some((4, 1)));
-    assert_eq!(buffer[(4, 1)].fg, theme().dim);
+    assert_eq!(row_text(&buffer, 100, 1).trim_end(), "▎");
 
     for (x, y) in [(1, 3), (98, 3), (1, 19), (98, 19)] {
         assert_eq!(buffer[(x, y)].bg, theme().band, "panel at ({x}, {y})");

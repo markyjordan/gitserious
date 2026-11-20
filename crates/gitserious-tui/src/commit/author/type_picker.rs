@@ -121,7 +121,7 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, session: &mut AuthoringS
     );
 }
 
-/// An accent bar, the typed filter, a cursor, and the subject's shape until something is typed.
+/// An accent bar, the typed filter, and its cursor.
 fn render_subject_filter(frame: &mut Frame<'_>, area: Rect, filter: &str) {
     frame.render_widget(
         Paragraph::new("▎").style(Style::new().fg(theme().pending)),
@@ -137,7 +137,7 @@ fn render_subject_filter(frame: &mut Frame<'_>, area: Rect, filter: &str) {
         .chars()
         .skip(filter.chars().count().saturating_sub(room))
         .collect();
-    let mut spans = vec![
+    let spans = [
         Span::styled(
             typed,
             Style::new().fg(theme().text).add_modifier(Modifier::BOLD),
@@ -149,13 +149,7 @@ fn render_subject_filter(frame: &mut Frame<'_>, area: Rect, filter: &str) {
                 .add_modifier(Modifier::REVERSED),
         ),
     ];
-    if filter.is_empty() {
-        spans.push(Span::styled(
-            "type(scope): description",
-            Style::new().fg(theme().dim),
-        ));
-    }
-    frame.render_widget(Paragraph::new(Line::from(spans)), text);
+    frame.render_widget(Paragraph::new(Line::from_iter(spans)), text);
 }
 
 /// Taxonomy ids on the left, the active one underlined, and its versioned id on the right.
