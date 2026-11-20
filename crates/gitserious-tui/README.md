@@ -210,14 +210,12 @@ compact and wide terminals.
 
 ## Commit authoring
 
-Authoring, once started from the Commit page, begins at the default taxonomy
-in `gitserious.toml` with an empty subject line above a list of its types. Each
-row shows a type and its property keys, and the row under the list describes
-the highlighted type. Typing on the subject line keeps the types whose key
-starts with what was typed; Backspace edits it, and Esc clears it before it
-leaves authoring. Left and Right switch taxonomy and keep the filter, Up and
-Down move, and Enter opens the composer for the highlighted type. Switching
-taxonomy never mutates project policy.
+Authoring, once started from the Commit page, begins with the type picker on
+the default taxonomy in `gitserious.toml`. Each row shows a type and its
+property keys. The row under the list describes the highlighted type. Left
+and Right switch taxonomy, Up and Down move through its types, and Enter
+opens the composer for the highlighted type. Esc leaves the picker.
+Switching taxonomy never mutates project policy.
 
 The composer shows a subject card, one card for each property, and an optional
 breaking-change card. The selected type is fixed on the subject line. Type a
