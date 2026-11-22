@@ -138,7 +138,10 @@ fn enter_opens_the_editor_whose_initialize_row_writes_the_chosen_taxonomies()
     terminal.draw(|frame| root.render(frame, &[]))?;
     let text = rendered(&terminal);
     assert!(text.contains(" initialize fresh"), "{text}");
-    assert!(text.contains("esc back  space include  enter default"));
+    assert!(
+        text.contains("esc back  space include  enter initialize"),
+        "the editor opens on the Initialize row"
+    );
     root.handle_event(key(KeyCode::Esc), of(&workspace), &[]);
     assert!(workspace.created.borrow().is_none(), "esc writes nothing");
     assert_eq!(
@@ -158,9 +161,6 @@ fn enter_opens_the_editor_whose_initialize_row_writes_the_chosen_taxonomies()
         rendered(&terminal).contains(" initialize fresh"),
         "the editor survives a visit to another section"
     );
-    for _ in 0..3 {
-        root.handle_event(key(KeyCode::Down), of(&workspace), &[]);
-    }
     terminal.draw(|frame| root.render(frame, &[]))?;
     assert!(rendered(&terminal).contains("enter initialize"));
     root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
@@ -208,16 +208,8 @@ fn library_taxonomies_start_excluded_and_an_unreadable_library_is_named()
         .ok_or("missing Library taxonomy")?;
     assert!(row.starts_with(" ○ –  team-changes  custom"), "{row}");
     assert!(row.trim_end().ends_with("3 types"));
-    for code in [
-        KeyCode::Down,
-        KeyCode::Down,
-        KeyCode::Down,
-        KeyCode::Char(' '),
-    ] {
+    for code in [KeyCode::Up, KeyCode::Char(' '), KeyCode::Down] {
         root.handle_event(key(code), of(&workspace), &[]);
-    }
-    for _ in 0..4 {
-        root.handle_event(key(KeyCode::Down), of(&workspace), &[]);
     }
     root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
     let created = workspace
@@ -263,9 +255,6 @@ fn a_failed_initialization_shows_why_and_keeps_the_offer() -> Result<(), Box<dyn
     workspace.failure = Some("gitserious.toml already exists");
     let (mut root, mut terminal) = home_screen(&workspace, 100, 30)?;
     root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
-    for _ in 0..3 {
-        root.handle_event(key(KeyCode::Down), of(&workspace), &[]);
-    }
     root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
     terminal.draw(|frame| root.render(frame, &[]))?;
     let text = rendered(&terminal);

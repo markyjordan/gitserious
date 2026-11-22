@@ -66,16 +66,19 @@ fn project_enter_opens_the_same_editor_as_home_and_cancel_writes_nothing()
         assert!(workspace.created.borrow().is_none());
         project.execute(Action::Select(Section::Config), of(&workspace));
         project.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
-        // Exclude conventional and make infra-ops the default; only those choices may
+        // Make infra-ops the default and exclude conventional; only those choices may
         // appear in Project after the root reloads the initialized configuration.
-        project.handle_event(key(KeyCode::Char(' ')), of(&workspace), &[]);
-        project.handle_event(key(KeyCode::Down), of(&workspace), &[]);
-        project.handle_event(key(KeyCode::Down), of(&workspace), &[]);
-        project.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
-        for _ in 0..3 {
-            project.handle_event(key(KeyCode::Down), of(&workspace), &[]);
+        for code in [
+            KeyCode::Up,
+            KeyCode::Enter,
+            KeyCode::Down,
+            KeyCode::Char(' '),
+            KeyCode::Down,
+            KeyCode::Down,
+            KeyCode::Enter,
+        ] {
+            project.handle_event(key(code), of(&workspace), &[]);
         }
-        project.handle_event(key(KeyCode::Enter), of(&workspace), &[]);
         assert!(!project.home.editing());
         let configuration = workspace
             .created

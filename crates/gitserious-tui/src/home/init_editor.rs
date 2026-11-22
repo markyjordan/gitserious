@@ -46,6 +46,7 @@ pub(super) struct InitEditor {
 
 impl InitEditor {
     /// Built-ins start included in their order; custom taxonomies start excluded after them.
+    /// The Initialize row starts selected, so Enter accepts the defaults.
     pub(super) fn new(
         built_ins: &[Taxonomy],
         custom: &[Taxonomy],
@@ -60,10 +61,10 @@ impl InitEditor {
                 custom,
                 included: !custom,
             })
-            .collect();
+            .collect::<Vec<_>>();
         Self {
+            cursor: rows.len(),
             rows,
-            cursor: 0,
             previewed: 0,
             creates_repository,
         }
@@ -645,10 +646,21 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(87, 40))?;
         terminal.draw(|frame| editor.render(frame, frame.area(), Path::new("/src/fresh"), None))?;
         let first = terminal.backend().buffer()[(1, 5)].clone();
-        assert_eq!(first.bg, theme().cursor, "conventional-v1 starts selected");
-        for _ in 0..3 {
-            press(&mut editor, KeyCode::Down);
-        }
+        assert_ne!(
+            first.bg,
+            theme().cursor,
+            "conventional-v1 starts unselected"
+        );
+        let initialize = screen(&editor, 87, 40)?
+            .iter()
+            .position(|row| row.contains(" initialize git and gitserious"))
+            .ok_or("missing Initialize row")?;
+        let cell = terminal.backend().buffer()[(1, u16::try_from(initialize)?)].clone();
+        assert_eq!(
+            cell.bg,
+            theme().cursor,
+            "the Initialize row starts selected"
+        );
         for (width, height) in [(87, 40), (100, 30)] {
             let rows = screen(&editor, width, height)?;
             let heading = rows
@@ -696,10 +708,7 @@ mod tests {
         );
         assert!(!rows.iter().any(|row| row.contains("will write")));
 
-        let mut editor = InitEditor::new(built_in_taxonomies(), &[], false);
-        for _ in 0..3 {
-            press(&mut editor, KeyCode::Down);
-        }
+        let editor = InitEditor::new(built_in_taxonomies(), &[], false);
         let rows = screen(&editor, 100, 30)?;
         let heading = rows
             .iter()
