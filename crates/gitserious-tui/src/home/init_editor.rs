@@ -485,6 +485,13 @@ mod tests {
         editor.key(KeyEvent::new(code, KeyModifiers::ALT));
     }
 
+    /// Selects the first taxonomy row, wherever the editor opened.
+    fn select_first(editor: &mut InitEditor) {
+        for _ in 0..editor.rows.len() {
+            press(editor, KeyCode::Up);
+        }
+    }
+
     fn initialize(editor: &mut InitEditor) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         for _ in 0..editor.rows.len() {
             press(editor, KeyCode::Down);
@@ -544,6 +551,7 @@ mod tests {
     fn space_includes_enter_makes_the_default_and_alt_arrows_reorder()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut editor = InitEditor::new(built_in_taxonomies(), &[team_changes()?], false);
+        select_first(&mut editor);
         for _ in 0..3 {
             press(&mut editor, KeyCode::Down);
         }
@@ -592,6 +600,7 @@ mod tests {
             })
             .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
         let mut editor = InitEditor::new(built_in_taxonomies(), &library, false);
+        select_first(&mut editor);
         for _ in 0..32 {
             press(&mut editor, KeyCode::Down);
         }
@@ -738,6 +747,7 @@ mod tests {
     fn the_last_included_taxonomy_cannot_be_excluded_and_esc_writes_nothing()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut editor = InitEditor::new(&built_in_taxonomies()[..1], &[], false);
+        select_first(&mut editor);
         press(&mut editor, KeyCode::Char(' '));
         assert!(screen(&editor, 87, 40)?[5].starts_with(" ✓ 1  conventional"));
         assert!(matches!(
@@ -751,6 +761,7 @@ mod tests {
     fn the_preview_sits_beside_the_list_on_wide_terminals_and_under_it_on_tall_ones()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut editor = InitEditor::new(built_in_taxonomies(), &[], false);
+        select_first(&mut editor);
         for (width, height, wide) in [
             (87, 40, false),
             (100, 30, true),
