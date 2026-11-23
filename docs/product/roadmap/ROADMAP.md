@@ -3,8 +3,7 @@
 ## v0.1.0: commit authoring and reusable configuration
 
 This document specifies intended release behavior. An unchecked item is planned,
-not a claim that the current binary implements it. The dependency-ordered work
-and planned commit messages are in [DELIVERY.md](DELIVERY.md).
+not a claim that the current binary implements it.
 
 ### Product hypothesis
 
