@@ -605,10 +605,8 @@ fn outline_expands_types_and_properties_and_the_inspector_follows()
 
     state.handle_event(key(KeyCode::Char('e')), &workspace);
     assert!(matches!(state.screen, Screen::Home));
-    assert!(matches!(
-        &state.status,
-        Some(Notice::Error(message)) if message.starts_with("Built-in taxonomies are read-only")
-    ));
+    assert!(!state.taxonomies.editing());
+    assert!(state.status.is_none());
     assert_eq!(cursor(&state), ["conventional", "feat", "constraints"]);
     for _ in 0..3 {
         state.handle_event(key(KeyCode::Up), &workspace);
@@ -1652,12 +1650,13 @@ fn taxonomy_commands_target_selected_global_definition() -> Result<(), Box<dyn s
     let mut state = State::new(&workspace);
     state.category = Category::Taxonomies;
     state.home_focus = HomeFocus::Content;
-    state.handle_event(key(KeyCode::Char('e')), &workspace);
-    assert!(matches!(state.screen, Screen::Home));
-    assert!(matches!(state.status, Some(Notice::Error(_))));
-    state.handle_event(key(KeyCode::Char('d')), &workspace);
-    assert!(matches!(state.screen, Screen::Home));
-    assert!(matches!(state.status, Some(Notice::Error(_))));
+    // A built-in offers neither e nor d, so both do nothing.
+    for code in [KeyCode::Char('e'), KeyCode::Char('d')] {
+        state.handle_event(key(code), &workspace);
+        assert!(matches!(state.screen, Screen::Home));
+        assert!(!state.taxonomies.editing());
+        assert!(state.status.is_none());
+    }
     state.handle_event(key(KeyCode::Char('f')), &workspace);
     assert!(state.taxonomies.editing());
     assert_eq!(cursor(&state), ["conventional-fork"]);

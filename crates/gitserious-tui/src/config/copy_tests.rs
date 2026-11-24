@@ -254,10 +254,7 @@ fn c_refuses_a_built_in_a_lone_type_and_a_target_that_has_the_key_with_a_sentenc
     );
     assert_eq!(cursor(&state), ["conventional", "feat", "intent"]);
     press(&mut state, &workspace, &[KeyCode::Char('c')]);
-    assert_eq!(
-        notice(&state),
-        Some("Built-in taxonomies are read-only; fork one to customize it.")
-    );
+    assert_eq!(notice(&state), None);
     assert_eq!(state.taxonomies.root_keys(), RootKeys::Navigation);
 
     let library = state.global.as_mut().ok_or("the Library loads")?;

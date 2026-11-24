@@ -9,8 +9,7 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 
 use gitserious_app::{
-    DraftEdit, DraftField, EditRefusal, LibraryDraft, NodeId, NodeRef, Policy, Problem,
-    ProblemSite, TaxonomyOrigin,
+    DraftEdit, DraftField, EditRefusal, LibraryDraft, NodeId, NodeRef, Policy, Problem, ProblemSite,
 };
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -167,7 +166,25 @@ pub(super) enum Nav {
     /// Left on a top-level row hands focus to the sidebar.
     Sidebar,
     Act(LibraryAction),
+    /// D asks to remove the selected node, which `State` confirms first.
+    Delete,
     Unhandled,
+}
+
+/// A letter acts only when the row offers it; an action letter the row lacks does nothing.
+fn letter_nav(letter: char, offers: &[Offer]) -> Nav {
+    let (offer, nav) = match letter {
+        'e' => (Offer::Edit, Nav::Act(LibraryAction::Edit)),
+        'f' => (Offer::Fork, Nav::Act(LibraryAction::Fork)),
+        'c' => (Offer::Copy, Nav::Act(LibraryAction::Copy)),
+        'd' => (Offer::Delete, Nav::Delete),
+        _ => return Nav::Unhandled,
+    };
+    if offers.contains(&offer) {
+        nav
+    } else {
+        Nav::Handled
+    }
 }
 
 impl TaxonomiesView {
@@ -234,6 +251,11 @@ impl TaxonomiesView {
         rows.get(index).copied()
     }
 
+    /// What a letter key does on the selected row; the footer hints every letter that acts.
+    pub(super) fn letter(&self, letter: char, library: &LibraryDraft) -> Nav {
+        letter_nav(letter, &self.offers(Some(library)))
+    }
+
     /// The selected row's node, or for an add row the node it adds to.
     pub(super) fn selected<'a>(&self, library: &'a LibraryDraft) -> Option<NodeRef<'a>> {
         self.selected_row(library).and_then(Row::node)
@@ -288,21 +310,15 @@ impl TaxonomiesView {
         let node = row.node();
         let open = outline::has_children(row, self.read_only)
             && node.is_some_and(|node| self.expanded.contains(node.id()));
-        let custom = node.is_some_and(|node| node.taxonomy().origin() == TaxonomyOrigin::Custom);
+        let offers = offers::offers(row, self.read_only, open);
         let plain = key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT;
         match key.code {
-            KeyCode::Char('e') if plain => return Nav::Act(LibraryAction::Edit),
-            KeyCode::Char('f') if plain => return Nav::Act(LibraryAction::Fork),
-            KeyCode::Char('c') if plain && matches!(row, Row::Node(NodeRef::Property { .. })) => {
-                return Nav::Act(LibraryAction::Copy);
+            KeyCode::Char(letter @ ('e' | 'f' | 'c' | 'd')) if plain => {
+                return letter_nav(letter, &offers);
             }
             KeyCode::Up | KeyCode::Down
                 if key.modifiers.contains(KeyModifiers::ALT)
-                    && custom
-                    && matches!(
-                        row,
-                        Row::Node(NodeRef::Type { .. } | NodeRef::Property { .. })
-                    ) =>
+                    && offers.contains(&Offer::Reorder) =>
             {
                 return Nav::Act(LibraryAction::Move {
                     down: key.code == KeyCode::Down,
