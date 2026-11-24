@@ -4,8 +4,8 @@ use crate::shared::components::confirmation_dialog::{
     self, Answer, Confirmation, ConfirmationDialog, REMOVE,
 };
 use gitserious_app::{
-    ConfigurationWorkspace, DraftEdit, EditRefusal, LibraryDraft, NodeId, NodeRef, ProjectSnapshot,
-    RepositoryRoot, TaxonomyOrigin,
+    ConfigurationWorkspace, DraftEdit, LibraryDraft, NodeId, NodeRef, ProjectSnapshot,
+    RepositoryRoot,
 };
 #[cfg(test)]
 use gitserious_core::{Taxonomy, TaxonomyId};
@@ -697,6 +697,7 @@ impl State {
             KeyCode::Char('/') if key.modifiers.is_empty() => {
                 self.home_overlay = Some(CommandPaletteState {
                     project_preview: Some(!self.empty_project_overview()),
+                    row_commands: self.row_commands(),
                     ..CommandPaletteState::default()
                 });
             }
@@ -750,6 +751,27 @@ impl State {
         false
     }
 
+    /// The palette's row commands the selected Library row offers, as its letter keys do.
+    fn row_commands(&self) -> Vec<HomeCommand> {
+        let Some(library) = self.library() else {
+            return Vec::new();
+        };
+        [HomeCommand::Edit, HomeCommand::Fork, HomeCommand::Delete]
+            .into_iter()
+            .filter(|command| {
+                let letter = match command {
+                    HomeCommand::Edit => 'e',
+                    HomeCommand::Fork => 'f',
+                    _ => 'd',
+                };
+                matches!(
+                    self.taxonomies.letter(letter, library),
+                    Nav::Act(_) | Nav::Delete
+                )
+            })
+            .collect()
+    }
+
     /// Removes `node` after its dialog confirmed it and lands on its neighbor.
     fn remove(&mut self, node: &NodeId) {
         self.screen = Screen::Home;
@@ -785,33 +807,6 @@ impl State {
     fn request_global_action(&mut self, action: PendingAction) {
         if self.global.is_none() {
             self.status = Some(Notice::error(self.library_error()));
-            return;
-        }
-        // Only creating applies on the new taxonomy row, which selects no node.
-        if !matches!(action, PendingAction::Library(LibraryAction::Create))
-            && self
-                .library()
-                .is_some_and(|library| self.taxonomies.selected(library).is_none())
-        {
-            self.status = Some(Notice::error(naming::refusal_sentence(
-                EditRefusal::NotApplicable,
-                None,
-            )));
-            return;
-        }
-        if matches!(
-            action,
-            PendingAction::Library(LibraryAction::Edit | LibraryAction::Copy)
-                | PendingAction::Delete
-        ) && self
-            .library()
-            .and_then(|library| self.taxonomies.selected(library))
-            .is_some_and(|node| node.taxonomy().origin() == TaxonomyOrigin::BuiltIn)
-        {
-            self.status = Some(Notice::error(naming::refusal_sentence(
-                EditRefusal::ReadOnly,
-                None,
-            )));
             return;
         }
         if matches!(action, PendingAction::Delete)

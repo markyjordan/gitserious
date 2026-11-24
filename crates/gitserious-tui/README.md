@@ -155,8 +155,9 @@ create taxonomy command creates one. Expanded custom taxonomies and types includ
 add rows for types and properties. A custom property's `c` opens a picker for
 copying it to other types in the same taxonomy. Alt+Up and Alt+Down reorder a
 type or property. Browsing footers lead with `←/→ focus`, `↑/↓ move`, then
-the selected row’s Enter action and other actions. The `/` palette lists the
-available Library actions.
+the selected row’s Enter action and other actions. A row takes only the
+action keys its footer shows; any other action key does nothing. The `/`
+palette lists create taxonomy and only the row actions the selected row offers.
 
 Config pop-ups use the Bone ground and text, a double orange border, and
 plain orange key hints with dim labels. Clickable confirmation actions use
