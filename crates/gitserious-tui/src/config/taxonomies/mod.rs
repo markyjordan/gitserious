@@ -23,12 +23,14 @@ use unicode_segmentation::UnicodeSegmentation;
 use super::naming::{problem_sentence, refusal_sentence, single_line};
 use super::{RootKeys, contains};
 use crate::theme::{EDIT_BADGE, footer_hints, footer_key_style, footer_label_style, theme};
+use offers::Offer;
 use outline::Row;
 pub(super) use outline::RowKey;
 
 mod inspector;
 #[cfg(test)]
 mod layout_tests;
+mod offers;
 mod outline;
 mod panes;
 mod picker;
@@ -212,6 +214,18 @@ impl TaxonomiesView {
                 .chain(picker::CHOICES)
                 .collect()
         })
+    }
+
+    /// What the selected row offers in NAV.
+    fn offers(&self, library: Option<&LibraryDraft>) -> Vec<Offer> {
+        library
+            .and_then(|library| self.selected_row(library))
+            .map_or_else(Vec::new, |row| {
+                let open = row
+                    .node()
+                    .is_some_and(|node| self.expanded.contains(node.id()));
+                offers::offers(row, self.read_only, open)
+            })
     }
 
     fn selected_row<'a>(&self, library: &'a LibraryDraft) -> Option<Row<'a>> {
@@ -744,14 +758,13 @@ impl TaxonomiesView {
         if let Some(hints) = self.picker_hints() {
             return footer_hints(&hints).style(footer_label_style());
         }
-        let row = library.and_then(|library| self.selected_row(library));
         let editing = self.editing();
-        let property_actions = !self.read_only
-            && !editing
-            && row.and_then(Row::node).is_some_and(|node| {
-                matches!(node, NodeRef::Property { .. })
-                    && node.taxonomy().origin() == TaxonomyOrigin::Custom
-            });
+        let offers = if editing {
+            Vec::new()
+        } else {
+            self.offers(library)
+        };
+        let property_actions = offers.contains(&Offer::Copy);
         let chip = vec![if editing {
             Span::styled(" EDIT ", EDIT_BADGE)
         } else {
@@ -770,67 +783,29 @@ impl TaxonomiesView {
         if !editing {
             trailing.insert(0, ("tab", "nav bar"));
         }
-        if matches!(row, Some(Row::NewTaxonomy)) {
-            hints.extend([("enter", "new")]);
-        } else if let Some(row) = row
-            && let Some(node) = row.node()
-        {
-            let built_in = node.taxonomy().origin() == TaxonomyOrigin::BuiltIn;
-            if self.read_only {
-                if outline::has_children(row, true) {
-                    hints.push(if self.expanded.contains(node.id()) {
-                        ("enter", "close")
+        if editing {
+            let policy = matches!(
+                self.mode,
+                Mode::Edit {
+                    field: DraftField::Policy,
+                    ..
+                }
+            );
+            hints.extend([
+                ("enter", "next field"),
+                ("←/→", if policy { "policy" } else { "cursor" }),
+                (
+                    "ctrl+w",
+                    if library.is_some_and(LibraryDraft::is_project) {
+                        "stage"
                     } else {
-                        ("enter", "open")
-                    });
-                }
-            } else if editing {
-                let policy = matches!(
-                    self.mode,
-                    Mode::Edit {
-                        field: DraftField::Policy,
-                        ..
-                    }
-                );
-                hints.extend([
-                    ("enter", "next field"),
-                    ("←/→", if policy { "policy" } else { "cursor" }),
-                    (
-                        "ctrl+w",
-                        if library.is_some_and(LibraryDraft::is_project) {
-                            "stage"
-                        } else {
-                            "save"
-                        },
-                    ),
-                    ("esc", "cancel"),
-                ]);
-            } else if !built_in && matches!(node, NodeRef::Property { .. }) {
-                hints.extend([
-                    ("e", "edit"),
-                    ("c", "copy property to other types"),
-                    ("d", "delete"),
-                ]);
-            } else if matches!(row, Row::Node(_)) {
-                if outline::has_children(row, self.read_only) {
-                    hints.push(if self.expanded.contains(node.id()) {
-                        ("enter", "close")
-                    } else {
-                        ("enter", "open")
-                    });
-                }
-                hints.push(("f", "fork"));
-                if !built_in {
-                    hints.push(("n", "new"));
-                    hints.push(("e", "edit"));
-                    hints.push(("d", "delete"));
-                    if !matches!(node, NodeRef::Taxonomy(_)) {
-                        hints.push(("alt+↑/↓", "reorder"));
-                    }
-                }
-            } else {
-                hints.push(("enter", "add"));
-            }
+                        "save"
+                    },
+                ),
+                ("esc", "cancel"),
+            ]);
+        } else {
+            hints.extend(offers.iter().map(|offer| offer.hint()));
         }
         let width = usize::from(width);
         let line = |hints: &[(&str, &str)], trailing: &[(&str, &str)], padded: bool| {
