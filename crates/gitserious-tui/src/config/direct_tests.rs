@@ -244,7 +244,7 @@ fn blank_creation_cancels_for_every_policy_and_the_footer_tracks_all_text() -> R
         let (store, mut state) = fixture()?;
         let original = stored(&store)?;
         match kind {
-            "taxonomy" => press(&mut state, &store, KeyCode::Char('n')),
+            "taxonomy" => super::tests::create_taxonomy(&mut state, &store),
             "type" => {
                 let parent = select(&mut state, &["team"])?;
                 add_row(&mut state, &store, RowKey::AddType(parent))?;
@@ -397,7 +397,7 @@ fn partial_fields_and_duplicate_names_stay_in_edit_with_inline_errors() -> Resul
 fn zero_type_entry_reopens_unlocks_until_eligible_and_stays_locked_after_last_type_removed()
 -> Result {
     let (store, mut state) = fixture()?;
-    press(&mut state, &store, KeyCode::Char('n'));
+    super::tests::create_taxonomy(&mut state, &store);
     paste(&mut state, &store, "Work in progress");
     press(&mut state, &store, KeyCode::Enter);
     paste(&mut state, &store, "Purpose");
@@ -681,7 +681,7 @@ fn stale_library_cannot_overwrite_another_session() -> Result {
 #[test]
 fn editing_blocks_navigation_clicks_review_shortcut_and_normal_quit() -> Result {
     let (store, mut state) = fixture()?;
-    press(&mut state, &store, KeyCode::Char('n'));
+    super::tests::create_taxonomy(&mut state, &store);
     paste(&mut state, &store, "Partial");
     frame(&mut state, 87, 40)?;
     let menu = state.tab_areas[Category::Project.index()];
@@ -735,15 +735,11 @@ fn explicit_edit_escape_restores_nonblank_creation_and_navigation() -> Result {
         let before = format!("{:?}", state.library());
         let navigation = format!("{:?}", state.taxonomies.observe(state.library()));
         let original = stored(&store)?;
-        press(
-            &mut state,
-            &store,
-            match action {
-                "taxonomy" => KeyCode::Char('n'),
-                "fork" => KeyCode::Char('f'),
-                _ => KeyCode::Enter,
-            },
-        );
+        match action {
+            "taxonomy" => super::tests::create_taxonomy(&mut state, &store),
+            "fork" => press(&mut state, &store, KeyCode::Char('f')),
+            _ => press(&mut state, &store, KeyCode::Enter),
+        }
         assert!(state.taxonomies.editing(), "{action}");
         replace(&mut state, &store, "nonblank draft")?;
         press(&mut state, &store, KeyCode::Esc);

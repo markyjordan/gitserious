@@ -648,11 +648,9 @@ impl State {
             self.home_focus = HomeFocus::Content;
         }
         if self.category == Category::Project
-            && (matches!(
-                key.code,
-                KeyCode::Char('i' | 'l' | 'e' | 'f' | 'n' | 'd' | 'c')
-            ) || (key.code == KeyCode::Char('s')
-                && key.modifiers.contains(KeyModifiers::CONTROL)))
+            && (matches!(key.code, KeyCode::Char('i' | 'l' | 'e' | 'f' | 'd' | 'c'))
+                || (key.code == KeyCode::Char('s')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)))
         {
             return false;
         }
@@ -727,14 +725,13 @@ impl State {
             {
                 self.home_focus = HomeFocus::Menu;
             }
-            KeyCode::Char(letter @ ('e' | 'f' | 'n' | 'd')) if key.modifiers.is_empty() => {
+            KeyCode::Char(letter @ ('e' | 'f' | 'd')) if key.modifiers.is_empty() => {
                 if let Some(editor) = editor {
                     self.request_editor_action(
                         editor,
                         match letter {
                             'e' => PendingAction::Library(LibraryAction::Edit),
                             'f' => PendingAction::Library(LibraryAction::Fork),
-                            'n' => PendingAction::Library(LibraryAction::Create),
                             _ => PendingAction::Delete,
                         },
                     );

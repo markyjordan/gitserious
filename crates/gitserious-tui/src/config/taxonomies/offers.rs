@@ -12,7 +12,6 @@ pub(super) enum Offer {
     /// Enter on an add type or add property row.
     Add,
     Fork,
-    New,
     Edit,
     Copy,
     Delete,
@@ -27,7 +26,6 @@ impl Offer {
             Self::NewTaxonomy => ("enter", "new"),
             Self::Add => ("enter", "add"),
             Self::Fork => ("f", "fork"),
-            Self::New => ("n", "new"),
             Self::Edit => ("e", "edit"),
             Self::Copy => ("c", "copy property to other types"),
             Self::Delete => ("d", "delete"),
@@ -58,7 +56,7 @@ pub(super) fn offers(row: Row<'_>, read_only: bool, open: bool) -> Vec<Offer> {
     let mut offers: Vec<Offer> = toggle().into_iter().collect();
     offers.push(Offer::Fork);
     if custom {
-        offers.extend([Offer::New, Offer::Edit, Offer::Delete]);
+        offers.extend([Offer::Edit, Offer::Delete]);
         if !matches!(node, NodeRef::Taxonomy(_)) {
             offers.push(Offer::Reorder);
         }

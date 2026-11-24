@@ -208,6 +208,18 @@ pub(super) fn row_of(text: &str, needle: &str) -> Option<usize> {
 pub(super) fn key(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
 }
+/// Opens the Library and creates a taxonomy with Enter on its `+ new taxonomy` row, which
+/// follows the built-ins.
+pub(super) fn new_taxonomy_keys() -> Vec<Event> {
+    std::iter::once(key(KeyCode::Char('2')))
+        .chain(
+            std::iter::repeat_with(|| key(KeyCode::Down))
+                .take(gitserious_core::built_in_taxonomies().len()),
+        )
+        .chain([key(KeyCode::Enter)])
+        .collect()
+}
+
 pub(super) fn span(text: &str, strong: bool) -> HelpSpan {
     HelpSpan {
         text: text.into(),
