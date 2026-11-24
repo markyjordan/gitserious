@@ -84,6 +84,9 @@ fn commands(category: Category) -> &'static [HomeCommand] {
 pub(super) struct CommandPaletteState {
     pub(super) query: String,
     pub(super) project_preview: Option<bool>,
+    /// Which of edit, fork, and delete the selected Library row offers; the palette lists
+    /// only those.
+    pub(super) row_commands: Vec<HomeCommand>,
     pub(super) selected: usize,
     pub(super) list_area: Rect,
     pub(super) list_offset: usize,
@@ -101,6 +104,14 @@ impl CommandPaletteState {
                         || (!initialized && matches!(command, HomeCommand::Initialize))
                 }
                 _ => true,
+            })
+            .filter(|command| {
+                category != Category::Taxonomies
+                    || !matches!(
+                        command,
+                        HomeCommand::Edit | HomeCommand::Fork | HomeCommand::Delete
+                    )
+                    || self.row_commands.contains(command)
             })
             .filter(|command| {
                 command

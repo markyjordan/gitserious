@@ -19,7 +19,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use gitserious_app::{
-    DraftField, GlobalConfiguration, NodeRef, ProblemSite, TaxonomyNode, TypeNode,
+    DraftField, GlobalConfiguration, NodeRef, ProblemSite, TaxonomyNode, TaxonomyOrigin, TypeNode,
 };
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,

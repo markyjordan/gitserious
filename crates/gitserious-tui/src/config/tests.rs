@@ -1326,14 +1326,23 @@ fn home_palette_filters_commands_and_routes_through_existing_actions()
         terminal.backend().buffer()[(palette_list.x, search_top + 1)].symbol(),
         "/"
     );
-    // Create taxonomy has no key, so edit's is the first shortcut.
+    // A built-in offers only fork among the row commands, and create taxonomy has no key.
+    assert_eq!(
+        palette.visible(state.category),
+        [
+            HomeCommand::New,
+            HomeCommand::Fork,
+            HomeCommand::SwitchTab,
+            HomeCommand::Quit
+        ]
+    );
     assert_eq!(
         terminal.backend().buffer()[(palette_list.right() - 1, palette_list.y)].symbol(),
         " "
     );
     assert_eq!(
         terminal.backend().buffer()[(palette_list.right() - 1, palette_list.y + 1)].symbol(),
-        "e"
+        "f"
     );
     state.handle_event(Event::Paste("fork".into()), &workspace);
     terminal.draw(|frame| state.render(frame))?;
@@ -1356,11 +1365,12 @@ fn home_palette_filters_commands_and_routes_through_existing_actions()
 #[test]
 fn library_and_creation_commands_are_lowercase_and_switch_has_no_shortcut()
 -> Result<(), Box<dyn std::error::Error>> {
-    let workspace = Workspace::new();
+    let (workspace, _) = custom_workspace()?;
     for (width, height) in [(MINIMUM_WIDTH, MINIMUM_HEIGHT), (120, 30)] {
         let mut state = State::new(&workspace);
         state.category = Category::Taxonomies;
         state.home_focus = HomeFocus::Content;
+        select_taxonomy(&mut state, 3);
         state.handle_event(key(KeyCode::Char('/')), &workspace);
         let mut terminal = Terminal::new(TestBackend::new(width, height))?;
         terminal.draw(|frame| state.render(frame))?;
@@ -1470,7 +1480,7 @@ fn home_arrows_switch_tabs_and_m_does_nothing_at_compact_and_wide_widths()
 }
 
 #[test]
-fn palette_blocks_underlying_keys_and_reports_unavailable_actions()
+fn palette_blocks_underlying_keys_and_omits_actions_the_row_lacks()
 -> Result<(), Box<dyn std::error::Error>> {
     let workspace = Workspace::new();
     let mut state = State::new(&workspace);
@@ -1485,10 +1495,14 @@ fn palette_blocks_underlying_keys_and_reports_unavailable_actions()
     assert_eq!(palette.query, "editn");
     assert!(matches!(state.screen, Screen::Home));
     state.handle_event(key(KeyCode::Backspace), &workspace);
+    let Some(palette) = &state.home_overlay else {
+        return Err("palette missing".into());
+    };
+    assert!(palette.visible(state.category).is_empty());
     state.handle_event(key(KeyCode::Enter), &workspace);
     assert!(matches!(state.screen, Screen::Home));
-    assert!(matches!(state.status, Some(Notice::Error(_))));
-    assert!(state.home_overlay.is_none());
+    assert!(!state.taxonomies.editing());
+    assert!(state.status.is_none());
     assert_eq!(workspace.saves.get(), 0);
     Ok(())
 }
@@ -1528,10 +1542,11 @@ fn question_mark_has_no_navigation_action_or_footer_hint() -> Result<(), Box<dyn
 #[test]
 fn command_popup_fits_the_minimum_and_blocks_underlying_mouse_targets()
 -> Result<(), Box<dyn std::error::Error>> {
-    let workspace = Workspace::new();
+    let (workspace, _) = custom_workspace()?;
     let mut state = State::new(&workspace);
     state.category = Category::Taxonomies;
     state.home_focus = HomeFocus::Content;
+    select_taxonomy(&mut state, 3);
     let mut terminal = Terminal::new(TestBackend::new(MINIMUM_WIDTH, MINIMUM_HEIGHT))?;
     terminal.draw(|frame| state.render(frame))?;
     assert!(!row_text(&terminal, 0, MINIMUM_HEIGHT - 2, MINIMUM_WIDTH).contains("? help"));
