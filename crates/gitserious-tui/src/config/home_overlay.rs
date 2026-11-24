@@ -50,11 +50,10 @@ impl HomeCommand {
     fn shortcut(self) -> &'static str {
         match self {
             Self::Initialize => "i",
-            Self::New => "n",
+            Self::New | Self::SwitchTab => "",
             Self::Edit => "e",
             Self::Fork => "f",
             Self::Delete => "d",
-            Self::SwitchTab => "",
             Self::Quit => "q",
         }
     }

@@ -159,6 +159,17 @@ fn key(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
 }
 
+/// Creates a taxonomy through the palette, which leaves the outline cursor where it was.
+pub(super) fn create_taxonomy(state: &mut State, workspace: &dyn ConfigurationWorkspace) {
+    for event in [
+        key(KeyCode::Char('/')),
+        Event::Paste("create taxonomy".into()),
+        key(KeyCode::Enter),
+    ] {
+        assert!(!state.handle_event(event, workspace));
+    }
+}
+
 fn ctrl(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::CONTROL))
 }
@@ -207,7 +218,6 @@ pub(super) fn footer_text(text: &str) -> String {
         "↑/↓",
         "enter",
         "esc",
-        "n",
         "f",
         "e",
         "d",
@@ -1157,7 +1167,6 @@ fn taxonomy_footer_orders_focus_move_enter_and_actions() -> Result<(), Box<dyn s
             "↑/↓ move",
             enter,
             "f fork",
-            "n new",
             "e edit",
             "d delete",
         ] {
@@ -1319,9 +1328,14 @@ fn home_palette_filters_commands_and_routes_through_existing_actions()
         terminal.backend().buffer()[(palette_list.x, search_top + 1)].symbol(),
         "/"
     );
+    // Create taxonomy has no key, so edit's is the first shortcut.
     assert_eq!(
         terminal.backend().buffer()[(palette_list.right() - 1, palette_list.y)].symbol(),
-        "n"
+        " "
+    );
+    assert_eq!(
+        terminal.backend().buffer()[(palette_list.right() - 1, palette_list.y + 1)].symbol(),
+        "e"
     );
     state.handle_event(Event::Paste("fork".into()), &workspace);
     terminal.draw(|frame| state.render(frame))?;
@@ -1706,7 +1720,7 @@ fn unavailable_library_keeps_the_frame_and_reports_the_error()
     assert!(rendered.contains("Taxonomy library unavailable."));
     assert!(footer_text(&rendered).contains("/ commands"));
     assert!(rendered.contains("Global load failed."));
-    state.handle_event(key(KeyCode::Char('n')), &workspace);
+    create_taxonomy(&mut state, &workspace);
     assert!(matches!(state.screen, Screen::Home));
     assert!(matches!(state.status, Some(Notice::Error(_))));
     Ok(())
@@ -2207,7 +2221,8 @@ fn add_rows_new_and_fork_create_blank_drafts_and_open_their_name()
     assert_eq!(cursor(&state), ["original", ""]);
     assert_eq!(field(&state), Some(DraftField::Name));
 
-    press(&mut state, &workspace, &[KeyCode::Esc, KeyCode::Char('n')]);
+    press(&mut state, &workspace, &[KeyCode::Esc]);
+    create_taxonomy(&mut state, &workspace);
     assert_eq!(cursor(&state), [""]);
     assert_eq!(field(&state), Some(DraftField::Name));
     press(&mut state, &workspace, &[KeyCode::Esc]);

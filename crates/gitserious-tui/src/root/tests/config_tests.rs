@@ -114,8 +114,9 @@ fn the_config_tab_has_no_library_change_badge() -> Result<(), Box<dyn std::error
     let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
     terminal.draw(|frame| root.render(frame, &[]))?;
     assert!(!rendered(&terminal).contains('●'));
-    root.handle_event(key(KeyCode::Char('2')), of(&services), &[]);
-    root.handle_event(key(KeyCode::Char('n')), of(&services), &[]);
+    for event in new_taxonomy_keys() {
+        root.handle_event(event, of(&services), &[]);
+    }
     terminal.draw(|frame| root.render(frame, &[]))?;
     let header = rendered(&terminal)
         .lines()
@@ -142,13 +143,11 @@ fn hidden_config_edit_pauses(event: Event) -> Result<(), Box<dyn std::error::Err
     for (width, height) in [(MINIMUM_WIDTH - 1, 40), (87, MINIMUM_HEIGHT - 1)] {
         let services = Services;
         let mut root = Root::new(InitialPage::Config, of(&services), &[]);
-        for event in [
-            key(KeyCode::Char('2')),
-            key(KeyCode::Char('n')),
+        for event in new_taxonomy_keys().into_iter().chain([
             Event::Paste("Paused taxonomy".into()),
             key(KeyCode::Enter),
             Event::Paste("Paused purpose".into()),
-        ] {
+        ]) {
             assert!(root.handle_event(event, of(&services), &[]).is_none());
         }
         let mut large = Terminal::new(TestBackend::new(87, 40))?;
@@ -231,8 +230,9 @@ fn hidden_config_edit_pauses_paste() -> Result<(), Box<dyn std::error::Error>> {
 fn config_edit_locks_tabs_and_gives_esc_and_q_to_the_field() {
     let services = Services;
     let mut root = Root::new(InitialPage::Config, of(&services), &[]);
-    root.handle_event(key(KeyCode::Char('2')), of(&services), &[]);
-    root.handle_event(key(KeyCode::Char('n')), of(&services), &[]);
+    for event in new_taxonomy_keys() {
+        root.handle_event(event, of(&services), &[]);
+    }
     assert_eq!(root.config.root_keys(), RootKeys::None);
     root.handle_event(key(KeyCode::Char('q')), of(&services), &[]);
     assert_eq!(root.section, Section::Config);

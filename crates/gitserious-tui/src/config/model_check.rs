@@ -214,7 +214,7 @@ const SEEDS: &[Seed] = &[
         name: "a new taxonomy in EDIT on its Name",
         workspace: built_ins,
         start: Start::Keys {
-            keys: &["2", "n"],
+            keys: &["2", "down", "down", "down", "enter"],
             ready: |snapshot| editing(snapshot) == Some(DraftField::Name),
         },
         depth: 3,

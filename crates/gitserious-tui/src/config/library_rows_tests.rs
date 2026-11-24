@@ -29,11 +29,8 @@ pub(super) fn press(state: &mut State, workspace: &Workspace, keys: &[KeyCode]) 
 pub(super) fn fixture() -> Result<(Workspace, State)> {
     let workspace = super::copy_tests::team()?;
     let mut state = State::new(&workspace);
-    press(
-        &mut state,
-        &workspace,
-        &[KeyCode::Char('2'), KeyCode::Char('n')],
-    );
+    press(&mut state, &workspace, &[KeyCode::Char('2')]);
+    super::tests::create_taxonomy(&mut state, &workspace);
     state.handle_event(Event::Paste("Draft ideas".into()), &workspace);
     press(&mut state, &workspace, &[KeyCode::Enter]);
     state.handle_event(

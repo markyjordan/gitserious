@@ -293,7 +293,6 @@ impl TaxonomiesView {
         match key.code {
             KeyCode::Char('e') if plain => return Nav::Act(LibraryAction::Edit),
             KeyCode::Char('f') if plain => return Nav::Act(LibraryAction::Fork),
-            KeyCode::Char('n') if plain => return Nav::Act(LibraryAction::Create),
             KeyCode::Char('c') if plain && matches!(row, Row::Node(NodeRef::Property { .. })) => {
                 return Nav::Act(LibraryAction::Copy);
             }
@@ -861,7 +860,7 @@ impl TaxonomiesView {
         let optional: &[&str] = if property_actions {
             &[]
         } else {
-            &["d", "n", "f", "e"]
+            &["d", "f", "e"]
         };
         for optional in optional {
             if fits(&candidate) {

@@ -149,8 +149,9 @@ outline show only the type name; expanding a type reveals its property rows.
 Valid taxonomy rows align their type count before their version (`11 types  v1`);
 narrow rows drop the count before the version.
 Built-in taxonomies show their origin in the outline and read-only status in
-the Inspector. `f` forks a taxonomy, `n` creates one, `e` opens EDIT, and `d`
-asks for deletion confirmation. Expanded custom taxonomies and types include
+the Inspector. `f` forks a taxonomy, `e` opens EDIT, and `d` asks for
+deletion confirmation. Enter on the `+ new taxonomy` row or the palette's
+create taxonomy command creates one. Expanded custom taxonomies and types include
 add rows for types and properties. A custom property's `c` opens a picker for
 copying it to other types in the same taxonomy. Alt+Up and Alt+Down reorder a
 type or property. Browsing footers lead with `←/→ focus`, `↑/↓ move`, then

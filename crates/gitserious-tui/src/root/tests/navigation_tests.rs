@@ -463,8 +463,9 @@ fn ctrl_c_waits_while_the_git_result_or_a_hidden_config_edit_is_open()
     );
 
     let mut config = Root::new(InitialPage::Config, of(&Services), &[]);
-    config.handle_event(key(KeyCode::Char('2')), of(&Services), &[]);
-    config.handle_event(key(KeyCode::Char('n')), of(&Services), &[]);
+    for event in new_taxonomy_keys() {
+        config.handle_event(event, of(&Services), &[]);
+    }
     let mut small = Terminal::new(TestBackend::new(MINIMUM_WIDTH - 1, 40))?;
     small.draw(|frame| config.render(frame, &[]))?;
     assert_eq!(config.handle_event(control_c, of(&Services), &[]), None);
