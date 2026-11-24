@@ -50,16 +50,23 @@ pub(super) fn offers(row: Row<'_>, read_only: bool, open: bool) -> Vec<Offer> {
         Row::Node(node) => node,
     };
     let custom = node.taxonomy().origin() == TaxonomyOrigin::Custom;
+    let movable = match node {
+        NodeRef::Taxonomy(_) => false,
+        NodeRef::Type { taxonomy, .. } => taxonomy.types().len() > 1,
+        NodeRef::Property { commit_type, .. } => commit_type.properties().len() > 1,
+    };
+    let reorder = (custom && movable).then_some(Offer::Reorder);
     if custom && matches!(node, NodeRef::Property { .. }) {
-        return vec![Offer::Edit, Offer::Copy, Offer::Delete];
+        return [Offer::Edit, Offer::Copy, Offer::Delete]
+            .into_iter()
+            .chain(reorder)
+            .collect();
     }
     let mut offers: Vec<Offer> = toggle().into_iter().collect();
     offers.push(Offer::Fork);
     if custom {
         offers.extend([Offer::Edit, Offer::Delete]);
-        if !matches!(node, NodeRef::Taxonomy(_)) {
-            offers.push(Offer::Reorder);
-        }
     }
+    offers.extend(reorder);
     offers
 }

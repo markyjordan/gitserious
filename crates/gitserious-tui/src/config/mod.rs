@@ -37,6 +37,8 @@ mod home_overlay;
 mod library_edit_tests;
 mod library_header;
 #[cfg(test)]
+mod library_keys_tests;
+#[cfg(test)]
 mod library_policy_tests;
 #[cfg(test)]
 mod library_rows_tests;
@@ -684,6 +686,10 @@ impl State {
                     self.request_editor_action(editor, PendingAction::Library(action));
                     return false;
                 }
+                Nav::Delete => {
+                    self.request_editor_action(editor, PendingAction::Delete);
+                    return false;
+                }
                 Nav::Unhandled => {}
             }
         }
@@ -726,15 +732,16 @@ impl State {
                 self.home_focus = HomeFocus::Menu;
             }
             KeyCode::Char(letter @ ('e' | 'f' | 'd')) if key.modifiers.is_empty() => {
-                if let Some(editor) = editor {
-                    self.request_editor_action(
-                        editor,
-                        match letter {
-                            'e' => PendingAction::Library(LibraryAction::Edit),
-                            'f' => PendingAction::Library(LibraryAction::Fork),
-                            _ => PendingAction::Delete,
-                        },
-                    );
+                if let Some(editor) = editor
+                    && let Some(library) = self.editor_draft()
+                {
+                    match self.editor_view().letter(letter, library) {
+                        Nav::Act(action) => {
+                            self.request_editor_action(editor, PendingAction::Library(action));
+                        }
+                        Nav::Delete => self.request_editor_action(editor, PendingAction::Delete),
+                        Nav::Handled | Nav::Sidebar | Nav::Unhandled => {}
+                    }
                 }
             }
             KeyCode::Esc | KeyCode::Char('q') => return true,
