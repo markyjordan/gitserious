@@ -37,6 +37,8 @@ mod home_overlay;
 mod library_edit_tests;
 mod library_header;
 #[cfg(test)]
+mod library_keys_tests;
+#[cfg(test)]
 mod library_policy_tests;
 #[cfg(test)]
 mod library_rows_tests;
