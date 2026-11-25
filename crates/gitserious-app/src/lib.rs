@@ -35,7 +35,7 @@ pub use project::{
     ProjectWorkspace, initialize_project,
 };
 pub use repository_locator::{
-    RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryRootError,
+    MissingWorkTree, RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryRootError,
 };
 pub use resolve_global_paths::resolve_global_paths;
 pub use storage_directory::StorageDirectory;

@@ -2,8 +2,8 @@ use std::fmt::Display;
 use std::path::Path;
 
 use crate::{
-    ProjectConfiguration, ProjectConfigurationStore, ProjectOverview, RepositoryInitializer,
-    RepositoryLocator, RepositoryStatusReader,
+    MissingWorkTree, ProjectConfiguration, ProjectConfigurationStore, ProjectOverview,
+    RepositoryInitializer, RepositoryLocator, RepositoryStatusReader,
 };
 
 /// The project file every gitserious repository commits.
@@ -62,7 +62,7 @@ where
         let directory = self.start.to_path_buf();
         let root = match self.locator.locate(self.start) {
             Ok(root) => root,
-            Err(error) if L::is_not_repository(&error) => {
+            Err(error) if L::missing_work_tree(&error) == Some(MissingWorkTree::NotRepository) => {
                 return ProjectOverview::NoRepository { directory };
             }
             Err(error) => {
@@ -111,7 +111,7 @@ where
         let locate = || self.locator.locate(self.start);
         let root = match locate() {
             Ok(root) => root,
-            Err(error) if L::is_not_repository(&error) => {
+            Err(error) if L::missing_work_tree(&error) == Some(MissingWorkTree::NotRepository) => {
                 self.initializer.initialize(self.start)?;
                 locate().map_err(|error| error.to_string())?
             }

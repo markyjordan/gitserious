@@ -32,8 +32,8 @@ impl RepositoryLocator for Locator {
             .map_or_else(|| Ok(self.root.clone()), Err)
     }
 
-    fn is_not_repository(_: &Self::Error) -> bool {
-        false
+    fn missing_work_tree(_: &Self::Error) -> Option<gitserious_app::MissingWorkTree> {
+        None
     }
 }
 
