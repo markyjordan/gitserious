@@ -96,7 +96,11 @@ impl Root {
             tabs: Tabs::default(),
             too_small: false,
         };
-        root.enter(section, capabilities);
+        if section == Section::Commit {
+            root.commit.launch(capabilities.commit);
+        } else {
+            root.enter(section, capabilities);
+        }
         root
     }
 

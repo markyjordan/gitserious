@@ -67,9 +67,10 @@ keeps its discard confirmation.
 The Commit overview shows repository/branch identity and directory trees for
 Staged, Unstaged, and Untracked changes. Partially staged files appear in both
 applicable groups. Up/Down selects rows; Left/Right collapses or expands folders.
-`r` refreshes and Enter starts authoring when staged changes and valid persisted
-project policy exist. Conflicts block authoring. These actions are also available
-through `/`. Stage changes using Git; the overview never modifies the index.
+`r` refreshes and Enter starts authoring when the repository and its persisted
+project policy are valid, whatever the index holds; otherwise the page names the
+blocker and Enter does nothing. These actions are also available through `/`.
+Stage changes using Git; the overview never modifies the index.
 
 Authoring happens inside the Commit page, under the nav bar, and reuses the
 existing picker, composer, and review. Its first row reads `N staged` and the
@@ -80,11 +81,14 @@ The footer leads with an orange EDIT badge and the step's keys, and ends with
 `/`, and Esc reach it. Tab and nav bar clicks still switch sections, and the
 draft is still there on return. Quit and Ctrl+C ask before discarding an
 unsaved draft. Submission restores the terminal while Git runs, then returns
-to a refreshed overview with the result; `o` opens a scrollable full result. A
-rejected commit retains its reviewed message and composer; Enter resumes review. `c` starts a new commit. Quit asks
-before discarding a retained review. Direct `gitserious commit` opens this
-Commit page and waits. Authoring starts from the page, and cancelling it
-returns here.
+to a refreshed overview with the result; `o` opens a scrollable full result.
+Conflicts and the staged index are checked at submission: with conflicted
+paths or nothing staged, Review stays open with the reason under its commit
+row, and Review shows that reason before Enter when it already holds. A commit
+Git rejects retains its reviewed message and composer; Enter resumes review. `c` starts a new commit. Quit asks
+before discarding a retained review. Direct `gitserious commit` opens the type
+picker when changes are staged, and this Commit page otherwise. Cancelling
+authoring returns to the page.
 
 Help lists its Overview, Init, Config, and Commit pages in a numbered sidebar
 beside the chosen page. `gitserious help` opens the shell at Help on the

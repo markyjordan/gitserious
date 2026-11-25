@@ -103,9 +103,12 @@ fn the_commit_palette_follows_the_blocker_the_last_result_and_the_pending_review
     let missing = Root::new(InitialPage::Commit, of(&Unavailable), &[]);
     assert_eq!(palette(&missing), listing(&["Refresh repository"]));
     let unstaged = Root::new(InitialPage::Commit, of(&Services), &[]);
-    assert_eq!(palette(&unstaged), listing(&["Refresh repository"]));
+    assert_eq!(
+        palette(&unstaged),
+        listing(&["Refresh repository", "Start commit"])
+    );
 
-    let mut ready = Root::new(InitialPage::Commit, of(&Ready), &[]);
+    let mut ready = on_commit_page(&Ready);
     assert_eq!(
         palette(&ready),
         listing(&["Refresh repository", "Start commit"])
@@ -127,13 +130,11 @@ fn the_commit_palette_follows_the_blocker_the_last_result_and_the_pending_review
             "Resume review"
         ])
     );
+    let mut blocked = rejected_review_with(&Ready);
+    blocked.execute(Action::Commit(CommitRequest::Refresh), of(&Unavailable));
     assert_eq!(
-        palette(&rejected_review_with(&Services)),
-        listing(&[
-            "Refresh repository",
-            "View last Git result",
-            "Resume review"
-        ])
+        palette(&blocked),
+        listing(&["Refresh repository", "Resume review"])
     );
 }
 

@@ -217,7 +217,7 @@ fn executable_commands_select_the_initial_page_without_authoring_or_git_writes()
     let before = support::git(repository.path(), &["status", "--porcelain=v1"])?.stdout;
     for (arguments, page, content) in [
         (Vec::<&str>::new(), "Home", "Go to Commit"),
-        (vec!["commit"], "Commit", "[enter] start commit"),
+        (vec!["commit"], "Commit", "enter choose"),
         (vec!["config"], "Config", "1  Project"),
         (vec!["help"], "Help", "Usage: gitserious [COMMAND]"),
         (vec!["help", "commit"], "Help", "gitserious help: commit"),
@@ -228,12 +228,16 @@ fn executable_commands_select_the_initial_page_without_authoring_or_git_writes()
         session
             .wait_for(|screen| active_page(screen, page) && screen.contents().contains(content))?;
         if page == "Commit" {
-            assert!(session.contents().contains("Staged (1)"));
+            assert!(session.contents().contains("1 staged  staged-file"));
         }
         for other in ["Home", "Commit", "Config", "Help"] {
             assert_eq!(active_page(session.screen(), other), other == page);
         }
         record(&session, &[&["initial"][..], &arguments].concat().join("-"))?;
+        if page == "Commit" {
+            session.send(b"\x1b")?;
+            session.wait_for(|screen| screen.contents().contains("[enter] start commit"))?;
+        }
         quit(&mut session)?;
         assert_eq!(
             support::git(repository.path(), &["status", "--porcelain=v1"])?.stdout,
@@ -245,11 +249,17 @@ fn executable_commands_select_the_initial_page_without_authoring_or_git_writes()
 }
 
 #[test]
-fn executable_commit_entry_matches_navigation_from_home() -> Result<(), Box<dyn Error>> {
+fn executable_commit_entry_opens_the_type_picker_over_the_page_navigation_shows()
+-> Result<(), Box<dyn Error>> {
     let (repository, home) = initialized_repository()?;
     let mut command = home.command(repository.path());
     command.arg("commit");
     let mut direct = Session::spawn(&command, Streams::Terminal)?;
+    direct.wait_for(|screen| {
+        active_page(screen, "Commit") && screen.contents().contains("enter choose")
+    })?;
+    record(&direct, "commit-direct-picker")?;
+    direct.send(b"\x1b")?;
     direct.wait_for(|screen| {
         active_page(screen, "Commit") && screen.contents().contains("[enter] start commit")
     })?;

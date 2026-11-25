@@ -67,14 +67,10 @@ impl CommitView {
             KeyCode::Char('o') if !self.notice.is_empty() => {
                 return Some(CommitRequest::ShowResult);
             }
-            KeyCode::Enter => {
-                return Some(if self.has_pending_review() {
-                    CommitRequest::Resume
-                } else {
-                    CommitRequest::Author
-                });
+            KeyCode::Enter if self.has_pending_review() => return Some(CommitRequest::Resume),
+            KeyCode::Enter | KeyCode::Char('c') if self.blocker.is_none() => {
+                return Some(CommitRequest::Author);
             }
-            KeyCode::Char('c') => return Some(CommitRequest::Author),
             KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right => {
                 self.tree.key(code, self.snapshot.as_ref())
             }
@@ -133,15 +129,7 @@ impl CommitView {
             CommitRequest::ShowResult => self.popup = Some((Popup::Result, 0)),
             CommitRequest::Author => {
                 self.refresh(commit);
-                match commit.prepare_commit() {
-                    Ok(context) => {
-                        let mut session = AuthoringSession::with_context(context);
-                        session.set_citation_paths(commit.cite_paths());
-                        session.set_citation_commits(commit.cite_commits());
-                        self.authoring = Some(session);
-                    }
-                    Err(error) => self.notice = error,
-                }
+                self.author(commit);
             }
             CommitRequest::Resume => {
                 self.refresh(commit);
@@ -150,6 +138,33 @@ impl CommitView {
             CommitRequest::Submit => return Some(request),
         }
         None
+    }
+
+    /// Opens the editor at launch when the index already holds a commit, as `enter` would.
+    pub(crate) fn launch(&mut self, commit: &dyn CommitWorkspace) {
+        self.refresh(commit);
+        if self
+            .snapshot
+            .as_ref()
+            .is_some_and(RepositoryStatus::has_staged_changes)
+        {
+            self.author(commit);
+        }
+    }
+
+    fn author(&mut self, commit: &dyn CommitWorkspace) {
+        if self.blocker.is_some() {
+            return;
+        }
+        match commit.prepare_commit() {
+            Ok(context) => {
+                let mut session = AuthoringSession::with_context(context);
+                session.set_citation_paths(commit.cite_paths());
+                session.set_citation_commits(commit.cite_commits());
+                self.authoring = Some(session);
+            }
+            Err(error) => self.blocker = Some(error),
+        }
     }
 
     /// Commit's palette commands.
@@ -294,7 +309,8 @@ impl CommitView {
         Ok(())
     }
 
-    /// Closes the editor on Git's answer, keeping a rejected review to resume.
+    /// Closes the editor on Git's answer, keeping a rejected review to resume. An index
+    /// Git cannot commit keeps the review open instead, with the reason under it.
     pub(crate) fn conclude_submission(
         &mut self,
         commit: &dyn CommitWorkspace,
@@ -312,6 +328,12 @@ impl CommitView {
                 )
                 .trim()
                 .clone_into(&mut self.notice);
+            }
+            Err(SubmitError::Conflicts(_) | SubmitError::NothingStaged) => {
+                if let (Some(mut session), Some(authored)) = (session, authored) {
+                    session.reopen_review(&authored);
+                    self.authoring = Some(session);
+                }
             }
             Err(error) => {
                 self.notice = format!("Commit failed: {error}\nThe reviewed message is retained.");
@@ -346,6 +368,7 @@ impl CommitView {
                 editor,
                 session,
                 &commit_target(self.snapshot.as_ref()),
+                index_refusal(self.snapshot.as_ref()).as_deref(),
             );
             return;
         }
@@ -364,8 +387,10 @@ impl CommitView {
         });
         frame.render_widget(Paragraph::new(summary_text), summary);
         self.tree.render(frame, tree);
-        let action = if self.has_pending_review() {
+        let action = if self.has_pending_review() && self.blocker.is_none() {
             "[c] start new commit  [enter] resume review"
+        } else if self.has_pending_review() {
+            "[enter] resume review"
         } else if self.blocker.is_some() {
             "Start commit unavailable"
         } else {
@@ -404,6 +429,24 @@ fn visible(text: &str) -> String {
             }
         })
         .collect()
+}
+
+/// Why Git would refuse to commit the index `snapshot` read, as Review warns before `enter`.
+fn index_refusal(snapshot: Option<&RepositoryStatus>) -> Option<String> {
+    let snapshot = snapshot?;
+    let conflicts = snapshot.conflicted_paths();
+    if !conflicts.is_empty() {
+        let paths: Vec<_> = conflicts
+            .iter()
+            .map(|path| visible(&path.to_string_lossy()))
+            .collect();
+        return Some(format!(
+            "Resolve conflicts in Git before committing: {}",
+            paths.join(", ")
+        ));
+    }
+    (!snapshot.has_staged_changes())
+        .then(|| "Nothing is staged. Stage changes with Git before committing.".to_owned())
 }
 
 /// Where Git puts the commit, as the review's commit row reads.
@@ -511,6 +554,44 @@ mod tests {
             .map(ratatui::buffer::Cell::symbol)
             .collect();
         assert_eq!(row, "2 staged  src/net/retry.…  ctrl+g change");
+        Ok(())
+    }
+
+    #[test]
+    fn review_names_conflicts_before_an_empty_index() -> Result<(), Box<dyn std::error::Error>> {
+        let entry = |path: &str, index: char| StatusEntry {
+            path: path.into(),
+            original_path: None,
+            index,
+            worktree: '.',
+            untracked: false,
+            conflicted: index == 'U',
+            submodule: "N...".into(),
+        };
+        let refusal =
+            |entries: Vec<StatusEntry>| -> Result<Option<String>, Box<dyn std::error::Error>> {
+                Ok(index_refusal(Some(&RepositoryStatus {
+                    root: RepositoryRoot::new(std::env::temp_dir())?,
+                    branch: BranchState::Named("main".into()),
+                    entries,
+                })))
+            };
+
+        assert_eq!(
+            refusal(vec![
+                entry("a.rs", 'U'),
+                entry("b.rs", 'U'),
+                entry("c.rs", 'M')
+            ])?
+            .as_deref(),
+            Some("Resolve conflicts in Git before committing: a.rs, b.rs")
+        );
+        assert_eq!(
+            refusal(Vec::new())?.as_deref(),
+            Some("Nothing is staged. Stage changes with Git before committing.")
+        );
+        assert_eq!(refusal(vec![entry("c.rs", 'M')])?, None);
+        assert_eq!(index_refusal(None), None);
         Ok(())
     }
 

@@ -22,23 +22,86 @@ fn full_git_result_scrolls_and_keeps_navigation_modal() -> Result<(), Box<dyn st
     Ok(())
 }
 #[test]
-fn opening_commit_matches_navigating_there_and_does_not_author() {
+fn opening_commit_with_nothing_staged_lands_on_the_page_ready_to_author() {
     let services = Services;
     let mut opened = Root::new(InitialPage::Commit, of(&services), &[]);
-    let mut visited = Root::new(InitialPage::Home, of(&services), &[]);
-    visited.execute(Action::Select(Section::Commit), of(&services));
+    let visited = on_commit_page(&services);
 
     assert_eq!(opened.section, Section::Commit);
+    assert!(!opened.commit.editing());
     assert_eq!(commit_page(&opened), commit_page(&visited));
-    assert!(!opened.commit.has_pending_review());
-    assert!(opened.commit.notice().is_empty());
+    assert_eq!(opened.commit.blocker(), None);
     assert_eq!(
         opened.handle_event(key(KeyCode::Enter), of(&services), &[]),
         None
     );
-    assert!(!opened.commit.editing());
-    assert_eq!(opened.commit.notice(), "Stage changes with Git");
-    assert!(!opened.commit.has_pending_review());
+    assert!(opened.commit.editing());
+    assert!(opened.commit.notice().is_empty());
+}
+
+#[test]
+fn opening_commit_with_changes_staged_opens_the_type_picker()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut opened = Root::new(InitialPage::Commit, of(&Ready), &[]);
+
+    assert_eq!(opened.section, Section::Commit);
+    assert!(opened.commit.editing());
+    let text = rendered(&draw(&mut opened)?);
+    assert!(text.contains("enter choose"), "{text}");
+    assert!(text.contains("2 staged"), "{text}");
+    Ok(())
+}
+
+#[test]
+fn enter_on_a_blocked_commit_page_keeps_the_blocker_as_the_message()
+-> Result<(), Box<dyn std::error::Error>> {
+    let workspace = Unavailable;
+    let mut opened = Root::new(InitialPage::Commit, of(&workspace), &[]);
+    let before = rendered(&draw(&mut opened)?);
+    assert!(before.contains("Start commit unavailable"), "{before}");
+
+    for code in [KeyCode::Enter, KeyCode::Char('c')] {
+        assert_eq!(opened.handle_event(key(code), of(&workspace), &[]), None);
+        assert!(!opened.commit.editing());
+        assert!(opened.commit.notice().is_empty());
+        assert_eq!(opened.commit.blocker(), Some("repository unavailable"));
+        let after = rendered(&draw(&mut opened)?);
+        assert_eq!(after, before);
+        assert!(!after.contains("[o] result"), "{after}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_submit_git_would_refuse_keeps_the_review_open_with_the_reason()
+-> Result<(), Box<dyn std::error::Error>> {
+    for refusal in [
+        SubmitError::NothingStaged,
+        SubmitError::Conflicts(vec!["src/net/retry.rs".into()]),
+    ] {
+        let mut root = on_commit_page(&Ready);
+        assert_eq!(
+            approve_a_commit(&mut root),
+            Some(Action::Commit(CommitRequest::Submit))
+        );
+        root.commit
+            .conclude_submission(&Services, Err(refusal.clone()));
+
+        assert!(root.commit.editing(), "{refusal:?}");
+        assert!(!root.commit.has_pending_review(), "{refusal:?}");
+        assert!(root.commit.notice().is_empty(), "{refusal:?}");
+        let text = rendered(&draw(&mut root)?);
+        assert!(text.contains("feat: open the commit page"), "{text}");
+        assert!(text.contains("reviewed decision"), "{text}");
+        assert!(text.contains("Nothing is staged."), "{text}");
+        assert!(text.contains("enter commit"), "{text}");
+        assert_eq!(
+            root.handle_event(key(KeyCode::Enter), of(&Ready), &[]),
+            Some(Action::Commit(CommitRequest::Submit)),
+            "{refusal:?}"
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -64,7 +127,7 @@ fn a_missing_repository_blocks_the_commit_page_and_leaves_the_other_pages_open()
 
 #[test]
 fn cancelling_authoring_returns_to_commit_without_writing() {
-    let mut root = Root::new(InitialPage::Commit, of(&Ready), &[]);
+    let mut root = on_commit_page(&Ready);
     let notice = root.commit.notice().to_owned();
 
     assert_eq!(
@@ -84,7 +147,7 @@ fn cancelling_authoring_returns_to_commit_without_writing() {
 fn a_created_commit_returns_to_commit_and_a_rejected_one_keeps_the_review()
 -> Result<(), Box<dyn std::error::Error>> {
     let created = CommitOutput::new(b"created\n".to_vec(), b"hook note\n".to_vec());
-    let mut root = Root::new(InitialPage::Commit, of(&Ready), &[]);
+    let mut root = on_commit_page(&Ready);
 
     assert_eq!(
         approve_a_commit(&mut root),
@@ -168,7 +231,7 @@ fn a_failed_review_survives_navigation_refresh_and_cancelling_new_authoring()
 
 #[test]
 fn repeated_rejections_remain_resumable_until_a_successful_retry() {
-    let mut root = Root::new(InitialPage::Commit, of(&Ready), &[]);
+    let mut root = on_commit_page(&Ready);
     approve_a_commit(&mut root);
     for rejection in ["first hook rejection", "second hook rejection"] {
         root.commit
@@ -201,7 +264,7 @@ fn repeated_rejections_remain_resumable_until_a_successful_retry() {
 
 /// A root on Commit with the editor open on a feat draft whose description is `subject`.
 fn editing(subject: &str) -> Root {
-    let mut root = Root::new(InitialPage::Commit, of(&Ready), &[]);
+    let mut root = on_commit_page(&Ready);
     for event in [
         key(KeyCode::Enter),
         key(KeyCode::Enter),
@@ -221,7 +284,7 @@ fn draw(root: &mut Root) -> Result<Terminal<TestBackend>, Box<dyn std::error::Er
 #[test]
 fn enter_opens_the_editor_under_the_nav_bar_with_the_staged_header_and_edit_badge()
 -> Result<(), Box<dyn std::error::Error>> {
-    let mut root = Root::new(InitialPage::Commit, of(&Ready), &[]);
+    let mut root = on_commit_page(&Ready);
     assert_eq!(
         root.handle_event(key(KeyCode::Enter), of(&Ready), &[]),
         None
@@ -271,7 +334,7 @@ fn enter_opens_the_editor_under_the_nav_bar_with_the_staged_header_and_edit_badg
 #[test]
 fn the_type_picker_fits_the_page_at_80x24_and_100x30() -> Result<(), Box<dyn std::error::Error>> {
     for (width, height) in [(80, 24), (100, 30)] {
-        let mut root = Root::new(InitialPage::Commit, of(&Ready), &[]);
+        let mut root = on_commit_page(&Ready);
         assert_eq!(
             root.handle_event(key(KeyCode::Enter), of(&Ready), &[]),
             None
@@ -341,7 +404,7 @@ fn a_conditional_card_keeps_every_footer_key_at_80_columns()
 #[test]
 fn review_draws_the_message_without_provenance_and_approves_it_with_provenance()
 -> Result<(), Box<dyn std::error::Error>> {
-    let mut root = Root::new(InitialPage::Commit, of(&Ready), &[]);
+    let mut root = on_commit_page(&Ready);
     review_a_commit(&mut root);
     let terminal = draw(&mut root)?;
     let text = rendered(&terminal);
