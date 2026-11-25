@@ -116,6 +116,7 @@ fn parse_status(root: RepositoryRoot, bytes: &[u8]) -> Result<RepositoryStatus, 
         root,
         branch,
         entries,
+        operation: None,
     })
 }
 

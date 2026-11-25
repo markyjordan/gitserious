@@ -553,6 +553,7 @@ mod tests {
             root: RepositoryRoot::new(std::env::temp_dir())?,
             branch: BranchState::Named("main".into()),
             entries: vec![entry("src/net/retry.rs"), entry("tests/retry.rs")],
+            operation: None,
         };
         let mut terminal = Terminal::new(TestBackend::new(40, 1))?;
         terminal.draw(|frame| render_staged_header(frame, frame.area(), Some(&snapshot)))?;
@@ -584,6 +585,7 @@ mod tests {
                     root: RepositoryRoot::new(std::env::temp_dir())?,
                     branch: BranchState::Named("main".into()),
                     entries,
+                    operation: None,
                 })))
             };
 
@@ -624,6 +626,7 @@ mod tests {
                         submodule: "N...".into(),
                     })
                     .collect(),
+                operation: None,
             }),
             ..CommitView::default()
         };

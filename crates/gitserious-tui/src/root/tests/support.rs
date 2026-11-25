@@ -49,6 +49,7 @@ impl CommitWorkspace for Services {
             root: RepositoryRoot::new(std::env::temp_dir()).map_err(|error| error.to_string())?,
             branch: BranchState::Unborn("main".into()),
             entries: Vec::new(),
+            operation: None,
         })
     }
     fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
