@@ -38,6 +38,7 @@ impl RatatuiInteractiveUi {
                 match root.session_event(event, capabilities, help) {
                     Some(SessionRequest::Quit) => return Ok(()),
                     Some(SessionRequest::Submit) => root.submit(terminal, capabilities)?,
+                    Some(SessionRequest::EditPolicy) => root.edit_policy(terminal, capabilities)?,
                     None => {}
                 }
             }

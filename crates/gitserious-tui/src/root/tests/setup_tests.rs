@@ -101,3 +101,85 @@ fn a_directory_git_cannot_commit_from_says_why_and_offers_nothing()
     }
     Ok(())
 }
+
+/// A repository whose `gitserious.toml` exists but does not load.
+struct BrokenPolicy;
+
+impl ConfigurationWorkspace for BrokenPolicy {
+    fn load_library(&self) -> Result<LibraryDraft, String> {
+        Services.load_library()
+    }
+    fn save_library(&self, library: &LibraryDraft) -> Result<LibraryDraft, String> {
+        Services.save_library(library)
+    }
+    fn load_project(&self) -> Result<ProjectSnapshot, String> {
+        Services.load_project()
+    }
+    fn library_taxonomies(&self) -> Result<Vec<gitserious_core::Taxonomy>, String> {
+        Services.library_taxonomies()
+    }
+    fn library_path(&self) -> std::path::PathBuf {
+        Services.library_path()
+    }
+}
+
+impl ProjectWorkspace for BrokenPolicy {
+    fn overview(&self) -> ProjectOverview {
+        ProjectOverview::Unavailable {
+            directory: fresh_root().as_path().to_path_buf(),
+            error: BROKEN.into(),
+            missing: None,
+        }
+    }
+    fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
+        Services.initialize(configuration)
+    }
+}
+
+const BROKEN: &str = "invalid project configuration in gitserious.toml at line 3, column 1: \
+                      unexpected `=`";
+
+impl CommitWorkspace for BrokenPolicy {
+    fn repository_status(&self) -> Result<RepositoryStatus, String> {
+        Services.repository_status()
+    }
+    fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
+        Err(BROKEN.into())
+    }
+    fn submit_commit(
+        &self,
+        authored: &gitserious_app::AuthoredCommit,
+    ) -> Result<CommitOutput, SubmitError> {
+        Services.submit_commit(authored)
+    }
+    fn can_edit_policy(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn e_hands_a_broken_policy_to_the_editor_only_where_it_is_offered()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut broken = Root::new(InitialPage::Commit, of(&BrokenPolicy), &[]);
+    let text = page(&mut broken)?;
+    assert!(text.contains("[e] edit gitserious.toml"), "{text}");
+    assert!(text.contains("at line 3, column 1"), "{text}");
+    assert!(
+        broken
+            .commit
+            .hints()
+            .contains(&("e", "edit gitserious.toml"))
+    );
+    assert_eq!(
+        broken.session_event(key(KeyCode::Char('e')), of(&BrokenPolicy), &[]),
+        Some(SessionRequest::EditPolicy)
+    );
+
+    let mut valid = on_commit_page(&Services);
+    assert!(!valid.commit.hints().iter().any(|(key, _)| *key == "e"));
+    assert_eq!(
+        valid.session_event(key(KeyCode::Char('e')), of(&Services), &[]),
+        None
+    );
+    Ok(())
+}

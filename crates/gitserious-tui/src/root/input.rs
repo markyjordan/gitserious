@@ -19,6 +19,7 @@ impl Root {
         match self.handle_event(event, capabilities, help)? {
             Action::Quit => Some(SessionRequest::Quit),
             Action::Commit(CommitRequest::Submit) => Some(SessionRequest::Submit),
+            Action::Commit(CommitRequest::EditPolicy) => Some(SessionRequest::EditPolicy),
             Action::Select(_) | Action::Home(_) | Action::Commit(_) | Action::Initialize => None,
         }
     }
