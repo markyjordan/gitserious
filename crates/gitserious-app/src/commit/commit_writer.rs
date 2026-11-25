@@ -2,18 +2,43 @@ use gitserious_core::CommitMessage;
 
 use crate::RepositoryRoot;
 
+/// The commit Git created, as Git abbreviates its name and stores its first line.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreatedCommit {
+    pub abbreviated_oid: String,
+    pub summary: String,
+}
+
 /// Output emitted by the concrete commit operation.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CommitOutput {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+    created: Option<CreatedCommit>,
 }
 
 impl CommitOutput {
     /// Records exact standard output and standard error bytes from Git.
     #[must_use]
     pub const fn new(stdout: Vec<u8>, stderr: Vec<u8>) -> Self {
-        Self { stdout, stderr }
+        Self {
+            stdout,
+            stderr,
+            created: None,
+        }
+    }
+
+    /// Records the commit Git reports at `HEAD` after creating it.
+    #[must_use]
+    pub fn with_created(mut self, created: CreatedCommit) -> Self {
+        self.created = Some(created);
+        self
+    }
+
+    /// The created commit, absent when Git could not name it after a successful commit.
+    #[must_use]
+    pub const fn created(&self) -> Option<&CreatedCommit> {
+        self.created.as_ref()
     }
 
     /// Returns exact standard output bytes.

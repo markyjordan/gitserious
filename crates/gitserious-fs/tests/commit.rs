@@ -123,6 +123,24 @@ fn writer_commits_exact_message_and_only_the_staged_index() -> Result<(), Box<dy
 }
 
 #[test]
+fn writer_names_the_commit_it_created_as_git_stores_it() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    fs::write(repository.path().join("staged.txt"), "staged\n")?;
+    git_ok(repository.path(), &["add", "staged.txt"])?;
+
+    let output = GitCommitWriter.commit(&root(repository.path())?, &feat_message()?)?;
+
+    let abbreviated = git(repository.path(), &["rev-parse", "--short", "HEAD"])?;
+    let created = output.created().ok_or("the created commit is unnamed")?;
+    assert_eq!(
+        created.abbreviated_oid,
+        String::from_utf8(abbreviated.stdout)?.trim()
+    );
+    assert_eq!(created.summary, "feat(fs): create commit");
+    Ok(())
+}
+
+#[test]
 fn writer_preserves_the_exact_wrapped_canonical_message() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     fs::write(repository.path().join("staged.txt"), "staged\n")?;
