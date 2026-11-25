@@ -293,7 +293,7 @@ fn executable_commit_entry_opens_the_type_picker_over_the_page_navigation_shows(
 }
 
 #[test]
-fn missing_repository_blocks_commit_and_still_allows_config_navigation()
+fn missing_repository_offers_initialization_and_still_allows_config_navigation()
 -> Result<(), Box<dyn Error>> {
     let directory = tempfile::tempdir()?;
     let home = Home::new()?;
@@ -302,8 +302,10 @@ fn missing_repository_blocks_commit_and_still_allows_config_navigation()
     let mut session = Session::spawn(&command, Streams::Terminal)?;
     session.wait_for(|screen| {
         active_page(screen, "Commit")
-            && screen.contents().contains("Repository unavailable")
-            && screen.contents().contains("Start commit unavailable")
+            && screen.contents().contains("Directory:")
+            && screen
+                .contents()
+                .contains("[enter] initialize git and gitserious")
     })?;
     record(&session, "commit-no-repository")?;
     session.send(b"\t")?;

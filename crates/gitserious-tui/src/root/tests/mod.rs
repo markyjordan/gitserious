@@ -31,4 +31,5 @@ mod help_tests;
 mod home_tests;
 mod navigation_tests;
 mod project_overview_tests;
+mod setup_tests;
 mod staging_tests;

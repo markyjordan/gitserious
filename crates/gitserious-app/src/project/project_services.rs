@@ -62,13 +62,16 @@ where
         let directory = self.start.to_path_buf();
         let root = match self.locator.locate(self.start) {
             Ok(root) => root,
-            Err(error) if L::missing_work_tree(&error) == Some(MissingWorkTree::NotRepository) => {
-                return ProjectOverview::NoRepository { directory };
-            }
             Err(error) => {
-                return ProjectOverview::Unavailable {
-                    directory,
-                    error: error.to_string(),
+                return match L::missing_work_tree(&error) {
+                    Some(MissingWorkTree::NotRepository) => {
+                        ProjectOverview::NoRepository { directory }
+                    }
+                    missing => ProjectOverview::Unavailable {
+                        directory,
+                        error: error.to_string(),
+                        missing,
+                    },
                 };
             }
         };
@@ -79,6 +82,7 @@ where
                 return ProjectOverview::Unavailable {
                     directory,
                     error: error.to_string(),
+                    missing: None,
                 };
             }
         };
@@ -91,6 +95,7 @@ where
             return ProjectOverview::Unavailable {
                 directory,
                 error: format!("{POLICY_FILE} names a missing default taxonomy {default}."),
+                missing: None,
             };
         };
         let policy_untracked = self.status.read(&root).is_ok_and(|status| {

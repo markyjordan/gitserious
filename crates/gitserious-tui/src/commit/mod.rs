@@ -3,8 +3,11 @@ mod status_tree;
 
 use std::io;
 
+use std::path::{Path, PathBuf};
+
 use gitserious_app::{
-    AuthoredCommit, BranchState, CommitOutput, CommitWorkspace, RepositoryStatus, SubmitError,
+    AuthoredCommit, BranchState, CommitOutput, CommitWorkspace, MissingWorkTree, ProjectOverview,
+    RepositoryStatus, SubmitError,
 };
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
@@ -16,7 +19,12 @@ use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::shared::paths::path_lines;
+use crate::shared::work_tree::guidance;
 use crate::theme::{command_hints, frame_style, theme};
+
+/// The project policy file at the repository root.
+const POLICY_FILE: &str = "gitserious.toml";
 
 #[cfg(test)]
 pub(crate) use author::built_in_context;
@@ -38,6 +46,33 @@ pub(crate) enum CommitRequest {
     StageTracked,
     /// Stage or unstage the selected file.
     ToggleFile,
+    /// Open the shared initialization editor, which returns to Commit.
+    Initialize,
+}
+
+/// What Commit's `enter` sets up when the directory is not ready to commit from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Setup {
+    /// A repository without `gitserious.toml`: gitserious init only.
+    Gitserious,
+    /// No repository at all, in a directory where one may be created.
+    GitAndGitserious,
+}
+
+impl Setup {
+    const fn action(self) -> &'static str {
+        match self {
+            Self::Gitserious => "[enter] initialize gitserious",
+            Self::GitAndGitserious => "[enter] initialize git and gitserious",
+        }
+    }
+
+    const fn command(self) -> &'static str {
+        match self {
+            Self::Gitserious => "Initialize gitserious",
+            Self::GitAndGitserious => "Initialize git and gitserious",
+        }
+    }
 }
 
 /// A read-only popup over the page.
@@ -65,6 +100,11 @@ pub(crate) struct CommitView {
     popup: Option<(Popup, u16)>,
     /// Whether the workspace can write the index, read at each refresh.
     can_stage: bool,
+    /// The directory Commit started in and what its project lacks, from the last overview.
+    directory: Option<PathBuf>,
+    setup: Option<Setup>,
+    /// What to do instead when the directory has no usable work tree or no project.
+    guidance: Option<String>,
 }
 
 impl CommitView {
@@ -79,6 +119,7 @@ impl CommitView {
             KeyCode::Enter | KeyCode::Char('c') if self.blocker.is_none() => {
                 return Some(CommitRequest::Author);
             }
+            KeyCode::Enter if self.setup.is_some() => return Some(CommitRequest::Initialize),
             KeyCode::Char('a') if self.stages_tracked() => {
                 return Some(CommitRequest::StageTracked);
             }
@@ -165,7 +206,7 @@ impl CommitView {
                 self.refresh(commit);
                 self.authoring = self.pending.take();
             }
-            CommitRequest::Submit => return Some(request),
+            CommitRequest::Submit | CommitRequest::Initialize => return Some(request),
             CommitRequest::StageTracked => {
                 let written = commit.stage_tracked();
                 self.conclude_staging(commit, written);
@@ -256,6 +297,35 @@ impl CommitView {
         }
     }
 
+    /// Reads what the project in Commit's directory lacks, which decides what `enter` sets up
+    /// and what the page says instead of the bare error.
+    pub(crate) fn observe(&mut self, overview: &ProjectOverview) {
+        (self.directory, self.setup, self.guidance) = match overview {
+            ProjectOverview::NoRepository { directory } => (
+                Some(directory.clone()),
+                Some(Setup::GitAndGitserious),
+                Some(guidance(&MissingWorkTree::NotRepository)),
+            ),
+            ProjectOverview::Uninitialized { root } => (
+                Some(root.as_path().to_path_buf()),
+                Some(Setup::Gitserious),
+                Some(
+                    "gitserious.toml is missing, so this repository has no commit policy yet."
+                        .to_owned(),
+                ),
+            ),
+            ProjectOverview::Unavailable {
+                directory,
+                missing: Some(missing),
+                ..
+            } => (Some(directory.clone()), None, Some(guidance(missing))),
+            ProjectOverview::Unavailable { directory, .. } => (Some(directory.clone()), None, None),
+            ProjectOverview::Initialized { root, .. } => {
+                (Some(root.as_path().to_path_buf()), None, None)
+            }
+        };
+    }
+
     /// Commit's palette commands.
     pub(crate) fn commands(&self) -> Vec<(&'static str, CommitRequest)> {
         let mut commands = vec![("Refresh repository", CommitRequest::Refresh)];
@@ -264,6 +334,8 @@ impl CommitView {
         }
         if self.blocker.is_none() {
             commands.push(("Start commit", CommitRequest::Author));
+        } else if let Some(setup) = self.setup {
+            commands.push((setup.command(), CommitRequest::Initialize));
         }
         if self.has_pending_review() {
             commands.push(("Resume review", CommitRequest::Resume));
@@ -382,6 +454,45 @@ impl CommitView {
             ])),
             footer,
         );
+    }
+
+    /// The repository and branch, or the whole directory when no repository is usable,
+    /// broken after separators to fit `width`.
+    fn summary(&self, width: usize) -> Vec<String> {
+        let Some(snapshot) = &self.snapshot else {
+            let directory = self
+                .directory
+                .as_ref()
+                .map(|directory| visible(&directory.to_string_lossy()))
+                .unwrap_or_default();
+            return std::iter::once("Directory:".to_owned())
+                .chain(path_lines(&directory, width))
+                .collect();
+        };
+        let branch = match &snapshot.branch {
+            BranchState::Named(name) => visible(name),
+            BranchState::Unborn(name) => format!("{} (unborn)", visible(name)),
+            BranchState::Detached(oid) => format!(
+                "detached HEAD ({})",
+                oid.chars().take(12).collect::<String>()
+            ),
+        };
+        let policy_untracked = snapshot
+            .entries
+            .iter()
+            .any(|entry| entry.untracked && entry.path == Path::new(POLICY_FILE));
+        vec![
+            format!(
+                "Repository: {}",
+                visible(&snapshot.root.as_path().to_string_lossy())
+            ),
+            format!("Branch: {branch}"),
+            if policy_untracked {
+                "gitserious.toml is untracked. Commit it on its own to share the policy.".to_owned()
+            } else {
+                "Git commits the staged index. Use `git add -p` to stage part of a file.".to_owned()
+            },
+        ]
     }
 
     pub(crate) fn refresh(&mut self, commit: &dyn CommitWorkspace) {
@@ -503,25 +614,21 @@ impl CommitView {
             );
             return;
         }
+        let summary_lines = self.summary(usize::from(area.width));
         let [summary, tree, status] = Layout::vertical([
-            Constraint::Length(3),
+            Constraint::Length(u16::try_from(summary_lines.len()).unwrap_or(u16::MAX)),
             Constraint::Min(1),
             Constraint::Length(4),
         ])
         .areas(area);
-        let summary_text = self.snapshot.as_ref().map_or_else(|| "Repository unavailable".into(), |snapshot| {
-            let branch = match &snapshot.branch {
-                BranchState::Named(name) => visible(name), BranchState::Unborn(name) => format!("{} (unborn)", visible(name)),
-                BranchState::Detached(oid) => format!("detached HEAD ({})", oid.chars().take(12).collect::<String>()),
-            };
-            format!("Repository: {}\nBranch: {branch}\nGit commits the staged index. Use `git add -p` to stage part of a file.", visible(&snapshot.root.as_path().to_string_lossy()))
-        });
-        frame.render_widget(Paragraph::new(summary_text), summary);
+        frame.render_widget(Paragraph::new(summary_lines.join("\n")), summary);
         self.tree.render(frame, tree);
         let action = if self.has_pending_review() && self.blocker.is_none() {
             "[c] start new commit  [enter] resume review"
         } else if self.has_pending_review() {
             "[enter] resume review"
+        } else if let (Some(_), Some(setup)) = (&self.blocker, self.setup) {
+            setup.action()
         } else if self.blocker.is_some() {
             "Start commit unavailable"
         } else if self.stages_tracked()
@@ -535,9 +642,10 @@ impl CommitView {
             "[enter] start commit"
         };
         let detail = if self.notice.is_empty() {
-            self.blocker
-                .clone()
-                .unwrap_or_else(|| self.tree.detail().map_or_else(String::new, str::to_owned))
+            self.blocker.as_ref().map_or_else(
+                || self.tree.detail().map_or_else(String::new, str::to_owned),
+                |blocker| self.guidance.clone().unwrap_or_else(|| blocker.clone()),
+            )
         } else {
             self.notice.clone()
         };

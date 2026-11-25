@@ -74,6 +74,17 @@ blocks authoring with the commands that finish or stop it, and so does a rebase
 stopped on conflicts; a rebase stopped without conflicts commits normally. These
 actions are also available through `/`.
 
+When the directory is not ready to commit from, Commit sets it up in place. In
+a repository without `gitserious.toml`, Enter runs gitserious init only; where
+no repository exists, it offers to initialize git and gitserious. Either opens
+Home's initialization editor, and finishing or cancelling it returns to Commit.
+A new `gitserious.toml` is left untracked, and the page suggests committing it
+on its own. A home directory or filesystem root, a bare repository, a directory
+inside `.git`, and a repository Git refuses for its owner get no offer, only
+what to do instead; the last names the `git config --global --add
+safe.directory` command. Without a repository the page shows the whole
+directory, broken after separators, as Home and the editor do.
+
 The page stages whole files, and these keys are its only writes to the index.
 `a` stages every change to tracked files, deletions included (`git add -u`),
 when there is one; with nothing staged, the page leads with it. `space` stages

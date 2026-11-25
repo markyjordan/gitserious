@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use crate::shared::paths::path_lines;
+use crate::shared::work_tree::guidance;
 use gitserious_app::{ConfigurationWorkspace, ProjectOverview, ProjectWorkspace};
 use gitserious_core::{TaxonomyReference, built_in_taxonomies};
 use ratatui::Frame;
@@ -75,6 +77,8 @@ pub(crate) struct HomeView {
     editor: Option<InitEditor>,
     /// Why the last initialization from Home failed.
     error: Option<String>,
+    /// Commit opened the editor, so closing it returns there.
+    returns_to_commit: bool,
 }
 
 /// What Home asks the root to do.
@@ -93,7 +97,25 @@ impl HomeView {
             overview: project.overview(),
             editor: None,
             error: None,
+            returns_to_commit: false,
         }
+    }
+
+    /// Opens the editor for Commit, which it returns to once initialization ends either way.
+    pub(crate) fn initialize_for_commit(
+        &mut self,
+        project: &dyn ProjectWorkspace,
+        config: &dyn ConfigurationWorkspace,
+    ) {
+        self.refresh(project);
+        self.error = None;
+        self.offer_initialization(config);
+        self.returns_to_commit = true;
+    }
+
+    /// Whether the editor that just closed was Commit's, clearing it.
+    pub(crate) fn take_return_to_commit(&mut self) -> bool {
+        std::mem::take(&mut self.returns_to_commit)
     }
 
     /// Rereads the overview, and closes the editor once there is nothing to initialize.
@@ -173,7 +195,8 @@ impl HomeView {
             EditorOutcome::Back => {
                 self.editor = None;
                 self.error = None;
-                None
+                self.take_return_to_commit()
+                    .then_some(HomeRequest::GoToCommit)
             }
             EditorOutcome::Initialize(configuration) => {
                 let outcome = match project.initialize(&configuration) {
@@ -260,10 +283,15 @@ fn render(frame: &mut Frame<'_>, area: Rect, state: &ProjectOverview, error: Opt
                 lines.push(Line::styled("  git add gitserious.toml", bold));
             }
         }
-        ProjectOverview::Unavailable { directory, error } => {
+        ProjectOverview::Unavailable {
+            directory,
+            error,
+            missing,
+        } => {
             lines.extend(identity(directory));
             lines.push(Line::default());
-            lines.push(Line::styled(format!("✗ {error}"), blocks()));
+            let reason = missing.as_ref().map_or_else(|| error.clone(), guidance);
+            lines.push(Line::styled(format!("✗ {reason}"), blocks()));
         }
     }
     if let Some(action) = HomeAction::of(state) {
@@ -300,14 +328,18 @@ fn name(path: &Path) -> String {
     )
 }
 
-fn identity(path: &Path) -> [Line<'static>; 2] {
-    [
-        Line::styled(
-            name(path),
-            Style::new().fg(theme().text).add_modifier(Modifier::BOLD),
-        ),
-        Line::styled(path.display().to_string(), Style::new().fg(theme().dim)),
-    ]
+/// The directory's name, then its whole path broken after separators.
+fn identity(path: &Path) -> Vec<Line<'static>> {
+    std::iter::once(Line::styled(
+        name(path),
+        Style::new().fg(theme().text).add_modifier(Modifier::BOLD),
+    ))
+    .chain(
+        path_lines(&path.display().to_string(), usize::from(COLUMN_WIDTH))
+            .into_iter()
+            .map(|line| Line::styled(line, Style::new().fg(theme().dim))),
+    )
+    .collect()
 }
 
 fn action_row(action: HomeAction) -> Line<'static> {
