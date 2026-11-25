@@ -23,9 +23,9 @@ pub(crate) enum Command {
     Config,
     /// Author and create a durable commit from the staged index.
     ///
-    /// Commit opens the Commit page. From that page you start authoring,
-    /// choose a type, write its properties, and review the exact message
-    /// before gitserious passes it to `git commit`.
+    /// Commit opens the type picker when changes are staged, and the Commit
+    /// page otherwise. You choose a type, write its properties, and review
+    /// the exact message before gitserious passes it to `git commit`.
     ///
     /// Only staged changes are committed. Stage them with `git add` first.
     Commit,

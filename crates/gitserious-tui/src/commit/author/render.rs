@@ -16,12 +16,14 @@ const MINIMUM_WIDTH: u16 = 60;
 const MINIMUM_HEIGHT: u16 = 16;
 
 /// Draws the editor in `area`, which the Commit page leaves it under the staged header.
-/// `target` names where Git puts the commit, as the review's commit row reads.
+/// `target` names where Git puts the commit, as the review's commit row reads, and `refusal`
+/// why Git would refuse it, which Review shows under that row.
 pub(crate) fn render(
     frame: &mut Frame<'_>,
     area: Rect,
     session: &mut AuthoringSession,
     target: &str,
+    refusal: Option<&str>,
 ) {
     session.discard_dialog.invalidate();
     session.catalog_tabs.clear();
@@ -52,7 +54,7 @@ pub(crate) fn render(
     match session.visible_stage() {
         Stage::SelectType => type_picker::render(frame, area, session),
         Stage::Compose => composer::render(frame, area, &mut session.composer),
-        Stage::Review => review::render(frame, area, session, target),
+        Stage::Review => review::render(frame, area, session, target, refusal),
         Stage::Confirm => unreachable!("confirmation resolves to its underlying stage"),
     }
     if session.stage == Stage::Compose {

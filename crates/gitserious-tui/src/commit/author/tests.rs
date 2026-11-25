@@ -127,6 +127,7 @@ fn draw(frame: &mut Frame<'_>, session: &mut AuthoringSession) {
         Rect::new(0, 1, area.width, area.height.saturating_sub(2)),
         session,
         "commit to main",
+        None,
     );
     crate::theme::normalize_background(frame, area);
 }

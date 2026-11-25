@@ -418,11 +418,20 @@ pub(super) fn approve_a_commit(root: &mut Root) -> Option<Action> {
     root.handle_event(key(KeyCode::Enter), of(&Ready), &[])
 }
 
+/// A root on the Commit page, reached from Home so the launch never opens the editor.
+pub(super) fn on_commit_page(
+    workspace: &(impl CommitWorkspace + ConfigurationWorkspace + ProjectWorkspace),
+) -> Root {
+    let mut root = Root::new(InitialPage::Home, of(workspace), &[]);
+    root.execute(Action::Select(Section::Commit), of(workspace));
+    root
+}
+
 /// A root on Commit that retains a rejected review, with `workspace` behind it.
 pub(super) fn rejected_review_with(
     workspace: &(impl CommitWorkspace + ConfigurationWorkspace + ProjectWorkspace),
 ) -> Root {
-    let mut root = Root::new(InitialPage::Commit, of(workspace), &[]);
+    let mut root = on_commit_page(workspace);
     assert_eq!(
         approve_a_commit(&mut root),
         Some(Action::Commit(CommitRequest::Submit))

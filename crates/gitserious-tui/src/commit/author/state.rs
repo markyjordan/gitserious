@@ -554,7 +554,7 @@ mod confirmation_tests {
     fn shared_commit_dialog_keeps_the_draft_and_can_cancel_by_mouse()
     -> Result<(), Box<dyn std::error::Error>> {
         let draw = |frame: &mut ratatui::Frame<'_>, session: &mut AuthoringSession| {
-            render::render(frame, frame.area(), session, "commit to main");
+            render::render(frame, frame.area(), session, "commit to main", None);
         };
         for (width, height) in [(60, 18), (100, 24)] {
             let mut session =
@@ -632,8 +632,9 @@ mod confirmation_tests {
         assert!(session.composer.dirty());
         session.handle_event(key(KeyCode::Esc));
         let mut terminal = Terminal::new(TestBackend::new(100, 24))?;
-        terminal
-            .draw(|frame| render::render(frame, frame.area(), &mut session, "commit to main"))?;
+        terminal.draw(|frame| {
+            render::render(frame, frame.area(), &mut session, "commit to main", None)
+        })?;
         let buttons = session.discard_dialog.buttons.ok_or("missing buttons")?;
         assert!(session.handle_event(click(buttons.confirm)).is_none());
         assert_eq!(session.stage, Stage::SelectType);

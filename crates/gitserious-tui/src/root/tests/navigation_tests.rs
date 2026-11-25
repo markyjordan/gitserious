@@ -108,7 +108,7 @@ fn the_commit_palette_follows_the_blocker_the_last_result_and_the_pending_review
         listing(&["Refresh repository", "Start commit"])
     );
 
-    let mut ready = Root::new(InitialPage::Commit, of(&Ready), &[]);
+    let mut ready = on_commit_page(&Ready);
     assert_eq!(
         palette(&ready),
         listing(&["Refresh repository", "Start commit"])
