@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use super::operation_refusal;
 use crate::{
-    AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitWriter, GitOperation,
+    AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitWriter, GitOperation, IndexWriter,
     ProjectConfigurationStore, RepositoryLocator, RepositoryStatus, RepositoryStatusReader,
     WorktreePaths, prepare_commit_with_taxonomy, validate_reviewed_commit,
 };
@@ -24,7 +24,25 @@ pub trait CommitWorkspace {
     fn cite_commits(&self) -> Vec<crate::CitedCommit> {
         Vec::new()
     }
+    /// Whether this page can write the index, which its staging keys need.
+    fn can_stage(&self) -> bool {
+        false
+    }
+    /// Stages every change to tracked files, deletions included.
+    fn stage_tracked(&self) -> Result<(), String> {
+        Err(STAGING_UNAVAILABLE.into())
+    }
+    /// Stages `paths`, untracked files included.
+    fn stage(&self, _paths: &[PathBuf]) -> Result<(), String> {
+        Err(STAGING_UNAVAILABLE.into())
+    }
+    /// Unstages `paths`; a rename names both of its paths.
+    fn unstage(&self, _paths: &[PathBuf]) -> Result<(), String> {
+        Err(STAGING_UNAVAILABLE.into())
+    }
 }
+
+const STAGING_UNAVAILABLE: &str = "This Commit page cannot write the index.";
 
 /// Why a reviewed commit was not written.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -60,6 +78,7 @@ pub struct CommitServices<'a, L: ?Sized, S: ?Sized, W: ?Sized> {
     writer: &'a W,
     start: &'a Path,
     paths: Option<&'a dyn WorktreePaths>,
+    index: Option<&'a dyn IndexWriter>,
 }
 
 impl<'a, L, S, W> CommitServices<'a, L, S, W>
@@ -85,6 +104,7 @@ where
             writer,
             start,
             paths: None,
+            index: None,
         }
     }
 
@@ -92,6 +112,26 @@ where
         prepare_commit_with_taxonomy(self.locator, self.store, self.start)
             .map(|(_, context)| context)
             .map_err(|error| error.to_string())
+    }
+
+    /// Writes the index through `index` when Commit stages or unstages.
+    #[must_use]
+    pub fn staging(mut self, index: &'a dyn IndexWriter) -> Self {
+        self.index = Some(index);
+        self
+    }
+
+    /// Runs `write` on the index of the repository that contains `start`.
+    fn write_index(
+        &self,
+        write: impl FnOnce(&dyn IndexWriter, &crate::RepositoryRoot) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let index = self.index.ok_or(STAGING_UNAVAILABLE)?;
+        let root = self
+            .locator
+            .locate(self.start)
+            .map_err(|error| error.to_string())?;
+        write(index, &root)
     }
 
     /// Uses `paths` when the editor asks what the message can cite.
@@ -157,6 +197,22 @@ where
             .ok()
             .and_then(|root| paths.paths(&root).ok())
             .unwrap_or_default()
+    }
+
+    fn can_stage(&self) -> bool {
+        self.index.is_some()
+    }
+
+    fn stage_tracked(&self) -> Result<(), String> {
+        self.write_index(|index, root| index.stage_tracked(root))
+    }
+
+    fn stage(&self, paths: &[PathBuf]) -> Result<(), String> {
+        self.write_index(|index, root| index.stage(root, paths))
+    }
+
+    fn unstage(&self, paths: &[PathBuf]) -> Result<(), String> {
+        self.write_index(|index, root| index.unstage(root, paths))
     }
 
     fn cite_commits(&self) -> Vec<crate::CitedCommit> {
