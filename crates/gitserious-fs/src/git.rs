@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use gitserious_app::{
-    RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryRootError,
+    MissingWorkTree, RepositoryInitializer, RepositoryLocator, RepositoryRoot, RepositoryRootError,
 };
 
 /// Git-process adapter for locating the enclosing worktree.
@@ -49,9 +49,11 @@ impl RepositoryLocator for GitRepositoryLocator {
             .map_err(GitRepositoryError::GitUnavailable)?;
 
         if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
             return Err(GitRepositoryError::NotWorkTree {
+                missing: missing_work_tree(start, &detail),
                 start: start.to_path_buf(),
-                detail: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+                detail,
             });
         }
 
@@ -59,14 +61,73 @@ impl RepositoryLocator for GitRepositoryLocator {
         RepositoryRoot::new(path).map_err(GitRepositoryError::InvalidRoot)
     }
 
-    /// Only Git's own "not a git repository" counts; a bare repository, a `.git` file that names
-    /// nothing, or unsafe ownership is a repository Git cannot use, not a missing one.
-    fn is_not_repository(error: &Self::Error) -> bool {
-        matches!(
-            error,
-            GitRepositoryError::NotWorkTree { detail, .. } if detail.contains("not a git repository")
-        )
+    fn missing_work_tree(error: &Self::Error) -> Option<MissingWorkTree> {
+        match error {
+            GitRepositoryError::NotWorkTree { missing, .. } => missing.clone(),
+            _ => None,
+        }
     }
+}
+
+/// Reads why `start` has no work tree from Git's `detail`, asking Git what `start` is when the
+/// message alone cannot tell. A `.git` file that names nothing stays unclassified.
+fn missing_work_tree(start: &Path, detail: &str) -> Option<MissingWorkTree> {
+    if detail.contains("not a git repository") {
+        return Some(if is_home_or_root(start) {
+            MissingWorkTree::HomeOrRoot
+        } else {
+            MissingWorkTree::NotRepository
+        });
+    }
+    if detail.contains("dubious ownership") {
+        return dubious_repository(detail)
+            .map(|repository| MissingWorkTree::DubiousOwnership { repository });
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(start)
+        .args([
+            "rev-parse",
+            "--is-bare-repository",
+            "--is-inside-git-dir",
+            "--absolute-git-dir",
+        ])
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut lines = stdout.lines();
+    let (bare, inside, git_dir) = (lines.next()?, lines.next()?, lines.next()?);
+    if bare == "true" {
+        return Some(MissingWorkTree::Bare);
+    }
+    (inside == "true").then(|| {
+        let git_dir = Path::new(git_dir);
+        MissingWorkTree::InsideGitDir {
+            worktree: (git_dir.file_name() == Some(".git".as_ref()))
+                .then(|| git_dir.parent().map(Path::to_path_buf))
+                .flatten(),
+        }
+    })
+}
+
+/// The repository Git names in "detected dubious ownership in repository at '<path>'".
+fn dubious_repository(detail: &str) -> Option<PathBuf> {
+    let (_, rest) = detail.split_once("repository at '")?;
+    let (path, _) = rest.split_once('\'')?;
+    Some(PathBuf::from(path))
+}
+
+/// Whether `directory` is the user's home directory or a filesystem root, where `git init`
+/// would put everything below under version control.
+fn is_home_or_root(directory: &Path) -> bool {
+    let Ok(directory) = directory.canonicalize() else {
+        return false;
+    };
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .and_then(|home| PathBuf::from(home).canonicalize().ok());
+    directory.parent().is_none() || home.is_some_and(|home| home == directory)
 }
 
 fn path_from_stdout(mut bytes: Vec<u8>) -> Result<PathBuf, GitRepositoryError> {
@@ -103,6 +164,8 @@ pub enum GitRepositoryError {
         start: PathBuf,
         /// Git's trimmed diagnostic output.
         detail: String,
+        /// Why no work tree contains the directory, when Git's answer tells.
+        missing: Option<MissingWorkTree>,
     },
     /// Git succeeded without returning a worktree path.
     EmptyOutput,
@@ -117,14 +180,24 @@ impl Display for GitRepositoryError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::GitUnavailable(_) => formatter.write_str("could not execute git"),
-            Self::NotWorkTree { start, detail } if detail.is_empty() => {
+            Self::NotWorkTree {
+                start,
+                missing: Some(MissingWorkTree::HomeOrRoot),
+                ..
+            } => write!(
+                formatter,
+                "{} is a home directory or a filesystem root; open a project folder to \
+                 initialize git and gitserious",
+                start.display()
+            ),
+            Self::NotWorkTree { start, detail, .. } if detail.is_empty() => {
                 write!(
                     formatter,
                     "directory is not inside a Git worktree: {}",
                     start.display()
                 )
             }
-            Self::NotWorkTree { start, detail } => write!(
+            Self::NotWorkTree { start, detail, .. } => write!(
                 formatter,
                 "directory is not inside a Git worktree: {} ({detail})",
                 start.display()
@@ -148,5 +221,23 @@ impl Error for GitRepositoryError {
             Self::InvalidEncoding(error) => Some(error),
             Self::InvalidRoot(error) => Some(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dubious_ownership_names_the_repository_git_refuses() {
+        let detail = "fatal: detected dubious ownership in repository at '/srv/shared repo'\n\
+                      To add an exception for this directory, call:\n\n\
+                      \tgit config --global --add safe.directory '/srv/shared repo'";
+        assert_eq!(
+            missing_work_tree(Path::new("/srv/shared repo"), detail),
+            Some(MissingWorkTree::DubiousOwnership {
+                repository: "/srv/shared repo".into()
+            })
+        );
     }
 }

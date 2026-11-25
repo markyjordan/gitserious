@@ -540,8 +540,8 @@ struct NoRepository;
 impl RepositoryLocator for NoRepository {
     type Error = FakeError;
 
-    fn is_not_repository(_: &Self::Error) -> bool {
-        true
+    fn missing_work_tree(_: &Self::Error) -> Option<gitserious_app::MissingWorkTree> {
+        Some(gitserious_app::MissingWorkTree::NotRepository)
     }
 
     fn locate(&self, _start: &Path) -> Result<RepositoryRoot, Self::Error> {

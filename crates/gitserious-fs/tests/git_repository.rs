@@ -8,7 +8,7 @@ use std::ffi::OsString;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
 
-use gitserious_app::RepositoryLocator;
+use gitserious_app::{MissingWorkTree, RepositoryLocator};
 use gitserious_fs::{GitRepositoryError, GitRepositoryLocator};
 use tempfile::TempDir;
 
@@ -90,9 +90,17 @@ fn linked_worktree_resolves_its_own_root() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn missing(path: &Path) -> Option<MissingWorkTree> {
+    GitRepositoryLocator
+        .locate(path)
+        .err()
+        .and_then(|error| GitRepositoryLocator::missing_work_tree(&error))
+}
+
 #[test]
-fn rejects_non_repositories_and_bare_repositories() -> Result<(), Box<dyn Error>> {
+fn each_directory_without_a_work_tree_says_why() -> Result<(), Box<dyn Error>> {
     let plain = tempfile::tempdir()?;
+    assert_eq!(missing(plain.path()), Some(MissingWorkTree::NotRepository));
     assert!(matches!(
         GitRepositoryLocator.locate(plain.path()),
         Err(GitRepositoryError::NotWorkTree { .. })
@@ -100,35 +108,42 @@ fn rejects_non_repositories_and_bare_repositories() -> Result<(), Box<dyn Error>
 
     let bare = tempfile::tempdir()?;
     git(&["init", "-q", "--bare"], bare.path())?;
-    assert!(matches!(
-        GitRepositoryLocator.locate(bare.path()),
-        Err(GitRepositoryError::NotWorkTree { .. })
-    ));
+    assert_eq!(missing(bare.path()), Some(MissingWorkTree::Bare));
+    assert_eq!(
+        missing(&bare.path().join("objects")),
+        Some(MissingWorkTree::Bare)
+    );
+
+    let repository = repository()?;
+    let Some(MissingWorkTree::InsideGitDir {
+        worktree: Some(worktree),
+    }) = missing(&repository.path().join(".git"))
+    else {
+        return Err("a .git directory names its work tree".into());
+    };
+    assert_same_existing_path(&worktree, repository.path())?;
+
+    let broken = tempfile::tempdir()?;
+    fs::write(broken.path().join(".git"), "not a gitdir pointer\n")?;
+    assert_eq!(
+        missing(broken.path()),
+        None,
+        "a broken .git file stays unclassified"
+    );
     Ok(())
 }
 
 #[test]
-fn only_a_missing_repository_counts_as_not_a_repository() -> Result<(), Box<dyn Error>> {
-    let is_not_repository = |path: &Path| {
-        GitRepositoryLocator
-            .locate(path)
-            .err()
-            .is_some_and(|error| GitRepositoryLocator::is_not_repository(&error))
-    };
-    let plain = tempfile::tempdir()?;
-    assert!(is_not_repository(plain.path()));
-
-    let bare = tempfile::tempdir()?;
-    git(&["init", "-q", "--bare"], bare.path())?;
-    assert!(!is_not_repository(bare.path()), "a bare repository exists");
-
-    let broken = tempfile::tempdir()?;
-    fs::write(broken.path().join(".git"), "not a gitdir pointer\n")?;
-    assert!(
-        !is_not_repository(broken.path()),
-        "a broken .git file is not absence"
-    );
-    Ok(())
+fn a_filesystem_root_without_a_repository_is_never_offered_git_init() {
+    let root = std::env::temp_dir()
+        .ancestors()
+        .last()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    // A machine whose root is itself a repository has nothing to check here.
+    if let Some(missing) = missing(&root) {
+        assert_eq!(missing, MissingWorkTree::HomeOrRoot);
+    }
 }
 
 #[test]

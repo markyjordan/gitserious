@@ -32,8 +32,8 @@ impl RepositoryLocator for Locator {
         }
     }
 
-    fn is_not_repository(error: &Self::Error) -> bool {
-        *error == "not a git repository"
+    fn missing_work_tree(error: &Self::Error) -> Option<gitserious_app::MissingWorkTree> {
+        (*error == "not a git repository").then_some(gitserious_app::MissingWorkTree::NotRepository)
     }
 }
 

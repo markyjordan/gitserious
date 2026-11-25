@@ -69,9 +69,26 @@ pub trait RepositoryLocator {
     /// discovered.
     fn locate(&self, start: &Path) -> Result<RepositoryRoot, Self::Error>;
 
-    /// Whether `error` means no Git worktree contains the start directory,
-    /// as opposed to Git itself failing.
-    fn is_not_repository(error: &Self::Error) -> bool;
+    /// Why no usable Git worktree contains the start directory, or `None` when Git itself
+    /// failed.
+    fn missing_work_tree(error: &Self::Error) -> Option<MissingWorkTree>;
+}
+
+/// Why no usable Git work tree contains a directory, which decides what Commit and Home offer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MissingWorkTree {
+    /// No repository contains the directory, so `git init` may create one there.
+    NotRepository,
+    /// No repository contains the directory, but it is a home directory or a filesystem
+    /// root, where a repository would take in everything below it.
+    HomeOrRoot,
+    /// A bare repository, which has no work tree to commit from.
+    Bare,
+    /// Inside a repository's Git directory. `worktree` is its work tree when the layout
+    /// names one.
+    InsideGitDir { worktree: Option<PathBuf> },
+    /// Git refuses a repository another user owns until it is marked safe.
+    DubiousOwnership { repository: PathBuf },
 }
 
 /// Creates a Git repository in a directory that has none.
