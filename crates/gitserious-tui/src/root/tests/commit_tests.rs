@@ -190,6 +190,32 @@ fn a_created_commit_returns_to_commit_and_a_rejected_one_keeps_the_review()
 }
 
 #[test]
+fn a_created_commit_names_itself_on_the_page() -> Result<(), Box<dyn std::error::Error>> {
+    let mut root = on_commit_page(&Ready);
+    approve_a_commit(&mut root);
+    let created = CommitOutput::new(
+        b"[main 1a2b3c4] feat: open the commit page\n".to_vec(),
+        Vec::new(),
+    )
+    .with_created(CreatedCommit {
+        abbreviated_oid: "1a2b3c4".into(),
+        summary: "feat: open the commit page".into(),
+    });
+    root.commit.conclude_submission(&Services, Ok(created));
+
+    assert!(!root.commit.editing());
+    let text = rendered(&draw(&mut root)?);
+    assert!(
+        text.contains("Committed 1a2b3c4 feat: open the commit page"),
+        "{text}"
+    );
+    assert!(text.contains("[enter] start commit  [o] result"), "{text}");
+    assert!(!text.contains("Start commit unavailable"), "{text}");
+    assert!(!text.contains("Commit created."), "{text}");
+    Ok(())
+}
+
+#[test]
 fn a_failed_review_survives_navigation_refresh_and_cancelling_new_authoring()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut root = rejected_review_with(&Ready);

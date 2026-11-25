@@ -321,8 +321,18 @@ impl CommitView {
         match result {
             Ok(output) => {
                 self.pending = None;
+                let headline = output.created().map_or_else(
+                    || "Commit created.".to_owned(),
+                    |created| {
+                        format!(
+                            "Committed {} {}",
+                            visible(&created.abbreviated_oid),
+                            visible(&created.summary)
+                        )
+                    },
+                );
                 format!(
-                    "Commit created.\n{}{}",
+                    "{headline}\n{}{}",
                     String::from_utf8_lossy(output.stdout()),
                     String::from_utf8_lossy(output.stderr())
                 )

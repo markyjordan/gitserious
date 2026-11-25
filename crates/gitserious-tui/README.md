@@ -81,7 +81,8 @@ The footer leads with an orange EDIT badge and the step's keys, and ends with
 `/`, and Esc reach it. Tab and nav bar clicks still switch sections, and the
 draft is still there on return. Quit and Ctrl+C ask before discarding an
 unsaved draft. Submission restores the terminal while Git runs, then returns
-to a refreshed overview with the result; `o` opens a scrollable full result.
+to a refreshed overview that names the new commit by its abbreviated hash and
+first line; `o` opens a scrollable full result.
 Conflicts and the staged index are checked at submission: with conflicted
 paths or nothing staged, Review stays open with the reason under its commit
 row, and Review shows that reason before Enter when it already holds. A commit
