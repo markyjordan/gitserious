@@ -42,6 +42,26 @@ fn opening_commit_matches_navigating_there_and_enter_authors_with_nothing_staged
 }
 
 #[test]
+fn enter_on_a_blocked_commit_page_keeps_the_blocker_as_the_message()
+-> Result<(), Box<dyn std::error::Error>> {
+    let workspace = Unavailable;
+    let mut opened = Root::new(InitialPage::Commit, of(&workspace), &[]);
+    let before = rendered(&draw(&mut opened)?);
+    assert!(before.contains("Start commit unavailable"), "{before}");
+
+    for code in [KeyCode::Enter, KeyCode::Char('c')] {
+        assert_eq!(opened.handle_event(key(code), of(&workspace), &[]), None);
+        assert!(!opened.commit.editing());
+        assert!(opened.commit.notice().is_empty());
+        assert_eq!(opened.commit.blocker(), Some("repository unavailable"));
+        let after = rendered(&draw(&mut opened)?);
+        assert_eq!(after, before);
+        assert!(!after.contains("[o] result"), "{after}");
+    }
+    Ok(())
+}
+
+#[test]
 fn a_missing_repository_blocks_the_commit_page_and_leaves_the_other_pages_open() {
     let workspace = Unavailable;
     let mut opened = Root::new(InitialPage::Commit, of(&workspace), &[]);
