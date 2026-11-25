@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use gitserious_app::{
     AuthoredCommit, BranchState, CitedCommit, CommitAuthoringContext, CommitOutput, CommitServices,
     CommitTaxonomy, CommitWorkspace, CommitWriter, ConfigurationServices, ConfigurationWorkspace,
-    FileEditor, GitOperation, GlobalConfiguration, GlobalConfigurationStore, IndexWriter,
-    ProjectConfiguration, ProjectConfigurationStore, ProjectRevision, RepositoryLocator,
-    RepositoryRoot, RepositoryStatus, RepositoryStatusReader, StatusEntry, StoredProject,
-    SubmitError, WorktreePaths,
+    DraftStore, FileEditor, GitOperation, GlobalConfiguration, GlobalConfigurationStore,
+    IndexWriter, ProjectConfiguration, ProjectConfigurationStore, ProjectRevision,
+    RepositoryLocator, RepositoryRoot, RepositoryStatus, RepositoryStatusReader, SavedDraft,
+    StatusEntry, StoredProject, SubmitError, WorktreePaths,
 };
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitProvenance, CommitSubject,
@@ -1137,5 +1137,48 @@ fn only_a_policy_that_does_not_load_is_offered_to_the_editor() -> Result<(), Box
             PathBuf::from("gitserious.toml")
         )]
     );
+    Ok(())
+}
+
+#[derive(Default)]
+struct Drafts(RefCell<Option<SavedDraft>>);
+
+impl DraftStore for Drafts {
+    fn load(&self, _: &RepositoryRoot) -> Result<Option<SavedDraft>, String> {
+        Ok(self.0.borrow().clone())
+    }
+    fn save(&self, _: &RepositoryRoot, draft: &SavedDraft) -> Result<(), String> {
+        *self.0.borrow_mut() = Some(draft.clone());
+        Ok(())
+    }
+    fn discard(&self, _: &RepositoryRoot) -> Result<(), String> {
+        *self.0.borrow_mut() = None;
+        Ok(())
+    }
+}
+
+#[test]
+fn drafts_are_kept_only_through_a_draft_store() -> Result<(), Box<dyn Error>> {
+    let session = Session::new(Vec::new())?;
+    let draft = SavedDraft {
+        taxonomy: "team".into(),
+        fingerprint: "sha256:00".into(),
+        commit_type: "note".into(),
+        subject: ": kept".into(),
+        properties: Vec::new(),
+        breaking_change: String::new(),
+    };
+    let unwired = session.commit();
+    assert!(!unwired.keeps_drafts());
+    unwired.save_draft(&draft)?;
+    assert_eq!(unwired.saved_draft(), None);
+
+    let drafts = Drafts::default();
+    let commit = session.commit().drafting(&drafts);
+    assert!(commit.keeps_drafts());
+    commit.save_draft(&draft)?;
+    assert_eq!(commit.saved_draft(), Some(draft));
+    commit.discard_draft()?;
+    assert_eq!(commit.saved_draft(), None);
     Ok(())
 }

@@ -30,6 +30,12 @@ impl CommitTaxonomy {
         validate_commit_draft_with_provenance(&provenance, draft)
     }
 
+    /// The taxonomy's semantic fingerprint, which changes with any change to its policy.
+    #[must_use]
+    pub fn fingerprint(&self) -> gitserious_core::Fingerprint {
+        fingerprint_taxonomy(&self.taxonomy)
+    }
+
     /// Returns the taxonomy identity.
     #[must_use]
     pub const fn id(&self) -> &TaxonomyId {

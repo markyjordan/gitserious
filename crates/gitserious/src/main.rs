@@ -10,8 +10,8 @@ use gitserious_cli::{
     write_init_outcome,
 };
 use gitserious_fs::{
-    GitCommitWriter, GitEditor, GitIndexWriter, GitRepositoryInitializer, GitRepositoryLocator,
-    GitRepositoryStatusReader, GitWorktreePaths, SystemGlobalPathResolver,
+    GitCommitWriter, GitDraftStore, GitEditor, GitIndexWriter, GitRepositoryInitializer,
+    GitRepositoryLocator, GitRepositoryStatusReader, GitWorktreePaths, SystemGlobalPathResolver,
     TomlGlobalConfigurationStore, TomlProjectStore,
 };
 use gitserious_tui::{Capabilities, HelpPage, InitialPage, RatatuiInteractiveUi};
@@ -48,7 +48,8 @@ fn main() -> ExitCode {
             )
             .citing(&worktree)
             .staging(&GitIndexWriter)
-            .editing(&GitEditor);
+            .editing(&GitEditor)
+            .drafting(&GitDraftStore);
             let config = ConfigurationServices::new(
                 &GitRepositoryLocator,
                 &TomlProjectStore,

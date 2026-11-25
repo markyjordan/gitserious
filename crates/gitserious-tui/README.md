@@ -109,15 +109,20 @@ that Enter resumes.
 The footer leads with an orange EDIT badge and the step's keys, and ends with
 `tab nav bar`. The editor takes every key except Tab and Shift+Tab, so `q`,
 `/`, and Esc reach it. Tab and nav bar clicks still switch sections, and the
-draft is still there on return. Quit and Ctrl+C ask before discarding an
-unsaved draft. Submission restores the terminal while Git runs, then returns
+draft is still there on return. The draft is saved as it changes to
+`git rev-parse --git-path gitserious/draft.toml`, so each work tree keeps its own
+and Git never commits it; writes wait half a second between them, and leaving
+the page, losing focus, or quitting saves at once. Quit and Ctrl+C therefore
+leave without asking. The next Commit offers the draft back with `[enter] resume
+draft`, says when its taxonomy changed since, and `c` starts a new commit
+instead. A successful commit or a confirmed discard deletes the draft. Submission restores the terminal while Git runs, then returns
 to a refreshed overview that names the new commit by its abbreviated hash and
 first line; `o` opens a scrollable full result.
 Conflicts and the staged index are checked at submission: with conflicted
 paths or nothing staged, Review stays open with the reason under its commit
 row, and Review shows that reason before Enter when it already holds. A commit
-Git rejects retains its reviewed message and composer; Enter resumes review. `c` starts a new commit. Quit asks
-before discarding a retained review. Direct `gitserious commit` opens the type
+Git rejects retains its reviewed message and composer; Enter resumes review. `c` starts a new commit. A retained
+review is saved as a draft too, so quitting keeps it. Direct `gitserious commit` opens the type
 picker when changes are staged, and this Commit page otherwise. Cancelling
 authoring returns to the page.
 

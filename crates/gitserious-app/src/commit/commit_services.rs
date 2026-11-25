@@ -3,9 +3,10 @@ use std::path::{Path, PathBuf};
 
 use super::operation_refusal;
 use crate::{
-    AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitWriter, FileEditor, GitOperation,
-    IndexWriter, ProjectConfigurationStore, RepositoryLocator, RepositoryStatus,
-    RepositoryStatusReader, WorktreePaths, prepare_commit_with_taxonomy, validate_reviewed_commit,
+    AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitWriter, DraftStore, FileEditor,
+    GitOperation, IndexWriter, ProjectConfigurationStore, RepositoryLocator, RepositoryStatus,
+    RepositoryStatusReader, SavedDraft, WorktreePaths, prepare_commit_with_taxonomy,
+    validate_reviewed_commit,
 };
 
 /// Application operations exposed to the Commit page.
@@ -48,6 +49,22 @@ pub trait CommitWorkspace {
     /// Opens `gitserious.toml` in Git's editor and waits for it to close.
     fn edit_policy(&self) -> Result<(), String> {
         Err(EDITING_UNAVAILABLE.into())
+    }
+    /// Whether drafts survive leaving Commit, so quitting need not ask before dropping one.
+    fn keeps_drafts(&self) -> bool {
+        false
+    }
+    /// The draft saved in this work tree, if any.
+    fn saved_draft(&self) -> Option<SavedDraft> {
+        None
+    }
+    /// Saves `draft` as this work tree's draft. Without a store nothing is kept.
+    fn save_draft(&self, _draft: &SavedDraft) -> Result<(), String> {
+        Ok(())
+    }
+    /// Deletes this work tree's saved draft.
+    fn discard_draft(&self) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -92,6 +109,7 @@ pub struct CommitServices<'a, L: ?Sized, S: ?Sized, W: ?Sized> {
     paths: Option<&'a dyn WorktreePaths>,
     index: Option<&'a dyn IndexWriter>,
     editor: Option<&'a dyn FileEditor>,
+    drafts: Option<&'a dyn DraftStore>,
 }
 
 impl<'a, L, S, W> CommitServices<'a, L, S, W>
@@ -119,6 +137,7 @@ where
             paths: None,
             index: None,
             editor: None,
+            drafts: None,
         }
     }
 
@@ -139,6 +158,13 @@ where
     #[must_use]
     pub fn editing(mut self, editor: &'a dyn FileEditor) -> Self {
         self.editor = Some(editor);
+        self
+    }
+
+    /// Keeps drafts in `drafts` so they survive leaving Commit.
+    #[must_use]
+    pub fn drafting(mut self, drafts: &'a dyn DraftStore) -> Self {
+        self.drafts = Some(drafts);
         self
     }
 
@@ -230,6 +256,39 @@ where
                 .locator
                 .locate(self.start)
                 .is_ok_and(|root| self.store.load(&root).is_err())
+    }
+
+    fn keeps_drafts(&self) -> bool {
+        self.drafts.is_some()
+    }
+
+    fn saved_draft(&self) -> Option<SavedDraft> {
+        let drafts = self.drafts?;
+        let root = self.locator.locate(self.start).ok()?;
+        // An unreadable draft is not offered; the next save replaces it.
+        drafts.load(&root).ok().flatten()
+    }
+
+    fn save_draft(&self, draft: &SavedDraft) -> Result<(), String> {
+        let Some(drafts) = self.drafts else {
+            return Ok(());
+        };
+        let root = self
+            .locator
+            .locate(self.start)
+            .map_err(|error| error.to_string())?;
+        drafts.save(&root, draft)
+    }
+
+    fn discard_draft(&self) -> Result<(), String> {
+        let Some(drafts) = self.drafts else {
+            return Ok(());
+        };
+        let root = self
+            .locator
+            .locate(self.start)
+            .map_err(|error| error.to_string())?;
+        drafts.discard(&root)
     }
 
     fn edit_policy(&self) -> Result<(), String> {

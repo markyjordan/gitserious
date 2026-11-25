@@ -1,7 +1,9 @@
 use super::citation_picker::{CitationPickerAction, CitationPickerState};
 use super::composer::MessageComposer;
 use crate::shared::components::confirmation_dialog::{Answer, ConfirmationDialog, DISCARD};
-use gitserious_app::{AuthoredCommit, CitedCommit, CommitAuthoringContext, CommitTaxonomy};
+use gitserious_app::{
+    AuthoredCommit, CitedCommit, CommitAuthoringContext, CommitTaxonomy, SavedDraft,
+};
 use gitserious_core::{CommitDraft, CommitMessage, CommitTypeDefinition, ConditionalApplicability};
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -161,6 +163,62 @@ impl AuthoringSession {
         );
         session.context = Some(context);
         session
+    }
+
+    /// What a saved draft keeps of this session: nothing until a type is chosen and
+    /// something is written, since an empty composer has nothing to lose.
+    pub(crate) fn saved_draft(&self) -> Option<SavedDraft> {
+        if self.stage == Stage::SelectType || !self.composer.dirty() {
+            return None;
+        }
+        let taxonomy = self.taxonomy()?;
+        let (subject, properties, breaking_change) = self.composer.saved_fields();
+        Some(SavedDraft {
+            taxonomy: taxonomy.id().to_string(),
+            fingerprint: taxonomy.fingerprint().to_string(),
+            commit_type: self.definition().id().to_string(),
+            subject,
+            properties,
+            breaking_change,
+        })
+    }
+
+    /// Opens `saved` in the composer under `context`, or says why its taxonomy or type is
+    /// gone from the policy.
+    pub(crate) fn restore(
+        context: CommitAuthoringContext,
+        saved: &SavedDraft,
+    ) -> Result<Self, String> {
+        let catalog = context
+            .taxonomies()
+            .iter()
+            .position(|taxonomy| taxonomy.id().as_str() == saved.taxonomy)
+            .ok_or_else(|| {
+                format!(
+                    "The saved draft's taxonomy {} is no longer in gitserious.toml.",
+                    saved.taxonomy
+                )
+            })?;
+        let mut session = Self::with_context(context);
+        session.preselected = false;
+        session.select_type_catalog(TypeCatalogKind::Taxonomy(catalog));
+        session.selected_type = session
+            .definitions
+            .iter()
+            .position(|definition| definition.id().as_str() == saved.commit_type)
+            .ok_or_else(|| {
+                format!(
+                    "The saved draft's type {} is no longer in {}.",
+                    saved.commit_type, saved.taxonomy
+                )
+            })?;
+        session.composer = MessageComposer::new(session.definition().clone());
+        session
+            .composer
+            .fill(&saved.subject, &saved.properties, &saved.breaking_change);
+        session.review = None;
+        session.stage = Stage::Compose;
+        Ok(session)
     }
 
     /// The taxonomy whose types the picker lists, absent without a project context.
