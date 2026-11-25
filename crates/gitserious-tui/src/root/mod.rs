@@ -42,6 +42,8 @@ pub struct Capabilities<'a> {
 pub(crate) enum SessionRequest {
     /// Hand the approved commit to Git, which may need the terminal.
     Submit,
+    /// Open `gitserious.toml` in Git's editor, which takes the terminal.
+    EditPolicy,
     Quit,
 }
 
@@ -162,6 +164,17 @@ impl Root {
         capabilities: Capabilities<'_>,
     ) -> io::Result<()> {
         self.commit.submit(terminal, capabilities.commit)
+    }
+
+    /// Runs Git's editor on `gitserious.toml`, then rereads what the project lacks.
+    pub(crate) fn edit_policy(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        capabilities: Capabilities<'_>,
+    ) -> io::Result<()> {
+        self.commit.edit_policy(terminal, capabilities.commit)?;
+        self.commit.observe(&capabilities.project.overview());
+        Ok(())
     }
 }
 

@@ -79,7 +79,11 @@ a repository without `gitserious.toml`, Enter runs gitserious init only; where
 no repository exists, it offers to initialize git and gitserious. Either opens
 Home's initialization editor, and finishing or cancelling it returns to Commit.
 A new `gitserious.toml` is left untracked, and the page suggests committing it
-on its own. A home directory or filesystem root, a bare repository, a directory
+on its own. A `gitserious.toml` that does not load names the line and
+column where it breaks, or says to resolve it in Git when a merge left conflict
+markers. `e` then opens it in Git's editor (`git var GIT_EDITOR`), with the
+terminal handed over as for a commit, and Commit checks it again when the editor
+exits; `r` checks again by hand. A home directory or filesystem root, a bare repository, a directory
 inside `.git`, and a repository Git refuses for its owner get no offer, only
 what to do instead; the last names the `git config --global --add
 safe.directory` command. Without a repository the page shows the whole

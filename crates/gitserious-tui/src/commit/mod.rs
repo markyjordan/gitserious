@@ -48,6 +48,8 @@ pub(crate) enum CommitRequest {
     ToggleFile,
     /// Open the shared initialization editor, which returns to Commit.
     Initialize,
+    /// Open `gitserious.toml` in Git's editor, which needs the terminal.
+    EditPolicy,
 }
 
 /// What Commit's `enter` sets up when the directory is not ready to commit from.
@@ -100,6 +102,8 @@ pub(crate) struct CommitView {
     popup: Option<(Popup, u16)>,
     /// Whether the workspace can write the index, read at each refresh.
     can_stage: bool,
+    /// Whether `gitserious.toml` exists but does not load, so `e` opens it.
+    can_edit_policy: bool,
     /// The directory Commit started in and what its project lacks, from the last overview.
     directory: Option<PathBuf>,
     setup: Option<Setup>,
@@ -120,6 +124,7 @@ impl CommitView {
                 return Some(CommitRequest::Author);
             }
             KeyCode::Enter if self.setup.is_some() => return Some(CommitRequest::Initialize),
+            KeyCode::Char('e') if self.can_edit_policy => return Some(CommitRequest::EditPolicy),
             KeyCode::Char('a') if self.stages_tracked() => {
                 return Some(CommitRequest::StageTracked);
             }
@@ -206,7 +211,9 @@ impl CommitView {
                 self.refresh(commit);
                 self.authoring = self.pending.take();
             }
-            CommitRequest::Submit | CommitRequest::Initialize => return Some(request),
+            CommitRequest::Submit | CommitRequest::Initialize | CommitRequest::EditPolicy => {
+                return Some(request);
+            }
             CommitRequest::StageTracked => {
                 let written = commit.stage_tracked();
                 self.conclude_staging(commit, written);
@@ -337,6 +344,9 @@ impl CommitView {
         } else if let Some(setup) = self.setup {
             commands.push((setup.command(), CommitRequest::Initialize));
         }
+        if self.can_edit_policy {
+            commands.push(("Edit gitserious.toml", CommitRequest::EditPolicy));
+        }
         if self.has_pending_review() {
             commands.push(("Resume review", CommitRequest::Resume));
         }
@@ -363,6 +373,9 @@ impl CommitView {
             }
             if self.stages_tracked() {
                 hints.push(("a", "stage tracked"));
+            }
+            if self.can_edit_policy {
+                hints.push(("e", "edit gitserious.toml"));
             }
             hints.push(("r", "refresh"));
             return hints;
@@ -499,11 +512,13 @@ impl CommitView {
         match commit.repository_status() {
             Ok(snapshot) => {
                 self.can_stage = commit.can_stage();
+                self.can_edit_policy = commit.can_edit_policy();
                 self.snapshot = Some(snapshot);
                 self.blocker = commit.prepare_commit().err();
             }
             Err(error) => {
                 self.snapshot = None;
+                self.can_edit_policy = false;
                 self.blocker = Some(error);
             }
         }
@@ -521,6 +536,18 @@ impl CommitView {
                 .authoring
                 .as_ref()
                 .is_some_and(|session| session.composer.dirty())
+    }
+
+    /// Opens `gitserious.toml` in Git's editor with the terminal restored, then checks it again.
+    pub(crate) fn edit_policy(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        commit: &dyn CommitWorkspace,
+    ) -> io::Result<()> {
+        let edited = crate::runtime::suspended(terminal, || commit.edit_policy())?;
+        self.notice = edited.err().unwrap_or_default();
+        self.refresh(commit);
+        Ok(())
     }
 
     /// Hands the approved commit to Git with the terminal restored, since hooks and
@@ -629,6 +656,8 @@ impl CommitView {
             "[enter] resume review"
         } else if let (Some(_), Some(setup)) = (&self.blocker, self.setup) {
             setup.action()
+        } else if self.blocker.is_some() && self.can_edit_policy {
+            "[e] edit gitserious.toml  [r] check again"
         } else if self.blocker.is_some() {
             "Start commit unavailable"
         } else if self.stages_tracked()

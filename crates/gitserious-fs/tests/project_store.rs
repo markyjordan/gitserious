@@ -141,7 +141,7 @@ fn invalid_documents_name_their_defect() -> Result<(), Box<dyn Error>> {
             .ok_or("fixture has a taxonomy")?..]
     );
     let cases = [
-        ("config-version = 1\n[[", "TOML parse error"),
+        ("config-version = 1\n[[", "unquoted keys cannot be empty"),
         (
             &CUSTOM_CONVENTIONAL.replace("config-version = 1", "config-version = 2"),
             "unsupported project config version 2",
@@ -266,5 +266,38 @@ fn symlinked_project_file_is_refused() -> Result<(), Box<dyn Error>> {
         Err(ProjectStateError::UnsafePath(_))
     ));
     assert!(Path::new(&elsewhere).is_file());
+    Ok(())
+}
+
+#[test]
+fn a_toml_error_names_the_file_line_and_column_and_conflict_markers_name_git()
+-> Result<(), Box<dyn Error>> {
+    let (_directory, root) = repository()?;
+    let load = |contents: &str| -> Result<String, Box<dyn Error>> {
+        fs::write(config_path(&root), contents)?;
+        Ok(TomlProjectStore
+            .load(&root)
+            .err()
+            .ok_or("an invalid file loaded")?
+            .to_string())
+    };
+
+    assert_eq!(
+        load("config-version = 1\ndefault-taxonomy = [\n= 2\n")?,
+        "invalid project configuration in gitserious.toml at line 3, column 1: unexpected `=` in \
+         array, expected value, `]`"
+    );
+    let schema = load("config-version = 1\ndefault-taxonomy = 7\ntaxonomies = []\n")?;
+    assert!(
+        schema
+            .starts_with("invalid project configuration in gitserious.toml at line 2, column 20:"),
+        "{schema}"
+    );
+    assert!(schema.contains("expected a string"), "{schema}");
+    assert_eq!(
+        load("config-version = 1\n<<<<<<< HEAD\ndefault-taxonomy = \"a\"\n=======\n>>>>>>> b\n")?,
+        "gitserious.toml has Git conflict markers from line 2. Resolve gitserious.toml in Git, \
+         then refresh."
+    );
     Ok(())
 }

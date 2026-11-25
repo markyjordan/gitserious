@@ -102,11 +102,22 @@ fn parse_configuration(
 ) -> Result<ProjectConfiguration, ProjectStateError> {
     let format = |message: String| ProjectStateError::Format {
         path: path.to_path_buf(),
+        location: None,
         message,
     };
     let text = std::str::from_utf8(contents).map_err(|error| format(error.to_string()))?;
+    if let Some(line) = conflict_marker_line(text) {
+        return Err(ProjectStateError::ConflictMarkers {
+            path: path.to_path_buf(),
+            line,
+        });
+    }
     let wire: ProjectConfigurationWire =
-        toml::from_str(text).map_err(|error| format(error.to_string()))?;
+        toml::from_str(text).map_err(|error| ProjectStateError::Format {
+            path: path.to_path_buf(),
+            location: error.span().map(|span| TextLocation::of(text, span.start)),
+            message: error.message().trim().to_owned(),
+        })?;
     let default = TaxonomyId::new(wire.default_taxonomy)
         .map_err(|error| format(format!("default-taxonomy: {error}")))?;
     let taxonomies = wire
@@ -118,6 +129,17 @@ fn parse_configuration(
         .map_err(format)?;
     ProjectConfiguration::new(wire.config_version, default, taxonomies)
         .map_err(|error| format(error.to_string()))
+}
+
+/// The first line of `text` that a Git merge conflict left, which no TOML document holds.
+fn conflict_marker_line(text: &str) -> Option<usize> {
+    text.lines()
+        .position(|line| {
+            ["<<<<<<< ", ">>>>>>> ", "======="]
+                .iter()
+                .any(|marker| line.starts_with(marker) || line == marker.trim_end())
+        })
+        .map(|index| index + 1)
 }
 
 fn render_configuration(configuration: &ProjectConfiguration) -> Result<String, ProjectStateError> {
@@ -215,12 +237,39 @@ struct ProjectConfigurationWire {
     taxonomies: Vec<TaxonomyWire>,
 }
 
+/// Where in a file a problem starts, counted from 1 as editors count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TextLocation {
+    pub line: usize,
+    pub column: usize,
+}
+
+impl TextLocation {
+    /// The line and column of byte `offset` in `text`, the column in characters.
+    fn of(text: &str, offset: usize) -> Self {
+        let before = &text[..offset.min(text.len())];
+        let line_start = before.rfind('\n').map_or(0, |index| index + 1);
+        Self {
+            line: before.matches('\n').count() + 1,
+            column: before[line_start..].chars().count() + 1,
+        }
+    }
+}
+
 /// Project persistence failure.
 #[derive(Debug)]
 pub enum ProjectStateError {
+    /// The file is not a valid project configuration. `location` is where the parser
+    /// stopped, when it knows.
     Format {
         path: PathBuf,
+        location: Option<TextLocation>,
         message: String,
+    },
+    /// A Git merge left conflict markers in the file, first at `line`.
+    ConflictMarkers {
+        path: PathBuf,
+        line: usize,
     },
     Serialize(String),
     Collision(PathBuf),
@@ -236,10 +285,29 @@ pub enum ProjectStateError {
 impl Display for ProjectStateError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Format { path, message } => write!(
+            Self::Format {
+                path,
+                location: Some(TextLocation { line, column }),
+                message,
+            } => write!(
                 formatter,
-                "invalid project configuration {}: {message}",
-                path.display()
+                "invalid project configuration in {} at line {line}, column {column}: {message}",
+                file_name(path)
+            ),
+            Self::Format {
+                path,
+                location: None,
+                message,
+            } => write!(
+                formatter,
+                "invalid project configuration in {}: {message}",
+                file_name(path)
+            ),
+            Self::ConflictMarkers { path, line } => write!(
+                formatter,
+                "{name} has Git conflict markers from line {line}. Resolve {name} in Git, \
+                 then refresh.",
+                name = file_name(path)
             ),
             Self::Serialize(message) => {
                 write!(
@@ -276,3 +344,11 @@ impl Display for ProjectStateError {
 }
 
 impl Error for ProjectStateError {}
+
+/// `path`'s file name, which every project error names since the file sits at the root.
+fn file_name(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}

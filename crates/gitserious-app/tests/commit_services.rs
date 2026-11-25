@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use gitserious_app::{
     AuthoredCommit, BranchState, CitedCommit, CommitAuthoringContext, CommitOutput, CommitServices,
     CommitTaxonomy, CommitWorkspace, CommitWriter, ConfigurationServices, ConfigurationWorkspace,
-    GitOperation, GlobalConfiguration, GlobalConfigurationStore, IndexWriter, ProjectConfiguration,
-    ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot,
-    RepositoryStatus, RepositoryStatusReader, StatusEntry, StoredProject, SubmitError,
-    WorktreePaths,
+    FileEditor, GitOperation, GlobalConfiguration, GlobalConfigurationStore, IndexWriter,
+    ProjectConfiguration, ProjectConfigurationStore, ProjectRevision, RepositoryLocator,
+    RepositoryRoot, RepositoryStatus, RepositoryStatusReader, StatusEntry, StoredProject,
+    SubmitError, WorktreePaths,
 };
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitProvenance, CommitSubject,
@@ -1101,6 +1101,41 @@ fn staging_writes_the_located_repository_index_only_through_an_index_writer()
     assert_eq!(
         commit.stage_tracked().err().as_deref(),
         Some("locator unavailable")
+    );
+    Ok(())
+}
+
+#[derive(Default)]
+struct Editor(RefCell<Vec<(RepositoryRoot, PathBuf)>>);
+
+impl FileEditor for Editor {
+    fn edit(&self, root: &RepositoryRoot, path: &Path) -> Result<(), String> {
+        self.0.borrow_mut().push((root.clone(), path.to_path_buf()));
+        Ok(())
+    }
+}
+
+#[test]
+fn only_a_policy_that_does_not_load_is_offered_to_the_editor() -> Result<(), Box<dyn Error>> {
+    let session = Session::new(Vec::new())?;
+    let editor = Editor::default();
+    assert!(!session.commit().can_edit_policy(), "no editor is wired");
+    assert!(
+        !session.commit().editing(&editor).can_edit_policy(),
+        "the policy loads"
+    );
+
+    *session.project.0.borrow_mut() = Err("invalid project configuration");
+    let commit = session.commit().editing(&editor);
+    assert!(commit.can_edit_policy());
+    commit.edit_policy()?;
+
+    assert_eq!(
+        editor.0.borrow().as_slice(),
+        [(
+            session.locator.root.clone(),
+            PathBuf::from("gitserious.toml")
+        )]
     );
     Ok(())
 }
