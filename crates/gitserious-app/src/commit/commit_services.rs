@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 
 use super::operation_refusal;
 use crate::{
-    AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitWriter, GitOperation, IndexWriter,
-    ProjectConfigurationStore, RepositoryLocator, RepositoryStatus, RepositoryStatusReader,
-    WorktreePaths, prepare_commit_with_taxonomy, validate_reviewed_commit,
+    AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitWriter, FileEditor, GitOperation,
+    IndexWriter, ProjectConfigurationStore, RepositoryLocator, RepositoryStatus,
+    RepositoryStatusReader, WorktreePaths, prepare_commit_with_taxonomy, validate_reviewed_commit,
 };
 
 /// Application operations exposed to the Commit page.
@@ -40,7 +40,19 @@ pub trait CommitWorkspace {
     fn unstage(&self, _paths: &[PathBuf]) -> Result<(), String> {
         Err(STAGING_UNAVAILABLE.into())
     }
+    /// Whether `gitserious.toml` exists but does not load, and this page can open an editor
+    /// on it.
+    fn can_edit_policy(&self) -> bool {
+        false
+    }
+    /// Opens `gitserious.toml` in Git's editor and waits for it to close.
+    fn edit_policy(&self) -> Result<(), String> {
+        Err(EDITING_UNAVAILABLE.into())
+    }
 }
+
+const EDITING_UNAVAILABLE: &str = "This Commit page cannot open an editor.";
+const POLICY_FILE: &str = "gitserious.toml";
 
 const STAGING_UNAVAILABLE: &str = "This Commit page cannot write the index.";
 
@@ -79,6 +91,7 @@ pub struct CommitServices<'a, L: ?Sized, S: ?Sized, W: ?Sized> {
     start: &'a Path,
     paths: Option<&'a dyn WorktreePaths>,
     index: Option<&'a dyn IndexWriter>,
+    editor: Option<&'a dyn FileEditor>,
 }
 
 impl<'a, L, S, W> CommitServices<'a, L, S, W>
@@ -105,6 +118,7 @@ where
             start,
             paths: None,
             index: None,
+            editor: None,
         }
     }
 
@@ -118,6 +132,13 @@ where
     #[must_use]
     pub fn staging(mut self, index: &'a dyn IndexWriter) -> Self {
         self.index = Some(index);
+        self
+    }
+
+    /// Opens `gitserious.toml` through `editor` when its policy does not load.
+    #[must_use]
+    pub fn editing(mut self, editor: &'a dyn FileEditor) -> Self {
+        self.editor = Some(editor);
         self
     }
 
@@ -201,6 +222,23 @@ where
 
     fn can_stage(&self) -> bool {
         self.index.is_some()
+    }
+
+    fn can_edit_policy(&self) -> bool {
+        self.editor.is_some()
+            && self
+                .locator
+                .locate(self.start)
+                .is_ok_and(|root| self.store.load(&root).is_err())
+    }
+
+    fn edit_policy(&self) -> Result<(), String> {
+        let editor = self.editor.ok_or(EDITING_UNAVAILABLE)?;
+        let root = self
+            .locator
+            .locate(self.start)
+            .map_err(|error| error.to_string())?;
+        editor.edit(&root, Path::new(POLICY_FILE))
     }
 
     fn stage_tracked(&self) -> Result<(), String> {

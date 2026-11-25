@@ -10,7 +10,7 @@ use gitserious_cli::{
     write_init_outcome,
 };
 use gitserious_fs::{
-    GitCommitWriter, GitIndexWriter, GitRepositoryInitializer, GitRepositoryLocator,
+    GitCommitWriter, GitEditor, GitIndexWriter, GitRepositoryInitializer, GitRepositoryLocator,
     GitRepositoryStatusReader, GitWorktreePaths, SystemGlobalPathResolver,
     TomlGlobalConfigurationStore, TomlProjectStore,
 };
@@ -47,7 +47,8 @@ fn main() -> ExitCode {
                 &directory,
             )
             .citing(&worktree)
-            .staging(&GitIndexWriter);
+            .staging(&GitIndexWriter)
+            .editing(&GitEditor);
             let config = ConfigurationServices::new(
                 &GitRepositoryLocator,
                 &TomlProjectStore,
