@@ -16,9 +16,10 @@ pub mod test_support;
 
 pub use commit::{
     AuthoredCommit, BranchState, CitedCommit, CommitAuthoringContext, CommitOutput, CommitServices,
-    CommitTaxonomy, CommitWorkspace, CommitWriter, CreatedCommit, FileEditor, GitOperation,
-    IndexWriter, RepositoryStatus, RepositoryStatusReader, StatusEntry, SubmitError, WorktreePaths,
-    prepare_commit_with_taxonomy, validate_reviewed_commit,
+    CommitTaxonomy, CommitWorkspace, CommitWriter, CreatedCommit, DraftStore, FileEditor,
+    GitOperation, IndexWriter, RepositoryStatus, RepositoryStatusReader, SavedDraft, SavedProperty,
+    StatusEntry, SubmitError, WorktreePaths, prepare_commit_with_taxonomy,
+    validate_reviewed_commit,
 };
 pub use config::{
     ConfigurationError, ConfigurationServices, ConfigurationWorkspace, DraftEdit, DraftField,

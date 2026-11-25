@@ -6,6 +6,7 @@
 mod directory;
 mod git;
 mod git_commit;
+mod git_draft;
 mod git_editor;
 mod git_index;
 mod git_status;
@@ -19,6 +20,7 @@ mod taxonomy_wire;
 pub use directory::LocalDirectoryCreator;
 pub use git::{GitRepositoryError, GitRepositoryInitializer, GitRepositoryLocator};
 pub use git_commit::{GitCommitError, GitCommitWriter};
+pub use git_draft::GitDraftStore;
 pub use git_editor::GitEditor;
 pub use git_index::GitIndexWriter;
 pub use global::{GlobalPathError, SystemGlobalPathResolver};
