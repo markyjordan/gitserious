@@ -3,7 +3,7 @@ use std::fmt::{self, Display, Formatter};
 use std::io::{self, Write};
 use std::process::{Command, ExitStatus, Stdio};
 
-use gitserious_app::{CommitOutput, CommitWriter, RepositoryRoot};
+use gitserious_app::{CommitOutput, CommitWriter, CreatedCommit, RepositoryRoot};
 use gitserious_core::CommitMessage;
 
 /// Git-process implementation that commits the current staged index.
@@ -37,7 +37,12 @@ impl CommitWriter for GitCommitWriter {
             .map_err(GitCommitError::GitUnavailable)?;
 
         if output.status.success() {
-            Ok(CommitOutput::new(output.stdout, output.stderr))
+            let written = CommitOutput::new(output.stdout, output.stderr);
+            // The commit exists by now, so a failed read of HEAD must not report a failure.
+            Ok(match head(root) {
+                Some(created) => written.with_created(created),
+                None => written,
+            })
         } else {
             Err(GitCommitError::Rejected {
                 status: output.status,
@@ -46,6 +51,29 @@ impl CommitWriter for GitCommitWriter {
             })
         }
     }
+}
+
+/// `HEAD`'s abbreviated name and first line, as Git stores them.
+fn head(root: &RepositoryRoot) -> Option<CreatedCommit> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root.as_path())
+        .args([
+            "-c",
+            "log.showSignature=false",
+            "log",
+            "-1",
+            "--format=%h%x00%s",
+        ])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let (abbreviated_oid, summary) = text.trim_end_matches('\n').split_once('\0')?;
+    Some(CreatedCommit {
+        abbreviated_oid: abbreviated_oid.to_owned(),
+        summary: summary.to_owned(),
+    })
 }
 
 /// Failure to prepare a message file or create a Git commit.
