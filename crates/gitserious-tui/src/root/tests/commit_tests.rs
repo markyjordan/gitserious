@@ -76,6 +76,7 @@ fn enter_on_a_blocked_commit_page_keeps_the_blocker_as_the_message()
 fn a_submit_git_would_refuse_keeps_the_review_open_with_the_reason()
 -> Result<(), Box<dyn std::error::Error>> {
     for refusal in [
+        SubmitError::Operation(GitOperation::Merge),
         SubmitError::NothingStaged,
         SubmitError::Conflicts(vec!["src/net/retry.rs".into()]),
     ] {
