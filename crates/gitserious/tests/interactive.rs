@@ -10,7 +10,8 @@ use std::process::{Command, Output};
 use gitserious_app::{
     AuthoredCommit, CommitServices, CommitWorkspace, ConfigurationServices, ConfigurationWorkspace,
     GlobalConfiguration, GlobalConfigurationStore, LibraryTaxonomy, ProjectConfiguration,
-    ProjectOverview, ProjectServices, ProjectWorkspace, RepositoryInitializer, initialize_project,
+    ProjectOverview, ProjectServices, ProjectWorkspace, RepositoryInitializer, SubmitError,
+    initialize_project,
 };
 use gitserious_core::{
     CommitDraft, CommitSubject, CommitTypeDefinition, CommitTypeId, Description, SchemaVersion,
@@ -55,8 +56,6 @@ type GitCommitServices<'a> =
     CommitServices<'a, GitRepositoryLocator, TomlProjectStore, GitCommitWriter>;
 
 fn exercise(commit: &GitCommitServices<'_>, directory: &Path) -> Result<(), String> {
-    assert!(commit.prepare_commit().is_err());
-    git(directory, &["add", "file"]).map_err(|error| error.to_string())?;
     let context = commit.prepare_commit()?;
     let draft = CommitDraft::new(
         CommitTypeId::new("note").map_err(|error| error.to_string())?,
@@ -85,8 +84,13 @@ fn exercise(commit: &GitCommitServices<'_>, directory: &Path) -> Result<(), Stri
             .into_message()
             .map_err(|error| error.to_string())?,
     );
-    assert!(commit.submit_commit(&mismatch).is_err());
     let authored = AuthoredCommit::reviewed(taxonomy.id().clone(), draft, message.clone());
+    assert_eq!(
+        commit.submit_commit(&authored).err(),
+        Some(SubmitError::NothingStaged)
+    );
+    git(directory, &["add", "file"]).map_err(|error| error.to_string())?;
+    assert!(commit.submit_commit(&mismatch).is_err());
     // A normal Git hook rejects submission; the same reviewed object can then be retried.
     #[cfg(unix)]
     {
@@ -103,7 +107,7 @@ fn exercise(commit: &GitCommitServices<'_>, directory: &Path) -> Result<(), Stri
             .submit_commit(&authored)
             .err()
             .ok_or("hook did not reject commit")?;
-        assert!(error.contains("test-hook-rejected"));
+        assert!(error.to_string().contains("test-hook-rejected"));
         assert!(
             !support::head_exists(directory).map_err(|error| error.to_string())?,
             "a rejected first commit must leave HEAD unborn"
@@ -123,7 +127,9 @@ fn exercise(commit: &GitCommitServices<'_>, directory: &Path) -> Result<(), Stri
         );
         fs::remove_file(hook).map_err(|error| error.to_string())?;
     }
-    commit.submit_commit(&authored)?;
+    commit
+        .submit_commit(&authored)
+        .map_err(|error| error.to_string())?;
     let count =
         git(directory, &["rev-list", "--count", "HEAD"]).map_err(|error| error.to_string())?;
     assert_eq!(String::from_utf8_lossy(&count.stdout).trim(), "1");

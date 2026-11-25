@@ -7,7 +7,7 @@ use gitserious_app::{
     CommitTaxonomy, CommitWorkspace, CommitWriter, ConfigurationServices, ConfigurationWorkspace,
     GlobalConfiguration, GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore,
     ProjectRevision, RepositoryLocator, RepositoryRoot, RepositoryStatus, RepositoryStatusReader,
-    StatusEntry, StoredProject, WorktreePaths,
+    StatusEntry, StoredProject, SubmitError, WorktreePaths,
 };
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitProvenance, CommitSubject,
@@ -234,51 +234,60 @@ fn entry(path: &str, index: char, worktree: char) -> StatusEntry {
 }
 
 #[test]
-fn preparation_and_submission_require_a_staged_conflict_free_index() -> Result<(), Box<dyn Error>> {
+fn preparation_accepts_any_index() -> Result<(), Box<dyn Error>> {
+    for entries in [
+        vec![],
+        vec![entry("file", '.', 'M')],
+        vec![entry("file", '?', '?')],
+        vec![entry("file", 'U', 'U')],
+        vec![entry("file", 'M', '.')],
+    ] {
+        let session = Session::new(entries.clone())?;
+        session
+            .commit()
+            .prepare_commit()
+            .map_err(|error| format!("{entries:?}: {error}"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn submission_requires_a_staged_conflict_free_index() -> Result<(), Box<dyn Error>> {
     let cases = [
-        ("clean", vec![], Some("Stage changes")),
+        ("clean", vec![], Some(SubmitError::NothingStaged)),
         (
             "unstaged",
             vec![entry("file", '.', 'M')],
-            Some("Stage changes"),
+            Some(SubmitError::NothingStaged),
         ),
         (
             "untracked",
             vec![entry("file", '?', '?')],
-            Some("Stage changes"),
+            Some(SubmitError::NothingStaged),
         ),
         ("staged", vec![entry("file", 'M', '.')], None),
         ("partially staged", vec![entry("file", 'M', 'M')], None),
         (
             "conflicted",
             vec![entry("file", 'U', 'U')],
-            Some("conflicts"),
+            Some(SubmitError::Conflicts(vec!["file".into()])),
         ),
         (
             "conflict and staged",
             vec![entry("conflict", 'U', 'U'), entry("staged", 'M', '.')],
-            Some("conflicts"),
+            Some(SubmitError::Conflicts(vec!["conflict".into()])),
         ),
     ];
-    for (name, entries, blocker) in cases {
+    for (name, entries, refusal) in cases {
         let session = Session::new(entries)?;
         let commit = session.commit();
-        let preparation = commit.prepare_commit();
-        if let Some(blocker) = blocker {
-            let error = preparation
-                .err()
-                .ok_or("ineligible preparation succeeded")?;
-            assert!(error.contains(blocker), "{name}: {error}");
-            let error = commit
-                .submit_commit(&approved_project_commit()?)
-                .err()
-                .ok_or("ineligible submission succeeded")?;
-            assert!(error.contains(blocker), "{name}: {error}");
+        let authored = approved(&commit.prepare_commit()?)?;
+        let result = commit.submit_commit(&authored);
+        if let Some(refusal) = refusal {
+            assert_eq!(result.err(), Some(refusal), "{name}");
             assert!(session.writer.0.borrow().is_empty(), "{name}");
         } else {
-            let authored = approved(&preparation?)?;
-            let output = commit.submit_commit(&authored)?;
-            assert_eq!(output.stdout(), b"created\n", "{name}");
+            assert_eq!(result?.stdout(), b"created\n", "{name}");
             assert_eq!(
                 session.writer.0.borrow().as_slice(),
                 &[(
@@ -293,22 +302,39 @@ fn preparation_and_submission_require_a_staged_conflict_free_index() -> Result<(
 }
 
 #[test]
-fn locator_and_status_failures_stop_preparation_and_submission() -> Result<(), Box<dyn Error>> {
+fn submission_checks_the_index_before_reloading_policy() -> Result<(), Box<dyn Error>> {
+    let session = Session::new(Vec::new())?;
+    *session.project.0.borrow_mut() = Ok(None);
+
+    assert_eq!(
+        session
+            .commit()
+            .submit_commit(&approved_project_commit()?)
+            .err(),
+        Some(SubmitError::NothingStaged)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_locator_failure_stops_preparation_and_a_status_failure_stops_submission()
+-> Result<(), Box<dyn Error>> {
     for failure in ["locator unavailable", "status unavailable"] {
         let session = Session::new(vec![entry("file", 'M', '.')])?;
-        if failure.starts_with("locator") {
+        let locator = failure.starts_with("locator");
+        if locator {
             session.locator.failure.set(Some(failure));
         } else {
             *session.status.0.borrow_mut() = Err(failure.into());
         }
         let commit = session.commit();
-        assert_eq!(commit.prepare_commit().err().as_deref(), Some(failure));
         assert_eq!(
-            commit
-                .submit_commit(&approved_project_commit()?)
-                .err()
-                .as_deref(),
-            Some(failure)
+            commit.prepare_commit().err().as_deref(),
+            locator.then_some(failure)
+        );
+        assert_eq!(
+            commit.submit_commit(&approved_project_commit()?).err(),
+            Some(SubmitError::Failed(failure.into()))
         );
         assert!(session.writer.0.borrow().is_empty());
     }
@@ -610,7 +636,10 @@ fn an_uninitialized_project_names_init_before_authoring() -> Result<(), Box<dyn 
 
     for error in [
         commit.prepare_commit().err(),
-        commit.submit_commit(&approved_project_commit()?).err(),
+        commit
+            .submit_commit(&approved_project_commit()?)
+            .err()
+            .map(|error| error.to_string()),
     ] {
         let error = error.ok_or("an uninitialized project was accepted")?;
         assert!(
@@ -675,6 +704,7 @@ fn types_outside_the_taxonomy_never_reach_git() -> Result<(), Box<dyn Error>> {
     let error = commit
         .submit_commit(&custom)
         .err()
+        .map(|error| error.to_string())
         .ok_or("an unknown type was written")?;
 
     assert!(
@@ -712,7 +742,7 @@ fn an_incomplete_draft_is_revalidated_before_writing() -> Result<(), Box<dyn Err
         .err()
         .ok_or("an incomplete draft was written")?;
 
-    assert_eq!(error, expected.to_string());
+    assert_eq!(error, SubmitError::Failed(expected.to_string()));
     assert!(written(&session).is_empty());
     Ok(())
 }
@@ -731,7 +761,11 @@ fn a_writer_failure_is_reported_after_one_write_attempt() -> Result<(), Box<dyn 
     let authored = reviewed(commit.prepare_commit()?.initial_taxonomy(), "feat")?;
 
     assert_eq!(
-        commit.submit_commit(&authored).err().as_deref(),
+        commit
+            .submit_commit(&authored)
+            .err()
+            .map(|error| error.to_string())
+            .as_deref(),
         Some("writer failed")
     );
     assert_eq!(writer.0.get(), 1);
@@ -876,7 +910,11 @@ fn mismatched_reviewed_bytes_never_reach_git() -> Result<(), Box<dyn Error>> {
 
     for (authored, expected) in cases {
         assert_eq!(
-            commit.submit_commit(&authored).err().as_deref(),
+            commit
+                .submit_commit(&authored)
+                .err()
+                .map(|error| error.to_string())
+                .as_deref(),
             Some(expected)
         );
     }
@@ -926,6 +964,7 @@ fn unknown_taxonomies_and_cross_schema_drafts_never_reach_git() -> Result<(), Bo
     let error = commit
         .submit_commit(&forged)
         .err()
+        .map(|error| error.to_string())
         .ok_or("an unknown taxonomy was written")?;
     assert!(
         error.starts_with("taxonomy \"global-only\" is unavailable"),
@@ -944,7 +983,10 @@ fn unknown_taxonomies_and_cross_schema_drafts_never_reach_git() -> Result<(), Bo
         .err()
         .ok_or("a conventional fix validated under research")?;
     assert_eq!(
-        commit.submit_commit(&cross_schema).err(),
+        commit
+            .submit_commit(&cross_schema)
+            .err()
+            .map(|error| error.to_string()),
         Some(expected.to_string())
     );
     assert!(written(&session).is_empty());

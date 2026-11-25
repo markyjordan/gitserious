@@ -4,7 +4,7 @@ mod status_tree;
 use std::io;
 
 use gitserious_app::{
-    AuthoredCommit, BranchState, CommitOutput, CommitWorkspace, RepositoryStatus,
+    AuthoredCommit, BranchState, CommitOutput, CommitWorkspace, RepositoryStatus, SubmitError,
 };
 use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
@@ -298,7 +298,7 @@ impl CommitView {
     pub(crate) fn conclude_submission(
         &mut self,
         commit: &dyn CommitWorkspace,
-        result: Result<CommitOutput, String>,
+        result: Result<CommitOutput, SubmitError>,
     ) {
         let session = self.authoring.take();
         let authored = self.approved.take();

@@ -1,5 +1,5 @@
-use std::fmt::Display;
-use std::path::Path;
+use std::fmt::{self, Display};
+use std::path::{Path, PathBuf};
 
 use crate::{
     AuthoredCommit, CommitAuthoringContext, CommitOutput, CommitWriter, ProjectConfigurationStore,
@@ -10,10 +10,10 @@ use crate::{
 /// Application operations exposed to the Commit page.
 pub trait CommitWorkspace {
     fn repository_status(&self) -> Result<RepositoryStatus, String>;
-    /// The authoring context for a staged, conflict-free index under persisted project policy.
+    /// The authoring context under persisted project policy, whatever the index holds.
     fn prepare_commit(&self) -> Result<CommitAuthoringContext, String>;
     /// Writes the reviewed bytes once the index and persisted policy still accept them.
-    fn submit_commit(&self, authored: &AuthoredCommit) -> Result<CommitOutput, String>;
+    fn submit_commit(&self, authored: &AuthoredCommit) -> Result<CommitOutput, SubmitError>;
     /// Files and directories the message can cite. Empty when this page has no reader.
     fn cite_paths(&self) -> Vec<String> {
         Vec::new()
@@ -23,6 +23,29 @@ pub trait CommitWorkspace {
         Vec::new()
     }
 }
+
+/// Why a reviewed commit was not written.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SubmitError {
+    /// The index holds unmerged paths, in Git's order.
+    Conflicts(Vec<PathBuf>),
+    /// The index matches `HEAD`, so Git would record no change.
+    NothingStaged,
+    /// The repository, the persisted policy, the reviewed bytes, or Git refused the commit.
+    Failed(String),
+}
+
+impl Display for SubmitError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Conflicts(_) => formatter.write_str("Resolve Git conflicts before committing."),
+            Self::NothingStaged => formatter.write_str("Nothing is staged to commit."),
+            Self::Failed(reason) => formatter.write_str(reason),
+        }
+    }
+}
+
+impl std::error::Error for SubmitError {}
 
 /// Commit operations over the repository that contains `start`.
 pub struct CommitServices<'a, L: ?Sized, S: ?Sized, W: ?Sized> {
@@ -86,30 +109,27 @@ where
     }
 
     fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
-        let snapshot = self.repository_status()?;
-        if snapshot.has_conflicts() {
-            return Err("Resolve Git conflicts before starting a commit.".into());
-        }
-        if !snapshot.has_staged_changes() {
-            return Err("Stage changes with Git, then refresh to start a commit.".into());
-        }
         prepare_commit_with_taxonomy(self.locator, self.store, self.start)
             .map(|(_, context)| context)
             .map_err(|error| error.to_string())
     }
 
-    fn submit_commit(&self, authored: &AuthoredCommit) -> Result<CommitOutput, String> {
+    fn submit_commit(&self, authored: &AuthoredCommit) -> Result<CommitOutput, SubmitError> {
+        let snapshot = self.repository_status().map_err(SubmitError::Failed)?;
+        let conflicts = snapshot.conflicted_paths();
+        if !conflicts.is_empty() {
+            return Err(SubmitError::Conflicts(conflicts));
+        }
+        if !snapshot.has_staged_changes() {
+            return Err(SubmitError::NothingStaged);
+        }
         // Reload persisted policy on submission; unapplied Config drafts never influence authoring.
-        let context = self.prepare_commit()?;
+        let context = self.prepare_commit().map_err(SubmitError::Failed)?;
         let message = validate_reviewed_commit::<L::Error, S::Error>(&context, authored)
-            .map_err(|error| error.to_string())?;
-        let root = self
-            .locator
-            .locate(self.start)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| SubmitError::Failed(error.to_string()))?;
         self.writer
-            .commit(&root, &message)
-            .map_err(|error| error.to_string())
+            .commit(&snapshot.root, &message)
+            .map_err(|error| SubmitError::Failed(error.to_string()))
     }
 
     fn cite_paths(&self) -> Vec<String> {

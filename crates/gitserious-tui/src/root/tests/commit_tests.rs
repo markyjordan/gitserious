@@ -101,7 +101,7 @@ fn a_created_commit_returns_to_commit_and_a_rejected_one_keeps_the_review()
 
     approve_a_commit(&mut root);
     root.commit
-        .conclude_submission(&Ready, Err("hook rejected".into()));
+        .conclude_submission(&Ready, Err(SubmitError::Failed("hook rejected".into())));
 
     assert_eq!(root.section, Section::Commit);
     assert!(!root.commit.editing());
@@ -172,7 +172,7 @@ fn repeated_rejections_remain_resumable_until_a_successful_retry() {
     approve_a_commit(&mut root);
     for rejection in ["first hook rejection", "second hook rejection"] {
         root.commit
-            .conclude_submission(&Ready, Err(rejection.into()));
+            .conclude_submission(&Ready, Err(SubmitError::Failed(rejection.into())));
         assert!(root.commit.has_pending_review());
         assert!(root.commit.notice().contains(rejection));
         assert!(!root.commit.notice().contains("Commit created."));
