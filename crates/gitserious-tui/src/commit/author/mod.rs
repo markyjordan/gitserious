@@ -9,7 +9,7 @@ mod tests;
 mod type_picker;
 
 pub(crate) use render::{hints, render};
-pub(crate) use state::{AuthoringOutcome, AuthoringSession};
+pub(crate) use state::{AuthoringOutcome, AuthoringSession, Stage};
 
 /// A project context over the built-in taxonomies, with no type chosen.
 #[cfg(test)]

@@ -6,7 +6,9 @@ use std::io;
 use gitserious_app::{
     AuthoredCommit, BranchState, CommitOutput, CommitWorkspace, RepositoryStatus, SubmitError,
 };
-use ratatui::crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
+use ratatui::crossterm::event::{
+    Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -18,7 +20,7 @@ use crate::theme::{command_hints, frame_style, theme};
 
 #[cfg(test)]
 pub(crate) use author::built_in_context;
-use author::{AuthoringOutcome, AuthoringSession};
+use author::{AuthoringOutcome, AuthoringSession, Stage};
 use status_tree::{StatusTree, in_group};
 
 /// What Commit asks the root to do.
@@ -32,6 +34,10 @@ pub(crate) enum CommitRequest {
     Resume,
     /// Hand the approved commit to Git, which needs the terminal.
     Submit,
+    /// Stage every change to tracked files.
+    StageTracked,
+    /// Stage or unstage the selected file.
+    ToggleFile,
 }
 
 /// A read-only popup over the page.
@@ -57,6 +63,8 @@ pub(crate) struct CommitView {
     tree: StatusTree,
     /// The open popup and its scroll offset.
     popup: Option<(Popup, u16)>,
+    /// Whether the workspace can write the index, read at each refresh.
+    can_stage: bool,
 }
 
 impl CommitView {
@@ -70,6 +78,12 @@ impl CommitView {
             KeyCode::Enter if self.has_pending_review() => return Some(CommitRequest::Resume),
             KeyCode::Enter | KeyCode::Char('c') if self.blocker.is_none() => {
                 return Some(CommitRequest::Author);
+            }
+            KeyCode::Char('a') if self.stages_tracked() => {
+                return Some(CommitRequest::StageTracked);
+            }
+            KeyCode::Char(' ') if self.toggled_file().is_some() => {
+                return Some(CommitRequest::ToggleFile);
             }
             KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right => {
                 self.tree.key(code, self.snapshot.as_ref())
@@ -86,6 +100,22 @@ impl CommitView {
 
     /// Hands `event` to the open editor, or a click to the tree.
     pub(crate) fn event(&mut self, event: Event) -> Option<CommitRequest> {
+        if let Event::Key(key) = event
+            && key.kind == KeyEventKind::Press
+            && key.code == KeyCode::Char('s')
+            && key.modifiers.is_empty()
+            && self.editor_opens_staging()
+        {
+            // Nothing is written in the picker; a review waits as a retained one.
+            let session = self.authoring.take();
+            if session
+                .as_ref()
+                .is_some_and(|session| session.stage == Stage::Review)
+            {
+                self.pending = session;
+            }
+            return None;
+        }
         let Some(session) = &mut self.authoring else {
             if let Event::Mouse(mouse) = event
                 && mouse.kind == MouseEventKind::Down(MouseButton::Left)
@@ -136,8 +166,67 @@ impl CommitView {
                 self.authoring = self.pending.take();
             }
             CommitRequest::Submit => return Some(request),
+            CommitRequest::StageTracked => {
+                let written = commit.stage_tracked();
+                self.conclude_staging(commit, written);
+            }
+            CommitRequest::ToggleFile => {
+                if let Some(file) = self.toggled_file().cloned() {
+                    let written = if file.staged {
+                        commit.unstage(&file.paths)
+                    } else {
+                        commit.stage(&file.paths[..1])
+                    };
+                    self.conclude_staging(commit, written);
+                }
+            }
         }
         None
+    }
+
+    fn conclude_staging(&mut self, commit: &dyn CommitWorkspace, written: Result<(), String>) {
+        self.notice = written
+            .err()
+            .map(|error| format!("Staging failed: {error}"))
+            .unwrap_or_default();
+        self.refresh(commit);
+    }
+
+    /// Whether `a` would stage something: a tracked file changed in the worktree, outside a
+    /// conflict Git must resolve.
+    fn stages_tracked(&self) -> bool {
+        self.can_stage
+            && self.snapshot.as_ref().is_some_and(|snapshot| {
+                snapshot
+                    .entries
+                    .iter()
+                    .any(|entry| !entry.untracked && !entry.conflicted && entry.worktree != '.')
+            })
+    }
+
+    /// The selected file `space` stages or unstages.
+    fn toggled_file(&self) -> Option<&status_tree::TreeFile> {
+        self.tree
+            .selected_file()
+            .filter(|file| self.can_stage && !file.conflicted)
+    }
+
+    /// Whether `s` leaves the editor for staging: from the type picker, or from a review
+    /// with nothing staged.
+    fn editor_opens_staging(&self) -> bool {
+        let Some(session) = &self.authoring else {
+            return false;
+        };
+        self.can_stage
+            && match session.stage {
+                Stage::SelectType => true,
+                Stage::Review => self.snapshot.as_ref().is_some_and(|snapshot| {
+                    snapshot.foreign_commit_operation().is_none()
+                        && snapshot.conflicted_paths().is_empty()
+                        && !snapshot.has_staged_changes()
+                }),
+                Stage::Compose | Stage::Confirm => false,
+            }
     }
 
     /// Opens the editor at launch when the index already holds a commit, as `enter` would.
@@ -179,14 +268,42 @@ impl CommitView {
         if self.has_pending_review() {
             commands.push(("Resume review", CommitRequest::Resume));
         }
+        if self.stages_tracked() {
+            commands.push(("Stage all tracked changes", CommitRequest::StageTracked));
+        }
+        match self.toggled_file() {
+            Some(file) if file.staged => {
+                commands.push(("Unstage selected file", CommitRequest::ToggleFile));
+            }
+            Some(_) => commands.push(("Stage selected file", CommitRequest::ToggleFile)),
+            None => {}
+        }
         commands
     }
 
     pub(crate) fn hints(&self) -> Vec<(&'static str, &'static str)> {
-        self.authoring.as_ref().map_or_else(
-            || vec![("↑/↓", "move"), ("←/→", "tree"), ("r", "refresh")],
-            author::hints,
-        )
+        let Some(session) = &self.authoring else {
+            let mut hints = vec![("↑/↓", "move"), ("←/→", "tree")];
+            match self.toggled_file() {
+                Some(file) if file.staged => hints.push(("space", "unstage")),
+                Some(_) => hints.push(("space", "stage")),
+                None => {}
+            }
+            if self.stages_tracked() {
+                hints.push(("a", "stage tracked"));
+            }
+            hints.push(("r", "refresh"));
+            return hints;
+        };
+        let mut hints = author::hints(session);
+        if self.editor_opens_staging() {
+            let back = hints
+                .iter()
+                .position(|(key, _)| *key == "esc")
+                .unwrap_or(hints.len());
+            hints.insert(back, ("s", "stage files"));
+        }
+        hints
     }
 
     #[cfg(test)]
@@ -270,6 +387,7 @@ impl CommitView {
     pub(crate) fn refresh(&mut self, commit: &dyn CommitWorkspace) {
         match commit.repository_status() {
             Ok(snapshot) => {
+                self.can_stage = commit.can_stage();
                 self.snapshot = Some(snapshot);
                 self.blocker = commit.prepare_commit().err();
             }
@@ -396,7 +514,7 @@ impl CommitView {
                 BranchState::Named(name) => visible(name), BranchState::Unborn(name) => format!("{} (unborn)", visible(name)),
                 BranchState::Detached(oid) => format!("detached HEAD ({})", oid.chars().take(12).collect::<String>()),
             };
-            format!("Repository: {}\nBranch: {branch}\nGit commits the staged index. Stage changes with Git.", visible(&snapshot.root.as_path().to_string_lossy()))
+            format!("Repository: {}\nBranch: {branch}\nGit commits the staged index. Use `git add -p` to stage part of a file.", visible(&snapshot.root.as_path().to_string_lossy()))
         });
         frame.render_widget(Paragraph::new(summary_text), summary);
         self.tree.render(frame, tree);
@@ -406,6 +524,13 @@ impl CommitView {
             "[enter] resume review"
         } else if self.blocker.is_some() {
             "Start commit unavailable"
+        } else if self.stages_tracked()
+            && !self
+                .snapshot
+                .as_ref()
+                .is_some_and(RepositoryStatus::has_staged_changes)
+        {
+            "[a] stage all tracked changes  [enter] start commit"
         } else {
             "[enter] start commit"
         };
@@ -461,8 +586,7 @@ fn index_refusal(snapshot: Option<&RepositoryStatus>) -> Option<String> {
             paths.join(", ")
         ));
     }
-    (!snapshot.has_staged_changes())
-        .then(|| "Nothing is staged. Stage changes with Git before committing.".to_owned())
+    (!snapshot.has_staged_changes()).then(|| "Nothing is staged.".to_owned())
 }
 
 /// Where Git puts the commit, as the review's commit row reads.
@@ -619,7 +743,7 @@ mod tests {
         );
         assert_eq!(
             during(None, Vec::new())?.as_deref(),
-            Some("Nothing is staged. Stage changes with Git before committing.")
+            Some("Nothing is staged.")
         );
         assert_eq!(during(None, vec![entry("c.rs", 'M')])?, None);
         assert_eq!(index_refusal(None), None);
