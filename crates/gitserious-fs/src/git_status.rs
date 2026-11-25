@@ -2,7 +2,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use gitserious_app::{
-    BranchState, RepositoryRoot, RepositoryStatus, RepositoryStatusReader, StatusEntry,
+    BranchState, GitOperation, RepositoryRoot, RepositoryStatus, RepositoryStatusReader,
+    StatusEntry,
 };
 
 /// Reads machine-stable, NUL-delimited status without optional index refresh locks.
@@ -27,8 +28,42 @@ impl RepositoryStatusReader for GitRepositoryStatusReader {
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
         }
-        parse_status(root.clone(), &output.stdout)
+        let mut status = parse_status(root.clone(), &output.stdout)?;
+        status.operation = operation(root)?;
+        Ok(status)
     }
+}
+
+/// The marker each operation leaves while stopped, rebases first: an interactive rebase that
+/// stops on a pick may leave a cherry-pick marker as well.
+const OPERATION_MARKERS: [(&str, GitOperation); 5] = [
+    ("rebase-merge", GitOperation::Rebase),
+    ("rebase-apply", GitOperation::Rebase),
+    ("MERGE_HEAD", GitOperation::Merge),
+    ("CHERRY_PICK_HEAD", GitOperation::CherryPick),
+    ("REVERT_HEAD", GitOperation::Revert),
+];
+
+/// The operation stopped in `root`'s worktree. Git resolves each marker's path, so a linked
+/// worktree reads its own markers.
+fn operation(root: &RepositoryRoot) -> Result<Option<GitOperation>, String> {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(root.as_path()).arg("rev-parse");
+    for (marker, _) in OPERATION_MARKERS {
+        command.args(["--git-path", marker]);
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("could not execute git rev-parse: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+    let paths = String::from_utf8_lossy(&output.stdout);
+    Ok(paths
+        .lines()
+        .zip(OPERATION_MARKERS)
+        .find(|(path, _)| root.as_path().join(path).exists())
+        .map(|(_, (_, operation))| operation))
 }
 
 // Unix paths are infallible; the same interface reports decoding errors on Windows.

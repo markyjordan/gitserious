@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use gitserious_app::{BranchState, RepositoryRoot, RepositoryStatusReader};
+use gitserious_app::{BranchState, GitOperation, RepositoryRoot, RepositoryStatusReader};
 use gitserious_fs::GitRepositoryStatusReader;
 use tempfile::TempDir;
 
@@ -115,7 +115,101 @@ fn real_conflict_is_reported_without_refreshing_the_index() -> Result<(), Box<dy
     let status =
         GitRepositoryStatusReader.read(&RepositoryRoot::new(temp.path().to_path_buf())?)?;
     assert_eq!(status.conflicted_paths(), [PathBuf::from("file")]);
+    assert_eq!(status.operation, Some(GitOperation::Merge));
     assert!(!status.has_staged_changes());
     assert_eq!(fs::read(temp.path().join(".git/index"))?, before);
+    Ok(())
+}
+
+/// Runs git in `directory` expecting it to stop, as a conflicted or interrupted operation does.
+fn git_stops(directory: &Path, arguments: &[&str]) -> Result<(), Box<dyn Error>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(directory)
+        .args(arguments)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_EDITOR", "true")
+        .output()?;
+    assert!(!output.status.success(), "git {arguments:?} did not stop");
+    Ok(())
+}
+
+/// `main` and `other` each change `file` from a shared base, so combining them conflicts.
+fn diverged(directory: &Path) -> Result<(), Box<dyn Error>> {
+    fs::write(directory.join("file"), "base\n")?;
+    git(directory, &["add", "file"])?;
+    git(directory, &["commit", "-m", "base"])?;
+    git(directory, &["checkout", "-b", "other"])?;
+    fs::write(directory.join("file"), "other\n")?;
+    git(directory, &["commit", "-am", "other"])?;
+    git(directory, &["checkout", "main"])?;
+    fs::write(directory.join("file"), "main\n")?;
+    git(directory, &["commit", "-am", "main"])?;
+    Ok(())
+}
+
+fn operation(directory: &Path) -> Result<Option<GitOperation>, Box<dyn Error>> {
+    Ok(GitRepositoryStatusReader
+        .read(&RepositoryRoot::new(directory.to_path_buf())?)?
+        .operation)
+}
+
+#[test]
+fn each_stopped_operation_is_named_and_a_clean_repository_has_none() -> Result<(), Box<dyn Error>> {
+    let stops: [(&[&str], GitOperation); 4] = [
+        (&["merge", "other"], GitOperation::Merge),
+        (&["cherry-pick", "other"], GitOperation::CherryPick),
+        // Reverting the base that created the file conflicts with main's change to it.
+        (&["revert", "--no-edit", "HEAD~1"], GitOperation::Revert),
+        (&["rebase", "other"], GitOperation::Rebase),
+    ];
+    for (arguments, expected) in stops {
+        let temp = repository()?;
+        diverged(temp.path())?;
+        assert_eq!(operation(temp.path())?, None, "{arguments:?}");
+        git_stops(temp.path(), arguments)?;
+        assert_eq!(operation(temp.path())?, Some(expected), "{arguments:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_rebase_stopped_without_conflicts_is_a_rebase_with_a_clean_index() -> Result<(), Box<dyn Error>>
+{
+    let temp = repository()?;
+    diverged(temp.path())?;
+    git_stops(temp.path(), &["rebase", "--exec", "exit 1", "HEAD~1"])?;
+
+    let status =
+        GitRepositoryStatusReader.read(&RepositoryRoot::new(temp.path().to_path_buf())?)?;
+    assert_eq!(status.operation, Some(GitOperation::Rebase));
+    assert!(status.conflicted_paths().is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_linked_worktree_reads_its_own_operation() -> Result<(), Box<dyn Error>> {
+    let temp = repository()?;
+    diverged(temp.path())?;
+    let linked = TempDir::new()?;
+    let linked_path = linked.path().join("linked");
+    git(
+        temp.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            &linked_path.to_string_lossy(),
+            "main",
+        ],
+    )?;
+
+    git_stops(&linked_path, &["merge", "other"])?;
+
+    assert_eq!(operation(&linked_path)?, Some(GitOperation::Merge));
+    assert_eq!(operation(temp.path())?, None);
     Ok(())
 }
