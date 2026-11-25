@@ -27,6 +27,7 @@ mod support;
 
 mod commit_tests;
 mod config_tests;
+mod draft_tests;
 mod help_tests;
 mod home_tests;
 mod navigation_tests;

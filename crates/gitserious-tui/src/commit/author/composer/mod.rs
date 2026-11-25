@@ -13,7 +13,7 @@ pub(crate) use field::{
 };
 pub(crate) use render::render;
 
-use gitserious_app::CommitTaxonomy;
+use gitserious_app::{CommitTaxonomy, SavedProperty};
 use gitserious_core::{
     CommitDraft, CommitMessage, CommitScope, CommitSubject, CommitSubjectError,
     CommitTypeDefinition, CommitValidationError, ConditionalApplicability, PropertyKey,
@@ -169,6 +169,61 @@ impl MessageComposer {
     }
 
     /// Whether leaving now would drop anything the user wrote or decided.
+    /// The subject tail, each property's text and decision in the type's order, and the
+    /// breaking change, as a saved draft keeps them.
+    pub(crate) fn saved_fields(&self) -> (String, Vec<SavedProperty>, String) {
+        let properties = self
+            .definition
+            .properties()
+            .iter()
+            .zip(&self.properties)
+            .map(|(property, field)| SavedProperty {
+                key: property.key().as_str().to_owned(),
+                text: field.body.lines().join("\n"),
+                applies: field
+                    .requirement
+                    .decision()
+                    .map(|decision| decision == ConditionalApplicability::Applies),
+            })
+            .collect();
+        (
+            self.subject.lines().join("\n"),
+            properties,
+            self.breaking_change.body.lines().join("\n"),
+        )
+    }
+
+    /// Fills the fields from a saved draft. A property this type no longer asks for is
+    /// dropped, and a decision returns only to a property that is still conditional.
+    pub(crate) fn fill(&mut self, subject: &str, properties: &[SavedProperty], breaking: &str) {
+        let text = |text: &str| TextArea::new(text.split('\n').map(str::to_owned).collect());
+        self.subject = text(subject);
+        for (property, field) in self
+            .definition
+            .properties()
+            .iter()
+            .zip(&mut self.properties)
+        {
+            let Some(saved) = properties
+                .iter()
+                .find(|saved| saved.key == property.key().as_str())
+            else {
+                continue;
+            };
+            field.body = text(&saved.text);
+            if let (FieldRequirementState::Conditional(answer), Some(applies)) =
+                (&mut field.requirement, saved.applies)
+            {
+                *answer = Some(if applies {
+                    ConditionalApplicability::Applies
+                } else {
+                    ConditionalApplicability::DoesNotApply
+                });
+            }
+        }
+        self.breaking_change.body = text(breaking);
+    }
+
     pub(crate) fn dirty(&self) -> bool {
         !self.subject.is_empty()
             || self

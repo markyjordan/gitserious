@@ -17,7 +17,10 @@ impl Root {
         help: &[HelpPage],
     ) -> Option<SessionRequest> {
         match self.handle_event(event, capabilities, help)? {
-            Action::Quit => Some(SessionRequest::Quit),
+            Action::Quit => {
+                self.commit.persist(capabilities.commit, true);
+                Some(SessionRequest::Quit)
+            }
             Action::Commit(CommitRequest::Submit) => Some(SessionRequest::Submit),
             Action::Commit(CommitRequest::EditPolicy) => Some(SessionRequest::EditPolicy),
             Action::Select(_) | Action::Home(_) | Action::Commit(_) | Action::Initialize => None,
@@ -39,6 +42,10 @@ impl Root {
         }
         if matches!(event, Event::FocusGained) {
             self.reread(capabilities);
+            return None;
+        }
+        if matches!(event, Event::FocusLost) {
+            self.commit.persist(capabilities.commit, true);
             return None;
         }
         if self.overlay.is_some() {
@@ -145,7 +152,9 @@ impl Root {
     }
 
     fn commit_event(&mut self, event: Event, capabilities: Capabilities<'_>) -> Option<Action> {
-        let request = self.commit.event(event)?;
+        let request = self.commit.event(event);
+        self.commit.persist(capabilities.commit, false);
+        let request = request?;
         self.execute(Action::Commit(request), capabilities)
     }
 

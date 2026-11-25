@@ -4,10 +4,11 @@ mod status_tree;
 use std::io;
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use gitserious_app::{
     AuthoredCommit, BranchState, CommitOutput, CommitWorkspace, MissingWorkTree, ProjectOverview,
-    RepositoryStatus, SubmitError,
+    RepositoryStatus, SavedDraft, SubmitError,
 };
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
@@ -50,7 +51,12 @@ pub(crate) enum CommitRequest {
     Initialize,
     /// Open `gitserious.toml` in Git's editor, which needs the terminal.
     EditPolicy,
+    /// Reopen the draft saved when Commit was last left.
+    ResumeDraft,
 }
+
+/// How long a changed draft waits before it is written, so typing does not write each key.
+const DRAFT_SAVE_INTERVAL: Duration = Duration::from_millis(500);
 
 /// What Commit's `enter` sets up when the directory is not ready to commit from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -109,6 +115,24 @@ pub(crate) struct CommitView {
     setup: Option<Setup>,
     /// What to do instead when the directory has no usable work tree or no project.
     guidance: Option<String>,
+    drafts: Drafts,
+}
+
+/// The draft kept across sessions: the one offered at Commit's start, and what the open
+/// session has written of its own.
+#[derive(Default)]
+struct Drafts {
+    /// Whether the workspace keeps drafts across sessions.
+    kept: bool,
+    /// A draft saved when Commit was last left, offered until it is resumed or replaced, and
+    /// whether its taxonomy changed since.
+    offered: Option<(SavedDraft, bool)>,
+    /// What the open session last wrote, and when, so an unchanged draft is not rewritten.
+    written: Option<(SavedDraft, Instant)>,
+    /// The saved draft belongs to the open session, which deletes it when it ends.
+    owned: bool,
+    /// The session ended without a commit, so its draft goes.
+    ended: bool,
 }
 
 impl CommitView {
@@ -120,6 +144,9 @@ impl CommitView {
                 return Some(CommitRequest::ShowResult);
             }
             KeyCode::Enter if self.has_pending_review() => return Some(CommitRequest::Resume),
+            KeyCode::Enter if self.blocker.is_none() && self.drafts.offered.is_some() => {
+                return Some(CommitRequest::ResumeDraft);
+            }
             KeyCode::Enter | KeyCode::Char('c') if self.blocker.is_none() => {
                 return Some(CommitRequest::Author);
             }
@@ -180,6 +207,7 @@ impl CommitView {
         match session.handle_event(event)? {
             AuthoringOutcome::Cancelled => {
                 self.authoring = None;
+                self.drafts.ended = true;
                 None
             }
             AuthoringOutcome::Authored(draft) => {
@@ -210,6 +238,26 @@ impl CommitView {
             CommitRequest::Resume => {
                 self.refresh(commit);
                 self.authoring = self.pending.take();
+            }
+            CommitRequest::ResumeDraft => {
+                self.refresh(commit);
+                let (saved, _) = self.drafts.offered.take()?;
+                match commit
+                    .prepare_commit()
+                    .and_then(|context| AuthoringSession::restore(context, &saved))
+                {
+                    Ok(mut session) => {
+                        session.set_citation_paths(commit.cite_paths());
+                        session.set_citation_commits(commit.cite_commits());
+                        self.authoring = Some(session);
+                        self.drafts.written = Some((saved, Instant::now()));
+                        self.drafts.owned = true;
+                    }
+                    Err(error) => {
+                        self.notice = error;
+                        self.drafts.offered = Some((saved, true));
+                    }
+                }
             }
             CommitRequest::Submit | CommitRequest::Initialize | CommitRequest::EditPolicy => {
                 return Some(request);
@@ -277,13 +325,15 @@ impl CommitView {
             }
     }
 
-    /// Opens the editor at launch when the index already holds a commit, as `enter` would.
+    /// Opens the editor at launch when the index already holds a commit, as `enter` would,
+    /// unless a saved draft waits to be resumed.
     pub(crate) fn launch(&mut self, commit: &dyn CommitWorkspace) {
         self.refresh(commit);
-        if self
-            .snapshot
-            .as_ref()
-            .is_some_and(RepositoryStatus::has_staged_changes)
+        if self.drafts.offered.is_none()
+            && self
+                .snapshot
+                .as_ref()
+                .is_some_and(RepositoryStatus::has_staged_changes)
         {
             self.author(commit);
         }
@@ -301,6 +351,38 @@ impl CommitView {
                 self.authoring = Some(session);
             }
             Err(error) => self.blocker = Some(error),
+        }
+    }
+
+    /// Writes the open draft when it changed, waiting `DRAFT_SAVE_INTERVAL` between writes
+    /// unless `now` asks for it. It deletes the draft once its session ends without a commit,
+    /// or when the session discards what it wrote to choose another type.
+    pub(crate) fn persist(&mut self, commit: &dyn CommitWorkspace, now: bool) {
+        let session = self.authoring.as_ref().or(self.pending.as_ref());
+        let draft = session.and_then(AuthoringSession::saved_draft);
+        let discarded =
+            std::mem::take(&mut self.drafts.ended) || (session.is_some() && draft.is_none());
+        if discarded {
+            if std::mem::take(&mut self.drafts.owned) {
+                // A draft that cannot be deleted is offered again next time, which is safe.
+                let _ = commit.discard_draft();
+            }
+            self.drafts.written = None;
+            return;
+        }
+        let Some(draft) = draft else {
+            return;
+        };
+        let written = self.drafts.written.as_ref();
+        if written.is_some_and(|(saved, _)| *saved == draft)
+            || !now && written.is_some_and(|(_, at)| at.elapsed() < DRAFT_SAVE_INTERVAL)
+        {
+            return;
+        }
+        if commit.save_draft(&draft).is_ok() {
+            self.drafts.written = Some((draft, Instant::now()));
+            self.drafts.owned = true;
+            self.drafts.offered = None;
         }
     }
 
@@ -349,6 +431,8 @@ impl CommitView {
         }
         if self.has_pending_review() {
             commands.push(("Resume review", CommitRequest::Resume));
+        } else if self.blocker.is_none() && self.drafts.offered.is_some() {
+            commands.push(("Resume saved draft", CommitRequest::ResumeDraft));
         }
         if self.stages_tracked() {
             commands.push(("Stage all tracked changes", CommitRequest::StageTracked));
@@ -511,6 +595,18 @@ impl CommitView {
     pub(crate) fn refresh(&mut self, commit: &dyn CommitWorkspace) {
         match commit.repository_status() {
             Ok(snapshot) => {
+                self.drafts.kept = commit.keeps_drafts();
+                if self.authoring.is_none() && self.pending.is_none() && !self.drafts.owned {
+                    self.drafts.offered = commit.saved_draft().map(|saved| {
+                        let changed = commit.prepare_commit().map_or(true, |context| {
+                            !context.taxonomies().iter().any(|taxonomy| {
+                                taxonomy.id().as_str() == saved.taxonomy
+                                    && taxonomy.fingerprint().to_string() == saved.fingerprint
+                            })
+                        });
+                        (saved, changed)
+                    });
+                }
                 self.can_stage = commit.can_stage();
                 self.can_edit_policy = commit.can_edit_policy();
                 self.snapshot = Some(snapshot);
@@ -529,13 +625,15 @@ impl CommitView {
         self.pending.is_some()
     }
 
-    /// Whether quitting now would drop a draft or a rejected review.
+    /// Whether quitting now would drop a draft or a rejected review, which a workspace that
+    /// keeps drafts never does.
     pub(crate) fn has_unsaved_work(&self) -> bool {
-        self.pending.is_some()
-            || self
-                .authoring
-                .as_ref()
-                .is_some_and(|session| session.composer.dirty())
+        !self.drafts.kept
+            && (self.pending.is_some()
+                || self
+                    .authoring
+                    .as_ref()
+                    .is_some_and(|session| session.composer.dirty()))
     }
 
     /// Opens `gitserious.toml` in Git's editor with the terminal restored, then checks it again.
@@ -578,6 +676,8 @@ impl CommitView {
         match result {
             Ok(output) => {
                 self.pending = None;
+                self.drafts.ended = true;
+                self.persist(commit, true);
                 let headline = output.created().map_or_else(
                     || "Commit created.".to_owned(),
                     |created| {
@@ -654,6 +754,8 @@ impl CommitView {
             "[c] start new commit  [enter] resume review"
         } else if self.has_pending_review() {
             "[enter] resume review"
+        } else if self.blocker.is_none() && self.drafts.offered.is_some() {
+            "[enter] resume draft  [c] start new commit"
         } else if let (Some(_), Some(setup)) = (&self.blocker, self.setup) {
             setup.action()
         } else if self.blocker.is_some() && self.can_edit_policy {
@@ -672,7 +774,12 @@ impl CommitView {
         };
         let detail = if self.notice.is_empty() {
             self.blocker.as_ref().map_or_else(
-                || self.tree.detail().map_or_else(String::new, str::to_owned),
+                || {
+                    self.drafts.offered.as_ref().map_or_else(
+                        || self.tree.detail().map_or_else(String::new, str::to_owned),
+                        saved_draft_line,
+                    )
+                },
                 |blocker| self.guidance.clone().unwrap_or_else(|| blocker.clone()),
             )
         } else {
@@ -704,6 +811,24 @@ fn visible(text: &str) -> String {
             }
         })
         .collect()
+}
+
+/// The saved draft's type and subject, and a warning when its taxonomy changed since.
+fn saved_draft_line((saved, changed): &(SavedDraft, bool)) -> String {
+    let subject = saved.subject.lines().next().unwrap_or_default();
+    let warning = if *changed {
+        format!(
+            " The {} policy changed since it was saved; check the draft before committing.",
+            visible(&saved.taxonomy)
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "Saved draft: {}{}.{warning}",
+        visible(&saved.commit_type),
+        visible(subject)
+    )
 }
 
 /// Why the commit `snapshot` describes would be refused, as Review warns before `enter`.

@@ -345,3 +345,44 @@ fn commit_rereads_git_when_the_terminal_regains_focus() -> Result<(), Box<dyn Er
     );
     Ok(())
 }
+
+#[test]
+fn quitting_mid_draft_and_running_commit_again_offers_the_draft_back() -> Result<(), Box<dyn Error>>
+{
+    let (repository, home) = initialized_repository()?;
+    let mut command = home.command(repository.path());
+    command.arg("commit");
+    let mut first = Session::spawn(&command, Streams::Terminal)?;
+    first.wait_for(|screen| screen.contents().contains("enter choose"))?;
+    first.send(b"\r")?;
+    first.wait_for(|screen| screen.contents().contains("ctrl+s review"))?;
+    first.send(b": keep drafts across sessions")?;
+    first.wait_for(|screen| screen.contents().contains("keep drafts across sessions"))?;
+    // ctrl+c quits without asking, since the draft is kept.
+    first.send(b"\x03")?;
+    assert!(first.finish()?.success());
+
+    let mut second = Session::spawn(&command, Streams::Terminal)?;
+    second.wait_for(|screen| {
+        screen.contents().contains("[enter] resume draft")
+            && screen
+                .contents()
+                .contains("Saved draft: feat: keep drafts across sessions.")
+    })?;
+    second.send(b"\r")?;
+    second.wait_for(|screen| {
+        screen
+            .contents()
+            .contains("feat: keep drafts across sessions")
+    })?;
+    record(&second, "commit-draft-resumed")?;
+    second.send(b"\x1b")?;
+    // A key sent right after esc would arrive as alt and that key.
+    second.wait_for(|screen| screen.contents().contains("Discard this draft"))?;
+    second.send(b"y")?;
+    second.wait_for(|screen| screen.contents().contains("enter choose"))?;
+    second.send(b"\x1b")?;
+    second.wait_for(|screen| screen.contents().contains("[enter] start commit"))?;
+    quit(&mut second)?;
+    Ok(())
+}

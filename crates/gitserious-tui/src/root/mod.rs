@@ -122,6 +122,9 @@ impl Root {
 
     /// Arrives at `section` the same way a tab, a click, or the launch does.
     fn enter(&mut self, section: Section, capabilities: Capabilities<'_>) {
+        if self.section == Section::Commit && section != Section::Commit {
+            self.commit.persist(capabilities.commit, true);
+        }
         self.section = section;
         match section {
             Section::Commit => {
