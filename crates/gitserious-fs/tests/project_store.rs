@@ -141,7 +141,7 @@ fn invalid_documents_name_their_defect() -> Result<(), Box<dyn Error>> {
             .ok_or("fixture has a taxonomy")?..]
     );
     let cases = [
-        ("config-version = 1\n[[", "TOML parse error"),
+        ("config-version = 1\n[[", "unquoted keys cannot be empty"),
         (
             &CUSTOM_CONVENTIONAL.replace("config-version = 1", "config-version = 2"),
             "unsupported project config version 2",
@@ -268,3 +268,4 @@ fn symlinked_project_file_is_refused() -> Result<(), Box<dyn Error>> {
     assert!(Path::new(&elsewhere).is_file());
     Ok(())
 }
+

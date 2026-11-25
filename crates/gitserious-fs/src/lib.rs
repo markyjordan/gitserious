@@ -21,7 +21,7 @@ pub use git_commit::{GitCommitError, GitCommitWriter};
 pub use git_index::GitIndexWriter;
 pub use global::{GlobalPathError, SystemGlobalPathResolver};
 pub use taxonomy_global::{GlobalConfigurationError, TomlGlobalConfigurationStore};
-pub use taxonomy_project::{ProjectStateError, TomlProjectStore};
+pub use taxonomy_project::{ProjectStateError, TextLocation, TomlProjectStore};
 
 #[cfg(test)]
 #[path = "../tests/unit/mod.rs"]
