@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use gitserious_app::{BranchState, RepositoryRoot, RepositoryStatusReader};
@@ -114,7 +114,7 @@ fn real_conflict_is_reported_without_refreshing_the_index() -> Result<(), Box<dy
     let before = fs::read(temp.path().join(".git/index"))?;
     let status =
         GitRepositoryStatusReader.read(&RepositoryRoot::new(temp.path().to_path_buf())?)?;
-    assert!(status.has_conflicts());
+    assert_eq!(status.conflicted_paths(), [PathBuf::from("file")]);
     assert!(!status.has_staged_changes());
     assert_eq!(fs::read(temp.path().join(".git/index"))?, before);
     Ok(())

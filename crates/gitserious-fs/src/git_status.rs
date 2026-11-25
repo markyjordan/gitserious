@@ -143,7 +143,7 @@ u UU N... 100644 100644 100644 100644 a b c conflict\0\
         assert!(status.entries[2].conflicted);
         assert!(status.entries[3].untracked);
         assert!(status.has_staged_changes());
-        assert!(status.has_conflicts());
+        assert_eq!(status.conflicted_paths(), [PathBuf::from("conflict")]);
         Ok(())
     }
 

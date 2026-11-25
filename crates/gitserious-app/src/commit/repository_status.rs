@@ -38,9 +38,14 @@ impl RepositoryStatus {
             .any(|entry| !entry.untracked && entry.index != '.' && !entry.conflicted)
     }
 
+    /// The unmerged paths, in Git's order.
     #[must_use]
-    pub fn has_conflicts(&self) -> bool {
-        self.entries.iter().any(|entry| entry.conflicted)
+    pub fn conflicted_paths(&self) -> Vec<PathBuf> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.conflicted)
+            .map(|entry| entry.path.clone())
+            .collect()
     }
 }
 

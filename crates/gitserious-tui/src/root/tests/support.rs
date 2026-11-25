@@ -54,8 +54,11 @@ impl CommitWorkspace for Services {
     fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
         Err("Stage changes with Git".into())
     }
-    fn submit_commit(&self, _: &gitserious_app::AuthoredCommit) -> Result<CommitOutput, String> {
-        Err("test submit unavailable".into())
+    fn submit_commit(
+        &self,
+        _: &gitserious_app::AuthoredCommit,
+    ) -> Result<CommitOutput, SubmitError> {
+        Err(SubmitError::Failed("test submit unavailable".into()))
     }
 }
 
@@ -98,7 +101,7 @@ impl CommitWorkspace for Unavailable {
     fn submit_commit(
         &self,
         authored: &gitserious_app::AuthoredCommit,
-    ) -> Result<CommitOutput, String> {
+    ) -> Result<CommitOutput, SubmitError> {
         CommitWorkspace::submit_commit(&Services, authored)
     }
 }
@@ -167,7 +170,7 @@ impl CommitWorkspace for HomeWorkspace {
     fn submit_commit(
         &self,
         authored: &gitserious_app::AuthoredCommit,
-    ) -> Result<CommitOutput, String> {
+    ) -> Result<CommitOutput, SubmitError> {
         Services.submit_commit(authored)
     }
 }
@@ -351,7 +354,7 @@ impl CommitWorkspace for Ready {
     fn submit_commit(
         &self,
         authored: &gitserious_app::AuthoredCommit,
-    ) -> Result<CommitOutput, String> {
+    ) -> Result<CommitOutput, SubmitError> {
         Services.submit_commit(authored)
     }
 }
@@ -425,7 +428,7 @@ pub(super) fn rejected_review_with(
         Some(Action::Commit(CommitRequest::Submit))
     );
     root.commit
-        .conclude_submission(workspace, Err("hook rejected".into()));
+        .conclude_submission(workspace, Err(SubmitError::Failed("hook rejected".into())));
     root
 }
 
