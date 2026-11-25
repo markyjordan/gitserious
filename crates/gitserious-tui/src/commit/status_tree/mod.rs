@@ -220,6 +220,7 @@ mod tests {
                 conflicted: false,
                 submodule: "N...".into(),
             }],
+            operation: None,
         };
         let mut tree = StatusTree::default();
         tree.rebuild(Some(&snapshot));

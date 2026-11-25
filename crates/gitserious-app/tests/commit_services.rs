@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 use gitserious_app::{
     AuthoredCommit, BranchState, CitedCommit, CommitAuthoringContext, CommitOutput, CommitServices,
     CommitTaxonomy, CommitWorkspace, CommitWriter, ConfigurationServices, ConfigurationWorkspace,
-    GlobalConfiguration, GlobalConfigurationStore, ProjectConfiguration, ProjectConfigurationStore,
-    ProjectRevision, RepositoryLocator, RepositoryRoot, RepositoryStatus, RepositoryStatusReader,
-    StatusEntry, StoredProject, SubmitError, WorktreePaths,
+    GitOperation, GlobalConfiguration, GlobalConfigurationStore, ProjectConfiguration,
+    ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot,
+    RepositoryStatus, RepositoryStatusReader, StatusEntry, StoredProject, SubmitError,
+    WorktreePaths,
 };
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitProvenance, CommitSubject,
@@ -140,6 +141,7 @@ impl Session {
                 root,
                 branch: BranchState::Named("main".into()),
                 entries,
+                operation: None,
             }))),
             writer: Writer::default(),
         })
@@ -169,6 +171,7 @@ impl Session {
             root: self.locator.root.clone(),
             branch: BranchState::Named("main".into()),
             entries,
+            operation: None,
         });
     }
 }
@@ -317,21 +320,16 @@ fn submission_checks_the_index_before_reloading_policy() -> Result<(), Box<dyn E
 }
 
 #[test]
-fn a_locator_failure_stops_preparation_and_a_status_failure_stops_submission()
--> Result<(), Box<dyn Error>> {
+fn locator_and_status_failures_stop_preparation_and_submission() -> Result<(), Box<dyn Error>> {
     for failure in ["locator unavailable", "status unavailable"] {
         let session = Session::new(vec![entry("file", 'M', '.')])?;
-        let locator = failure.starts_with("locator");
-        if locator {
+        if failure.starts_with("locator") {
             session.locator.failure.set(Some(failure));
         } else {
             *session.status.0.borrow_mut() = Err(failure.into());
         }
         let commit = session.commit();
-        assert_eq!(
-            commit.prepare_commit().err().as_deref(),
-            locator.then_some(failure)
-        );
+        assert_eq!(commit.prepare_commit().err().as_deref(), Some(failure));
         assert_eq!(
             commit.submit_commit(&approved_project_commit()?).err(),
             Some(SubmitError::Failed(failure.into()))
@@ -990,5 +988,64 @@ fn unknown_taxonomies_and_cross_schema_drafts_never_reach_git() -> Result<(), Bo
         Some(expected.to_string())
     );
     assert!(written(&session).is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_merge_cherry_pick_or_revert_stops_authoring_and_never_reaches_the_writer()
+-> Result<(), Box<dyn Error>> {
+    for (operation, command) in [
+        (GitOperation::Merge, "merge"),
+        (GitOperation::CherryPick, "cherry-pick"),
+        (GitOperation::Revert, "revert"),
+    ] {
+        let session = Session::new(vec![entry("file", 'M', '.')])?;
+        if let Ok(status) = session.status.0.borrow_mut().as_mut() {
+            status.operation = Some(operation);
+        }
+        let commit = session.commit();
+
+        let refusal = commit
+            .prepare_commit()
+            .err()
+            .ok_or("authoring started during an operation")?;
+        assert!(
+            refusal.contains(&format!("`git {command} --continue`"))
+                && refusal.contains(&format!("`git {command} --abort`")),
+            "{refusal}"
+        );
+        assert_eq!(
+            commit.submit_commit(&approved_project_commit()?).err(),
+            Some(SubmitError::Operation(operation))
+        );
+        assert!(session.writer.0.borrow().is_empty(), "{command}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_rebase_stop_authors_a_normal_commit_unless_it_stopped_on_conflicts()
+-> Result<(), Box<dyn Error>> {
+    let stopped = |entries| -> Result<Session, Box<dyn Error>> {
+        let session = Session::new(entries)?;
+        if let Ok(status) = session.status.0.borrow_mut().as_mut() {
+            status.operation = Some(GitOperation::Rebase);
+        }
+        Ok(session)
+    };
+
+    let edit = stopped(vec![entry("file", 'M', '.')])?;
+    let authored = approved(&edit.commit().prepare_commit()?)?;
+    edit.commit().submit_commit(&authored)?;
+    assert_eq!(edit.writer.0.borrow().len(), 1);
+
+    let conflicted = stopped(vec![entry("a.rs", 'U', 'U'), entry("b.rs", 'U', 'U')])?;
+    assert_eq!(
+        conflicted.commit().prepare_commit().err().as_deref(),
+        Some(
+            "A rebase stopped on conflicts in a.rs, b.rs. Resolve them, then run \
+             `git rebase --continue`."
+        )
+    );
     Ok(())
 }

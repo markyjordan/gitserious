@@ -98,6 +98,7 @@ impl RepositoryStatusReader for Status {
             root: root.clone(),
             branch: BranchState::Named("main".into()),
             entries,
+            operation: None,
         })
     }
 }

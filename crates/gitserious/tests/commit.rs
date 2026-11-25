@@ -3,7 +3,10 @@ mod support;
 use std::error::Error;
 use std::fs;
 
-use gitserious_app::{AuthoredCommit, CommitAuthoringContext, CommitServices, CommitWorkspace};
+use gitserious_app::{
+    AuthoredCommit, CommitAuthoringContext, CommitServices, CommitWorkspace, GitOperation,
+    SubmitError,
+};
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitSubject, PropertyRequirement, PropertyValue, TaxonomyId,
 };
@@ -207,5 +210,53 @@ fn project_owned_conventional_replaces_the_built_in_definition() -> Result<(), B
         ["ship"]
     );
     assert!(!head_exists(repository.path())?);
+    Ok(())
+}
+
+#[test]
+fn a_merge_in_progress_never_reaches_git_commit() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    let home = Home::new()?;
+    home.init(repository.path())?;
+    fs::write(repository.path().join("file"), "base\n")?;
+    git(repository.path(), &["add", "."])?;
+    git(repository.path(), &["commit", "-q", "-m", "base"])?;
+    git(repository.path(), &["checkout", "-q", "-b", "other"])?;
+    fs::write(repository.path().join("file"), "other\n")?;
+    git(repository.path(), &["commit", "-q", "-am", "other"])?;
+    git(repository.path(), &["checkout", "-q", "-"])?;
+    fs::write(repository.path().join("file"), "mine\n")?;
+    git(repository.path(), &["commit", "-q", "-am", "mine"])?;
+    let commit = CommitServices::new(
+        &GitRepositoryLocator,
+        &TomlProjectStore,
+        &GitRepositoryStatusReader,
+        &GitCommitWriter,
+        repository.path(),
+    );
+    let authored = reviewed_research_fix(&commit.prepare_commit()?)?;
+    let head = stdout(&git(repository.path(), &["rev-parse", "HEAD"])?);
+
+    assert!(git(repository.path(), &["merge", "other"]).is_err());
+    fs::write(repository.path().join("file"), "resolved\n")?;
+    git(repository.path(), &["add", "file"])?;
+
+    let refusal = commit
+        .prepare_commit()
+        .err()
+        .ok_or("authoring started during a merge")?;
+    assert!(refusal.contains("`git merge --continue`"), "{refusal}");
+    assert_eq!(
+        commit.submit_commit(&authored).err(),
+        Some(SubmitError::Operation(GitOperation::Merge))
+    );
+    assert_eq!(
+        stdout(&git(repository.path(), &["rev-parse", "HEAD"])?),
+        head
+    );
+    git(
+        repository.path(),
+        &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+    )?;
     Ok(())
 }

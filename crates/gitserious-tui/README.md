@@ -69,7 +69,10 @@ Staged, Unstaged, and Untracked changes. Partially staged files appear in both
 applicable groups. Up/Down selects rows; Left/Right collapses or expands folders.
 `r` refreshes and Enter starts authoring when the repository and its persisted
 project policy are valid, whatever the index holds; otherwise the page names the
-blocker and Enter does nothing. These actions are also available through `/`.
+blocker and Enter does nothing. A merge, cherry-pick, or revert in progress
+blocks authoring with the commands that finish or stop it, and so does a rebase
+stopped on conflicts; a rebase stopped without conflicts commits normally. These
+actions are also available through `/`.
 Stage changes using Git; the overview never modifies the index.
 
 Authoring happens inside the Commit page, under the nav bar, and reuses the

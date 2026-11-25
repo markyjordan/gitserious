@@ -7,8 +7,9 @@ use std::cell::RefCell;
 
 use gitserious_app::{
     BranchState, CommitAuthoringContext, CommitOutput, CommitWorkspace, ConfigurationWorkspace,
-    CreatedCommit, GlobalConfiguration, LibraryDraft, ProjectConfiguration, ProjectOverview,
-    ProjectSnapshot, ProjectWorkspace, RepositoryRoot, RepositoryStatus, SubmitError,
+    CreatedCommit, GitOperation, GlobalConfiguration, LibraryDraft, ProjectConfiguration,
+    ProjectOverview, ProjectSnapshot, ProjectWorkspace, RepositoryRoot, RepositoryStatus,
+    SubmitError,
 };
 
 use crate::commit;

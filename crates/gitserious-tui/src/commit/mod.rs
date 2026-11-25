@@ -310,7 +310,8 @@ impl CommitView {
     }
 
     /// Closes the editor on Git's answer, keeping a rejected review to resume. An index
-    /// Git cannot commit keeps the review open instead, with the reason under it.
+    /// Git cannot commit, or an operation whose commit gitserious does not author, keeps the
+    /// review open instead, with the reason under it.
     pub(crate) fn conclude_submission(
         &mut self,
         commit: &dyn CommitWorkspace,
@@ -339,7 +340,9 @@ impl CommitView {
                 .trim()
                 .clone_into(&mut self.notice);
             }
-            Err(SubmitError::Conflicts(_) | SubmitError::NothingStaged) => {
+            Err(
+                SubmitError::Operation(_) | SubmitError::Conflicts(_) | SubmitError::NothingStaged,
+            ) => {
                 if let (Some(mut session), Some(authored)) = (session, authored) {
                     session.reopen_review(&authored);
                     self.authoring = Some(session);
@@ -441,9 +444,12 @@ fn visible(text: &str) -> String {
         .collect()
 }
 
-/// Why Git would refuse to commit the index `snapshot` read, as Review warns before `enter`.
+/// Why the commit `snapshot` describes would be refused, as Review warns before `enter`.
 fn index_refusal(snapshot: Option<&RepositoryStatus>) -> Option<String> {
     let snapshot = snapshot?;
+    if let Some(operation) = snapshot.foreign_commit_operation() {
+        return Some(SubmitError::Operation(operation).to_string());
+    }
     let conflicts = snapshot.conflicted_paths();
     if !conflicts.is_empty() {
         let paths: Vec<_> = conflicts
@@ -533,7 +539,7 @@ fn truncate(text: &str, width: usize) -> String {
 mod tests {
     use super::*;
     use crate::theme::navigation_key_style;
-    use gitserious_app::{RepositoryRoot, StatusEntry};
+    use gitserious_app::{GitOperation, RepositoryRoot, StatusEntry};
     use ratatui::{Terminal, backend::TestBackend};
     use std::path::Path;
 
@@ -553,6 +559,7 @@ mod tests {
             root: RepositoryRoot::new(std::env::temp_dir())?,
             branch: BranchState::Named("main".into()),
             entries: vec![entry("src/net/retry.rs"), entry("tests/retry.rs")],
+            operation: None,
         };
         let mut terminal = Terminal::new(TestBackend::new(40, 1))?;
         terminal.draw(|frame| render_staged_header(frame, frame.area(), Some(&snapshot)))?;
@@ -568,7 +575,8 @@ mod tests {
     }
 
     #[test]
-    fn review_names_conflicts_before_an_empty_index() -> Result<(), Box<dyn std::error::Error>> {
+    fn review_names_an_operation_then_conflicts_then_an_empty_index()
+    -> Result<(), Box<dyn std::error::Error>> {
         let entry = |path: &str, index: char| StatusEntry {
             path: path.into(),
             original_path: None,
@@ -578,29 +586,42 @@ mod tests {
             conflicted: index == 'U',
             submodule: "N...".into(),
         };
-        let refusal =
-            |entries: Vec<StatusEntry>| -> Result<Option<String>, Box<dyn std::error::Error>> {
-                Ok(index_refusal(Some(&RepositoryStatus {
-                    root: RepositoryRoot::new(std::env::temp_dir())?,
-                    branch: BranchState::Named("main".into()),
-                    entries,
-                })))
-            };
+        let during = |operation: Option<GitOperation>,
+                      entries: Vec<StatusEntry>|
+         -> Result<Option<String>, Box<dyn std::error::Error>> {
+            Ok(index_refusal(Some(&RepositoryStatus {
+                root: RepositoryRoot::new(std::env::temp_dir())?,
+                branch: BranchState::Named("main".into()),
+                entries,
+                operation,
+            })))
+        };
 
+        let merge = during(Some(GitOperation::Merge), vec![entry("a.rs", 'U')])?;
+        assert!(
+            merge
+                .as_deref()
+                .is_some_and(|merge| merge.starts_with("A merge is in progress")),
+            "{merge:?}"
+        );
         assert_eq!(
-            refusal(vec![
-                entry("a.rs", 'U'),
-                entry("b.rs", 'U'),
-                entry("c.rs", 'M')
-            ])?
+            during(Some(GitOperation::Rebase), vec![entry("c.rs", 'M')])?,
+            None,
+            "a rebase stop commits normally"
+        );
+        assert_eq!(
+            during(
+                None,
+                vec![entry("a.rs", 'U'), entry("b.rs", 'U'), entry("c.rs", 'M')]
+            )?
             .as_deref(),
             Some("Resolve conflicts in Git before committing: a.rs, b.rs")
         );
         assert_eq!(
-            refusal(Vec::new())?.as_deref(),
+            during(None, Vec::new())?.as_deref(),
             Some("Nothing is staged. Stage changes with Git before committing.")
         );
-        assert_eq!(refusal(vec![entry("c.rs", 'M')])?, None);
+        assert_eq!(during(None, vec![entry("c.rs", 'M')])?, None);
         assert_eq!(index_refusal(None), None);
         Ok(())
     }
@@ -624,6 +645,7 @@ mod tests {
                         submodule: "N...".into(),
                     })
                     .collect(),
+                operation: None,
             }),
             ..CommitView::default()
         };

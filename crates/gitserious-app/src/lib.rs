@@ -16,7 +16,7 @@ pub mod test_support;
 
 pub use commit::{
     AuthoredCommit, BranchState, CitedCommit, CommitAuthoringContext, CommitOutput, CommitServices,
-    CommitTaxonomy, CommitWorkspace, CommitWriter, CreatedCommit, RepositoryStatus,
+    CommitTaxonomy, CommitWorkspace, CommitWriter, CreatedCommit, GitOperation, RepositoryStatus,
     RepositoryStatusReader, StatusEntry, SubmitError, WorktreePaths, prepare_commit_with_taxonomy,
     validate_reviewed_commit,
 };
