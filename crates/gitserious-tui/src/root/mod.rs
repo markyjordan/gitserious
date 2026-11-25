@@ -97,6 +97,7 @@ impl Root {
             too_small: false,
         };
         if section == Section::Commit {
+            root.commit.observe(&capabilities.project.overview());
             root.commit.launch(capabilities.commit);
         } else {
             root.enter(section, capabilities);
@@ -108,7 +109,10 @@ impl Root {
     fn enter(&mut self, section: Section, capabilities: Capabilities<'_>) {
         self.section = section;
         match section {
-            Section::Commit => self.commit.refresh(capabilities.commit),
+            Section::Commit => {
+                self.commit.refresh(capabilities.commit);
+                self.commit.observe(&capabilities.project.overview());
+            }
             Section::Home => self.home.enter(capabilities.project),
             Section::Help => self.help.enter(),
             Section::Config => {}
@@ -122,16 +126,23 @@ impl Root {
             Action::Home(HomeRequest::Initialized) => {
                 // Config loaded the project before it existed.
                 self.config = ConfigView::new(capabilities.config);
+                if self.home.take_return_to_commit() {
+                    self.enter(Section::Commit, capabilities);
+                }
+            }
+            Action::Commit(CommitRequest::Initialize) => {
+                self.section = Section::Home;
+                self.home
+                    .initialize_for_commit(capabilities.project, capabilities.config);
             }
             Action::Home(HomeRequest::Initialize) | Action::Initialize => {
                 self.section = Section::Home;
                 self.home.offer_initialization(capabilities.config);
             }
             Action::Commit(request) => {
-                return self
-                    .commit
-                    .run(request, capabilities.commit)
-                    .map(Action::Commit);
+                let handed_back = self.commit.run(request, capabilities.commit);
+                self.commit.observe(&capabilities.project.overview());
+                return handed_back.map(Action::Commit);
             }
             Action::Quit => {
                 if self.commit.has_unsaved_work() {

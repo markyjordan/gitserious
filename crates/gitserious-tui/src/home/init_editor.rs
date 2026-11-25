@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::shared::paths::path_lines;
 use gitserious_app::ProjectConfiguration;
 use gitserious_core::Taxonomy;
 use ratatui::Frame;
@@ -200,7 +201,11 @@ impl InitEditor {
                 text.add_modifier(Modifier::BOLD),
             ),
         ];
-        head.extend(inset(&root.display().to_string(), dim, width));
+        head.extend(
+            path_lines(&root.display().to_string(), width.saturating_sub(2))
+                .into_iter()
+                .map(|line| Line::styled(format!(" {line}"), dim)),
+        );
         head.extend([
             Line::default(),
             Line::styled(" commit message taxonomies", dim),

@@ -230,6 +230,7 @@ fn a_broken_repository_is_unavailable_with_its_error() -> Result<(), Box<dyn Err
         ProjectOverview::Unavailable {
             directory: start(),
             error: "git failed".into(),
+            missing: None,
         }
     );
     Ok(())
@@ -258,6 +259,7 @@ fn an_unreadable_project_is_unavailable_with_its_error() -> Result<(), Box<dyn E
         ProjectOverview::Unavailable {
             directory: start(),
             error: "gitserious.toml is not valid TOML".into(),
+            missing: None,
         }
     );
     Ok(())

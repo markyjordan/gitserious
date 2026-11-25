@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use gitserious_core::{TaxonomyId, TaxonomyVersion};
 
-use crate::RepositoryRoot;
+use crate::{MissingWorkTree, RepositoryRoot};
 
 /// The Git repository and gitserious project that contain a directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -19,6 +19,11 @@ pub enum ProjectOverview {
         /// Git does not track `gitserious.toml` yet, so the policy stays local.
         policy_untracked: bool,
     },
-    /// Git or the project file could not be read.
-    Unavailable { directory: PathBuf, error: String },
+    /// Git or the project file could not be read. `missing` says why no work tree contains
+    /// the directory, when that is the reason.
+    Unavailable {
+        directory: PathBuf,
+        error: String,
+        missing: Option<MissingWorkTree>,
+    },
 }

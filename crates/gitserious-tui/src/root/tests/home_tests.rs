@@ -106,6 +106,7 @@ fn home_names_the_directory_and_offers_only_the_step_its_state_allows()
         let workspace = HomeWorkspace::new(ProjectOverview::Unavailable {
             directory: root.as_path().to_path_buf(),
             error: "git is not installed".into(),
+            missing: None,
         });
         let (_, terminal) = home_screen(&workspace, width, height)?;
         let text = rendered(&terminal);
@@ -275,6 +276,7 @@ fn a_failed_initialization_shows_why_and_keeps_the_offer() -> Result<(), Box<dyn
     let workspace = HomeWorkspace::new(ProjectOverview::Unavailable {
         directory: fresh_root().as_path().to_path_buf(),
         error: "git is not installed".into(),
+        missing: None,
     });
     let (mut root, _) = home_screen(&workspace, 87, 40)?;
     root.handle_event(key(KeyCode::Enter), of(&workspace), &[]);

@@ -85,7 +85,11 @@ impl ConfigurationWorkspace for Unavailable {
 
 impl ProjectWorkspace for Unavailable {
     fn overview(&self) -> ProjectOverview {
-        Services.overview()
+        ProjectOverview::Unavailable {
+            directory: fresh_root().as_path().to_path_buf(),
+            error: "repository unavailable".into(),
+            missing: None,
+        }
     }
     fn initialize(&self, configuration: &ProjectConfiguration) -> Result<(), String> {
         Services.initialize(configuration)
@@ -161,12 +165,21 @@ impl ConfigurationWorkspace for HomeWorkspace {
     }
 }
 
+/// Commit follows the project state: no status without a repository, no authoring without a
+/// project.
 impl CommitWorkspace for HomeWorkspace {
     fn repository_status(&self) -> Result<RepositoryStatus, String> {
-        Services.repository_status()
+        match &*self.state.borrow() {
+            ProjectOverview::NoRepository { .. } => Err("not a git repository".into()),
+            ProjectOverview::Unavailable { error, .. } => Err(error.clone()),
+            _ => Services.repository_status(),
+        }
     }
     fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
-        Services.prepare_commit()
+        match &*self.state.borrow() {
+            ProjectOverview::Initialized { .. } => Services.prepare_commit(),
+            _ => Err("gitserious is not initialized".into()),
+        }
     }
     fn submit_commit(
         &self,
