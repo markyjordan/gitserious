@@ -37,6 +37,10 @@ impl Root {
         if matches!(&event, Event::Key(key) if key.kind == KeyEventKind::Release) {
             return None;
         }
+        if matches!(event, Event::FocusGained) {
+            self.reread(capabilities);
+            return None;
+        }
         if self.overlay.is_some() {
             return self.handle_overlay(event, capabilities);
         }

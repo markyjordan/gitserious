@@ -401,3 +401,21 @@ fn the_open_home_editor_leaves_q_slash_and_ctrl_c_to_the_root()
     assert!(workspace.created.borrow().is_none());
     Ok(())
 }
+
+#[test]
+fn regaining_focus_on_home_rereads_the_project() {
+    let workspace = HomeWorkspace::new(ProjectOverview::Uninitialized { root: fresh_root() });
+    let mut root = Root::new(InitialPage::Home, of(&workspace), &[]);
+    assert_eq!(root.home.action(), Some(HomeAction::InitializeGitserious));
+    *workspace.state.borrow_mut() = ProjectOverview::Initialized {
+        root: fresh_root(),
+        default: gitserious_core::TaxonomyId::new("conventional")
+            .unwrap_or_else(|error| unreachable!("a valid id: {error}")),
+        version: Some(TaxonomyVersion::V1),
+        policy_untracked: false,
+    };
+
+    root.handle_event(Event::FocusGained, of(&workspace), &[]);
+
+    assert_eq!(root.home.action(), Some(HomeAction::GoToCommit));
+}

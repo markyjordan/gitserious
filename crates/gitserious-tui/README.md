@@ -67,7 +67,9 @@ keeps its discard confirmation.
 The Commit overview shows repository/branch identity and directory trees for
 Staged, Unstaged, and Untracked changes. Partially staged files appear in both
 applicable groups. Up/Down selects rows; Left/Right collapses or expands folders.
-`r` refreshes and Enter starts authoring when the repository and its persisted
+Commit and Home reread Git when the terminal regains focus, so a `git add` in
+another pane shows on return; tmux reports focus only with `focus-events on`,
+so `r` refreshes by hand too. Enter starts authoring when the repository and its persisted
 project policy are valid, whatever the index holds; otherwise the page names the
 blocker and Enter does nothing. A merge, cherry-pick, or revert in progress
 blocks authoring with the commands that finish or stop it, and so does a rebase
