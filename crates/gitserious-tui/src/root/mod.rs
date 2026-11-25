@@ -107,6 +107,19 @@ impl Root {
         root
     }
 
+    /// Rereads what the open page shows from Git and the project, keeping its notice, its
+    /// selection, and any open editor, as when the terminal regains focus.
+    fn reread(&mut self, capabilities: Capabilities<'_>) {
+        match self.section {
+            Section::Commit => {
+                self.commit.refresh(capabilities.commit);
+                self.commit.observe(&capabilities.project.overview());
+            }
+            Section::Home => self.home.refresh(capabilities.project),
+            Section::Config | Section::Help => {}
+        }
+    }
+
     /// Arrives at `section` the same way a tab, a click, or the launch does.
     fn enter(&mut self, section: Section, capabilities: Capabilities<'_>) {
         self.section = section;

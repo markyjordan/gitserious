@@ -308,3 +308,36 @@ fn s_keeps_a_review_with_nothing_staged_until_enter_resumes_it() {
             .starts_with("feat: stage from review")
     }));
 }
+
+#[test]
+fn regaining_focus_rereads_status_and_keeps_the_notice_and_the_editor() {
+    let workspace = Staging::new(vec![entry("b.rs", '.', 'M')]);
+    let mut root = on_commit_page(&workspace);
+    root.commit
+        .notice_mut()
+        .push_str("Committed 1a2b3c4 earlier");
+    workspace
+        .entries
+        .borrow_mut()
+        .push(entry("staged.rs", 'A', '.'));
+
+    root.handle_event(Event::FocusGained, of(&workspace), &[]);
+
+    assert!(
+        root.commit
+            .snapshot()
+            .is_some_and(RepositoryStatus::has_staged_changes),
+        "the page reread status"
+    );
+    assert_eq!(root.commit.notice(), "Committed 1a2b3c4 earlier");
+
+    press(&mut root, &workspace, KeyCode::Enter);
+    workspace.entries.borrow_mut().clear();
+    root.handle_event(Event::FocusGained, of(&workspace), &[]);
+    assert!(root.commit.editing(), "the editor stays open");
+    assert!(
+        root.commit
+            .snapshot()
+            .is_some_and(|snapshot| snapshot.entries.is_empty())
+    );
+}

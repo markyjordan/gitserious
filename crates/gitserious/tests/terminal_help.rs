@@ -318,3 +318,30 @@ fn missing_repository_offers_initialization_and_still_allows_config_navigation()
     assert!(!directory.path().join("gitserious.toml").exists());
     Ok(())
 }
+
+#[test]
+fn commit_rereads_git_when_the_terminal_regains_focus() -> Result<(), Box<dyn Error>> {
+    let (repository, home) = initialized_repository()?;
+    let mut session = Session::spawn(&home.command(repository.path()), Streams::Terminal)?;
+    session.wait_for(|screen| active_page(screen, "Home"))?;
+    session.send(b"\t")?;
+    session.wait_for(|screen| screen.contents().contains("Staged (1)"))?;
+    assert!(
+        String::from_utf8_lossy(session.transcript()).contains("\x1b[?1004h"),
+        "the runtime asks the terminal for focus reports"
+    );
+
+    fs::write(repository.path().join("second-file"), "staged elsewhere\n")?;
+    support::git(repository.path(), &["add", "second-file"])?;
+    // The terminal's focus-in report, as it sends one when the user switches back.
+    session.send(b"\x1b[I")?;
+
+    session.wait_for(|screen| screen.contents().contains("Staged (2)"))?;
+    record(&session, "commit-focus-refresh")?;
+    quit(&mut session)?;
+    assert!(
+        String::from_utf8_lossy(session.transcript()).contains("\x1b[?1004l"),
+        "quitting turns focus reports off"
+    );
+    Ok(())
+}

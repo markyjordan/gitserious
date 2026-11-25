@@ -2,7 +2,10 @@ use std::io;
 
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::{
-    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
+    event::{
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+        EnableFocusChange, EnableMouseCapture,
+    },
     execute,
     terminal::{EnterAlternateScreen, enable_raw_mode},
 };
@@ -11,11 +14,23 @@ use ratatui::crossterm::{
 struct InputModes;
 impl InputModes {
     fn enable() -> io::Result<Self> {
-        execute!(io::stdout(), EnableMouseCapture, EnableBracketedPaste)?;
+        // Focus reports let pages reread Git after the user works in another pane. tmux sends
+        // them only with `focus-events on`, so `r` stays.
+        execute!(
+            io::stdout(),
+            EnableMouseCapture,
+            EnableBracketedPaste,
+            EnableFocusChange
+        )?;
         Ok(Self)
     }
     fn disable() -> io::Result<()> {
-        execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture)
+        execute!(
+            io::stdout(),
+            DisableFocusChange,
+            DisableBracketedPaste,
+            DisableMouseCapture
+        )
     }
 }
 impl Drop for InputModes {
@@ -47,7 +62,8 @@ pub(crate) fn suspended<T>(
         io::stdout(),
         EnterAlternateScreen,
         EnableMouseCapture,
-        EnableBracketedPaste
+        EnableBracketedPaste,
+        EnableFocusChange
     )?;
     // Fullscreen resize resets both buffers without a cursor-position query. A bare PTY
     // need not answer terminal device-status reports, and Git may have moved the cursor.
