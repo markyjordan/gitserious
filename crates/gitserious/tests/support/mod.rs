@@ -67,6 +67,11 @@ impl Home {
         })
     }
 
+    /// The directory every command sees as `HOME`.
+    pub fn path(&self) -> &Path {
+        self.root.path()
+    }
+
     pub fn config_home(&self) -> PathBuf {
         self.root.path().join("config")
     }

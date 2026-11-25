@@ -223,3 +223,21 @@ impl Error for GitRepositoryError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dubious_ownership_names_the_repository_git_refuses() {
+        let detail = "fatal: detected dubious ownership in repository at '/srv/shared repo'\n\
+                      To add an exception for this directory, call:\n\n\
+                      \tgit config --global --add safe.directory '/srv/shared repo'";
+        assert_eq!(
+            missing_work_tree(Path::new("/srv/shared repo"), detail),
+            Some(MissingWorkTree::DubiousOwnership {
+                repository: "/srv/shared repo".into()
+            })
+        );
+    }
+}

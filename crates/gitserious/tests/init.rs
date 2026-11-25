@@ -258,3 +258,22 @@ fn help_version_and_usage_exit_codes_match_the_public_contract() -> Result<(), B
     }
     Ok(())
 }
+
+// Windows finds the profile through USERPROFILE, which the test home does not replace.
+#[cfg(unix)]
+#[test]
+fn init_never_creates_a_repository_in_the_home_directory() -> Result<(), Box<dyn Error>> {
+    let home = Home::new()?;
+
+    let output = home.run(home.path(), &["init"])?;
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("is a home directory or a filesystem root"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(!home.path().join(".git").exists());
+    assert!(!home.path().join("gitserious.toml").exists());
+    Ok(())
+}
