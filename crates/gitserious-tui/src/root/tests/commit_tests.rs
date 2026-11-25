@@ -22,7 +22,7 @@ fn full_git_result_scrolls_and_keeps_navigation_modal() -> Result<(), Box<dyn st
     Ok(())
 }
 #[test]
-fn opening_commit_matches_navigating_there_and_does_not_author() {
+fn opening_commit_matches_navigating_there_and_enter_authors_with_nothing_staged() {
     let services = Services;
     let mut opened = Root::new(InitialPage::Commit, of(&services), &[]);
     let mut visited = Root::new(InitialPage::Home, of(&services), &[]);
@@ -36,8 +36,8 @@ fn opening_commit_matches_navigating_there_and_does_not_author() {
         opened.handle_event(key(KeyCode::Enter), of(&services), &[]),
         None
     );
-    assert!(!opened.commit.editing());
-    assert_eq!(opened.commit.notice(), "Stage changes with Git");
+    assert!(opened.commit.editing());
+    assert!(opened.commit.notice().is_empty());
     assert!(!opened.commit.has_pending_review());
 }
 

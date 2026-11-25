@@ -52,7 +52,7 @@ impl CommitWorkspace for Services {
         })
     }
     fn prepare_commit(&self) -> Result<CommitAuthoringContext, String> {
-        Err("Stage changes with Git".into())
+        commit::built_in_context()
     }
     fn submit_commit(
         &self,

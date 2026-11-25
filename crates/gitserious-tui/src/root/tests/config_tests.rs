@@ -7,7 +7,7 @@ fn config_overview_tab_switches_sections_and_keeps_menu_selection()
     let mut root = Root::new(InitialPage::Home, of(&services), &[]);
     root.handle_event(key(KeyCode::Tab), of(&services), &[]);
     assert_eq!(root.section, Section::Commit);
-    assert!(root.commit.blocker().is_some());
+    assert!(root.commit.snapshot().is_some());
     root.handle_event(key(KeyCode::Tab), of(&services), &[]);
     assert_eq!(root.section, Section::Config);
     let mut terminal = Terminal::new(TestBackend::new(100, 30))?;

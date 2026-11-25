@@ -67,14 +67,10 @@ impl CommitView {
             KeyCode::Char('o') if !self.notice.is_empty() => {
                 return Some(CommitRequest::ShowResult);
             }
-            KeyCode::Enter => {
-                return Some(if self.has_pending_review() {
-                    CommitRequest::Resume
-                } else {
-                    CommitRequest::Author
-                });
+            KeyCode::Enter if self.has_pending_review() => return Some(CommitRequest::Resume),
+            KeyCode::Enter | KeyCode::Char('c') if self.blocker.is_none() => {
+                return Some(CommitRequest::Author);
             }
-            KeyCode::Char('c') => return Some(CommitRequest::Author),
             KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right => {
                 self.tree.key(code, self.snapshot.as_ref())
             }
@@ -140,7 +136,7 @@ impl CommitView {
                         session.set_citation_commits(commit.cite_commits());
                         self.authoring = Some(session);
                     }
-                    Err(error) => self.notice = error,
+                    Err(error) => self.blocker = Some(error),
                 }
             }
             CommitRequest::Resume => {
@@ -364,8 +360,10 @@ impl CommitView {
         });
         frame.render_widget(Paragraph::new(summary_text), summary);
         self.tree.render(frame, tree);
-        let action = if self.has_pending_review() {
+        let action = if self.has_pending_review() && self.blocker.is_none() {
             "[c] start new commit  [enter] resume review"
+        } else if self.has_pending_review() {
+            "[enter] resume review"
         } else if self.blocker.is_some() {
             "Start commit unavailable"
         } else {
