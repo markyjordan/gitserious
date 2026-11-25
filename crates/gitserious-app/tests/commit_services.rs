@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use gitserious_app::{
     AuthoredCommit, BranchState, CitedCommit, CommitAuthoringContext, CommitOutput, CommitServices,
     CommitTaxonomy, CommitWorkspace, CommitWriter, ConfigurationServices, ConfigurationWorkspace,
-    GitOperation, GlobalConfiguration, GlobalConfigurationStore, ProjectConfiguration,
+    GitOperation, GlobalConfiguration, GlobalConfigurationStore, IndexWriter, ProjectConfiguration,
     ProjectConfigurationStore, ProjectRevision, RepositoryLocator, RepositoryRoot,
     RepositoryStatus, RepositoryStatusReader, StatusEntry, StoredProject, SubmitError,
     WorktreePaths,
@@ -1046,6 +1046,61 @@ fn a_rebase_stop_authors_a_normal_commit_unless_it_stopped_on_conflicts()
             "A rebase stopped on conflicts in a.rs, b.rs. Resolve them, then run \
              `git rebase --continue`."
         )
+    );
+    Ok(())
+}
+
+#[derive(Default)]
+struct Index(RefCell<Vec<(RepositoryRoot, String)>>);
+
+impl IndexWriter for Index {
+    fn stage_tracked(&self, root: &RepositoryRoot) -> Result<(), String> {
+        self.0.borrow_mut().push((root.clone(), "tracked".into()));
+        Ok(())
+    }
+    fn stage(&self, root: &RepositoryRoot, paths: &[PathBuf]) -> Result<(), String> {
+        self.0
+            .borrow_mut()
+            .push((root.clone(), format!("stage {paths:?}")));
+        Ok(())
+    }
+    fn unstage(&self, root: &RepositoryRoot, paths: &[PathBuf]) -> Result<(), String> {
+        self.0
+            .borrow_mut()
+            .push((root.clone(), format!("unstage {paths:?}")));
+        Ok(())
+    }
+}
+
+#[test]
+fn staging_writes_the_located_repository_index_only_through_an_index_writer()
+-> Result<(), Box<dyn Error>> {
+    let session = Session::new(Vec::new())?;
+    let unwired = session.commit();
+    assert!(!unwired.can_stage());
+    assert!(unwired.stage_tracked().is_err());
+    assert!(unwired.stage(&["file".into()]).is_err());
+
+    let index = Index::default();
+    let commit = session.commit().staging(&index);
+    assert!(commit.can_stage());
+    commit.stage_tracked()?;
+    commit.stage(&["file".into()])?;
+    commit.unstage(&["new".into(), "old".into()])?;
+
+    let root = session.locator.root.clone();
+    assert_eq!(
+        index.0.borrow().as_slice(),
+        [
+            (root.clone(), "tracked".to_owned()),
+            (root.clone(), "stage [\"file\"]".to_owned()),
+            (root, "unstage [\"new\", \"old\"]".to_owned()),
+        ]
+    );
+    session.locator.failure.set(Some("locator unavailable"));
+    assert_eq!(
+        commit.stage_tracked().err().as_deref(),
+        Some("locator unavailable")
     );
     Ok(())
 }

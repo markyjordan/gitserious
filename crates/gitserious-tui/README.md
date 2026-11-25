@@ -73,12 +73,22 @@ blocker and Enter does nothing. A merge, cherry-pick, or revert in progress
 blocks authoring with the commands that finish or stop it, and so does a rebase
 stopped on conflicts; a rebase stopped without conflicts commits normally. These
 actions are also available through `/`.
-Stage changes using Git; the overview never modifies the index.
+
+The page stages whole files, and these keys are its only writes to the index.
+`a` stages every change to tracked files, deletions included (`git add -u`),
+when there is one; with nothing staged, the page leads with it. `space` stages
+the selected file, untracked included, or unstages a staged one; a rename
+unstages both of its paths. Untracked files are staged only one at a time, and
+conflicted files are left to Git. Each key is hinted only on a row where it
+acts. Use `git add -p` to stage part of a file.
 
 Authoring happens inside the Commit page, under the nav bar, and reuses the
 existing picker, composer, and review. Its first row reads `N staged` and the
 staged paths, cut to fit, with `ctrl+g change` on the right, above a rule.
 Ctrl+G opens a read-only view of the staged changes; Esc returns to the draft.
+In the type picker, and in a Review that has nothing staged, `s` returns to the
+page to stage files: the picker closes, and the review waits as a retained one
+that Enter resumes.
 The footer leads with an orange EDIT badge and the step's keys, and ends with
 `tab nav bar`. The editor takes every key except Tab and Shift+Tab, so `q`,
 `/`, and Esc reach it. Tab and nav bar clicks still switch sections, and the

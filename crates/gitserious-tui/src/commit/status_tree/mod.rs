@@ -22,6 +22,18 @@ struct TreeRow {
     label: String,
     directory: Option<(usize, PathBuf)>,
     detail: String,
+    file: Option<TreeFile>,
+}
+
+/// A file row, which `space` stages or unstages as a whole.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct TreeFile {
+    /// Whether the row sits under Staged, so `space` unstages it.
+    pub(super) staged: bool,
+    /// The path, then a rename's original path, which unstaging names too.
+    pub(super) paths: Vec<PathBuf>,
+    /// Git resolves a conflict on `git add`, so staging leaves conflicted files to Git.
+    pub(super) conflicted: bool,
 }
 
 #[derive(Default)]
@@ -48,6 +60,11 @@ impl StatusTree {
             KeyCode::Left | KeyCode::Right => self.directory(code == KeyCode::Right, snapshot),
             _ => {}
         }
+    }
+
+    /// The selected row when it is a file.
+    pub(super) fn selected_file(&self) -> Option<&TreeFile> {
+        self.rows.get(self.selected)?.file.as_ref()
     }
 
     /// The selected row's path, which the status line shows.
@@ -122,6 +139,7 @@ fn group_rows(
         label: format!("{name} ({})", entries.len()),
         directory: None,
         detail: String::new(),
+        file: None,
     }];
     let mut root = Node::default();
     for entry in entries {
@@ -183,6 +201,13 @@ fn append_rows(
                 label: format!("{indent}{marker} {name}{renamed}{submodule}"),
                 directory: None,
                 detail: visible(&path.to_string_lossy()),
+                file: Some(TreeFile {
+                    staged: group == 0,
+                    paths: std::iter::once(entry.path.clone())
+                        .chain(entry.original_path.clone())
+                        .collect(),
+                    conflicted: entry.conflicted,
+                }),
             });
         }
         if !child.children.is_empty() {
@@ -192,6 +217,7 @@ fn append_rows(
                 label: format!("{indent}{} {name}/", if closed { '▸' } else { '▾' }),
                 directory: Some(key),
                 detail: visible(&path.to_string_lossy()),
+                file: None,
             });
             if !closed {
                 append_rows(child, &path, group, depth + 1, collapsed, rows);

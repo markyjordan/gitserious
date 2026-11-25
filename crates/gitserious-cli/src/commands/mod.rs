@@ -27,7 +27,8 @@ pub(crate) enum Command {
     /// page otherwise. You choose a type, write its properties, and review
     /// the exact message before gitserious passes it to `git commit`.
     ///
-    /// Only staged changes are committed. Stage them with `git add` first.
+    /// Only staged changes are committed. Stage whole files on the Commit
+    /// page, or parts of files with `git add -p`.
     Commit,
     /// Open a command's documentation in Help.
     ///

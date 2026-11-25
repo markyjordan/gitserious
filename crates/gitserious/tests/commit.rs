@@ -11,7 +11,8 @@ use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitSubject, PropertyRequirement, PropertyValue, TaxonomyId,
 };
 use gitserious_fs::{
-    GitCommitWriter, GitRepositoryLocator, GitRepositoryStatusReader, TomlProjectStore,
+    GitCommitWriter, GitIndexWriter, GitRepositoryLocator, GitRepositoryStatusReader,
+    TomlProjectStore,
 };
 use support::{Home, git, head_exists, repository, stderr, stdout};
 
@@ -258,5 +259,39 @@ fn a_merge_in_progress_never_reaches_git_commit() -> Result<(), Box<dyn Error>> 
         repository.path(),
         &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
     )?;
+    Ok(())
+}
+
+#[test]
+fn a_first_commit_stages_its_files_without_git_add() -> Result<(), Box<dyn Error>> {
+    let repository = repository()?;
+    let home = Home::new()?;
+    home.init(repository.path())?;
+    fs::write(repository.path().join("change.txt"), "first change\n")?;
+    let commit = CommitServices::new(
+        &GitRepositoryLocator,
+        &TomlProjectStore,
+        &GitRepositoryStatusReader,
+        &GitCommitWriter,
+        repository.path(),
+    )
+    .staging(&GitIndexWriter);
+    let authored = reviewed_research_fix(&commit.prepare_commit()?)?;
+    assert_eq!(
+        commit.submit_commit(&authored).err(),
+        Some(SubmitError::NothingStaged)
+    );
+
+    commit.stage(&["change.txt".into()])?;
+    commit.stage(&["gitserious.toml".into()])?;
+    commit.submit_commit(&authored)?;
+
+    assert_eq!(
+        stdout(&git(
+            repository.path(),
+            &["ls-tree", "--name-only", "HEAD"]
+        )?),
+        "change.txt\ngitserious.toml\n"
+    );
     Ok(())
 }
