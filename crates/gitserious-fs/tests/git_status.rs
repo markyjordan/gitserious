@@ -1,10 +1,12 @@
+mod support;
+
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 
 use gitserious_app::{BranchState, GitOperation, RepositoryRoot, RepositoryStatusReader};
 use gitserious_fs::GitRepositoryStatusReader;
+use support::{git, git_command, repository};
 use tempfile::TempDir;
 
 // Windows file names cannot contain line breaks; the parser's unit tests cover them there.
@@ -16,32 +18,6 @@ const RENAMED: &str = "new name";
 const UNTRACKED: &str = "untracked/a b\nc";
 #[cfg(not(unix))]
 const UNTRACKED: &str = "untracked/a b c";
-
-fn git(directory: &Path, arguments: &[&str]) -> Result<Output, Box<dyn Error>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(directory)
-        .args(arguments)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
-    }
-    Ok(output)
-}
-
-fn repository() -> Result<TempDir, Box<dyn Error>> {
-    let temp = TempDir::new()?;
-    git(temp.path(), &["init", "-b", "main"])?;
-    git(temp.path(), &["config", "user.name", "Status Test"])?;
-    git(
-        temp.path(),
-        &["config", "user.email", "status@example.invalid"],
-    )?;
-    git(temp.path(), &["config", "commit.gpgsign", "false"])?;
-    Ok(temp)
-}
 
 #[test]
 fn real_status_preserves_index_and_reports_partial_staging_rename_untracked_and_detached()
@@ -105,11 +81,7 @@ fn real_conflict_is_reported_without_refreshing_the_index() -> Result<(), Box<dy
     git(temp.path(), &["checkout", "main"])?;
     fs::write(temp.path().join("file"), "main\n")?;
     git(temp.path(), &["commit", "-am", "main"])?;
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(temp.path())
-        .args(["merge", "other"])
-        .output()?;
+    let output = git_command(temp.path()).args(["merge", "other"]).output()?;
     assert!(!output.status.success());
     let before = fs::read(temp.path().join(".git/index"))?;
     let status =
@@ -123,12 +95,8 @@ fn real_conflict_is_reported_without_refreshing_the_index() -> Result<(), Box<dy
 
 /// Runs git in `directory` expecting it to stop, as a conflicted or interrupted operation does.
 fn git_stops(directory: &Path, arguments: &[&str]) -> Result<(), Box<dyn Error>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(directory)
+    let output = git_command(directory)
         .args(arguments)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env("GIT_EDITOR", "true")
         .output()?;
     assert!(!output.status.success(), "git {arguments:?} did not stop");

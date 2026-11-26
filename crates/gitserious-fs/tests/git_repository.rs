@@ -1,7 +1,8 @@
+mod support;
+
 use std::error::Error;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 #[cfg(target_os = "linux")]
 use std::ffi::OsString;
@@ -10,24 +11,7 @@ use std::path::PathBuf;
 
 use gitserious_app::{MissingWorkTree, RepositoryLocator};
 use gitserious_fs::{GitRepositoryError, GitRepositoryLocator};
-use tempfile::TempDir;
-
-fn git(arguments: &[&str], directory: &Path) -> Result<(), Box<dyn Error>> {
-    let status = Command::new("git")
-        .args(arguments)
-        .current_dir(directory)
-        .status()?;
-    if !status.success() {
-        return Err(format!("git {arguments:?} failed with {status}").into());
-    }
-    Ok(())
-}
-
-fn repository() -> Result<TempDir, Box<dyn Error>> {
-    let directory = tempfile::tempdir()?;
-    git(&["init", "-q"], directory.path())?;
-    Ok(directory)
-}
+use support::{git, git_command, init, repository};
 
 fn assert_same_existing_path(actual: &Path, expected: &Path) -> Result<(), Box<dyn Error>> {
     assert_eq!(fs::canonicalize(actual)?, fs::canonicalize(expected)?);
@@ -54,7 +38,7 @@ fn nested_repository_selects_the_innermost_worktree() -> Result<(), Box<dyn Erro
     let outer = repository()?;
     let inner = outer.path().join("nested");
     fs::create_dir(&inner)?;
-    git(&["init", "-q"], &inner)?;
+    init(&inner)?;
 
     assert_same_existing_path(GitRepositoryLocator.locate(&inner)?.as_path(), &inner)?;
     Ok(())
@@ -64,25 +48,14 @@ fn nested_repository_selects_the_innermost_worktree() -> Result<(), Box<dyn Erro
 fn linked_worktree_resolves_its_own_root() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     git(
-        &[
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.com",
-            "commit",
-            "-q",
-            "--allow-empty",
-            "-m",
-            "initial",
-        ],
         repository.path(),
+        &["commit", "-q", "--allow-empty", "-m", "initial"],
     )?;
     let linked_parent = tempfile::tempdir()?;
     let linked = linked_parent.path().join("linked worktree");
-    let status = Command::new("git")
+    let status = git_command(repository.path())
         .args(["worktree", "add", "-q", "-b", "linked-test"])
         .arg(&linked)
-        .current_dir(repository.path())
         .status()?;
     assert!(status.success());
 
@@ -107,7 +80,7 @@ fn each_directory_without_a_work_tree_says_why() -> Result<(), Box<dyn Error>> {
     ));
 
     let bare = tempfile::tempdir()?;
-    git(&["init", "-q", "--bare"], bare.path())?;
+    git(bare.path(), &["init", "-q", "--bare"])?;
     assert_eq!(missing(bare.path()), Some(MissingWorkTree::Bare));
     assert_eq!(
         missing(&bare.path().join("objects")),
@@ -151,7 +124,7 @@ fn preserves_worktree_paths_with_spaces() -> Result<(), Box<dyn Error>> {
     let parent = tempfile::tempdir()?;
     let repository = parent.path().join("repository with spaces");
     fs::create_dir(&repository)?;
-    git(&["init", "-q"], &repository)?;
+    init(&repository)?;
 
     assert_same_existing_path(
         GitRepositoryLocator.locate(&repository)?.as_path(),
@@ -169,9 +142,7 @@ fn preserves_non_utf8_unix_worktree_paths() -> Result<(), Box<dyn Error>> {
     let name = OsString::from_vec(b"repository-\xff".to_vec());
     let repository = parent.path().join(PathBuf::from(name.clone()));
     fs::create_dir(&repository)?;
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(&repository)
+    let status = git_command(&repository)
         .args(["init", "-q"])
         .current_dir(parent.path())
         .status()?;

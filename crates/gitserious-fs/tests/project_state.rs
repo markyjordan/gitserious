@@ -1,7 +1,8 @@
+mod support;
+
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use gitserious_app::{
     GlobalConfiguration, InitOutcome, InitStatus, InitializeProjectError,
@@ -11,22 +12,10 @@ use gitserious_core::TaxonomyId;
 use gitserious_fs::{
     GitRepositoryError, GitRepositoryLocator, ProjectStateError, TomlProjectStore,
 };
-use tempfile::TempDir;
+use support::{git_command, repository};
 
 type InitResult =
     Result<InitOutcome, InitializeProjectError<GitRepositoryError, ProjectStateError>>;
-
-fn repository() -> Result<TempDir, Box<dyn Error>> {
-    let directory = tempfile::tempdir()?;
-    let status = Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(directory.path())
-        .status()?;
-    if !status.success() {
-        return Err(format!("git init failed with {status}").into());
-    }
-    Ok(directory)
-}
 
 fn root(directory: &Path) -> Result<RepositoryRoot, Box<dyn Error>> {
     Ok(GitRepositoryLocator.locate(directory)?)
@@ -58,9 +47,8 @@ fn project_paths(directory: &Path) -> ProjectPaths {
 }
 
 fn assert_ignored(repository: &Path, path: &str) -> Result<(), Box<dyn Error>> {
-    let status = Command::new("git")
+    let status = git_command(repository)
         .args(["check-ignore", "-q", path])
-        .current_dir(repository)
         .status()?;
     assert!(status.success(), "expected Git to ignore {path}");
     Ok(())

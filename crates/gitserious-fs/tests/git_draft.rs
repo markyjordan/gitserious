@@ -1,24 +1,11 @@
+mod support;
+
 use std::error::Error;
-use std::path::Path;
-use std::process::{Command, Output};
 
 use gitserious_app::{DraftStore, RepositoryRoot, SavedDraft, SavedProperty};
 use gitserious_fs::GitDraftStore;
+use support::{git, repository};
 use tempfile::TempDir;
-
-fn git(directory: &Path, arguments: &[&str]) -> Result<Output, Box<dyn Error>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(directory)
-        .args(arguments)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
-    }
-    Ok(output)
-}
 
 fn draft(subject: &str) -> SavedDraft {
     SavedDraft {
@@ -44,8 +31,7 @@ fn draft(subject: &str) -> SavedDraft {
 
 #[test]
 fn a_draft_round_trips_stays_out_of_status_and_discards() -> Result<(), Box<dyn Error>> {
-    let temp = TempDir::new()?;
-    git(temp.path(), &["init", "-q"])?;
+    let temp = repository()?;
     let root = RepositoryRoot::new(temp.path().to_path_buf())?;
     assert_eq!(GitDraftStore.load(&root)?, None);
 
@@ -63,21 +49,10 @@ fn a_draft_round_trips_stays_out_of_status_and_discards() -> Result<(), Box<dyn 
 
 #[test]
 fn each_linked_worktree_keeps_its_own_draft() -> Result<(), Box<dyn Error>> {
-    let temp = TempDir::new()?;
-    git(temp.path(), &["init", "-q"])?;
+    let temp = repository()?;
     git(
         temp.path(),
-        &[
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@e",
-            "commit",
-            "-q",
-            "--allow-empty",
-            "-m",
-            "base",
-        ],
+        &["commit", "-q", "--allow-empty", "-m", "base"],
     )?;
     let linked_parent = TempDir::new()?;
     let linked = linked_parent.path().join("linked");

@@ -1,7 +1,8 @@
+mod support;
+
 use std::error::Error;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 use gitserious_app::{
     ProjectConfiguration, ProjectConfigurationStore, ProjectRevision, RepositoryLocator,
@@ -33,14 +34,7 @@ level = "required"
 "#;
 
 fn repository() -> Result<(TempDir, RepositoryRoot), Box<dyn Error>> {
-    let directory = tempfile::tempdir()?;
-    let status = Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(directory.path())
-        .status()?;
-    if !status.success() {
-        return Err(format!("git init failed with {status}").into());
-    }
+    let directory = support::repository()?;
     let root = GitRepositoryLocator.locate(directory.path())?;
     Ok((directory, root))
 }
