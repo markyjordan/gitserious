@@ -10,8 +10,7 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Position;
 
 use super::naming::problem_sentence;
-pub(super) use super::test_support::{Workspace, footer_text};
-use super::test_support::{create_taxonomy, key};
+use super::test_support::{Workspace, create_taxonomy, footer_text, key};
 use super::*;
 use crate::theme::ACCENT;
 
