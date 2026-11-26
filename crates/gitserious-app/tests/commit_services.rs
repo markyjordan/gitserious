@@ -1,3 +1,5 @@
+mod support;
+
 use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -6,9 +8,9 @@ use gitserious_app::{
     AuthoredCommit, BranchState, CitedCommit, CommitAuthoringContext, CommitOutput, CommitServices,
     CommitTaxonomy, CommitWorkspace, CommitWriter, ConfigurationServices, ConfigurationWorkspace,
     DraftStore, FileEditor, GitOperation, GlobalConfiguration, GlobalConfigurationStore,
-    IndexWriter, ProjectConfiguration, ProjectConfigurationStore, ProjectRevision,
-    RepositoryLocator, RepositoryRoot, RepositoryStatus, RepositoryStatusReader, SavedDraft,
-    StatusEntry, StoredProject, SubmitError, WorktreePaths,
+    IndexWriter, ProjectConfiguration, ProjectConfigurationStore, ProjectRevision, RepositoryRoot,
+    RepositoryStatus, RepositoryStatusReader, SavedDraft, StatusEntry, StoredProject, SubmitError,
+    WorktreePaths,
 };
 use gitserious_core::{
     AuthoredProperty, CommitDraft, CommitMessage, CommitProvenance, CommitSubject,
@@ -18,24 +20,7 @@ use gitserious_core::{
     validate_commit_draft_with_provenance,
 };
 
-struct Locator {
-    root: RepositoryRoot,
-    failure: Cell<Option<&'static str>>,
-}
-
-impl RepositoryLocator for Locator {
-    type Error = &'static str;
-
-    fn locate(&self, _: &Path) -> Result<RepositoryRoot, Self::Error> {
-        self.failure
-            .get()
-            .map_or_else(|| Ok(self.root.clone()), Err)
-    }
-
-    fn missing_work_tree(_: &Self::Error) -> Option<gitserious_app::MissingWorkTree> {
-        None
-    }
-}
+use support::Locator;
 
 struct Project(RefCell<Result<Option<ProjectConfiguration>, &'static str>>);
 
@@ -131,10 +116,7 @@ impl Session {
     fn new(entries: Vec<StatusEntry>) -> Result<Self, Box<dyn Error>> {
         let root = RepositoryRoot::new(std::env::temp_dir())?;
         Ok(Self {
-            locator: Locator {
-                root: root.clone(),
-                failure: Cell::new(None),
-            },
+            locator: Locator::new(root.clone()),
             project: Project(RefCell::new(Ok(Some(project_configuration()?)))),
             library: Library(RefCell::new(GlobalConfiguration::default())),
             status: Status(RefCell::new(Ok(RepositoryStatus {

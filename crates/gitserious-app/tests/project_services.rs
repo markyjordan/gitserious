@@ -1,40 +1,23 @@
+mod support;
+
 use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
 use gitserious_app::{
     BranchState, ProjectConfiguration, ProjectConfigurationStore, ProjectOverview, ProjectRevision,
-    ProjectServices, ProjectWorkspace, RepositoryInitializer, RepositoryLocator, RepositoryRoot,
-    RepositoryStatus, RepositoryStatusReader, StatusEntry, StoredProject,
+    ProjectServices, ProjectWorkspace, RepositoryInitializer, RepositoryRoot, RepositoryStatus,
+    RepositoryStatusReader, StatusEntry, StoredProject,
 };
 use gitserious_core::{TaxonomyId, TaxonomyVersion, built_in_taxonomies};
+
+use support::{Locator, NOT_A_REPOSITORY};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Repository {
     Present,
     Missing,
     Broken,
-}
-
-struct Locator {
-    root: RepositoryRoot,
-    repository: Cell<Repository>,
-}
-
-impl RepositoryLocator for Locator {
-    type Error = &'static str;
-
-    fn locate(&self, _: &Path) -> Result<RepositoryRoot, Self::Error> {
-        match self.repository.get() {
-            Repository::Present => Ok(self.root.clone()),
-            Repository::Missing => Err("not a git repository"),
-            Repository::Broken => Err("git failed"),
-        }
-    }
-
-    fn missing_work_tree(error: &Self::Error) -> Option<gitserious_app::MissingWorkTree> {
-        (*error == "not a git repository").then_some(gitserious_app::MissingWorkTree::NotRepository)
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -105,7 +88,7 @@ impl RepositoryStatusReader for Status {
 
 /// Creates the repository the locator then finds, unless told to fail.
 struct Initializer<'a> {
-    repository: &'a Cell<Repository>,
+    locator: &'a Locator,
     failure: Option<&'static str>,
     calls: Cell<usize>,
 }
@@ -116,7 +99,7 @@ impl RepositoryInitializer for Initializer<'_> {
         if let Some(failure) = self.failure {
             return Err(failure.into());
         }
-        self.repository.set(Repository::Present);
+        self.locator.failure.set(None);
         Ok(())
     }
 }
@@ -132,11 +115,14 @@ impl Session {
         repository: Repository,
         project: Result<Option<ProjectConfiguration>, &'static str>,
     ) -> Result<Self, Box<dyn Error>> {
+        let locator = Locator::new(RepositoryRoot::new(start())?);
+        locator.failure.set(match repository {
+            Repository::Present => None,
+            Repository::Missing => Some(NOT_A_REPOSITORY),
+            Repository::Broken => Some("git failed"),
+        });
         Ok(Self {
-            locator: Locator {
-                root: RepositoryRoot::new(start())?,
-                repository: Cell::new(repository),
-            },
+            locator,
             store: Store {
                 project: RefCell::new(project),
                 local_state: Ok(()),
@@ -148,7 +134,7 @@ impl Session {
 
     fn initializer(&self, failure: Option<&'static str>) -> Initializer<'_> {
         Initializer {
-            repository: &self.locator.repository,
+            locator: &self.locator,
             failure,
             calls: Cell::new(0),
         }
