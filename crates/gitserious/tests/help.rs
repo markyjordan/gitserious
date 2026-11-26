@@ -1,8 +1,11 @@
+mod support;
+
 use std::error::Error;
-use std::process::{Command, Output};
+use std::process::Output;
 
 use gitserious_cli::{help_topics, styled_help};
 use gitserious_tui::HelpPage;
+use support::Home;
 
 const DOCUMENTED: [&str; 3] = ["init", "config", "commit"];
 const COMMANDS: [Option<&str>; 5] = [
@@ -16,7 +19,9 @@ const COLUMNS: usize = 100;
 
 /// Every stream of the child is a pipe, so clap takes the terminal width from `COLUMNS`.
 fn run(columns: usize, arguments: &[&str]) -> Result<Output, Box<dyn Error>> {
-    Ok(Command::new(env!("CARGO_BIN_EXE_gitserious"))
+    let home = Home::new()?;
+    Ok(home
+        .command(home.path())
         .args(arguments)
         .env("COLUMNS", columns.to_string())
         .output()?)
