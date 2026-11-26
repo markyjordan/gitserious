@@ -248,21 +248,22 @@ fn only_the_concise_help_points_to_the_help_command() -> Result<(), Box<dyn Erro
 }
 
 #[test]
-fn root_detailed_help_lists_the_help_command_and_points_to_command_help()
--> Result<(), Box<dyn Error>> {
+fn the_help_command_prints_the_concise_help_pointing_to_command_help() -> Result<(), Box<dyn Error>>
+{
     let help = detailed(None)?;
 
     assert!(
-        help.lines().any(|line| line.starts_with("  help ")
-            && line.ends_with(" Open a command's documentation in Help")),
-        "{help}"
-    );
-    assert_eq!(command_names(&help), ["init", "config", "commit", "help"]);
-    assert!(
         help.ends_with(
-            "\n\nUse `gitserious help <command>` for more information on a specific command.\n"
+            "\n\nUse `gitserious help <COMMAND>` for more information on a specific command.\n"
         ),
         "{help}"
+    );
+    assert_eq!(
+        help,
+        concise()?.replace(
+            "Use `gitserious help` for more details.",
+            "Use `gitserious help <COMMAND>` for more information on a specific command."
+        )
     );
     Ok(())
 }
@@ -294,28 +295,13 @@ fn command_help_is_the_description_then_the_usage() -> Result<(), Box<dyn Error>
 }
 
 #[test]
-fn detailed_help_puts_each_description_below_its_name_with_blank_lines_between()
--> Result<(), Box<dyn Error>> {
-    let root = detailed(None)?;
-    let options = root
-        .split_once("\nOptions:\n")
-        .and_then(|(_, rest)| rest.split("\n\nUse ").next())
-        .unwrap_or_default();
+fn command_help_puts_each_description_below_its_name() -> Result<(), Box<dyn Error>> {
     let help = detailed(Some("help"))?;
 
     assert!(
         help.ends_with("\nArguments:\n  [COMMAND]\n          The command to document\n"),
         "{help}"
     );
-    let entries: Vec<_> = options.split("\n\n").collect();
-    assert_eq!(entries.len(), 2, "{root}");
-    for entry in entries {
-        let lines: Vec<_> = entry.lines().collect();
-        assert_eq!(lines.len(), 2, "{entry}");
-        assert!(lines[0].trim_start().starts_with('-'), "{entry}");
-        assert!(lines[1].starts_with("          "), "{entry}");
-        assert!(!lines[1].trim().is_empty(), "{entry}");
-    }
     Ok(())
 }
 

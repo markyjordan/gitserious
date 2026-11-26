@@ -11,6 +11,10 @@ use crate::invocation::{Answer, Destination, Invocation};
 
 const HELP_WIDTH: usize = 100;
 
+/// How `help` and the Overview end, in place of the concise help's pointer to `help`.
+const OVERVIEW_FOOTER: &str =
+    "Use `gitserious help <COMMAND>` for more information on a specific command.";
+
 #[derive(Debug, Parser)]
 #[command(
     name = "gitserious",
@@ -24,7 +28,6 @@ const HELP_WIDTH: usize = 100;
     args_conflicts_with_subcommands = true,
     disable_help_subcommand = true,
     after_help = "Use `gitserious help` for more details.",
-    after_long_help = "Use `gitserious help <command>` for more information on a specific command.",
     subcommand_required = false
 )]
 struct Cli {
@@ -157,7 +160,8 @@ fn with_root_usage(root: clap::Command) -> clap::Command {
 enum HelpText<'a> {
     /// What `-h` and `--help` print: the root's summary, which points to `gitserious help`.
     Concise,
-    /// What `help` prints and the Help Overview shows: the root's full documentation.
+    /// What `help` prints and the Help Overview shows: the concise help, which points to each
+    /// command's documentation instead.
     Overview,
     /// What `help <command>` prints and the command's Help page shows.
     Command(&'a str),
@@ -173,7 +177,7 @@ impl<'a> HelpText<'a> {
     fn render(self, mut root: clap::Command) -> StyledStr {
         match self {
             Self::Concise => root.render_help(),
-            Self::Overview => root.render_long_help(),
+            Self::Overview => root.after_help(OVERVIEW_FOOTER).render_help(),
             Self::Command(name) => {
                 root.build();
                 match root.find_subcommand_mut(name) {
