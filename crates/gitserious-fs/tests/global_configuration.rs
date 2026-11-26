@@ -1,5 +1,3 @@
-use gitserious_app::test_support::LibraryLookup;
-
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -344,7 +342,12 @@ fn eligibility_changes_keep_selection_and_durable_name_locking() -> Result<(), B
     assert!(reopened.custom_taxonomies()[0].name_locked());
     assert!(reopened.catalog()?.find(original.id()).is_none());
     let mut draft = LibraryDraft::from_configuration(reopened);
-    let node = draft.find_path(&["team"]).ok_or("missing empty entry")?;
+    let node = draft
+        .taxonomies()
+        .iter()
+        .find(|node| node.name() == "team")
+        .map(|node| node.id().clone())
+        .ok_or("missing empty entry")?;
     assert_eq!(
         draft.edit(&node, DraftEdit::Text(DraftField::Name, "renamed")),
         Err(gitserious_app::EditRefusal::NameLocked)
