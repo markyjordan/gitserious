@@ -1,35 +1,16 @@
+mod support;
+
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 
 use gitserious_app::{IndexWriter, RepositoryRoot};
 use gitserious_fs::GitIndexWriter;
+use support::git;
 use tempfile::TempDir;
 
-fn git(directory: &Path, arguments: &[&str]) -> Result<Output, Box<dyn Error>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(directory)
-        .args(arguments)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
-    }
-    Ok(output)
-}
-
 fn repository() -> Result<(TempDir, RepositoryRoot), Box<dyn Error>> {
-    let temp = TempDir::new()?;
-    git(temp.path(), &["init", "-q", "-b", "main"])?;
-    git(temp.path(), &["config", "user.name", "Index Test"])?;
-    git(
-        temp.path(),
-        &["config", "user.email", "index@example.invalid"],
-    )?;
-    git(temp.path(), &["config", "commit.gpgsign", "false"])?;
+    let temp = support::repository()?;
     let root = RepositoryRoot::new(temp.path().to_path_buf())?;
     Ok((temp, root))
 }

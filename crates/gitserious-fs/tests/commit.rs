@@ -1,7 +1,8 @@
+mod support;
+
 use std::error::Error;
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
 
 use gitserious_app::{CommitWriter, RepositoryRoot};
 use gitserious_core::{
@@ -9,39 +10,7 @@ use gitserious_core::{
     PropertyValue, built_in_commit_types, validate_commit_draft,
 };
 use gitserious_fs::{GitCommitError, GitCommitWriter};
-use tempfile::TempDir;
-
-fn git(directory: &Path, arguments: &[&str]) -> Result<Output, Box<dyn Error>> {
-    Ok(Command::new("git")
-        .arg("-C")
-        .arg(directory)
-        .args(arguments)
-        .output()?)
-}
-
-fn git_ok(directory: &Path, arguments: &[&str]) -> Result<(), Box<dyn Error>> {
-    let output = git(directory, arguments)?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "git {arguments:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into())
-    }
-}
-
-fn repository() -> Result<TempDir, Box<dyn Error>> {
-    let directory = tempfile::tempdir()?;
-    git_ok(directory.path(), &["init", "-q"])?;
-    git_ok(directory.path(), &["config", "user.name", "Test User"])?;
-    git_ok(
-        directory.path(),
-        &["config", "user.email", "test@example.com"],
-    )?;
-    Ok(directory)
-}
+use support::{git, git_command, init, repository};
 
 fn root(path: &Path) -> Result<RepositoryRoot, Box<dyn Error>> {
     Ok(RepositoryRoot::new(path.to_path_buf())?)
@@ -73,11 +42,7 @@ fn feat_message_with_intent(intent: &str) -> Result<CommitMessage, Box<dyn Error
 }
 
 fn committed_message(directory: &Path) -> Result<String, Box<dyn Error>> {
-    let object = git(directory, &["cat-file", "commit", "HEAD"])?;
-    if !object.status.success() {
-        return Err(String::from_utf8_lossy(&object.stderr).into_owned().into());
-    }
-    let object = String::from_utf8(object.stdout)?;
+    let object = String::from_utf8(git(directory, &["cat-file", "commit", "HEAD"])?.stdout)?;
     object
         .split_once("\n\n")
         .map(|(_, message)| message.to_owned())
@@ -109,7 +74,7 @@ fn writer_commits_exact_message_and_only_the_staged_index() -> Result<(), Box<dy
     let repository = repository()?;
     fs::write(repository.path().join("staged.txt"), "staged\n")?;
     fs::write(repository.path().join("untracked.txt"), "untracked\n")?;
-    git_ok(repository.path(), &["add", "staged.txt"])?;
+    git(repository.path(), &["add", "staged.txt"])?;
     let message = feat_message()?;
 
     let output = GitCommitWriter.commit(&root(repository.path())?, &message)?;
@@ -126,7 +91,7 @@ fn writer_commits_exact_message_and_only_the_staged_index() -> Result<(), Box<dy
 fn writer_names_the_commit_it_created_as_git_stores_it() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     fs::write(repository.path().join("staged.txt"), "staged\n")?;
-    git_ok(repository.path(), &["add", "staged.txt"])?;
+    git(repository.path(), &["add", "staged.txt"])?;
 
     let output = GitCommitWriter.commit(&root(repository.path())?, &feat_message()?)?;
 
@@ -144,7 +109,7 @@ fn writer_names_the_commit_it_created_as_git_stores_it() -> Result<(), Box<dyn E
 fn writer_preserves_the_exact_wrapped_canonical_message() -> Result<(), Box<dyn Error>> {
     let repository = repository()?;
     fs::write(repository.path().join("staged.txt"), "staged\n")?;
-    git_ok(repository.path(), &["add", "staged.txt"])?;
+    git(repository.path(), &["add", "staged.txt"])?;
     let intent = format!("{} durable", "x".repeat(75));
     let message = feat_message_with_intent(&intent)?;
 
@@ -179,12 +144,12 @@ fn normal_pre_commit_and_commit_msg_hooks_run() -> Result<(), Box<dyn Error>> {
         "#!/bin/sh\ngrep -q '^feat(fs): create commit$' \"$1\"\n",
     )?;
     make_executable(&commit_msg)?;
-    git_ok(
+    git(
         repository.path(),
         &["config", "core.hooksPath", hooks.to_string_lossy().as_ref()],
     )?;
     fs::write(repository.path().join("change.txt"), "change\n")?;
-    git_ok(repository.path(), &["add", "change.txt"])?;
+    git(repository.path(), &["add", "change.txt"])?;
 
     GitCommitWriter.commit(&root(repository.path())?, &feat_message()?)?;
     assert_eq!(fs::read_to_string(marker)?, "ran");
@@ -202,12 +167,12 @@ fn hook_rejection_and_empty_index_preserve_exact_git_diagnostics() -> Result<(),
         "#!/bin/sh\necho 'policy rejected commit' >&2\nexit 9\n",
     )?;
     make_executable(&pre_commit)?;
-    git_ok(
+    git(
         rejected_repository.path(),
         &["config", "core.hooksPath", hooks.to_string_lossy().as_ref()],
     )?;
     fs::write(rejected_repository.path().join("change.txt"), "change\n")?;
-    git_ok(rejected_repository.path(), &["add", "change.txt"])?;
+    git(rejected_repository.path(), &["add", "change.txt"])?;
     let error = GitCommitWriter
         .commit(&root(rejected_repository.path())?, &feat_message()?)
         .err()
@@ -216,12 +181,11 @@ fn hook_rejection_and_empty_index_preserve_exact_git_diagnostics() -> Result<(),
     assert!(matches!(error, GitCommitError::Rejected { .. }));
     assert!(error_text.contains("policy rejected commit"));
     assert!(
-        !git(
-            rejected_repository.path(),
-            &["rev-parse", "--verify", "HEAD"]
-        )?
-        .status
-        .success()
+        !git_command(rejected_repository.path())
+            .args(["rev-parse", "--verify", "HEAD"])
+            .output()?
+            .status
+            .success()
     );
 
     let empty = repository()?;
@@ -240,15 +204,15 @@ fn repository_paths_with_spaces_are_supported() -> Result<(), Box<dyn Error>> {
     let parent = tempfile::tempdir()?;
     let repository = parent.path().join("repository with spaces");
     fs::create_dir(&repository)?;
-    git_ok(&repository, &["init", "-q"])?;
-    git_ok(&repository, &["config", "user.name", "Test User"])?;
-    git_ok(&repository, &["config", "user.email", "test@example.com"])?;
+    init(&repository)?;
     fs::write(repository.join("change.txt"), "change\n")?;
-    git_ok(&repository, &["add", "change.txt"])?;
+    git(&repository, &["add", "change.txt"])?;
 
     GitCommitWriter.commit(&root(&repository)?, &feat_message()?)?;
     assert!(
-        git(&repository, &["rev-parse", "--verify", "HEAD"])?
+        git_command(&repository)
+            .args(["rev-parse", "--verify", "HEAD"])
+            .output()?
             .status
             .success()
     );

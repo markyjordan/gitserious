@@ -1,25 +1,15 @@
 // Git runs the editor through sh, which only Unix runners are sure to have on PATH.
 #![cfg(unix)]
 
+mod support;
+
 use std::error::Error;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 use gitserious_app::{FileEditor, RepositoryRoot};
 use gitserious_fs::GitEditor;
-
-fn git(directory: &Path, arguments: &[&str]) -> Result<(), Box<dyn Error>> {
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(directory)
-        .args(arguments)
-        .status()?;
-    if !status.success() {
-        return Err(format!("git {arguments:?} failed with {status}").into());
-    }
-    Ok(())
-}
+use support::{git, repository};
 
 #[test]
 fn the_editor_git_names_edits_the_file_and_its_failure_is_reported() -> Result<(), Box<dyn Error>> {
@@ -30,8 +20,7 @@ fn the_editor_git_names_edits_the_file_and_its_failure_is_reported() -> Result<(
     {
         return Ok(());
     }
-    let directory = tempfile::tempdir()?;
-    git(directory.path(), &["init", "-q"])?;
+    let directory = repository()?;
     let root = RepositoryRoot::new(directory.path().to_path_buf())?;
     fs::write(directory.path().join("gitserious.toml"), "broken\n")?;
 
