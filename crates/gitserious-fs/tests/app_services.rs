@@ -1,11 +1,12 @@
 mod support;
 
 use std::cell::Cell;
+use std::collections::BTreeSet;
 use std::convert::Infallible;
 use std::error::Error;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 
 use gitserious_app::{
     AuthoredCommit, CommitServices, CommitWorkspace, ConfigurationServices, ConfigurationWorkspace,
@@ -21,6 +22,7 @@ use gitserious_fs::{
     GitCommitWriter, GitRepositoryInitializer, GitRepositoryLocator, GitRepositoryStatusReader,
     TomlProjectStore,
 };
+use support::{git, git_command, init, repository};
 
 struct Library(GlobalConfiguration);
 impl GlobalConfigurationStore for Library {
@@ -40,16 +42,39 @@ impl GlobalConfigurationStore for Library {
     }
 }
 
-fn git(directory: &Path, arguments: &[&str]) -> Result<Output, Box<dyn Error>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(directory)
-        .args(arguments)
-        .output()?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+fn head_exists(directory: &Path) -> Result<bool, Box<dyn Error>> {
+    Ok(git_command(directory)
+        .args(["rev-parse", "--verify", "HEAD"])
+        .output()?
+        .status
+        .success())
+}
+
+/// A fresh project adds only its policy and ignored local state beside Git and user files.
+fn assert_project_shape(directory: &Path) -> Result<(), Box<dyn Error>> {
+    fn entries(directory: &Path) -> Result<BTreeSet<OsString>, std::io::Error> {
+        fs::read_dir(directory)?
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect()
     }
-    Ok(output)
+    assert_eq!(
+        entries(directory)?,
+        [".git", ".gitserious", "gitserious.toml"]
+            .map(OsString::from)
+            .into(),
+        "initialization must not generate a lock file or another root artifact"
+    );
+    assert!(directory.join("gitserious.toml").is_file());
+    assert_eq!(
+        entries(&directory.join(".gitserious"))?,
+        [OsString::from(".gitignore")].into(),
+        "fresh local state contains only its ignore rule"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join(".gitserious/.gitignore"))?,
+        "*\n"
+    );
+    Ok(())
 }
 
 type GitCommitServices<'a> =
@@ -109,7 +134,7 @@ fn exercise(commit: &GitCommitServices<'_>, directory: &Path) -> Result<(), Stri
             .ok_or("hook did not reject commit")?;
         assert!(error.to_string().contains("test-hook-rejected"));
         assert!(
-            !support::head_exists(directory).map_err(|error| error.to_string())?,
+            !head_exists(directory).map_err(|error| error.to_string())?,
             "a rejected first commit must leave HEAD unborn"
         );
         assert!(commit.repository_status()?.has_staged_changes());
@@ -153,14 +178,7 @@ fn exercise(commit: &GitCommitServices<'_>, directory: &Path) -> Result<(), Stri
 #[test]
 fn commit_services_gate_staging_validate_review_and_retry_git_rejection()
 -> Result<(), Box<dyn Error>> {
-    let temp = tempfile::TempDir::new()?;
-    git(temp.path(), &["init", "-b", "main"])?;
-    git(temp.path(), &["config", "user.name", "Interactive Test"])?;
-    git(
-        temp.path(),
-        &["config", "user.email", "interactive@example.invalid"],
-    )?;
-    git(temp.path(), &["config", "commit.gpgsign", "false"])?;
+    let temp = repository()?;
     let taxonomy = Taxonomy::new(
         TaxonomyId::new("notes")?,
         Some(TaxonomyVersion::V1),
@@ -202,8 +220,7 @@ fn commit_services_gate_staging_validate_review_and_retry_git_rejection()
 
 #[test]
 fn commit_services_reject_absent_and_invalid_policy() -> Result<(), Box<dyn Error>> {
-    let temp = tempfile::TempDir::new()?;
-    git(temp.path(), &["init", "-b", "main"])?;
+    let temp = repository()?;
     fs::write(temp.path().join("file"), "staged\n")?;
     git(temp.path(), &["add", "file"])?;
     let global = GlobalConfiguration::default();
@@ -261,7 +278,7 @@ fn follow_home(project: &GitProjectServices<'_>, directory: &Path) -> Result<(),
             directory: directory.to_path_buf()
         }
     );
-    git(directory, &["init", "-b", "main"]).map_err(fail)?;
+    init(directory).map_err(fail)?;
     let ProjectOverview::Uninitialized { root } = project.overview() else {
         return Err(format!(
             "expected an uninitialized repository: {:?}",
@@ -273,7 +290,7 @@ fn follow_home(project: &GitProjectServices<'_>, directory: &Path) -> Result<(),
 
     let head = fs::read(directory.join(".git/HEAD")).map_err(|error| error.to_string())?;
     project.initialize(&built_ins()?)?;
-    support::assert_project_shape(directory, &[]).map_err(|error| error.to_string())?;
+    assert_project_shape(directory).map_err(|error| error.to_string())?;
     assert_eq!(
         fs::read(directory.join(".git/HEAD")).map_err(|error| error.to_string())?,
         head,
@@ -295,7 +312,7 @@ fn follow_home(project: &GitProjectServices<'_>, directory: &Path) -> Result<(),
         project.initialize(&built_ins()?).is_err(),
         "an existing project is never rewritten"
     );
-    support::assert_project_shape(directory, &[]).map_err(|error| error.to_string())?;
+    assert_project_shape(directory).map_err(|error| error.to_string())?;
     assert_eq!(
         fs::read_to_string(directory.join("gitserious.toml")).map_err(|error| error.to_string())?,
         written
@@ -387,7 +404,7 @@ fn plain_directory(project: &GitProjectServices<'_>, directory: &Path) -> Result
         ProjectOverview::NoRepository { .. }
     ));
     project.initialize(&built_ins()?)?;
-    support::assert_project_shape(directory, &[]).map_err(|error| error.to_string())?;
+    assert_project_shape(directory).map_err(|error| error.to_string())?;
     assert!(
         directory.join(".git").is_dir(),
         "git init ran in the directory"
@@ -515,14 +532,14 @@ fn repeat_initialization(project: &GitProjectServices<'_>, directory: &Path) -> 
 #[test]
 fn interactive_initialization_in_an_existing_repository_never_reinitializes_git()
 -> Result<(), Box<dyn Error>> {
-    let repository = support::repository()?;
+    let repository = repository()?;
     let initializer = CountingInitializer(Cell::new(0));
     repeat_initialization(
         &project_services(repository.path(), &initializer),
         repository.path(),
     )?;
     assert_eq!(initializer.0.get(), 0);
-    support::assert_project_shape(repository.path(), &[])?;
+    assert_project_shape(repository.path())?;
     Ok(())
 }
 
