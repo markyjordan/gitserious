@@ -27,7 +27,7 @@ The repository has no Markdown format or link check in `scripts/` or `.github/wo
 
 At `f6a082c`, on the same host and toolchain with a clean tree, `fmt`, `check`, `lint`, and `test` pass. No test fails and none is ignored. `test` took 128 s of wall time with the build already cached, and the TUI lib target took 93.74 s of it. `check` again skipped the dead-code scan, which runs only on Linux.
 
-The workspace lost 2 tests. #481 deleted 2 redundant CLI tests. #478 moved 9 tests from the executable to FS, so FS gained 9 and the executable lost 9.
+The workspace lost 2 tests. #481 deleted 2 redundant CLI tests. #478 moved 9 tests from the executable to FS, so FS gained 9 and the executable lost 9. The counts below include [the follow-ups after the stack](#follow-ups-after-the-stack), which moved 4 more tests from the executable to FS and kept the total at 605.
 
 ### Counts per crate
 
@@ -37,17 +37,17 @@ The measured count is what `cargo test -- --list` lists on this host. The static
 |---|---|---|---|---|---|---|
 | `gitserious-core` | 26 | 32 | 0 | 58 | 58 | 58 |
 | `gitserious-app` | 28 | 78 | 0 | 106 | 106 | 106 |
-| `gitserious-fs` | 18 | 76 | 0 | 94 | 96 | 85 |
+| `gitserious-fs` | 18 | 80 | 0 | 98 | 100 | 85 |
 | `gitserious-cli` | 8 | 3 | 0 | 11 | 11 | 13 |
 | `gitserious-tui` | 285 | 0 | 0 | 285 | 285 | 285 |
-| `gitserious` | 0 | 51 | 0 | 51 | 51 | 60 |
+| `gitserious` | 0 | 47 | 0 | 47 | 47 | 60 |
 | Total | 365 | 240 | 0 | 605 | 607 | 607 |
 
 The 18 FS unit tests are 6 parser tests in `src/` and 12 path resolution tests in `src/platform/`. At `5740240`, the FS lib held 23 unit tests, because `src/lib.rs` compiled `tests/unit/` into it. #473 moved 5 of those to the `tests/directory.rs` integration target. The executable's `src/main.rs` target has no tests.
 
 ### Counts and harness time per target
 
-Harness time is the `finished in` value from the `test` run at `f6a082c`. It excludes compilation.
+Harness time is the `finished in` value from the `test` run at `f6a082c`. It excludes compilation. The first follow-up changed the test counts of FS's `tests/app_services.rs` and the executable's `tests/commit.rs`. Their harness times were not remeasured, because the follow-up's run shared the host with other builds, and the unchanged `tests/git_worktree.rs` took 23.64 s in it.
 
 | Crate | Target | Tests | Harness time |
 |---|---|---|---|
@@ -67,7 +67,7 @@ Harness time is the `finished in` value from the `test` run at `f6a082c`. It exc
 | `gitserious-app` | `tests/project_services.rs` | 12 | 0.00 s |
 | `gitserious-app` | `tests/taxonomy_policy_v1.rs` | 2 | 0.00 s |
 | `gitserious-fs` | lib | 18 | 0.00 s |
-| `gitserious-fs` | `tests/app_services.rs` | 9 | 1.99 s |
+| `gitserious-fs` | `tests/app_services.rs` | 13 | not remeasured |
 | `gitserious-fs` | `tests/commit.rs` | 6 | 1.56 s |
 | `gitserious-fs` | `tests/directory.rs` | 5 | 0.00 s |
 | `gitserious-fs` | `tests/git_draft.rs` | 2 | 0.46 s |
@@ -84,7 +84,7 @@ Harness time is the `finished in` value from the `test` run at `f6a082c`. It exc
 | `gitserious-cli` | `tests/invocation.rs` | 3 | 0.01 s |
 | `gitserious-tui` | lib | 285 | 93.74 s |
 | `gitserious` | bin `src/main.rs` | 0 | 0.00 s |
-| `gitserious` | `tests/commit.rs` | 7 | 2.26 s |
+| `gitserious` | `tests/commit.rs` | 3 | not remeasured |
 | `gitserious` | `tests/config.rs` | 4 | 0.61 s |
 | `gitserious` | `tests/help.rs` | 15 | 0.28 s |
 | `gitserious` | `tests/home.rs` | 4 | 0.50 s |
@@ -135,7 +135,7 @@ Each row covers one module or file group at `f6a082c`. Locations are relative to
 | Location | Tests | Category | Contract protected | Dependencies | Isolation | Stack outcome | Coverage |
 |---|---|---|---|---|---|---|---|
 | `src/git.rs`, `src/git_status.rs`, `src/git_worktree.rs` | 6 | unit | Parsers name the repository Git refuses for dubious ownership. They read partial staging, renames, conflicts, unborn and detached heads, and Unix non-UTF-8 paths from porcelain output, and they read commit rows and parent directories. | none | pure | kept | preserved |
-| `src/platform/xdg.rs`, `src/platform/windows.rs` | 12, plus 1 that runs only on Windows | unit | Windows paths live under the roaming application data root, which must be absolute. XDG resolution uses `XDG_CONFIG_HOME` or falls back under `HOME`. It ignores empty and relative values, reports a missing or relative `HOME`, keeps non-Unicode paths, and creates nothing. | `FakeEnvironment` and the private `resolve_from` and `Environment` in `xdg.rs`, the private `resolve_from_root` in `windows.rs`, `tempfile` | pure, except one filesystem test. `system_adapter_uses_xdg_on_unix` reads the process `HOME`. | moved from `tests/unit/global.rs` into the platform modules (#473) | preserved |
+| `src/platform/xdg.rs`, `src/platform/windows.rs` | 12, plus 1 that runs only on Windows | unit | Windows paths live under the roaming application data root, which must be absolute. XDG resolution uses `XDG_CONFIG_HOME` or falls back under `HOME`. It ignores empty and relative values, reports a missing or relative `HOME`, keeps non-Unicode paths, and creates nothing. | `FakeEnvironment` and the private `resolve_from` and `Environment` in `xdg.rs`, the private `resolve_from_root` in `windows.rs`, `tempfile` | pure, except one filesystem test. `system_adapter_uses_xdg_on_unix` copies the process `HOME` and `XDG_CONFIG_HOME` into a `FakeEnvironment` and expects the system adapter to match `resolve_from`, so it passes in any environment. | moved from `tests/unit/global.rs` into the platform modules (#473) | preserved |
 | `tests/directory.rs` | 5 | integration | `LocalDirectoryCreator` creates only the config directory, recursively and idempotently. It reports a file collision, requests mode 0700 for new directories, and leaves existing modes unchanged. | `tempfile` | filesystem | moved from `tests/unit/directory.rs`, with `TestDirectory` replaced by `tempfile` (#473) | preserved |
 | `tests/commit.rs` | 6 | integration | `GitCommitWriter` commits the exact reviewed message and only the staged index. It names the commit it created, runs the `pre-commit` and `commit-msg` hooks, keeps Git's diagnostics, and supports paths with spaces. | real `git` through `tests/support`, `tempfile`, hook scripts | subprocess | kept, on the hermetic Git fixture (#474) | preserved. #474 closed gap G7. |
 | `tests/git_draft.rs` | 2 | integration | `GitDraftStore` round trips under `.git`, stays out of `git status`, discards idempotently, and keeps one draft per linked worktree. | real `git` through `tests/support`, `tempfile` | subprocess, filesystem | kept, on the hermetic Git fixture (#474). The tests for gap G1 are deferred. | missing. See gap G1. |
@@ -144,7 +144,7 @@ Each row covers one module or file group at `f6a082c`. Locations are relative to
 | `tests/global_configuration.rs` | 13 | integration | `TomlGlobalConfigurationStore` loads the built-in default without creating storage and round trips by compare-and-swap. It rejects stale snapshots, unknown fields, nonregular files, non-directory roots, and symlinked files. It requests mode 0700, leaves no temporary files, and round trips Library dates. | `tempfile`, one inline taxonomy lookup | filesystem | kept, with the inline lookup (#469). The tests for gaps G2 to G5 are deferred. | missing |
 | `tests/project_state.rs`, `tests/project_store.rs` | 18 | integration | `TomlProjectStore` initializes one file with ordered, complete taxonomies. Re-initialization preserves bytes, local state, and a custom ignore file. It refuses non-regular and symlinked paths and never regenerates an invalid project. `replace` writes only over the expected revision and refuses a stale or removed file. Errors name the TOML line and column and Git conflict markers. | real `git` through `tests/support`, `tempfile` | filesystem, subprocess | kept, on the hermetic Git fixture (#474). The tests for gap G4 are deferred. | missing |
 | `tests/taxonomy_storage_v1.rs` | 4 | integration | Both stores read format version 1. A legacy global shape fails with an actionable message. Retired examples load without a write and disappear on save, and custom versions disappear at both boundaries. | `tempfile` | filesystem | kept | preserved |
-| `tests/app_services.rs` | 9 | integration | App services wired to FS adapters in one process. Commit submission requires staged changes and can retry after a hook rejects it. Project services follow a directory from no repository to a tracked project. A failed or partial initialization writes only what it should. | real `git` through `tests/support`, `GitCommitWriter`, `TomlProjectStore`, a `Library` fake, local `head_exists` and `assert_project_shape` | subprocess | moved from `crates/gitserious/tests/interactive.rs` (#478) | preserved |
+| `tests/app_services.rs` | 13 | integration | App services wired to FS adapters in one process. Commit submission requires staged changes and can retry after a hook rejects it. Git stores the exact reviewed message, a project-owned `conventional` replaces the built-in definition, a merge in progress never reaches `git commit`, and a first commit stages its files without `git add`. Project services follow a directory from no repository to a tracked project. A failed or partial initialization writes only what it should. | real `git` through `tests/support`, `GitCommitWriter`, `GitIndexWriter`, `TomlProjectStore`, `initialize_project`, a `Library` fake, local `head_exists`, `assert_project_shape`, and `stdout` | subprocess | moved from `crates/gitserious/tests/interactive.rs` (#478). The 4 in-process tests from `crates/gitserious/tests/commit.rs` moved here after the stack. | preserved |
 
 ### gitserious-cli
 
@@ -158,7 +158,7 @@ Each row covers one module or file group at `f6a082c`. Locations are relative to
 
 | Location | Tests | Category | Contract protected | Dependencies | Isolation | Stack outcome | Coverage |
 |---|---|---|---|---|---|---|---|
-| `src/config/model_check/` (6 files) | 1 | property-model | Every key sequence up to each seed's depth keeps 14 Config editor properties, and each seed meets its reach goals. See [the model check](#the-model-check-mixed-six-responsibilities-in-one-file). | `Workspace` from `config/test_support.rs`, `LibraryLookup`, the `observe` hook in `config/taxonomies/mod.rs`, `TestBackend` | in-process, one worker thread per logical CPU | split from `src/config/model_check.rs` into six files (#482) | preserved, with the P4 limit under [Open items](#open-items) |
+| `src/config/model_check/` (6 files) | 1 | property-model | Every key sequence up to each seed's depth keeps 14 Config editor properties, and each seed meets its reach goals. See [the model check](#the-model-check-mixed-six-responsibilities-in-one-file). | `Workspace` from `config/test_support.rs`, `LibraryLookup`, the `observe` hook in `config/taxonomies/mod.rs`, `TestBackend` | in-process, one worker thread per logical CPU | split from `src/config/model_check.rs` into six files (#482) | preserved, with the P4 reach goal narrowed under [Follow-ups after the stack](#follow-ups-after-the-stack) |
 | `src/config/tests.rs` | 43 | unit, component | The Config Library outline, inspector, rail, header, footers, command palette, notices, and edit and remove flows render and route as the footer hints, at the minimum size and larger sizes. | `config/test_support.rs` and 19 file-local helpers | in-process | kept. Its shared helpers moved to `config/test_support.rs` (#476). Not split by area. | preserved |
 | `src/config/direct_tests.rs` | 18 | unit, component | Direct persistence edits save once on `ctrl+w` and restore on Esc. A failed save keeps the fields for a retry. Copy, reorder, and delete roll back on failure. A stale Library cannot overwrite another session. A hidden edit pauses on a terminal that is too small. | a store wrapper over `test_support::team` that counts saves and fails on demand | in-process | kept, on `config/test_support.rs` (#476) | preserved. The 5 hidden-edit tests overlap `root/tests/config_tests.rs` but assert store writes, not root routing. |
 | `src/config/library_*_tests.rs` (5 files) | 19 | unit, component | Library rows name their origin, type count, and version, and narrow rows drop the count first. Each row takes exactly the keys its footer hints. Policies read as plain words. Type rows show property tables, and edits show focus cues and counters. | `fixture`, `press`, and `select` from `config/test_support.rs` | in-process | kept, on `config/test_support.rs` (#476) | preserved |
@@ -182,7 +182,7 @@ Each row covers one module or file group at `f6a082c`. Locations are relative to
 |---|---|---|---|---|---|---|---|
 | `tests/help.rs` | 15 | integration | The binary prints the concise help for `-h` and `--help` and command help as the description, then the usage. Help wraps at `COLUMNS`, up to 100. `help nope` and misplaced root flags are usage errors. Each TUI help page matches what `help <command>` prints at the same width. | the binary through `support::Home`, `help_pages` from `src/help.rs` through `#[path]`, `gitserious_cli::{help_topics, styled_help}`, `gitserious_tui::HelpPage` | subprocess | kept. The binary runs through `support::Home` (#479). The 3 tests that copied `help_pages` now run the production function (#480). | preserved. `root_flags_with_a_command_are_usage_errors_that_name_the_way_out` repeats the CLI unit test of the same name and adds the process exit code. |
 | `tests/home.rs` | 4 | integration | A bare run without a terminal prints the concise help and creates no project files. Help never pages without a terminal. Help names `gitserious` whatever the executable is called. | the binary through `support::Home` and `Home::command_for`, `tempfile` | subprocess | kept, run through `support::Home` (#479) | preserved |
-| `tests/init.rs`, `tests/config.rs`, `tests/commit.rs` | 21 | integration | `init` writes exact version-control files, never rewrites or regenerates a project, resolves linked worktrees, and fails without writing when Git, a repository, or a readable Library is missing. `config` without a terminal loads nothing. `commit` without a terminal stops before authoring, and Git stores the exact reviewed message. | the binary, `support::{Home, git, repository, head_exists, assert_project_shape}`, and for 4 `commit.rs` tests App's commit services with `TomlProjectStore` and `GitCommitWriter` | subprocess. The 4 `commit.rs` tests also run FS adapters in process. | kept, on the hermetic Git environment (#479). Moving the 4 in-process tests is deferred. | preserved |
+| `tests/init.rs`, `tests/config.rs`, `tests/commit.rs` | 17 | integration | `init` writes exact version-control files, never rewrites or regenerates a project, resolves linked worktrees, and fails without writing when Git, a repository, or a readable Library is missing. `config` without a terminal loads nothing. `commit` without a terminal stops before authoring and touches neither policy nor Git. | the binary, `support::{Home, git, repository, head_exists}`, a local `assert_project_shape` in `tests/init.rs` | subprocess | kept, on the hermetic Git environment (#479). The 4 in-process `commit.rs` tests moved to FS after the stack. | preserved |
 | `tests/terminal_help.rs` | 11, Unix only | integration | In a pseudo terminal, help flags print without paging and `help` opens the TUI. Each command opens its first page without authoring or Git writes. Commit opens the type picker, focus rereads Git, and a draft left on quit comes back. Three tests check the terminal fixture itself. | `portable-pty`, `vt100`, `support::Home`, `support/terminal.rs` | subprocess, terminal | kept | preserved |
 
 ## Findings
@@ -192,7 +192,7 @@ Each finding describes the workspace at `5740240`, corrected where later work sh
 ### Tests that sat outside the crate or module that owns them
 
 - `crates/gitserious/tests/interactive.rs` never ran the binary. Its 9 tests wired App services to FS adapters in process. `gitserious-fs` already depends on `gitserious-app`, so these tests belonged in `crates/gitserious-fs/tests/`. #478 moved them to `crates/gitserious-fs/tests/app_services.rs`.
-- The inventory missed 4 more in-process tests in `crates/gitserious/tests/commit.rs`. `git_stores_the_exact_reviewed_taxonomy_message`, `project_owned_conventional_replaces_the_built_in_definition`, `a_merge_in_progress_never_reaches_git_commit`, and `a_first_commit_stages_its_files_without_git_add` call App's commit services with FS adapters. Three of them run the binary's `init` for setup. Moving them is deferred.
+- The inventory missed 4 more in-process tests in `crates/gitserious/tests/commit.rs`. `git_stores_the_exact_reviewed_taxonomy_message`, `project_owned_conventional_replaces_the_built_in_definition`, `a_merge_in_progress_never_reaches_git_commit`, and `a_first_commit_stages_its_files_without_git_add` call App's commit services with FS adapters. Three of them ran the binary's `init` for setup. After the stack they moved to `crates/gitserious-fs/tests/app_services.rs`, as [the follow-ups](#follow-ups-after-the-stack) record.
 - Three tests in `crates/gitserious/tests/help.rs`, not two, built their pages with `interactive_help`. They were `only_the_concise_help_points_to_the_help_command`, `each_help_page_shows_what_its_help_command_prints_at_the_same_width`, and `help_pages_mark_headings_and_names_strong_and_leave_descriptions_plain`. That function copied `help_pages` from `crates/gitserious/src/main.rs`, so the tests still passed when the real wiring changed. #480 moved `help_pages` unchanged to `crates/gitserious/src/help.rs`, and `tests/help.rs` includes that file.
 - `crates/gitserious-fs/tests/unit/` held 17 unit tests that `crates/gitserious-fs/src/lib.rs` compiled into the lib with `#[path = "../tests/unit/mod.rs"]`. #473 moved 12 into `src/platform/xdg.rs` and `src/platform/windows.rs` and 5 into `tests/directory.rs`, and removed the directory and the `#[path]` line.
 - `gitserious-app` exported `pub mod test_support` behind a feature so that FS and TUI tests could share one App helper. Every component of `scripts/ci/run-rust-quality.sh` passes `--all-features`, so check, lint, test, and the release build compiled the module into the App lib. #471 removed the feature and the module.
@@ -329,6 +329,8 @@ The plan numbered the stack PR1 to PR13. The table maps each planned item to its
 | Move the shared Config helpers into one TUI test-support module. | PR8, TUI areas | done in #476, as `crates/gitserious-tui/src/config/test_support.rs` |
 | Group Config tests by area. | PR8, TUI areas | skipped in #476. The 43 tests in `config/tests.rs` share 19 file-local helpers, and a split would move at least five into shared support or copy them. The other Config areas already had their own files. |
 | Put the citation picker tests in their own file. Not in the plan. | none | done in #477 |
+| Move the 4 in-process tests in `crates/gitserious/tests/commit.rs` to FS. Not in the plan. | none | done after the stack |
+| Delete or move the executable fixtures with fewer than two consumers. Not in the plan. | none | done after the stack |
 | Keep the root fake workspaces. | PR8, TUI areas | done. No pull request changed them. |
 | Keep the model-check timings above as the baseline. | PR9, model-check baseline | skipped as a separate pull request. The timings in #468 are the baseline, and #482 measured the split against the original. |
 | Split `model_check.rs` along the six responsibilities above, and give the `gitserious-verify-config-editor` skill the new paths. | PR10, model-check split | done in #482. The skill names `model_check/` and its files. |
@@ -340,16 +342,22 @@ The plan numbered the stack PR1 to PR13. The table maps each planned item to its
 | Fix the dev-dependency sentence in `workspace-baseline.md`, update the test ownership notes in `application-consumers.md`, and update this inventory to the final layout. Add [Testing](testing.md). | PR13, docs | done in this pull request |
 | Rebaseline or retire the rest of `application-consumers.md`. | PR13, docs | deferred. Its export index still records `b8c03d1`. |
 
+## Follow-ups after the stack
+
+These changes came after #482. The counts and inventory rows above include them.
+
+- The 4 in-process tests in `crates/gitserious/tests/commit.rs` moved to `crates/gitserious-fs/tests/app_services.rs` with their names and assertions unchanged. The three that ran the binary's `init` now call App's `initialize_project` with `GitRepositoryLocator`, `TomlProjectStore`, and the default Library, which is what the binary loads from a home with no Library. Breaking each test's subject in production code failed that test at the same assertion before and after the move. The four breaks wrote one extra byte into the commit message, hid `MERGE_HEAD` from the status reader, made path staging a no-op, and let the built-in `conventional` replace the project's. The executable's `repository` no longer refuses under `GIT_DIR`, `GIT_WORK_TREE`, or `GIT_INDEX_FILE`, because no executable test runs an adapter in process. With all three naming a decoy repository, the 47 executable tests passed and left the decoy byte for byte unchanged.
+- In `crates/gitserious/tests/support/mod.rs`, `with_stale_fingerprint` had no consumer and is gone. `assert_project_shape` moved into its one consumer, `crates/gitserious/tests/init.rs`. The file's `#![allow(dead_code)]`, which hid both, is gone as well. Each of the 6 executable test targets that include the module leaves some item unused, and `help.rs` and `home.rs` use only `Home`. So each of the 9 public items that some target leaves unused carries its own `#[allow(dead_code)]` instead, and the compiler checks the rest. The compiler needs only 6 of the 9, since an allowed item keeps the items it calls in use, but `git`, `Home::run`, and `stderr` keep theirs so that every allow marks an item some target leaves unused.
+- The P4 reach goal in `crates/gitserious-tui/src/config/model_check/seeds.rs` reads the policy only while `summary` is selected. Before, the seed's `notes` property, which starts at `optional`, met the goal, so P4 passed with `optional` removed from `Policy::ORDER` and with `Policy::cycle` wrapping one policy early. Both now fail P4, as does `cycle` skipping `recommended`. The seed explores the same 296 states and 756 transitions.
+
 ## Open items
 
 These items stay open after the stack. Each says what is known and what was not verified.
 
-- The 4 in-process tests in `crates/gitserious/tests/commit.rs` call App's commit services with FS adapters. They belong with `crates/gitserious-fs/tests/app_services.rs`. Moving them means replacing their setup through the binary's `init`.
-- The P4 reach goal in `crates/gitserious-tui/src/config/model_check/seeds.rs` cannot detect `optional` leaving the policy cycle. #482 records that the mutation named for P4 passes, because the seed's `notes` property already starts at `optional`.
 - The tests for FS gaps G1, G2, G4, and G5 do not exist. G3 and G6 are known limits.
-- FS adapters run Git with the test process's environment, and the fixtures cannot clear it without `unsafe` code. Whether the adapters should honor an inherited `GIT_DIR` is an open product decision. Until it is made, the fixtures refuse to start under `GIT_DIR`, `GIT_WORK_TREE`, or `GIT_INDEX_FILE`.
+- FS adapters run Git with the test process's environment, and the fixtures cannot clear it without `unsafe` code. Whether the adapters should honor an inherited `GIT_DIR` is an open product decision. Until it is made, the FS fixture refuses to start under `GIT_DIR`, `GIT_WORK_TREE`, or `GIT_INDEX_FILE`.
 - Neither Git fixture clears `GIT_CONFIG_PARAMETERS` or `GIT_CONFIG_COUNT`, so configuration exported in either variable still reaches the tests' Git commands and the adapters.
-- `system_adapter_uses_xdg_on_unix` in `crates/gitserious-fs/src/platform/xdg.rs` resolves paths from the real process environment. With `HOME` and `XDG_CONFIG_HOME` unset, it fails with `HomeUnavailable`. That was measured at `f6a082c`.
-- In `crates/gitserious/tests/support/mod.rs`, `with_stale_fingerprint` has no consumer, and `assert_project_shape` has one, `tests/init.rs`, since #478. The file's `#![allow(dead_code)]` hides both from the build and from `check-dead-code.sh`, which scans only `crates/*/src`.
+- `system_adapter_uses_xdg_on_unix` in `crates/gitserious-fs/src/platform/xdg.rs` checks the process environment adapter only against the variables the test process has. It cannot see the adapter drop a variable that is unset, or drop `XDG_CONFIG_HOME` when its value is `$HOME/.config`.
+- `crates/gitserious-fs/tests/support/mod.rs` keeps its `#![allow(dead_code)]`. After the first follow-up, removing it left every FS test target that includes the module with no dead-code warning on macOS, so it hides no unused fixture today. Linux and Windows were not checked.
 - The stack was verified locally only on macOS. The Linux-only non-UTF-8 path test, the `cfg(windows)` code in `src/platform/windows.rs`, and the dead-code scan first run in CI.
 - The model check's split between prefix replay and the serial property checks and fingerprints was measured once, in the instrumented run at `5740240`. No later run measured it.
