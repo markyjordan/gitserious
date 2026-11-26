@@ -1,11 +1,15 @@
+mod support;
+
 use std::error::Error;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
+
+use support::Home;
 
 fn gitserious(directory: &Path, arguments: &[&str]) -> Result<Output, Box<dyn Error>> {
-    Ok(Command::new(env!("CARGO_BIN_EXE_gitserious"))
+    Ok(Home::new()?
+        .command(directory)
         .args(arguments)
-        .current_dir(directory)
         .env("PAGER", "sed -e s/^/paged:/")
         .output()?)
 }
@@ -46,17 +50,12 @@ fn help_never_pages_when_stdout_is_not_a_terminal() -> Result<(), Box<dyn Error>
 fn explicit_help_version_and_non_terminal_config_keep_their_contracts() -> Result<(), Box<dyn Error>>
 {
     let directory = tempfile::TempDir::new()?;
+    let home = Home::new()?;
     for arguments in [&["--help"][..], &["--version"][..]] {
-        let output = Command::new(env!("CARGO_BIN_EXE_gitserious"))
-            .args(arguments)
-            .current_dir(directory.path())
-            .output()?;
+        let output = home.run(directory.path(), arguments)?;
         assert!(output.status.success());
     }
-    let output = Command::new(env!("CARGO_BIN_EXE_gitserious"))
-        .arg("config")
-        .current_dir(directory.path())
-        .output()?;
+    let output = home.run(directory.path(), &["config"])?;
     assert!(!output.status.success());
     assert!(
         String::from_utf8(output.stderr)?
@@ -73,6 +72,7 @@ fn help_names_gitserious_whatever_the_executable_is_called() -> Result<(), Box<d
         .path()
         .join(format!("renamed{}", std::env::consts::EXE_SUFFIX));
     std::fs::copy(env!("CARGO_BIN_EXE_gitserious"), &renamed)?;
+    let home = Home::new()?;
     for (arguments, usage) in [
         (
             &["--help"][..],
@@ -80,9 +80,9 @@ fn help_names_gitserious_whatever_the_executable_is_called() -> Result<(), Box<d
         ),
         (&["help", "commit"][..], "Usage: gitserious commit\n"),
     ] {
-        let output = Command::new(&renamed)
+        let output = home
+            .command_for(&renamed, directory.path())
             .args(arguments)
-            .current_dir(directory.path())
             .output()?;
         assert!(output.status.success(), "{arguments:?}");
         let stdout = String::from_utf8(output.stdout)?;
