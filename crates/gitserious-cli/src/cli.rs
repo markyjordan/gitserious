@@ -16,7 +16,7 @@ const HELP_WIDTH: usize = 100;
     name = "gitserious",
     bin_name = "gitserious",
     version,
-    about = "Create durable commit-message policy for Git repositories",
+    about = "Structured commits that keep what the diff leaves out.",
     disable_colored_help = true,
     max_term_width = HELP_WIDTH,
     disable_help_flag = true,
