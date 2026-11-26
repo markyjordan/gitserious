@@ -221,6 +221,7 @@ fn executable_commands_select_the_initial_page_without_authoring_or_git_writes()
         (vec!["config"], "Config", "1  Project"),
         (vec!["help"], "Help", "Usage: gitserious [COMMAND]"),
         (vec!["help", "commit"], "Help", "gitserious help: commit"),
+        (vec!["help", "help"], "Help", "gitserious help: help"),
     ] {
         let mut command = home.command(repository.path());
         command.args(&arguments);

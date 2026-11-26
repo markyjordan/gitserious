@@ -220,7 +220,7 @@ pub struct HelpTopic {
 
 /// The overview, then each command, in the order Help lists them.
 #[must_use]
-pub const fn help_topics() -> [HelpTopic; 4] {
+pub const fn help_topics() -> [HelpTopic; 5] {
     [
         HelpTopic {
             title: "Overview",
@@ -237,6 +237,10 @@ pub const fn help_topics() -> [HelpTopic; 4] {
         HelpTopic {
             title: "Commit",
             command: Some("commit"),
+        },
+        HelpTopic {
+            title: "Help",
+            command: Some("help"),
         },
     ]
 }
