@@ -1,6 +1,6 @@
 # Application interfaces and consumers
 
-This inventory records the App crate-root exports and their migration constraints at `b8c03d1a46a56cced76bbdc760e76eb9437f52ea`. It complements [the Cargo dependency baseline](workspace-baseline.md).
+This inventory records the App crate-root exports and their migration constraints at `b8c03d1a46a56cced76bbdc760e76eb9437f52ea`. It complements [the Cargo dependency baseline](workspace-baseline.md). Only [Test ownership and source coupling](#test-ownership-and-source-coupling) is updated, to `f6a082c`. Every other section still describes `b8c03d1`, and some exports and test names it lists no longer exist.
 
 ## Export index
 
@@ -114,29 +114,31 @@ Help content is created by CLI, represented by App `HelpPage`, `HelpLine`, and `
 
 ## Test ownership and source coupling
 
-| Current mechanism | Evidence | Removal constraint |
-|---|---|---|
-| TUI imports App test support by source path | `crates/gitserious-tui/src/lib.rs` includes `../../gitserious-app/tests/support/library_lookup.rs` | F05 needs deliberate fixture ownership. A Cargo graph does not expose this coupling. |
-| FS imports the same App helper | `crates/gitserious-fs/tests/global_configuration.rs` | Include this consumer when changing the helper's location. |
-| Author implementation included in TUI tests | `crates/gitserious-tui/tests/unit/mod.rs` includes `author/state.rs` and `author/render.rs` | Preserve discovery and behavior tests while removing inclusion in F05. |
-| Broad TUI fake services implement unrelated Config methods | `crates/gitserious-tui/src/shell/mod.rs` test module | Capability migration should narrow required test setup. AX does not invent a shared fake framework. |
-| Config tests reach workspace through editor callbacks | `crates/gitserious-app/tests/configuration.rs`, `project_configuration.rs` | C07 must migrate these callers before callback removal. |
-| Process fixtures own real Git and isolated homes | `crates/gitserious/tests/support/mod.rs` | Terminal fixtures stay executable-test owned. No reverse dependency from TUI tests to the executable. |
+This section describes `f6a082c`, the last code change of the test architecture stack (#468 to #482). [Testing](testing.md) is the reference for which crate owns each test and fixture, and [the test inventory](test-inventory.md) records the evidence.
+
+| Mechanism at `b8c03d1` | State at `f6a082c` |
+|---|---|
+| TUI imported App test support by source path. `crates/gitserious-tui/src/lib.rs` included `../../gitserious-app/tests/support/library_lookup.rs`. | Gone. TUI owns a test-only `LibraryLookup` in `crates/gitserious-tui/src/config/library_lookup.rs` (#470). App has no test-support module or feature (#471). `scripts/ci/check-crate-dependencies.py` rejects a source inclusion that leaves its crate. |
+| FS imported the same App helper in `crates/gitserious-fs/tests/global_configuration.rs`. | Gone. The test looks up its taxonomy inline (#469). |
+| `crates/gitserious-tui/tests/unit/mod.rs` included `author/state.rs` and `author/render.rs` in TUI tests. | Gone. `crates/gitserious-tui/tests/` does not exist, and every TUI test compiles in the lib target. |
+| Broad fake services in the `crates/gitserious-tui/src/shell/mod.rs` test module implemented unrelated Config methods. | `src/shell/` does not exist. `Services` in `crates/gitserious-tui/src/root/tests/support.rs` implements `ConfigurationWorkspace`, `ProjectWorkspace`, and `CommitWorkspace`. Three root test files each keep one narrower fake. |
+| App Config tests reached the private workspace through `ConfigurationEditor` callbacks in `crates/gitserious-app/tests/configuration.rs` and `project_configuration.rs`. | `ConfigurationEditor` and `edit_configuration` no longer exist in App, so no callback migration remains. |
+| Process fixtures in `crates/gitserious/tests/support/mod.rs` owned real Git and isolated homes. | Still true. `Home` and a hermetic Git environment isolate every binary a test spawns (#479). FS owns a separate hermetic Git fixture in `crates/gitserious-fs/tests/support/mod.rs` (#474). Terminal fixtures stay in `crates/gitserious/tests/support/terminal.rs`. No TUI test depends on the executable. |
 
 ## Baseline behavior evidence
 
-The following cases exist in source at the recorded baseline. Existence is not a passing test receipt. Each later PR records its checked head and command results. New AX test names should be added here when their implementations land rather than guessed ahead of time.
+The following cases exist in source at the recorded baseline. Several names no longer exist at `f6a082c`, and this table is not rebaselined, except that the tests #478 moved from the executable to FS name their current crate. Existence is not a passing test receipt. Each later PR records its checked head and command results. New AX test names should be added here when their implementations land rather than guessed ahead of time.
 
 | Plan item | Owning layer and existing evidence | Gap or limit |
 |---|---|---|
 | A03 routing | CLI `commands_select_a_shell_page_and_commit_does_not_author`, `commit_opens_the_shell_on_the_commit_page`, `unknown_commands_and_extra_arguments_are_usage_errors` | Launcher-error presentation needs focused tests. |
 | A04 Help | CLI `help_opens_the_shell_on_a_terminal_and_prints_when_redirected`; executable `help_wraps_each_paragraph_to_the_terminal_width_up_to_100_columns`, `each_help_page_shows_what_its_help_command_prints_at_the_same_width` | Injected terminal flags and redirected output do not prove actual PTY routing or pager-spawn fallback. |
 | A05 entry | TUI `opening_commit_matches_navigating_there_and_does_not_author`, `a_help_entry_opens_help_in_the_sidebar_on_its_command_page`; executable nonterminal Commit tests | PR #278 already covers deterministic Commit equivalence. Real executable initial selection still needs evidence. |
-| A06 eligibility | Executable `shell_services_gate_staging_validate_review_and_retry_git_rejection`; FS `real_status_preserves_index_and_reports_partial_staging_rename_untracked_and_detached`, `real_conflict_is_reported_without_refreshing_the_index` | Isolate the active application rejection matrix and eligibility loss before submission. |
+| A06 eligibility | FS `commit_services_gate_staging_validate_review_and_retry_git_rejection` in `tests/app_services.rs`, named `shell_services_gate_staging_validate_review_and_retry_git_rejection` in the executable at `b8c03d1`; FS `real_status_preserves_index_and_reports_partial_staging_rename_untracked_and_detached`, `real_conflict_is_reported_without_refreshing_the_index` | Isolate the active application rejection matrix and eligibility loss before submission. |
 | A07 freshness | App `missing_or_mismatched_reviewed_bytes_never_reach_git` protects the older use case | Active callback submission must observe policy changes. `approved_message_uses_the_captured_policy_even_if_the_project_changes` intentionally proves another contract. |
-| A08 recovery | TUI `failed_submission_checkpoint_preserves_editor_and_exact_review_bytes`, `a_created_commit_returns_to_commit_and_a_rejected_one_keeps_the_review`; executable hook retry case | Pending-review navigation, actual resume cancellation, and no-commit-before-retry need explicit evidence. Hook rejection is Unix-only. |
+| A08 recovery | TUI `failed_submission_checkpoint_preserves_editor_and_exact_review_bytes`, `a_created_commit_returns_to_commit_and_a_rejected_one_keeps_the_review`; FS hook retry case in `tests/app_services.rs` | Pending-review navigation, actual resume cancellation, and no-commit-before-retry need explicit evidence. Hook rejection is Unix-only. |
 | A09 configuration | App `reviewed_global_sessions_save_one_snapshot_and_reject_concurrent_changes`, `stale_or_failed_applies_leave_the_project_file_unchanged`, `first_save_creates_and_later_saves_replace_the_opened_revision`; FS `replace_refuses_a_stale_revision_and_keeps_the_external_edit` | Retry the same failed session and continue after a successful replacement. Do not duplicate create-then-replace coverage. |
-| A10 initialization | App `existing_project_is_never_rewritten_even_when_the_library_changed`; executable `non_repository_fails_without_creating_project_state`, `home_initializes_git_and_gitserious_in_a_plain_directory`, `a_retry_after_a_partial_initialization_writes_only_the_project` | Repeated interactive create and non-missing locator failure need focused evidence. |
+| A10 initialization | App `existing_project_is_never_rewritten_even_when_the_library_changed`; executable `non_repository_fails_without_creating_project_state`; FS `home_initializes_git_and_gitserious_in_a_plain_directory` and `a_retry_after_a_partial_initialization_writes_only_the_project` in `tests/app_services.rs` | Repeated interactive create and non-missing locator failure need focused evidence. |
 
 ## Recheck the inventory
 

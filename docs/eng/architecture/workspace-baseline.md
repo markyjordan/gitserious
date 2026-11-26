@@ -25,6 +25,8 @@ The workspace contains `gitserious`, `gitserious-app`, `gitserious-cli`, `gitser
 
 There are twelve workspace-to-workspace edges. All are normal, unconditional, nonoptional dependencies. No workspace member declares a development, build, conditional, or optional dependency on another workspace member at this baseline. External dependencies, including external development dependencies, are outside this table.
 
+The table and the statement above also hold at `f6a082c`. Between the two commits, App's `test-support` feature added development dependencies on App from FS, TUI, and App itself. #469, #470, and #471 removed all three. `scripts/ci/check-crate-dependencies.py` checks each workspace edge against its `PERMITTED` table whatever the edge's kind. It rejects an App self edge, so the feature's self dev-dependency cannot return. It still allows a development dependency along a listed edge, such as FS on App.
+
 Core has no dependency on another workspace member. App depends on Core and no adapter implementation. CLI and TUI do not depend on one another. FS depends on application contracts and Core. The executable depends on all five constituent crates for composition.
 
 ## Reproduce the table
@@ -54,7 +56,7 @@ PYTHON
 
 ## Ownership limits
 
-Cargo edges preserve the intended hexagonal direction. They do not prove that each type belongs to its current layer. App currently defines Help layout and UI-launch contracts despite having no adapter dependency. Relative source inclusions used by tests also do not appear as Cargo edges. The consumer inventory records those separately.
+Cargo edges preserve the intended hexagonal direction. They do not prove that each type belongs to its current layer. App currently defines Help layout and UI-launch contracts despite having no adapter dependency. Relative source inclusions do not appear as Cargo edges either. At `f6a082c`, the only two stay inside the executable crate. `tests/help.rs` includes `src/help.rs`, and `tests/terminal_help.rs` includes `tests/support/terminal.rs`. [Testing](testing.md) records which crate owns each test.
 
 `scripts/ci/check-crate-dependencies.py` now enforces the permitted workspace edges, keeps presentation crates out of Core and App, and rejects a source inclusion that leaves its crate. `run-rust-quality.sh check` runs it on the Linux and macOS legs.
 
