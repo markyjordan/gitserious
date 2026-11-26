@@ -218,10 +218,17 @@ mod tests {
     }
 
     #[test]
-    fn system_adapter_uses_xdg_on_unix() -> Result<(), Box<dyn Error>> {
-        let paths = resolve_global_paths(&SystemGlobalPathResolver)?;
+    fn system_adapter_uses_xdg_on_unix() {
+        let mut process = FakeEnvironment::default();
+        for name in ["HOME", "XDG_CONFIG_HOME"] {
+            if let Some(value) = std::env::var_os(name) {
+                process.set(name, value);
+            }
+        }
 
-        assert!(paths.config().as_path().is_absolute());
-        Ok(())
+        assert_eq!(
+            resolve_global_paths(&SystemGlobalPathResolver),
+            resolve_from(&process)
+        );
     }
 }
