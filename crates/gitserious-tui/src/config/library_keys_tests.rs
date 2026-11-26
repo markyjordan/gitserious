@@ -1,4 +1,4 @@
-use gitserious_app::test_support::LibraryLookup;
+use crate::config::library_lookup::LibraryLookup;
 
 use super::copy_tests::team;
 use super::tests::{Workspace, footer_text};
