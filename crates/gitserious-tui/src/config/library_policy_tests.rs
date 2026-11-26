@@ -2,7 +2,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell};
 
-use super::library_rows_tests::{Result, fixture, press, select};
+use super::test_support::{Result, Workspace, fixture, press, select};
 use super::*;
 
 const DIM: Color = theme().dim;
@@ -80,7 +80,7 @@ fn labels(rows: &[Row<'_>]) -> Vec<String> {
 }
 
 /// The Library with team's feat open and `intent`, a required property, under the cursor.
-fn on_intent() -> Result<(super::tests::Workspace, State)> {
+fn on_intent() -> Result<(Workspace, State)> {
     let (workspace, mut state) = fixture()?;
     select(&mut state, &["team"])?;
     press(

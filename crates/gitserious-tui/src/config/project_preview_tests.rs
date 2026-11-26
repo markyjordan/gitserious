@@ -1,4 +1,4 @@
-use super::tests::Workspace;
+use super::test_support::Workspace;
 use super::*;
 use gitserious_app::ProjectConfiguration;
 use gitserious_core::{

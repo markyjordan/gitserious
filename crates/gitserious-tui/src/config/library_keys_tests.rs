@@ -1,7 +1,6 @@
 use crate::config::library_lookup::LibraryLookup;
 
-use super::copy_tests::team;
-use super::tests::{Workspace, footer_text};
+use super::test_support::{Workspace, footer_text, team};
 use super::*;
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;

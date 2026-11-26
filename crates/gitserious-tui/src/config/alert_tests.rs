@@ -3,8 +3,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
 
-use super::copy_tests::team;
-use super::tests::Workspace;
+use super::test_support::{Workspace, team};
 use super::*;
 
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;

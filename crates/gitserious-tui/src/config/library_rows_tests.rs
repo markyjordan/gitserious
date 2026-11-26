@@ -4,56 +4,14 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Cell;
 
-use super::tests::Workspace;
+use super::test_support::{Result, fixture, footer_text, press, select};
 use super::*;
-
-pub(super) type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const DIM: Color = theme().dim;
 const SIZES: [(u16, u16); 3] = [(87, 40), (125, 51), (100, 30)];
 
 /// Keys that take focus from the outline, and how to tell that they did.
 type FocusAway = (&'static [KeyCode], fn(&State) -> bool);
-
-pub(super) fn press(state: &mut State, workspace: &Workspace, keys: &[KeyCode]) {
-    for &code in keys {
-        assert!(!state.handle_event(
-            Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
-            workspace
-        ));
-    }
-}
-
-/// The Library with the built-ins, the custom `team`, and `draft-ideas`, saved with no types,
-/// with conventional open under the cursor.
-pub(super) fn fixture() -> Result<(Workspace, State)> {
-    let workspace = super::copy_tests::team()?;
-    let mut state = State::new(&workspace);
-    press(&mut state, &workspace, &[KeyCode::Char('2')]);
-    super::tests::create_taxonomy(&mut state, &workspace);
-    state.handle_event(Event::Paste("Draft ideas".into()), &workspace);
-    press(&mut state, &workspace, &[KeyCode::Enter]);
-    state.handle_event(
-        Event::Paste("Ideas that have not earned a type yet.".into()),
-        &workspace,
-    );
-    assert!(!state.handle_event(
-        Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
-        &workspace
-    ));
-    select(&mut state, &["conventional"])?;
-    press(&mut state, &workspace, &[KeyCode::Enter]);
-    Ok((workspace, state))
-}
-
-pub(super) fn select(state: &mut State, path: &[&str]) -> Result {
-    let id = state
-        .library()
-        .and_then(|library| library.find_path(path))
-        .ok_or("node missing")?;
-    state.taxonomies.select(id);
-    Ok(())
-}
 
 /// The drawn frame and the outline's rows, each with its row on screen.
 struct Frame {
@@ -253,7 +211,7 @@ fn enter_on_the_last_row_creates_a_taxonomy() -> Result {
                 .iter()
                 .all(|cell| colors(cell) == (theme().ground, theme().cursor))
         );
-        let footer = super::tests::footer_text(&frame.line(size.1 - 1));
+        let footer = footer_text(&frame.line(size.1 - 1));
         assert!(footer.contains("enter new"), "{footer}");
 
         press(&mut state, &workspace, &[KeyCode::Enter]);

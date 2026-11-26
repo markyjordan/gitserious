@@ -1,67 +1,12 @@
 use crate::config::library_lookup::LibraryLookup;
-use gitserious_app::{GlobalConfiguration, Policy};
-use gitserious_core::{
-    CommitTypeDefinition, CommitTypeId, ConditionId, Description, PropertyCondition,
-    PropertyDefinition, PropertyKey, PropertyRequirement, SchemaVersion, TaxonomyVersion,
-};
+use gitserious_app::Policy;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use super::tests::Workspace;
+use super::test_support::{Workspace, footer_text, team};
 use super::*;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-pub(super) fn team() -> Result<Workspace, Box<dyn std::error::Error>> {
-    let property = |key: &str, requirement| -> Result<_, Box<dyn std::error::Error>> {
-        Ok(PropertyDefinition::new(
-            PropertyKey::new(key)?,
-            format!("The {key}."),
-            requirement,
-        )?)
-    };
-    let commit_type = |id: &str, properties| -> Result<_, Box<dyn std::error::Error>> {
-        Ok(CommitTypeDefinition::new(
-            Some(SchemaVersion::new(1)?),
-            CommitTypeId::new(id)?,
-            format!("A {id} change."),
-            properties,
-        )?)
-    };
-    let constraints = PropertyRequirement::Conditional(PropertyCondition::new(
-        ConditionId::new("has-limits")?,
-        "Record limits when a change is bounded by them.",
-    )?);
-    let team = Taxonomy::new(
-        TaxonomyId::new("team")?,
-        Some(TaxonomyVersion::new(1)?),
-        Description::new("Team taxonomy")?,
-        None,
-        vec![
-            commit_type(
-                "feat",
-                vec![
-                    property("intent", PropertyRequirement::Required)?,
-                    property("constraints", constraints)?,
-                ],
-            )?,
-            commit_type(
-                "fix",
-                vec![property("cause", PropertyRequirement::Required)?],
-            )?,
-            commit_type("docs", Vec::new())?,
-        ],
-    )?;
-    let workspace = Workspace::new();
-    let conventional = TaxonomyId::new("conventional")?;
-    *workspace.global.borrow_mut() = LibraryDraft::from_configuration(GlobalConfiguration::new(
-        1,
-        conventional.clone(),
-        vec![conventional],
-        vec![team.into()],
-    )?);
-    Ok(workspace)
-}
 
 fn press(state: &mut State, workspace: &Workspace, keys: &[KeyCode]) {
     for &code in keys {
@@ -131,7 +76,7 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
     open_constraints(&mut state, &workspace)?;
     let rows = screen(&mut state)?;
     assert!(!rows.iter().any(|row| row.contains("c copy to other types")));
-    let footer = super::tests::footer_text(rows.last().ok_or("footer")?);
+    let footer = footer_text(rows.last().ok_or("footer")?);
     assert!(
         footer.contains("e edit")
             && footer.contains("c copy property")
@@ -139,7 +84,7 @@ fn c_copies_a_property_to_the_chosen_types_and_each_copy_changes_apart() -> Test
         "{footer}"
     );
     assert!(
-        super::tests::footer_text(&rows[39]).contains("e edit  c copy property"),
+        footer_text(&rows[39]).contains("e edit  c copy property"),
         "{}",
         rows[39]
     );
