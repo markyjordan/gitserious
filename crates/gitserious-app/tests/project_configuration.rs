@@ -1,5 +1,7 @@
 #![allow(clippy::expect_used)]
 
+mod support;
+
 use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -7,10 +9,13 @@ use std::path::{Path, PathBuf};
 
 use gitserious_app::{
     ConfigurationServices, ConfigurationWorkspace, GlobalConfiguration, GlobalConfigurationStore,
-    ProjectConfiguration, ProjectConfigurationStore, ProjectRevision, RepositoryLocator,
-    RepositoryRoot, StoredProject,
+    ProjectConfiguration, ProjectConfigurationStore, ProjectRevision, RepositoryRoot,
+    StoredProject,
 };
 use gitserious_core::{TaxonomyId, built_in_taxonomies};
+
+use support::Locator;
+
 fn root() -> RepositoryRoot {
     RepositoryRoot::new(std::env::temp_dir()).expect("temporary directory is absolute")
 }
@@ -34,20 +39,6 @@ impl Display for FakeError {
 }
 
 impl Error for FakeError {}
-
-struct Locator;
-
-impl RepositoryLocator for Locator {
-    type Error = FakeError;
-
-    fn missing_work_tree(_: &Self::Error) -> Option<gitserious_app::MissingWorkTree> {
-        None
-    }
-
-    fn locate(&self, _start: &Path) -> Result<RepositoryRoot, Self::Error> {
-        Ok(root())
-    }
-}
 
 struct BrokenLibrary;
 
@@ -179,7 +170,7 @@ where
     F: Fn(&dyn ConfigurationWorkspace) -> Result<(), String>,
 {
     script(&ConfigurationServices::new(
-        &Locator,
+        &Locator::new(root()),
         project,
         &BrokenLibrary,
         Path::new("."),
