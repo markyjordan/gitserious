@@ -1,7 +1,5 @@
 #![allow(clippy::expect_used)]
 
-use gitserious_app::test_support::LibraryLookup;
-
 use std::error::Error;
 
 use gitserious_core::TaxonomyId;
@@ -10,10 +8,18 @@ use gitserious_app::{
     DraftEdit, DraftField, GlobalConfiguration, LibraryDraft, NodeId, Problem, ProblemSite,
 };
 
+fn taxonomy(library: &LibraryDraft, name: &str) -> Option<NodeId> {
+    library
+        .taxonomies()
+        .iter()
+        .find(|node| node.name() == name)
+        .map(|node| node.id().clone())
+}
+
 /// Forks conventional under the name `team`, as forking and typing a name does.
 fn fork_team(session: &mut LibraryDraft) -> Result<NodeId, Box<dyn Error>> {
     let library = session;
-    let conventional = library.find_path(&["conventional"]).ok_or("conventional")?;
+    let conventional = taxonomy(library, "conventional").ok_or("conventional")?;
     let fork = library.fork(&conventional)?;
     library.edit(&fork, DraftEdit::Text(DraftField::Name, "team"))?;
     Ok(fork)
@@ -53,7 +59,7 @@ fn a_selected_custom_taxonomy_cannot_be_removed_without_a_problem() -> Result<()
     let selected =
         GlobalConfiguration::new(1, team, available, built.custom_taxonomies().to_vec())?;
     let mut library = LibraryDraft::from_configuration(selected);
-    let team = library.find_path(&["team"]).ok_or("team")?;
+    let team = taxonomy(&library, "team").ok_or("team")?;
     library.edit(&team, DraftEdit::Remove)?;
     let problems = library.problems();
     assert!(

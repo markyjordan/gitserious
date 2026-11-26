@@ -11,8 +11,6 @@ mod project;
 mod repository_locator;
 mod resolve_global_paths;
 mod storage_directory;
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_support;
 
 pub use commit::{
     AuthoredCommit, BranchState, CitedCommit, CommitAuthoringContext, CommitOutput, CommitServices,

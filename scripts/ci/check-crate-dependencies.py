@@ -26,8 +26,7 @@ PERMITTED = {
     "gitserious": {
         "gitserious-app", "gitserious-cli", "gitserious-core", "gitserious-fs", "gitserious-tui",
     },
-    # The self edge lets the App's integration tests enable its test-support feature.
-    "gitserious-app": {"gitserious-app", "gitserious-core"},
+    "gitserious-app": {"gitserious-core"},
     "gitserious-cli": {"gitserious-app", "gitserious-core"},
     "gitserious-core": set(),
     "gitserious-fs": {"gitserious-app", "gitserious-core"},
