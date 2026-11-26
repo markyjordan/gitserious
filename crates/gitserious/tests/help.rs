@@ -383,10 +383,10 @@ fn each_help_page_shows_what_its_help_command_prints_at_the_same_width()
         shown,
         [
             ("Overview", None),
-            ("Init", Some("init")),
-            ("Config", Some("config")),
             ("Commit", Some("commit")),
+            ("Config", Some("config")),
             ("Help", Some("help")),
+            ("Init", Some("init")),
         ]
     );
     for page in &pages {
