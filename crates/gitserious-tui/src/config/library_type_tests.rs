@@ -2,8 +2,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Cell;
 
-use super::library_rows_tests::{Result, fixture, press, select};
-use super::tests::Workspace;
+use super::test_support::{Result, Workspace, fixture, press, select};
 use super::*;
 
 const SIZES: [(u16, u16); 3] = [(87, 40), (125, 51), (100, 30)];

@@ -1,11 +1,11 @@
 use ratatui::{Terminal, backend::TestBackend};
 
-use super::library_rows_tests::{Result, fixture, press, select};
+use super::test_support::{Result, Workspace, fixture, footer_text, press, select};
 use super::*;
 
 const SIZES: [(u16, u16); 2] = [(87, 40), (100, 30)];
 
-fn property() -> Result<(tests::Workspace, State)> {
+fn property() -> Result<(Workspace, State)> {
     let (workspace, mut state) = fixture()?;
     select(&mut state, &["team"])?;
     press(&mut state, &workspace, &[KeyCode::Enter]);
@@ -130,14 +130,14 @@ fn edit_focus_has_amber_cues_muted_navigation_and_a_footer_counter() -> Result {
     for size in SIZES {
         let (workspace, mut state) = property()?;
         let browsing = draw(&mut state, size)?;
-        let footer = tests::footer_text(&row(&browsing, size.1 - 1));
+        let footer = footer_text(&row(&browsing, size.1 - 1));
         assert!(!footer.contains("NAV") && !footer.contains("EDIT"));
         assert!(footer.contains("e edit") && footer.contains("d delete"));
 
         press(&mut state, &workspace, &[KeyCode::Char('e')]);
         let terminal = draw(&mut state, size)?;
         let buffer = terminal.backend().buffer();
-        let footer = tests::footer_text(&row(&terminal, size.1 - 1));
+        let footer = footer_text(&row(&terminal, size.1 - 1));
         assert!(footer.contains("EDIT   enter next field  ←/→ cursor  ctrl+w  save  esc cancel"));
         assert!(footer.trim_end().ends_with("11/80"));
         assert_eq!(buffer[(1, size.1 - 1)].bg, theme().pending);
@@ -168,7 +168,7 @@ fn edit_focus_has_amber_cues_muted_navigation_and_a_footer_counter() -> Result {
 
         press(&mut state, &workspace, &[KeyCode::Enter, KeyCode::Enter]);
         let terminal = draw(&mut state, size)?;
-        let footer = tests::footer_text(&row(&terminal, size.1 - 1));
+        let footer = footer_text(&row(&terminal, size.1 - 1));
         assert!(footer.contains("←/→ policy"));
         assert!(!footer.contains("/80") && !footer.contains("/100"));
         state.handle_event(

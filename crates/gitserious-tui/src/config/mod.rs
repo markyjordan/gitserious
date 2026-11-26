@@ -54,6 +54,8 @@ mod project_overview;
 mod project_preview_tests;
 mod taxonomies;
 #[cfg(test)]
+mod test_support;
+#[cfg(test)]
 mod tests;
 use home_overlay::{CommandPaletteState, HomeCommand};
 use naming::sentence;

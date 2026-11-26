@@ -1,7 +1,6 @@
 use crate::config::library_lookup::LibraryLookup;
-use std::cell::{Cell, RefCell};
 
-use gitserious_app::{DraftField, GlobalConfiguration, RepositoryRoot};
+use gitserious_app::{DraftField, GlobalConfiguration};
 use gitserious_core::{
     CommitTypeDefinition, CommitTypeId, Description, PropertyDefinition, PropertyKey,
     PropertyRequirement, SchemaVersion, TaxonomyVersion,
@@ -11,10 +10,11 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Position;
 
 use super::naming::problem_sentence;
+pub(super) use super::test_support::{Workspace, footer_text};
+use super::test_support::{create_taxonomy, key};
 use super::*;
 use crate::theme::ACCENT;
 
-const LIBRARY_PATH: &str = "/home/tester/.config/gitserious/config.toml";
 /// The Library outline's first row from 24 rows, below the top padding and the page header.
 const OUTLINE_TOP: u16 = 4;
 
@@ -35,30 +35,6 @@ fn rule_row(terminal: &Terminal<TestBackend>) -> Option<u16> {
         (CONTENT_X..buffer.area.width)
             .all(|x| buffer[(x, y)].symbol() == "─" && buffer[(x, y)].fg == theme().dim)
     })
-}
-
-pub(super) struct Workspace {
-    pub(super) global: RefCell<LibraryDraft>,
-    pub(super) project: RefCell<ProjectSnapshot>,
-    saves: Cell<usize>,
-    library_path: PathBuf,
-}
-
-impl Workspace {
-    pub(super) fn new() -> Self {
-        let global = GlobalConfiguration::default();
-        let root = RepositoryRoot::new(std::env::temp_dir()).unwrap_or_else(|_| unreachable!());
-        Self {
-            global: RefCell::new(LibraryDraft::from_configuration(global)),
-            project: RefCell::new(ProjectSnapshot::new(root, None)),
-            saves: Cell::new(0),
-            library_path: PathBuf::from(LIBRARY_PATH),
-        }
-    }
-
-    pub(super) fn saves(&self) -> usize {
-        self.saves.get()
-    }
 }
 
 /// Forks `source` under the name `target`, as `f` and typing a name do.
@@ -110,66 +86,6 @@ fn cursor(state: &State) -> Vec<String> {
     state.taxonomies.observe(state.library()).cursor_path
 }
 
-impl ConfigurationWorkspace for Workspace {
-    fn load_library(&self) -> Result<LibraryDraft, String> {
-        Ok(self.global.borrow().clone())
-    }
-
-    fn save_library(&self, library: &LibraryDraft) -> Result<LibraryDraft, String> {
-        self.saves.set(self.saves.get() + 1);
-        if self.global.borrow().persisted() != library.persisted() {
-            return Err("global configuration changed while editing".into());
-        }
-        let saved = library
-            .saved_on(
-                "2026-11-08"
-                    .parse::<gitserious_app::TaxonomyDate>()
-                    .map_err(|error| error.to_string())?,
-            )
-            .map_err(|problems| format!("{problems:?}"))?;
-        *self.global.borrow_mut() = saved.clone();
-        Ok(saved)
-    }
-
-    fn load_project(&self) -> Result<ProjectSnapshot, String> {
-        Ok(self.project.borrow().clone())
-    }
-
-    fn library_taxonomies(&self) -> Result<Vec<Taxonomy>, String> {
-        Ok(self
-            .global
-            .borrow()
-            .persisted()
-            .map(|library| {
-                library
-                    .custom_taxonomies()
-                    .iter()
-                    .filter_map(gitserious_app::LibraryTaxonomy::usable)
-                    .collect()
-            })
-            .unwrap_or_default())
-    }
-
-    fn library_path(&self) -> PathBuf {
-        self.library_path.clone()
-    }
-}
-
-fn key(code: KeyCode) -> Event {
-    Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
-}
-
-/// Creates a taxonomy through the palette, which leaves the outline cursor where it was.
-pub(super) fn create_taxonomy(state: &mut State, workspace: &dyn ConfigurationWorkspace) {
-    for event in [
-        key(KeyCode::Char('/')),
-        Event::Paste("create taxonomy".into()),
-        key(KeyCode::Enter),
-    ] {
-        assert!(!state.handle_event(event, workspace));
-    }
-}
-
 fn ctrl(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::CONTROL))
 }
@@ -199,36 +115,6 @@ fn text(terminal: &Terminal<TestBackend>) -> String {
         .iter()
         .map(ratatui::buffer::Cell::symbol)
         .collect()
-}
-
-pub(super) fn footer_text(text: &str) -> String {
-    let mut text = text.to_owned();
-    for mode in [" NAV ", " EDIT "] {
-        if let Some(at) = text.find(mode) {
-            let end = at + mode.len();
-            let hints = text[end..].trim_start();
-            text = format!(" {mode}  {hints}");
-            break;
-        }
-    }
-    for key in [
-        "←/→",
-        "←",
-        "q",
-        "↑/↓",
-        "enter",
-        "esc",
-        "f",
-        "e",
-        "d",
-        "c",
-        "alt+↑/↓",
-        "tab",
-        "/",
-    ] {
-        text = text.replace(&format!(" {key}  "), &format!(" {key} "));
-    }
-    text
 }
 
 fn row_text(terminal: &Terminal<TestBackend>, x: u16, y: u16, width: u16) -> String {

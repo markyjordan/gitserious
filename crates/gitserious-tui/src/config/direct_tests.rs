@@ -6,7 +6,7 @@ use ratatui::layout::Position;
 use ratatui::{Terminal, backend::TestBackend};
 
 use super::taxonomies::{ObservedMode as Mode, RowKey};
-use super::tests::Workspace;
+use super::test_support::{Workspace, create_taxonomy, footer_text, team};
 use super::*;
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -39,7 +39,7 @@ impl ConfigurationWorkspace for Store {
 
 fn fixture() -> Result<(Store, State)> {
     let store = Store {
-        inner: super::copy_tests::team()?,
+        inner: team()?,
         fail: Cell::new(false),
     };
     let mut state = State::new(&store);
@@ -244,7 +244,7 @@ fn blank_creation_cancels_for_every_policy_and_the_footer_tracks_all_text() -> R
         let (store, mut state) = fixture()?;
         let original = stored(&store)?;
         match kind {
-            "taxonomy" => super::tests::create_taxonomy(&mut state, &store),
+            "taxonomy" => create_taxonomy(&mut state, &store),
             "type" => {
                 let parent = select(&mut state, &["team"])?;
                 add_row(&mut state, &store, RowKey::AddType(parent))?;
@@ -279,14 +279,11 @@ fn blank_creation_cancels_for_every_policy_and_the_footer_tracks_all_text() -> R
             if field != DraftField::Policy {
                 for size in [(87, 40), (125, 51), (100, 30)] {
                     assert!(
-                        super::tests::footer_text(&frame(&mut state, size.0, size.1)?)
-                            .contains("esc cancel")
+                        footer_text(&frame(&mut state, size.0, size.1)?).contains("esc cancel")
                     );
                 }
                 paste(&mut state, &store, "x");
-                assert!(
-                    super::tests::footer_text(&frame(&mut state, 87, 40)?).contains("ctrl+w  save")
-                );
+                assert!(footer_text(&frame(&mut state, 87, 40)?).contains("ctrl+w  save"));
                 // Saving an incomplete item focuses its invalid field.
                 save_edit(&mut state, &store);
                 assert!(state.taxonomies.editing());
@@ -305,7 +302,7 @@ fn blank_creation_cancels_for_every_policy_and_the_footer_tracks_all_text() -> R
             }
             press(&mut state, &store, KeyCode::Enter);
         }
-        assert!(super::tests::footer_text(&frame(&mut state, 125, 51)?).contains("esc cancel"));
+        assert!(footer_text(&frame(&mut state, 125, 51)?).contains("esc cancel"));
         press(&mut state, &store, KeyCode::Esc);
         assert!(state.taxonomies.navigating(), "{kind} {policy:?}");
         assert_eq!(stored(&store)?, original);
@@ -322,7 +319,7 @@ fn clearing_an_existing_property_still_validates_on_save() -> Result {
     replace(&mut state, &store, "")?;
     press(&mut state, &store, KeyCode::Enter);
     replace(&mut state, &store, "")?;
-    assert!(super::tests::footer_text(&frame(&mut state, 87, 40)?).contains("ctrl+w  save"));
+    assert!(footer_text(&frame(&mut state, 87, 40)?).contains("ctrl+w  save"));
     save_edit(&mut state, &store);
     assert!(state.taxonomies.editing());
     assert!(
@@ -397,7 +394,7 @@ fn partial_fields_and_duplicate_names_stay_in_edit_with_inline_errors() -> Resul
 fn zero_type_entry_reopens_unlocks_until_eligible_and_stays_locked_after_last_type_removed()
 -> Result {
     let (store, mut state) = fixture()?;
-    super::tests::create_taxonomy(&mut state, &store);
+    create_taxonomy(&mut state, &store);
     paste(&mut state, &store, "Work in progress");
     press(&mut state, &store, KeyCode::Enter);
     paste(&mut state, &store, "Purpose");
@@ -554,7 +551,7 @@ fn conditional_fields_are_required_and_type_and_property_never_show_invalid_chip
             text.matches("+ new taxonomy").count()
         );
         assert!(!text.contains("~ modified"));
-        let footer = super::tests::footer_text(&text);
+        let footer = footer_text(&text);
         assert!(
             footer.contains("ctrl+w") && footer.contains("save") && footer.contains("cancel"),
             "{footer}"
@@ -681,7 +678,7 @@ fn stale_library_cannot_overwrite_another_session() -> Result {
 #[test]
 fn editing_blocks_navigation_clicks_review_shortcut_and_normal_quit() -> Result {
     let (store, mut state) = fixture()?;
-    super::tests::create_taxonomy(&mut state, &store);
+    create_taxonomy(&mut state, &store);
     paste(&mut state, &store, "Partial");
     frame(&mut state, 87, 40)?;
     let menu = state.tab_areas[Category::Project.index()];
@@ -736,7 +733,7 @@ fn explicit_edit_escape_restores_nonblank_creation_and_navigation() -> Result {
         let navigation = format!("{:?}", state.taxonomies.observe(state.library()));
         let original = stored(&store)?;
         match action {
-            "taxonomy" => super::tests::create_taxonomy(&mut state, &store),
+            "taxonomy" => create_taxonomy(&mut state, &store),
             "fork" => press(&mut state, &store, KeyCode::Char('f')),
             _ => press(&mut state, &store, KeyCode::Enter),
         }
