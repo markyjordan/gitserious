@@ -218,7 +218,7 @@ pub struct HelpTopic {
     pub command: Option<&'static str>,
 }
 
-/// The overview, then each command, in the order Help lists them.
+/// The overview, then each command alphabetically, in the order Help lists them.
 #[must_use]
 pub const fn help_topics() -> [HelpTopic; 5] {
     [
@@ -227,20 +227,20 @@ pub const fn help_topics() -> [HelpTopic; 5] {
             command: None,
         },
         HelpTopic {
-            title: "Init",
-            command: Some("init"),
+            title: "Commit",
+            command: Some("commit"),
         },
         HelpTopic {
             title: "Config",
             command: Some("config"),
         },
         HelpTopic {
-            title: "Commit",
-            command: Some("commit"),
-        },
-        HelpTopic {
             title: "Help",
             command: Some("help"),
+        },
+        HelpTopic {
+            title: "Init",
+            command: Some("init"),
         },
     ]
 }
