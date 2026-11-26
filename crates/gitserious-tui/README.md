@@ -126,7 +126,7 @@ review is saved as a draft too, so quitting keeps it. Direct `gitserious commit`
 picker when changes are staged, and this Commit page otherwise. Cancelling
 authoring returns to the page.
 
-Help lists its Overview, Init, Config, and Commit pages in a numbered sidebar
+Help lists its Overview, Init, Config, Commit, and Help pages in a numbered sidebar
 beside the chosen page. `gitserious help` opens the shell at Help on the
 Overview, and `gitserious help <command>` on that command's page, or on the
 Overview when the command has none. The

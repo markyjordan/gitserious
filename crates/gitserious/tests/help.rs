@@ -386,6 +386,7 @@ fn each_help_page_shows_what_its_help_command_prints_at_the_same_width()
             ("Init", Some("init")),
             ("Config", Some("config")),
             ("Commit", Some("commit")),
+            ("Help", Some("help")),
         ]
     );
     for page in &pages {
