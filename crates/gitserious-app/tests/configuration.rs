@@ -1,7 +1,5 @@
 #![allow(clippy::expect_used)]
 
-use gitserious_app::test_support::LibraryLookup;
-
 use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -66,8 +64,30 @@ fn draft(session: &mut LibraryDraft) -> &mut LibraryDraft {
     session
 }
 
+/// The node at a taxonomy, type, and property name path of one to three names.
+fn find_path(library: &LibraryDraft, names: &[&str]) -> Option<NodeId> {
+    let (name, rest) = names.split_first()?;
+    let taxonomy = library
+        .taxonomies()
+        .iter()
+        .find(|node| node.name() == *name)?;
+    let Some((name, rest)) = rest.split_first() else {
+        return Some(taxonomy.id().clone());
+    };
+    let commit_type = taxonomy.types().iter().find(|node| node.name() == *name)?;
+    match rest {
+        [] => Some(commit_type.id().clone()),
+        [name] => commit_type
+            .properties()
+            .iter()
+            .find(|node| node.name() == *name)
+            .map(|node| node.id().clone()),
+        _ => None,
+    }
+}
+
 fn node(session: &mut LibraryDraft, path: &[&str]) -> NodeId {
-    draft(session).find_path(path).expect("the node exists")
+    find_path(session, path).expect("the node exists")
 }
 
 /// Forks `source` under the name `target`, as forking and typing a name does.
@@ -463,10 +483,8 @@ fn forks_of_custom_taxonomies_preserve_content_without_version_metadata()
 #[test]
 fn forks_reject_unavailable_sources() {
     let mut session = LibraryDraft::from_configuration(GlobalConfiguration::default());
-    let missing =
-        LibraryDraft::from_configuration(library(vec![custom("missing")]).expect("valid"))
-            .find_path(&["missing"])
-            .expect("the other library has it");
+    let other = LibraryDraft::from_configuration(library(vec![custom("missing")]).expect("valid"));
+    let missing = find_path(&other, &["missing"]).expect("the other library has it");
 
     assert_eq!(
         draft(&mut session).fork(&missing),
@@ -702,8 +720,8 @@ fn saved_library_keeps_node_ids_and_no_op_saves_do_not_write() -> Result<(), Box
         let taxonomy = fork_as(&mut session, "conventional", "team");
         let child = node(&mut session, &["team", "feat"]);
         let saved = workspace.save_library(&session)?;
-        assert_eq!(saved.find_path(&["team"]), Some(taxonomy.clone()));
-        assert_eq!(saved.find_path(&["team", "feat"]), Some(child));
+        assert_eq!(find_path(&saved, &["team"]), Some(taxonomy.clone()));
+        assert_eq!(find_path(&saved, &["team", "feat"]), Some(child));
         assert!(!saved.is_changed());
         let saved = workspace.save_library(&saved)?;
         assert_eq!(store.swaps.get(), 1);
@@ -757,7 +775,7 @@ fn a_failed_global_save_retries_the_same_draft_and_preserves_identity() -> Resul
         store.fail.set(false);
         let saved = workspace.save_library(&session)?;
         assert!(!saved.is_changed());
-        assert_eq!(saved.find_path(&["team"]), Some(identity));
+        assert_eq!(find_path(&saved, &["team"]), Some(identity));
         let stored = store.current.borrow();
         let record = stored.custom_taxonomies().first().ok_or("saved taxonomy")?;
         assert!(record.created_on().is_some());

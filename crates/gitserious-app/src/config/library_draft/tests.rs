@@ -1,5 +1,3 @@
-use crate::test_support::LibraryLookup;
-
 use gitserious_core::{
     CommitTypeId, ConditionId, Description, LabelError, PropertyCondition, PropertyKey,
     SchemaVersion, Taxonomy, TaxonomyId,
@@ -71,10 +69,30 @@ fn team() -> Result<GlobalConfiguration, Box<dyn std::error::Error>> {
     )?)
 }
 
+/// The node at a taxonomy, type, and property name path of one to three names.
+fn find_path(draft: &LibraryDraft, names: &[&str]) -> Option<NodeId> {
+    let (name, rest) = names.split_first()?;
+    let taxonomy = draft
+        .taxonomies()
+        .iter()
+        .find(|node| node.name() == *name)?;
+    let Some((name, rest)) = rest.split_first() else {
+        return Some(taxonomy.id().clone());
+    };
+    let commit_type = taxonomy.types().iter().find(|node| node.name() == *name)?;
+    match rest {
+        [] => Some(commit_type.id().clone()),
+        [name] => commit_type
+            .properties()
+            .iter()
+            .find(|node| node.name() == *name)
+            .map(|node| node.id().clone()),
+        _ => None,
+    }
+}
+
 fn find(draft: &LibraryDraft, path: &[&str]) -> Result<NodeId, Box<dyn std::error::Error>> {
-    draft
-        .find_path(path)
-        .ok_or_else(|| format!("{path:?} is missing").into())
+    find_path(draft, path).ok_or_else(|| format!("{path:?} is missing").into())
 }
 
 #[test]
@@ -154,7 +172,10 @@ fn reads_walk_from_a_node_to_its_ancestors() -> TestResult {
         Some("Risky releases need a way back.")
     );
     let release = draft.parent(&rollback).ok_or("release")?;
-    assert_eq!(draft.find_path(&["team", "release"]), Some(release.clone()));
+    assert_eq!(
+        find_path(&draft, &["team", "release"]),
+        Some(release.clone())
+    );
     let team = draft.parent(&release).ok_or("team")?;
     assert_eq!(draft.parent(&team), None);
     assert_eq!(
@@ -162,7 +183,7 @@ fn reads_walk_from_a_node_to_its_ancestors() -> TestResult {
         Some(vec!["team", "release", "rollback"])
     );
     assert_eq!(draft.version(&rollback), None);
-    assert_eq!(draft.find_path(&["team", "missing"]), None);
+    assert_eq!(find_path(&draft, &["team", "missing"]), None);
     Ok(())
 }
 
