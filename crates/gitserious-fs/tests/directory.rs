@@ -3,17 +3,16 @@ use std::fs;
 use std::io;
 
 use gitserious_app::{DirectoryCreator, GlobalPaths};
+use gitserious_fs::LocalDirectoryCreator;
+use tempfile::TempDir;
 
-use crate::LocalDirectoryCreator;
-use crate::tests::support::TestDirectory;
-
-fn paths_beneath(root: &TestDirectory) -> GlobalPaths {
+fn paths_beneath(root: &TempDir) -> GlobalPaths {
     GlobalPaths::new(root.path().join("config"))
 }
 
 #[test]
 fn creating_the_directory_creates_nothing_beside_it() -> Result<(), Box<dyn Error>> {
-    let root = TestDirectory::new("selected-directory")?;
+    let root = tempfile::tempdir()?;
     let paths = paths_beneath(&root);
 
     LocalDirectoryCreator.ensure(paths.config())?;
@@ -25,7 +24,7 @@ fn creating_the_directory_creates_nothing_beside_it() -> Result<(), Box<dyn Erro
 
 #[test]
 fn creation_is_recursive_and_idempotent() -> Result<(), Box<dyn Error>> {
-    let root = TestDirectory::new("recursive-directory")?;
+    let root = tempfile::tempdir()?;
     let paths = GlobalPaths::new(root.path().join("parent/config/child"));
 
     LocalDirectoryCreator.ensure(paths.config())?;
@@ -37,7 +36,7 @@ fn creation_is_recursive_and_idempotent() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn a_file_collision_is_reported_by_the_adapter() -> Result<(), Box<dyn Error>> {
-    let root = TestDirectory::new("file-collision")?;
+    let root = tempfile::tempdir()?;
     let paths = paths_beneath(&root);
     fs::write(paths.config().as_path(), b"not a directory")?;
 
@@ -57,7 +56,7 @@ fn a_file_collision_is_reported_by_the_adapter() -> Result<(), Box<dyn Error>> {
 fn new_directories_request_private_permissions() -> Result<(), Box<dyn Error>> {
     use std::os::unix::fs::PermissionsExt;
 
-    let root = TestDirectory::new("private-permissions")?;
+    let root = tempfile::tempdir()?;
     let paths = GlobalPaths::new(root.path().join("parent/config"));
 
     LocalDirectoryCreator.ensure(paths.config())?;
@@ -77,7 +76,7 @@ fn new_directories_request_private_permissions() -> Result<(), Box<dyn Error>> {
 fn existing_directory_permissions_are_unchanged() -> Result<(), Box<dyn Error>> {
     use std::os::unix::fs::PermissionsExt;
 
-    let root = TestDirectory::new("existing-permissions")?;
+    let root = tempfile::tempdir()?;
     let paths = paths_beneath(&root);
     fs::create_dir(paths.config().as_path())?;
     fs::set_permissions(paths.config().as_path(), fs::Permissions::from_mode(0o750))?;

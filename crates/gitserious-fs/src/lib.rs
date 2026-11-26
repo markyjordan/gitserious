@@ -27,9 +27,5 @@ pub use global::{GlobalPathError, SystemGlobalPathResolver};
 pub use taxonomy_global::{GlobalConfigurationError, TomlGlobalConfigurationStore};
 pub use taxonomy_project::{ProjectStateError, TextLocation, TomlProjectStore};
 
-#[cfg(test)]
-#[path = "../tests/unit/mod.rs"]
-mod tests;
-
 pub use git_status::GitRepositoryStatusReader;
 pub use git_worktree::GitWorktreePaths;
