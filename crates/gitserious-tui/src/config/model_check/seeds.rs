@@ -250,7 +250,7 @@ pub(super) const SEEDS: &[Seed] = &[
         alphabet: Alphabet::Only(&["e", "up", "down", "left", "right", "enter"]),
         reaches: &[Reach {
             name: "P4, the Inspector's Policy reaches every policy",
-            observe: selected_policy,
+            observe: summary_policy,
             expected: &["required", "recommended", "conditional", "optional"],
         }],
     },
@@ -399,8 +399,12 @@ fn team_configuration(
     )?)
 }
 
-/// The policy of the property the outline has selected.
-fn selected_policy(snapshot: &Snapshot) -> Option<String> {
+/// The policy of `summary` while the outline selects it. `notes` starts at optional, so
+/// observing it would meet P4 without any key reaching optional.
+fn summary_policy(snapshot: &Snapshot) -> Option<String> {
+    if !selects(snapshot, SUMMARY) {
+        return None;
+    }
     let library = snapshot.library()?;
     let node = library.find_path(&snapshot.taxonomies.cursor_path)?;
     match library.node(&node)? {
