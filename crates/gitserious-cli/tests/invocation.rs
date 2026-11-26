@@ -44,7 +44,10 @@ fn commit_and_config_open_the_shell_whatever_the_terminal() {
 #[test]
 fn help_and_version_succeed_on_stdout() {
     for (arguments, expected) in [
-        (&["--help"][..], "Create durable commit-message policy"),
+        (
+            &["--help"][..],
+            "Structured commits that keep what the diff leaves out.",
+        ),
         (
             &["--version"][..],
             concat!("gitserious ", env!("CARGO_PKG_VERSION")),

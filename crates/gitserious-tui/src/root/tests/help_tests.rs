@@ -18,7 +18,10 @@ fn the_overview_opens_on_its_help_and_bolds_only_headings_and_names()
     let mut root = Root::new(InitialPage::Home, of(&services), &[]);
     let help = vec![HelpPage::new("Overview", None, |_| {
         vec![
-            vec![span("Create durable commit-message policy", false)],
+            vec![span(
+                "Structured commits that keep what the diff leaves out.",
+                false,
+            )],
             vec![],
             vec![
                 span("Usage:", true),
@@ -42,7 +45,7 @@ fn the_overview_opens_on_its_help_and_bolds_only_headings_and_names()
     let text = rendered(&terminal);
     assert!(!text.contains("┌ Help"), "{text}");
     assert!(!text.contains("gitserious help:"), "{text}");
-    let (x, y) = position(&terminal, "Create durable").ok_or("missing description")?;
+    let (x, y) = position(&terminal, "Structured commits").ok_or("missing description")?;
     assert_eq!(y, 2, "one blank row under the header");
     let buffer = terminal.backend().buffer();
     assert_eq!(
