@@ -24,9 +24,10 @@ concise help when redirected. Bare `config` enters the shell at Config, and
 `commit` enters the shell at Commit.
 
 Help has two tiers. `gitserious -h` and `gitserious --help` print the concise
-help to stdout. `gitserious help [<command>]` is the detailed help. In a
-terminal, it opens the shell at Help, on the command's page or the Overview.
-Redirected, it prints the detailed help. Printed help wraps to the terminal
+help to stdout. `gitserious help <command>` is the command's detailed help, and
+`gitserious help` is the concise help with a different last line. In a
+terminal, `help` opens the shell at Help, on the command's page or the
+Overview. Redirected, it prints that help. Printed help wraps to the terminal
 width, up to 100 columns.
 
 `-h`, `--help`, `-V`, and `--version` belong to `gitserious` itself and are
@@ -46,4 +47,5 @@ The shell Help pages show what `gitserious help` and
 `gitserious help <command>` print at the pane's width, with headings and names
 in bold. Only the concise help ends with
 ``Use `gitserious help` for more details.``, because the Overview is that
-page.
+page. `gitserious help` and the Overview end with
+``Use `gitserious help <COMMAND>` for more information on a specific command.``
