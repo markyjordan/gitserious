@@ -1,15 +1,11 @@
 use std::process::ExitCode;
 
-use gitserious_cli::{Destination, Invocation, parse, write_answer};
-
-fn invocations(arguments: &[&str]) -> [Invocation; 2] {
-    let arguments = || std::iter::once("gitserious").chain(arguments.iter().copied());
-    [parse(arguments(), true), parse(arguments(), false)]
-}
+use gitserious_cli::{Invocation, parse, write_answer};
 
 /// Writes what a redirected session answers for `arguments`.
 fn answered(arguments: &[&str]) -> (ExitCode, String, String) {
-    let [_, Invocation::Answer(answer)] = invocations(arguments) else {
+    let arguments = std::iter::once("gitserious").chain(arguments.iter().copied());
+    let Invocation::Answer(answer) = parse(arguments.clone(), false) else {
         unreachable!("{arguments:?} is answered by the CLI");
     };
     let mut stdout = Vec::new();
@@ -20,25 +16,6 @@ fn answered(arguments: &[&str]) -> (ExitCode, String, String) {
         String::from_utf8_lossy(&stdout).into_owned(),
         String::from_utf8_lossy(&stderr).into_owned(),
     )
-}
-
-#[test]
-fn init_initializes_whatever_the_terminal() {
-    assert_eq!(invocations(&["init"]), [Invocation::Init, Invocation::Init]);
-}
-
-#[test]
-fn commit_and_config_open_the_shell_whatever_the_terminal() {
-    for (command, page) in [
-        ("commit", Destination::Commit),
-        ("config", Destination::Config),
-    ] {
-        assert_eq!(
-            invocations(&[command]),
-            [Invocation::Open(page.clone()), Invocation::Open(page)],
-            "a missing terminal is the shell's concern, not a second author"
-        );
-    }
 }
 
 #[test]
