@@ -10,7 +10,7 @@
 //! Keys the root takes before Config still reach it here. Mouse, resize, write failures and the root are covered by interaction
 //! tests.
 
-use gitserious_app::test_support::LibraryLookup;
+use crate::config::library_lookup::LibraryLookup;
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::panic::{self, AssertUnwindSafe};

@@ -18,7 +18,6 @@ unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
 
 [dev-dependencies]
-gitserious-app = { workspace = true, features = ["test-support"] }
 ratatui = { workspace = true, features = ["layout-cache"] }
 
 [lints]
