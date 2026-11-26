@@ -1,3 +1,5 @@
+mod help;
+
 use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
@@ -6,15 +8,14 @@ use gitserious_app::{
     initialize_project, resolve_global_paths,
 };
 use gitserious_cli::{
-    Destination, Invocation, help_topics, parse, styled_help, write_answer, write_error,
-    write_init_outcome,
+    Destination, Invocation, parse, write_answer, write_error, write_init_outcome,
 };
 use gitserious_fs::{
     GitCommitWriter, GitDraftStore, GitEditor, GitIndexWriter, GitRepositoryInitializer,
     GitRepositoryLocator, GitRepositoryStatusReader, GitWorktreePaths, SystemGlobalPathResolver,
     TomlGlobalConfigurationStore, TomlProjectStore,
 };
-use gitserious_tui::{Capabilities, HelpPage, InitialPage, RatatuiInteractiveUi};
+use gitserious_tui::{Capabilities, InitialPage, RatatuiInteractiveUi};
 
 fn main() -> ExitCode {
     let mut stdout = io::stdout();
@@ -63,7 +64,7 @@ fn main() -> ExitCode {
                 &GitRepositoryInitializer,
                 &directory,
             );
-            RatatuiInteractiveUi::at(page, help_pages())
+            RatatuiInteractiveUi::at(page, help::help_pages())
                 .run(Capabilities {
                     commit: &commit,
                     config: &config,
@@ -91,16 +92,4 @@ fn main() -> ExitCode {
         }
         Invocation::Answer(answer) => write_answer(answer, &mut stdout, &mut stderr),
     }
-}
-
-/// The CLI's Help topics as TUI pages.
-fn help_pages() -> Vec<HelpPage> {
-    help_topics()
-        .into_iter()
-        .map(|topic| {
-            HelpPage::styled(topic.title, topic.command, move |width| {
-                styled_help(topic.command, width)
-            })
-        })
-        .collect()
 }

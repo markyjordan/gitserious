@@ -1,10 +1,13 @@
+/// The pages the executable gives the TUI, from the executable's own source.
+#[path = "../src/help.rs"]
+mod help;
 mod support;
 
 use std::error::Error;
 use std::process::Output;
 
-use gitserious_cli::{help_topics, styled_help};
 use gitserious_tui::HelpPage;
+use help::help_pages;
 use support::Home;
 
 const DOCUMENTED: [&str; 3] = ["init", "config", "commit"];
@@ -240,7 +243,7 @@ fn root_concise_help_points_to_the_help_command() -> Result<(), Box<dyn Error>> 
 #[test]
 fn only_the_concise_help_points_to_the_help_command() -> Result<(), Box<dyn Error>> {
     let pointer = "Use `gitserious help` for more details.";
-    let overview = interactive_help()
+    let overview = help_pages()
         .into_iter()
         .find(|page| page.command.is_none())
         .ok_or("no Overview page")?;
@@ -352,18 +355,6 @@ fn help_for_an_unknown_command_is_a_usage_error_naming_the_valid_ones() -> Resul
     Ok(())
 }
 
-/// The pages the executable gives the TUI, built from the same two CLI calls.
-fn interactive_help() -> Vec<HelpPage> {
-    help_topics()
-        .into_iter()
-        .map(|topic| {
-            HelpPage::styled(topic.title, topic.command, move |width| {
-                styled_help(topic.command, width)
-            })
-        })
-        .collect()
-}
-
 fn page_text(page: &HelpPage, width: u16) -> String {
     page.lines(width)
         .iter()
@@ -378,7 +369,7 @@ fn page_text(page: &HelpPage, width: u16) -> String {
 #[test]
 fn each_help_page_shows_what_its_help_command_prints_at_the_same_width()
 -> Result<(), Box<dyn Error>> {
-    let pages = interactive_help();
+    let pages = help_pages();
     let shown: Vec<_> = pages
         .iter()
         .map(|page| (page.title.as_str(), page.command.as_deref()))
@@ -410,7 +401,7 @@ fn each_help_page_shows_what_its_help_command_prints_at_the_same_width()
 
 #[test]
 fn help_pages_mark_headings_and_names_strong_and_leave_descriptions_plain() {
-    for page in interactive_help() {
+    for page in help_pages() {
         let spans = page.lines(80).concat();
         let strong: Vec<_> = spans
             .iter()
