@@ -1,4 +1,5 @@
-#![allow(dead_code)]
+//! Each test target compiles its own copy of this module, so an item that some target
+//! leaves unused allows `dead_code`.
 
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -30,12 +31,13 @@ fn isolate_git(command: &mut Command) -> &mut Command {
     command
 }
 
-pub fn git_command(directory: &Path) -> Command {
+fn git_command(directory: &Path) -> Command {
     let mut command = Command::new("git");
     isolate_git(command.current_dir(directory));
     command
 }
 
+#[allow(dead_code)]
 pub fn git(directory: &Path, arguments: &[&str]) -> Result<Output, Box<dyn Error>> {
     let output = git_command(directory).args(arguments).output()?;
     if output.status.success() {
@@ -53,6 +55,7 @@ pub fn git(directory: &Path, arguments: &[&str]) -> Result<Output, Box<dyn Error
 
 /// A repository in a new temporary directory with a fixed identity, no signing, and Git's
 /// default hooks.
+#[allow(dead_code)]
 pub fn repository() -> Result<TempDir, Box<dyn Error>> {
     let directory = tempfile::Builder::new()
         .prefix("gitserious process ")
@@ -64,6 +67,7 @@ pub fn repository() -> Result<TempDir, Box<dyn Error>> {
     Ok(directory)
 }
 
+#[allow(dead_code)]
 pub fn head_exists(directory: &Path) -> Result<bool, Box<dyn Error>> {
     Ok(git_command(directory)
         .args(["rev-parse", "--verify", "HEAD"])
@@ -86,6 +90,7 @@ impl Home {
     }
 
     /// The directory every command sees as `HOME`.
+    #[allow(dead_code)]
     pub fn path(&self) -> &Path {
         self.root.path()
     }
@@ -94,6 +99,7 @@ impl Home {
         self.root.path().join("config")
     }
 
+    #[allow(dead_code)]
     pub fn library_path(&self) -> PathBuf {
         self.config_home().join("gitserious/config.toml")
     }
@@ -116,10 +122,12 @@ impl Home {
         command
     }
 
+    #[allow(dead_code)]
     pub fn run(&self, directory: &Path, arguments: &[&str]) -> Result<Output, Box<dyn Error>> {
         Ok(self.command(directory).args(arguments).output()?)
     }
 
+    #[allow(dead_code)]
     pub fn init(&self, directory: &Path) -> Result<(), Box<dyn Error>> {
         let output = self.run(directory, &["init"])?;
         if output.status.success() {
@@ -130,59 +138,12 @@ impl Home {
     }
 }
 
+#[allow(dead_code)]
 pub fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+#[allow(dead_code)]
 pub fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
-}
-
-pub fn with_stale_fingerprint(lock: &str) -> Result<String, Box<dyn Error>> {
-    let marker = "config-fingerprint = \"sha256:";
-    let start = lock.find(marker).ok_or("lock has no fingerprint")? + marker.len();
-    let replacement = if lock[start..].starts_with('0') {
-        "1"
-    } else {
-        "0"
-    };
-    Ok(format!(
-        "{}{replacement}{}",
-        &lock[..start],
-        &lock[start + 1..]
-    ))
-}
-
-/// A fresh project adds only its policy and ignored local state beside Git and user files.
-pub fn assert_project_shape(directory: &Path, existing: &[&str]) -> Result<(), Box<dyn Error>> {
-    fn entries(
-        directory: &Path,
-    ) -> Result<std::collections::BTreeSet<std::ffi::OsString>, std::io::Error> {
-        std::fs::read_dir(directory)?
-            .map(|entry| entry.map(|entry| entry.file_name()))
-            .collect()
-    }
-    let expected = [".git", ".gitserious", "gitserious.toml"]
-        .into_iter()
-        .chain(existing.iter().copied())
-        .map(std::ffi::OsString::from)
-        .collect();
-    assert_eq!(
-        entries(directory)?,
-        expected,
-        "initialization must not generate a lock file or another root artifact"
-    );
-    assert!(directory.join("gitserious.toml").is_file());
-    assert_eq!(
-        entries(&directory.join(".gitserious"))?,
-        [std::ffi::OsString::from(".gitignore")]
-            .into_iter()
-            .collect(),
-        "fresh local state contains only its ignore rule"
-    );
-    assert_eq!(
-        std::fs::read_to_string(directory.join(".gitserious/.gitignore"))?,
-        "*\n"
-    );
-    Ok(())
 }
