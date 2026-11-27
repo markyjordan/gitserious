@@ -1,10 +1,10 @@
 # Testing
 
-This page is the reference for where gitserious tests live, who owns each fixture, and what a change must pass. It describes the workspace at `f6a082c`, the last code change of the test architecture stack (#468 to #482). [The test inventory](test-inventory.md) is the evidence record behind it, with one row for each test module and the measurements that led to this layout.
+This page is the reference for where gitserious tests live, who owns each fixture, and what a change must pass. It describes the workspace at `f6a082c`, the last code change of the test architecture stack (#468 to #482), with [the follow-ups after it](test-inventory.md#follow-ups-after-the-stack). [The test inventory](test-inventory.md) is the evidence record behind it, with one row for each test module and the measurements that led to this layout.
 
 ## Each crate tests the behavior it owns
 
-A test lives in the crate whose code decides the result it asserts. No test reaches into another workspace crate's private code or test files. The four in-process tests in `crates/gitserious/tests/commit.rs` are the one known exception, described under [Executable tests](#executable-tests).
+A test lives in the crate whose code decides the result it asserts. No test reaches into another workspace crate's private code or test files.
 
 | Crate | Where its tests live | What they protect | Fixtures |
 |---|---|---|---|
@@ -30,19 +30,17 @@ Every test in `crates/gitserious/tests/` that spawns the built binary does so th
 
 `tests/help.rs` includes `src/help.rs` with `#[path]`, so the help tests run the production `help_pages`. The binary crate has no lib target, so an integration test cannot import `help_pages` by its module path.
 
-Four tests in `tests/commit.rs` call App's commit services with FS adapters in process instead of spawning the binary. Three of them run the binary's `init` to set up the repository. They are a known exception, and the inventory records them as deferred.
-
 ## Fixture ownership
 
 - A fixture moves into a shared module only when three or more test files in one crate would each define the same fixture. Two copies stay in their files.
-- A shared test module holds only fixtures that at least two test files use. A fixture with one consumer lives in that consumer. At `f6a082c`, `with_stale_fingerprint` and `assert_project_shape` in `crates/gitserious/tests/support/mod.rs` break this rule, and [the inventory's open items](test-inventory.md#open-items) list them.
+- A shared test module holds only fixtures that at least two test files use. A fixture with one consumer lives in that consumer.
 - Fixtures that change for different reasons stay apart, even when they look alike. App's store fakes and `FakeError` each record, fail, or count in their own way. The locator in `tests/init.rs` records its calls, and the one in `tests/configuration.rs` is never called.
 - No workspace crate exists for test support. Each crate's fixtures live in that crate.
 - No crate exports a test-only public item or declares a Cargo feature for tests. Inside a library, test-only items use `#[cfg(test)]` and `pub(super)` or `pub(crate)` visibility.
 - No workspace crate declares a development dependency on another workspace crate. `scripts/ci/check-crate-dependencies.py` rejects any workspace edge outside its `PERMITTED` table, a self edge included. It does not reject a development dependency along an edge that the table lists, such as FS on App, so review enforces that case.
 - No source file compiles a file from another crate with `#[path]` or `include!`. The same script rejects that inclusion.
 
-The FS fixture in `crates/gitserious-fs/tests/support/mod.rs` and the executable fixture in `crates/gitserious/tests/support/mod.rs` are two copies on purpose. An integration test cannot import another crate's `tests/` directory, and sharing would need a test-support crate, a public test-only API, or a cross-crate include, which the rules above forbid. The copies also differ. The executable's `repository()` creates its directory with a space in the name and keeps Git's default branch, its `git` reports stdout as well as stderr, and only it has `Home`.
+The FS fixture in `crates/gitserious-fs/tests/support/mod.rs` and the executable fixture in `crates/gitserious/tests/support/mod.rs` are two copies on purpose. An integration test cannot import another crate's `tests/` directory, and sharing would need a test-support crate, a public test-only API, or a cross-crate include, which the rules above forbid. The copies also differ. The executable's `repository()` creates its directory with a space in the name, keeps Git's default branch, and does not refuse a leaked repository variable. Its `git` reports stdout as well as stderr, and only it has `Home`.
 
 ## Unit and integration tests
 
@@ -59,11 +57,11 @@ Both Git fixtures apply the same rules to the Git commands that tests run themse
 
 - Each command sets `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` to `/dev/null` and removes `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_INDEX_FILE`.
 - Each repository sets a fixed `user.name` and `user.email`, `commit.gpgsign=false`, and `core.hooksPath=.git/hooks` in its local configuration.
-- The repository constructor refuses to create a repository while `GIT_DIR`, `GIT_WORK_TREE`, or `GIT_INDEX_FILE` is set. FS's `init` and the executable's `repository` return an error that names the variable.
+- FS's repository constructor, `init`, refuses to create a repository while `GIT_DIR`, `GIT_WORK_TREE`, or `GIT_INDEX_FILE` is set, and returns an error that names the variable.
 
-The refusal exists because FS adapters that a test calls in process do not get the same isolation. They run Git with the test process's environment. That covers the FS tests of Git adapters, `crates/gitserious-fs/tests/app_services.rs`, and the four in-process tests in `crates/gitserious/tests/commit.rs`. Clearing a variable from the process environment needs `unsafe` code, which `unsafe_code = "forbid"` in the workspace manifest rules out. A binary that a test spawns through `Home` gets the isolated environment.
+The refusal exists because FS adapters that a test calls in process do not get the same isolation. They run Git with the test process's environment. That covers the FS tests of Git adapters and `crates/gitserious-fs/tests/app_services.rs`. Clearing a variable from the process environment needs `unsafe` code, which `unsafe_code = "forbid"` in the workspace manifest rules out. A binary that a test spawns through `Home` gets the isolated environment. No executable test runs an adapter in process, so the executable's `repository` does not refuse. With all three variables naming a decoy repository, the 47 executable tests passed and left the decoy unchanged.
 
-The repository's local settings outrank the developer's global and system settings, so the fixed identity, signing, and hooks also reach the adapters. A leaked `GIT_DIR` still reaches them. Under a leaked `GIT_DIR`, as under `git rebase --exec`, a test that builds its repository through the fixture stops at the refusal instead of writing into the repository that `GIT_DIR` names. Five tests in `crates/gitserious-fs/tests/app_services.rs` start from a plain directory, so they fail at an assertion instead, as #478 records.
+The repository's local settings outrank the developer's global and system settings, so the fixed identity, signing, and hooks also reach the adapters. A leaked `GIT_DIR` still reaches them. Under a leaked `GIT_DIR`, as under `git rebase --exec`, an FS test that builds its repository through the fixture stops at the refusal instead of writing into the repository that `GIT_DIR` names. Five tests in `crates/gitserious-fs/tests/app_services.rs` start from a plain directory, so they fail at an assertion instead, as #478 records.
 
 Whether FS adapters should honor an inherited `GIT_DIR` is an open product decision. The fixtures do not decide it.
 
@@ -100,18 +98,18 @@ The test prints one line per seed on stderr with its depth, states, transitions,
 | `test` | `cargo test --locked --workspace --all-targets --all-features`, then `cargo test --locked --workspace --doc` |
 | `release` | `cargo build --locked --workspace --all-targets --all-features --release`, then `cargo package --locked --workspace --list` |
 
-`check` skips the dead-code scan on macOS and Windows, so a local pass on a Mac does not cover it. `check-dead-code.sh` looks for `allow(dead_code)` only under `crates/*/src`. The `#![allow(dead_code)]` at the top of the FS and executable `tests/support/mod.rs` files therefore hides an unused fixture from every check.
+`check` skips the dead-code scan on macOS and Windows, so a local pass on a Mac does not cover it. `check-dead-code.sh` looks for `allow(dead_code)` only under `crates/*/src`, so in `tests/` only the compiler reports an unused fixture. The `#![allow(dead_code)]` at the top of `crates/gitserious-fs/tests/support/mod.rs` hides every unused FS fixture from it. `crates/gitserious/tests/support/mod.rs` has no blanket allow. Each executable test target compiles its own copy of the module, so each public item that some target leaves unused carries its own `#[allow(dead_code)]`. The compiler reports any other unused item, but not an allowed item that no target uses.
 
-A change that moves, adds, or removes tests reports the test list before and after. On macOS at `f6a082c`, `cargo test --workspace -- --list` lists 605 tests. No crate has a doc test.
+A change that moves, adds, or removes tests reports the test list before and after. On macOS at `f6a082c` with the follow-ups, `cargo test --workspace -- --list` lists 605 tests. No crate has a doc test.
 
 | Crate | Unit | Integration | Total |
 |---|---|---|---|
 | `gitserious-core` | 26 | 32 | 58 |
 | `gitserious-app` | 28 | 78 | 106 |
-| `gitserious-fs` | 18 | 76 | 94 |
+| `gitserious-fs` | 18 | 80 | 98 |
 | `gitserious-cli` | 8 | 3 | 11 |
 | `gitserious-tui` | 285 | 0 | 285 |
-| `gitserious` | 0 | 51 | 51 |
+| `gitserious` | 0 | 47 | 47 |
 | Total | 365 | 240 | 605 |
 
 Two tests do not run on macOS. `preserves_non_utf8_unix_worktree_paths` in `crates/gitserious-fs/tests/git_repository.rs` runs only on Linux, and `native_windows_adapter_returns_absolute_known_folder_paths` in `crates/gitserious-fs/src/platform/windows.rs` runs only on Windows. Windows also skips every Unix-only test. The Linux and Windows totals were not measured.
