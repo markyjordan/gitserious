@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-use std::env;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -10,8 +9,8 @@ use tempfile::TempDir;
 /// Git variables that would redirect a fixture's git calls into another repository.
 const REPOSITORY_OVERRIDES: [&str; 3] = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"];
 
-/// Repository settings outrank the developer's global and system configuration, so they also
-/// reach the adapters that tests call in process, which run Git with this process's environment.
+/// The identity, signing, and hooks of every Git command that a test or the binary runs in a
+/// fixture repository.
 const REPOSITORY_CONFIGURATION: [(&str, &str); 4] = [
     ("user.name", "Git Serious"),
     ("user.email", "gitserious@example.com"),
@@ -53,17 +52,8 @@ pub fn git(directory: &Path, arguments: &[&str]) -> Result<Output, Box<dyn Error
 }
 
 /// A repository in a new temporary directory with a fixed identity, no signing, and Git's
-/// default hooks. It refuses while the environment names a repository, because the adapters
-/// that tests call in process would run Git against that repository instead.
+/// default hooks.
 pub fn repository() -> Result<TempDir, Box<dyn Error>> {
-    if let Some(variable) = REPOSITORY_OVERRIDES
-        .into_iter()
-        .find(|variable| env::var_os(variable).is_some())
-    {
-        return Err(
-            format!("unset {variable}: the adapters tests call in process inherit it").into(),
-        );
-    }
     let directory = tempfile::Builder::new()
         .prefix("gitserious process ")
         .tempdir()?;
