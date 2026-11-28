@@ -232,7 +232,15 @@ fn root_concise_help_points_to_the_help_command() -> Result<(), Box<dyn Error>> 
         help.ends_with("\n\nUse `gitserious help` for more details.\n"),
         "{help}"
     );
-    assert_eq!(command_names(&help), ["init", "config", "commit", "help"]);
+    let rail: Vec<String> = help_pages()
+        .into_iter()
+        .filter_map(|page| page.command)
+        .collect();
+    assert_eq!(
+        command_names(&help),
+        rail,
+        "commands list in Help's rail order"
+    );
     assert!(
         command_lines(&help).all(|line| !line.ends_with('.')),
         "{help}"
