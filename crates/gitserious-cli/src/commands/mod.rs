@@ -2,14 +2,15 @@ use clap::Subcommand;
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
-    /// Initialize repository-local gitserious policy.
+    /// Author and create a durable commit from the staged index.
     ///
-    /// Init writes `gitserious.toml` at the root of the current Git repository.
-    /// It holds complete copies of the taxonomies your Library gives new
-    /// projects. The Library's default taxonomy becomes the project default.
+    /// Commit opens the type picker when changes are staged, and the Commit
+    /// page otherwise. You choose a type, write its properties, and review
+    /// the exact message before gitserious passes it to `git commit`.
     ///
-    /// An existing `gitserious.toml` is never rewritten.
-    Init,
+    /// Only staged changes are committed. Stage whole files on the Commit
+    /// page, or parts of files with `git add -p`.
+    Commit,
     /// Interactively configure taxonomy policy.
     ///
     /// Config opens in the terminal with two sections. Project shows the
@@ -21,15 +22,6 @@ pub(crate) enum Command {
     /// While you edit a Library item, Ctrl+W saves it and Esc discards the
     /// edit. Copies, reorders, and confirmed deletions save at once.
     Config,
-    /// Author and create a durable commit from the staged index.
-    ///
-    /// Commit opens the type picker when changes are staged, and the Commit
-    /// page otherwise. You choose a type, write its properties, and review
-    /// the exact message before gitserious passes it to `git commit`.
-    ///
-    /// Only staged changes are committed. Stage whole files on the Commit
-    /// page, or parts of files with `git add -p`.
-    Commit,
     /// Open a command's documentation in Help.
     ///
     /// In a terminal, help opens the Help page for the command, or the
@@ -40,4 +32,12 @@ pub(crate) enum Command {
         /// The command to document
         command: Option<String>,
     },
+    /// Initialize repository-local gitserious policy.
+    ///
+    /// Init writes `gitserious.toml` at the root of the current Git repository.
+    /// It holds complete copies of the taxonomies your Library gives new
+    /// projects. The Library's default taxonomy becomes the project default.
+    ///
+    /// An existing `gitserious.toml` is never rewritten.
+    Init,
 }
